@@ -128,21 +128,6 @@ type PodDeploymentStatus struct {
 	// +optional
 	Checksum string `json:"checksum,omitempty"`
 
-	// ObservedGeneration is the spec generation Checksum was published as, so a
-	// pod can be ordered against the spec rather than only compared to it.
-	// Checksums are opaque: two differing values say the pod is not on the
-	// current spec, never whether it is behind or how far. Reading it as
-	// "pod is at or past generation N" needs no knowledge of intermediate
-	// versions, which an observer's watch is not guaranteed to receive.
-	//
-	// Zero means unknown — the publisher has no record of that checksum (it was
-	// published by a previous leader, or before a restart), or the kind does not
-	// populate it: only HAProxyCfg does today, though this type is shared with
-	// the auxiliary file kinds. Treat unknown as not-yet-converged; the next
-	// publish records it.
-	// +optional
-	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-
 	// LastError contains the error message from the most recent failed sync attempt.
 	//
 	// This field is cleared when a sync succeeds. Combined with ConsecutiveErrors,

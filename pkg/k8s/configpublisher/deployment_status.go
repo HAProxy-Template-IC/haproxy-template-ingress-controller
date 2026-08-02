@@ -95,42 +95,6 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 		podStatus.Checksum = existing
 	}
 
-	// Order the checksum against the spec. Resolved from whatever checksum the
-	// entry ends up carrying (above), so a failed sync keeps the generation of
-	// the last config the pod actually ran rather than of the one it missed.
-	podStatus.ObservedGeneration = p.specGenerationFor(
-		update.RuntimeConfigNamespace, update.RuntimeConfigName, podStatus.Checksum)
-	if podStatus.ObservedGeneration == 0 {
-		// The map only knows checksums this process published, and the
-		// deploy-driven publish coalesces: a render deployed while a newer one
-		// is already queued is never published, so its checksum is never
-		// recorded and every lookup for a pod sitting on it misses. Ask the
-		// live spec directly — an exact checksum match IS the generation, with
-		// no history required — and learn it, so the pod's next update and the
-		// backfill both hit.
-		if gen, ok := p.generationIfCurrentSpec(
-			ctx, update.RuntimeConfigNamespace, update.RuntimeConfigName, podStatus.Checksum); ok {
-			podStatus.ObservedGeneration = gen
-			p.learnSpecGeneration(update.RuntimeConfigNamespace, update.RuntimeConfigName, podStatus.Checksum, gen)
-		}
-	}
-	if podStatus.ObservedGeneration == 0 {
-		// Still unknown. Do not REGRESS a pod that already had a generation: an
-		// omitted field is deleted by this manager's forced SSA (the hazard the
-		// checksum handling above exists for), and backfill cannot repair it
-		// once the entry's checksum no longer matches the current spec. Re-emit
-		// the recorded value — it under-states (the pod is at least there),
-		// which reads as not-yet-converged and never as falsely converged.
-		//
-		// Sound, but only a LOWER BOUND: on its own it never rises, which is
-		// what pinned a pod at generation 83 while the spec ran to 87 and failed
-		// 15 tests at once. The current-spec probe above is what lets it rise.
-		if prev, ok := p.existingPodObservedGeneration(
-			ctx, update.RuntimeConfigNamespace, update.RuntimeConfigName, update.PodName); ok {
-			podStatus.ObservedGeneration = prev
-		}
-	}
-
 	// SSA-apply this pod's entry to HAProxyCfg.status.deployedToPods.
 	if err := p.applyPodStatusToRuntimeConfig(ctx, update, &podStatus); err != nil {
 		return fmt.Errorf("applying pod status to HAProxyCfg: %w", err)
@@ -188,33 +152,6 @@ func (p *Publisher) existingPodChecksum(ctx context.Context, namespace, name, po
 	cfg, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return "", false
-	}
-	return find(cfg)
-}
-
-// existingPodObservedGeneration returns the generation currently recorded for
-// podName (lister cache first, API fallback), so an unknown lookup can preserve
-// it rather than let SSA delete the field. Returns (0, false) when the pod has
-// no entry yet or the config isn't readable — both correctly leave the pod
-// reading as not-converged.
-func (p *Publisher) existingPodObservedGeneration(ctx context.Context, namespace, name, podName string) (int64, bool) {
-	find := func(cfg *haproxyv1alpha1.HAProxyCfg) (int64, bool) {
-		for i := range cfg.Status.DeployedToPods {
-			if cfg.Status.DeployedToPods[i].PodName == podName {
-				g := cfg.Status.DeployedToPods[i].ObservedGeneration
-				return g, g > 0
-			}
-		}
-		return 0, false
-	}
-	if p.listers != nil && p.listers.HAProxyCfgs != nil {
-		if cfg, err := p.listers.HAProxyCfgs.HAProxyCfgs(namespace).Get(name); err == nil {
-			return find(cfg)
-		}
-	}
-	cfg, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return 0, false
 	}
 	return find(cfg)
 }
@@ -414,9 +351,6 @@ func buildPodStatusSSAPayload(kind, name, namespace string, podStatus *haproxyv1
 	}
 	if podStatus.Checksum != "" {
 		entry["checksum"] = podStatus.Checksum
-	}
-	if podStatus.ObservedGeneration > 0 {
-		entry["observedGeneration"] = podStatus.ObservedGeneration
 	}
 	if podStatus.LastError != "" {
 		entry["lastError"] = podStatus.LastError

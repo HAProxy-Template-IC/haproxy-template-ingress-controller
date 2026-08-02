@@ -135,7 +135,7 @@ func TestHTTPRouteSplit(t *testing.T) {
 			// "gtw_<ns>_echo-split_" appears only once this route's backends
 			// render, and <ns> is unique per test. Same convergence wait the
 			// rolling-restart test uses.
-			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-split_")
+			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-split")
 			return ctx
 		}).
 		Assess("traffic split converges to the configured 70/30 within a five-sigma band over ~200 samples", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

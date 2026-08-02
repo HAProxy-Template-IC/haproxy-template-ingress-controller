@@ -121,13 +121,11 @@ func TestIngressRollingRestartZeroDowntime(t *testing.T) {
 			// robins across the chart's HAProxy replicas, so a probe
 			// hitting a pod whose config push hasn't landed yet gets
 			// 503 SC--. CI parallel-test contention exposed this: e2e
-			// [3.1] of pipeline 2560383500 had a 503 fire ~1.4s after
-			// Ingress create but BEFORE the rolling restart began.
-			// Initial provisioning latency isn't what this test pins;
-			// reaction-time on endpoint changes is. Wait here for the
-			// initial setup to be fully propagated; the timer below
-			// then exercises only what we actually care about.
-			waitForControllerDeployed(ctx, t, client, namespace)
+			// NewIngress above already waited for this Ingress to be reported
+			// deployed to every replica, which is what pipeline 2560383500's
+			// [3.1] needed: a 503 fired ~1.4s after Ingress create but BEFORE
+			// the rolling restart began. Initial provisioning latency isn't
+			// what this test pins; reaction-time on endpoint changes is.
 			// Start continuous tailers — HAProxy access logs, backend
 			// pod stdout, EPS watch, events watch, kubelet log. They
 			// run for the whole test and write to

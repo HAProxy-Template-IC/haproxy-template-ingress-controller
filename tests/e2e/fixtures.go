@@ -448,13 +448,13 @@ func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespa
 		t.Fatalf("create Ingress %s/%s: %v", namespace, spec.Name, createErr)
 	}
 
-	// Wait for HAProxyCfg.status to report every HAProxy pod at the
-	// current spec.Checksum, AND for the controller's latest rendered
-	// config to mention our namespace (the marker that confirms this
-	// specific Ingress made it into the render). Without this wait the
-	// caller races multi-pod reload: NodePort distributes fresh
-	// handshakes round-robin between converged and still-reloading pods.
-	waitForControllerDeployed(ctx, t, client, namespace)
+	// Wait for the controller to report THIS Ingress deployed. The address is
+	// written under the "deployed" status variant, which statusapplier applies
+	// only when every HAProxy replica took the config — so a non-empty address
+	// is exactly the property the caller needs. Without it the caller races
+	// multi-pod reload: NodePort distributes fresh handshakes round-robin
+	// between converged and still-reloading pods.
+	waitForIngressDeployed(ctx, t, client, namespace, spec.Name)
 
 	// Delete the Ingress explicitly before the namespace teardown
 	// cascades, so the controller observes the Ingress disappear before

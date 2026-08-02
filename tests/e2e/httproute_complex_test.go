@@ -93,7 +93,7 @@ func TestHTTPRoutePrecedence(t *testing.T) {
 			// pre-route render and race the route's own throttled deploy. The
 			// fragment "gtw_<ns>_echo-precedence_" appears only once this route's
 			// backends render; <ns> is unique per test.
-			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-precedence_")
+			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-precedence")
 			return ctx
 		}).
 		// All four assertions poll on (status==200 AND Echo backend identity).
@@ -171,7 +171,7 @@ func TestHTTPRouteCombined(t *testing.T) {
 			// pre-route render and race the route's own throttled deploy. The
 			// fragment "gtw_<ns>_echo-combined_" appears only once this route's
 			// backends render; <ns> is unique per test.
-			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-combined_")
+			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-combined")
 			return ctx
 		}).
 		Assess("all matchers satisfied → v2", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
