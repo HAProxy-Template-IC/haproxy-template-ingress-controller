@@ -106,6 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Helm chart
 
+- Enabling `rateLimit.shared` without the spoaHub coraza plugin no longer fails the load gate and crash-loops the controller; the bundled shared rate-limit test no longer requires a WAF. Check your own values with `haptic-controller preflight -f values.yaml`.
+
 #### Added
 
 - Traffic shaping on the native `haproxy-haptic.org/*` library: `upload-bandwidth-limit` caps the bytes per second received from the client (`bwlim-in`) alongside the existing `download-bandwidth-limit`, and `bandwidth-limit-scope` chooses who shares the budget — `stream` (default), `client` (per source IP) or `service` (the whole backend). The shared scopes add a backend stick-table, so they can't be combined with the per-source `rate-limit-rps`/`-rpm`/`-connections` caps; that combination now fails the render with an actionable message instead of producing a config HAProxy refuses to start. Removes the unreleased `download-bandwidth-limit-after`, which mapped to the bandwidth filter's `min-size` — HAProxy's forward-chunk size, not nginx's "throttle after N bytes".
