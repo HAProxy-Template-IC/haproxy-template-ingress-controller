@@ -39,6 +39,11 @@ templateSnippets:
         {%- var ttlLines = []any{} %}
         {%- var skipLines = []any{} %}
         {%- var sizeLines = []any{} %}
+        {%- var graceLines = []any{} %}
+        {%- var swrLines = []any{} %}
+        {%- var sieLines = []any{} %}
+        {%- var keepLines = []any{} %}
+        {%- var stripLines = []any{} %}
         {%- for _, ingress := range resources.ingresses.List() %}
           {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" %}
             {%- var rid = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
@@ -51,7 +56,7 @@ templateSnippets:
                   haptic-cache-ttl.map — where the Varnish VCL computes
                   std.duration(ttl + "s") = "60ss" = 0s and silently never caches.
                   Require digits only so a bad unit is rejected at admission. -#}
-              {%- if !regex_search(ttl, "^[0-9]+$") %}{{ fail("Invalid value '" + ttl + "' for annotation 'haproxy-haptic.org/cache-ttl' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"60\" not \"60s\".") }}{%- end %}
+              {%- if !regex_search(ttl, "^([0-9]+|auto)$") %}{{ fail("Invalid value '" + ttl + "' for annotation 'haproxy-haptic.org/cache-ttl' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"60\" not \"60s\", or \"auto\" to follow the origin's Cache-Control.") }}{%- end %}
               {%- ttlLines = append(ttlLines, rid + " " + ttl) %}
             {%- end %}
             {%- var skip = ingress.Metadata.Annotations["haproxy-haptic.org/cache-exclude-content-types"] %}
@@ -73,6 +78,38 @@ templateSnippets:
               {%- if !regex_search(maxsz, "^[0-9]+$") || toint(maxsz) <= 0 %}{{ fail("Invalid value '" + maxsz + "' for annotation 'haproxy-haptic.org/cache-max-object-size' on Ingress '" + rid + "'. Must be a positive integer (bytes) with no unit suffix, e.g. \"1048576\" not \"1mb\".") }}{%- end %}
               {%- sizeLines = append(sizeLines, rid + " " + maxsz) %}
             {%- end %}
+            {#- Staleness windows. Same digits-only rule as cache-ttl and for the
+                same reason: the VCL builds a duration by appending "s", so a
+                unit-suffixed value yields 0s and silently disables the window. -#}
+            {%- var swr = ingress.Metadata.Annotations["haproxy-haptic.org/cache-stale-while-revalidate"] %}
+            {%- if swr != "" && !regex_search(swr, "^[0-9]+$") %}{{ fail("Invalid value '" + swr + "' for annotation 'haproxy-haptic.org/cache-stale-while-revalidate' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"30\" not \"30s\".") }}{%- end %}
+            {%- var sie = ingress.Metadata.Annotations["haproxy-haptic.org/cache-stale-if-error"] %}
+            {%- if sie != "" && !regex_search(sie, "^[0-9]+$") %}{{ fail("Invalid value '" + sie + "' for annotation 'haproxy-haptic.org/cache-stale-if-error' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"300\" not \"5m\".") }}{%- end %}
+            {#- Two windows, not one. beresp.grace is the TOTAL time the object may
+                still be used — the larger of the two. req.grace (set from the swr
+                value below) caps how much of it is spent serving stale
+                PROACTIVELY, so a route that asked for stale-if-error alone gets
+                swr=0: ordinary expiry fetches synchronously, and the wider grace
+                is reachable only as the fallback when that fetch fails. Without
+                the split, stale-if-error would serve stale on every expiry — the
+                behaviour its name denies. -#}
+            {%- if swr != "" || sie != "" %}
+              {%- var grace = toint(swr) %}
+              {%- if toint(sie) > grace %}{%- grace = toint(sie) %}{%- end %}
+              {%- graceLines = append(graceLines, rid + " " + tostring(grace)) %}
+              {%- swrLines = append(swrLines, rid + " " + tostring(toint(swr))) %}
+            {%- end %}
+            {%- if sie != "" %}{%- sieLines = append(sieLines, rid + " 1") %}{%- end %}
+            {%- var keep = ingress.Metadata.Annotations["haproxy-haptic.org/cache-revalidate"] %}
+            {%- if keep != "" %}
+              {%- if !regex_search(keep, "^[0-9]+$") %}{{ fail("Invalid value '" + keep + "' for annotation 'haproxy-haptic.org/cache-revalidate' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"600\" not \"10m\".") }}{%- end %}
+              {%- keepLines = append(keepLines, rid + " " + keep) %}
+            {%- end %}
+            {%- var stripCookie = ingress.Metadata.Annotations["haproxy-haptic.org/cache-strip-set-cookie"] %}
+            {%- if stripCookie != "" %}
+              {%- if stripCookie != "true" && stripCookie != "false" %}{{ fail("Invalid value '" + stripCookie + "' for annotation 'haproxy-haptic.org/cache-strip-set-cookie' on Ingress '" + rid + "'. Must be \"true\" or \"false\".") }}{%- end %}
+              {%- if stripCookie == "true" %}{%- stripLines = append(stripLines, rid + " 1") %}{%- end %}
+            {%- end %}
           {%- end %}
         {%- end %}
         {%- var _, e1 = fileRegistry.Register("map", "haptic-cache-enable.map", (enLines | toStringSlice() | join("\n")) + "\n") %}
@@ -83,6 +120,16 @@ templateSnippets:
         {%- if e3 != nil %}{{ fail("failed to register haptic-cache-skip-ct.map: " + tostring(e3)) }}{%- end %}
         {%- var _, e4 = fileRegistry.Register("map", "haptic-cache-maxsize.map", (sizeLines | toStringSlice() | join("\n")) + "\n") %}
         {%- if e4 != nil %}{{ fail("failed to register haptic-cache-maxsize.map: " + tostring(e4)) }}{%- end %}
+        {%- var _, e5 = fileRegistry.Register("map", "haptic-cache-grace.map", (graceLines | toStringSlice() | join("\n")) + "\n") %}
+        {%- if e5 != nil %}{{ fail("failed to register haptic-cache-grace.map: " + tostring(e5)) }}{%- end %}
+        {%- var _, e5b = fileRegistry.Register("map", "haptic-cache-swr.map", (swrLines | toStringSlice() | join("\n")) + "\n") %}
+        {%- if e5b != nil %}{{ fail("failed to register haptic-cache-swr.map: " + tostring(e5b)) }}{%- end %}
+        {%- var _, e6 = fileRegistry.Register("map", "haptic-cache-stale-if-error.map", (sieLines | toStringSlice() | join("\n")) + "\n") %}
+        {%- if e6 != nil %}{{ fail("failed to register haptic-cache-stale-if-error.map: " + tostring(e6)) }}{%- end %}
+        {%- var _, e7 = fileRegistry.Register("map", "haptic-cache-keep.map", (keepLines | toStringSlice() | join("\n")) + "\n") %}
+        {%- if e7 != nil %}{{ fail("failed to register haptic-cache-keep.map: " + tostring(e7)) }}{%- end %}
+        {%- var _, e8 = fileRegistry.Register("map", "haptic-cache-strip-cookie.map", (stripLines | toStringSlice() | join("\n")) + "\n") %}
+        {%- if e8 != nil %}{{ fail("failed to register haptic-cache-strip-cookie.map: " + tostring(e8)) }}{%- end %}
       {%- end %}
 
   # ==========================================================================
@@ -148,6 +195,11 @@ templateSnippets:
         {%- var ttlMap, _ = pathResolver.GetPath("haptic-cache-ttl.map", "map") %}
         {%- var skipMap, _ = pathResolver.GetPath("haptic-cache-skip-ct.map", "map") %}
         {%- var sizeMap, _ = pathResolver.GetPath("haptic-cache-maxsize.map", "map") %}
+        {%- var graceMap, _ = pathResolver.GetPath("haptic-cache-grace.map", "map") %}
+        {%- var swrMap, _ = pathResolver.GetPath("haptic-cache-swr.map", "map") %}
+        {%- var sieMap, _ = pathResolver.GetPath("haptic-cache-stale-if-error.map", "map") %}
+        {%- var keepMap, _ = pathResolver.GetPath("haptic-cache-keep.map", "map") %}
+        {%- var stripMap, _ = pathResolver.GetPath("haptic-cache-strip-cookie.map", "map") %}
       {{ "\n" }}# haptic/varnish-cache — shared, consistent-hash-sharded cache tier
       backend varnish_cache
           balance uri
@@ -160,6 +212,11 @@ templateSnippets:
           http-request del-header X-Haptic-Cache-Skip-CT
           http-request del-header X-Haptic-Cache-Max-Size
           http-request del-header X-Haptic-Cache-TTL
+          http-request del-header X-Haptic-Cache-Grace
+          http-request del-header X-Haptic-Cache-SWR
+          http-request del-header X-Haptic-Cache-Stale-If-Error
+          http-request del-header X-Haptic-Cache-Keep
+          http-request del-header X-Haptic-Cache-Strip-Cookie
           # Stamp the HAProxy-resolved backend so the dedicated backend-fetch
           # frontend routes the cache-miss loopback to the SAME backend this
           # client-leg selected — without re-deriving routing from an
@@ -169,6 +226,14 @@ templateSnippets:
           http-request set-header X-Haptic-Cache-TTL %[var(txn.resource_id),map({{ ttlMap }})] if { var(txn.resource_id),map({{ ttlMap }}) -m found }
           http-request set-header X-Haptic-Cache-Skip-CT %[var(txn.resource_id),map({{ skipMap }})] if { var(txn.resource_id),map({{ skipMap }}) -m found }
           http-request set-header X-Haptic-Cache-Max-Size %[var(txn.resource_id),map({{ sizeMap }})] if { var(txn.resource_id),map({{ sizeMap }}) -m found }
+          {#- Only set when the route opted in: an explicit "0" grace would
+              override Varnish's default_grace and disable stale delivery for a
+              route that never asked to change it. -#}
+          http-request set-header X-Haptic-Cache-Grace %[var(txn.resource_id),map({{ graceMap }})] if { var(txn.resource_id),map({{ graceMap }}) -m found }
+          http-request set-header X-Haptic-Cache-SWR %[var(txn.resource_id),map({{ swrMap }})] if { var(txn.resource_id),map({{ swrMap }}) -m found }
+          http-request set-header X-Haptic-Cache-Stale-If-Error %[var(txn.resource_id),map({{ sieMap }})] if { var(txn.resource_id),map({{ sieMap }}) -m found }
+          http-request set-header X-Haptic-Cache-Keep %[var(txn.resource_id),map({{ keepMap }})] if { var(txn.resource_id),map({{ keepMap }}) -m found }
+          http-request set-header X-Haptic-Cache-Strip-Cookie %[var(txn.resource_id),map({{ stripMap }})] if { var(txn.resource_id),map({{ stripMap }}) -m found }
         {%- for _, ingress := range resources.ingresses.List() %}
           {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" %}
             {%- var ckey = ingress.Metadata.Annotations["haproxy-haptic.org/cache-key"] %}
@@ -282,7 +347,7 @@ k8sResources:
       {%- var memLim = extraContext | dig("cache", "varnish", "resources", "limits", "memory") | fallback("384Mi") | tostring() %}
       {%- var pdbEnabled = extraContext | dig("cache", "varnish", "podDisruptionBudget", "enabled") | fallback("true") | tostring() %}
       {%- var pdbMaxUnavailable = extraContext | dig("cache", "varnish", "podDisruptionBudget", "maxUnavailable") | fallback("1") | tostring() %}
-      {%- var vcl = "vcl 4.1;\nimport std;\n\nbackend default {\n    .host = \"" + originHost + "\";\n    .port = \"" + originPort + "\";\n}\n\nsub vcl_recv {\n    # When a custom cache key is set (X-Haptic-Cache-Vary), the key already\n    # includes the caller identity, so it is safe to cache Authorization/Cookie\n    # requests too — bypass the builtin pass for idempotent methods. Without a\n    # key, the builtin vcl_recv still passes authenticated/cookie'd requests.\n    if (req.http.X-Haptic-Cache-Vary && (req.method == \"GET\" || req.method == \"HEAD\")) {\n        return (hash);\n    }\n}\n\nsub vcl_hash {\n    if (req.http.X-Haptic-Cache-Vary) {\n        hash_data(req.http.X-Haptic-Cache-Vary);\n    }\n}\n\nsub vcl_backend_response {\n    if (bereq.http.X-Haptic-Cache-Skip-CT && beresp.http.Content-Type && std.strstr(bereq.http.X-Haptic-Cache-Skip-CT, \"|\" + regsub(beresp.http.Content-Type, \";.*$\", \"\") + \"|\")) {\n        set beresp.uncacheable = true;\n        set beresp.ttl = 120s;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-Max-Size && beresp.http.Content-Length && std.integer(beresp.http.Content-Length, 0) > std.integer(bereq.http.X-Haptic-Cache-Max-Size, 0)) {\n        set beresp.uncacheable = true;\n        set beresp.ttl = 120s;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-TTL) {\n        if (beresp.http.Set-Cookie || beresp.status != 200) {\n            set beresp.uncacheable = true;\n            set beresp.ttl = 120s;\n            return (deliver);\n        }\n        set beresp.ttl = std.duration(bereq.http.X-Haptic-Cache-TTL + \"s\", 0s);\n        return (deliver);\n    }\n}\n\nsub vcl_deliver {\n    if (obj.hits > 0) {\n        set resp.http.X-Cache = \"HIT\";\n    } else {\n        set resp.http.X-Cache = \"MISS\";\n    }\n}\n" %}
+      {%- var vcl = "vcl 4.1;\nimport std;\n\nbackend default {\n    .host = \"" + originHost + "\";\n    .port = \"" + originPort + "\";\n}\n\nsub vcl_recv {\n    if (req.http.X-Haptic-Cache-Vary && (req.method == \"GET\" || req.method == \"HEAD\")) {\n        return (hash);\n    }\n    # beresp.grace is the total window the object may still be used; this caps\n    # how much of it is spent serving stale PROACTIVELY. A route that set only\n    # stale-if-error sends 0 here, so ordinary expiry fetches synchronously and\n    # the wider grace is reachable only as the fallback below.\n    if (req.http.X-Haptic-Cache-SWR) {\n        set req.grace = std.duration(req.http.X-Haptic-Cache-SWR + \"s\", 0s);\n    }\n}\n\nsub vcl_hash {\n    if (req.http.X-Haptic-Cache-Vary) {\n        hash_data(req.http.X-Haptic-Cache-Vary);\n    }\n}\n\nsub vcl_backend_response {\n    if (bereq.http.X-Haptic-Cache-Skip-CT && beresp.http.Content-Type && std.strstr(bereq.http.X-Haptic-Cache-Skip-CT, \"|\" + regsub(beresp.http.Content-Type, \";.*$\", \"\") + \"|\")) {\n        set beresp.uncacheable = true;\n        set beresp.ttl = param.uncacheable_ttl;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-Max-Size && beresp.http.Content-Length && std.integer(beresp.http.Content-Length, 0) > std.integer(bereq.http.X-Haptic-Cache-Max-Size, 0)) {\n        set beresp.uncacheable = true;\n        set beresp.ttl = param.uncacheable_ttl;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-Strip-Cookie) {\n        unset beresp.http.Set-Cookie;\n    }\n    # stale-if-error. Abandoning leaves the existing object in place and lets\n    # Varnish fall back to it while it is still within beresp.grace — which is\n    # what turns an origin 5xx into a stale hit. Deliberately NOT limited to\n    # background fetches: past the stale-while-revalidate window the refresh is\n    # synchronous, and that is exactly the fetch a client is waiting on.\n    if (bereq.http.X-Haptic-Cache-Stale-If-Error && beresp.status >= 500) {\n        return (abandon);\n    }\n    if (bereq.http.X-Haptic-Cache-TTL) {\n        if (beresp.http.Set-Cookie || beresp.status != 200) {\n            set beresp.uncacheable = true;\n            set beresp.ttl = param.uncacheable_ttl;\n            return (deliver);\n        }\n        if (bereq.http.X-Haptic-Cache-TTL == \"auto\") {\n            std.rfc_ttl();\n        } else {\n            set beresp.ttl = std.duration(bereq.http.X-Haptic-Cache-TTL + \"s\", 0s);\n        }\n        if (bereq.http.X-Haptic-Cache-Grace) {\n            set beresp.grace = std.duration(bereq.http.X-Haptic-Cache-Grace + \"s\", 0s);\n        }\n        if (bereq.http.X-Haptic-Cache-Keep) {\n            set beresp.keep = std.duration(bereq.http.X-Haptic-Cache-Keep + \"s\", 0s);\n        }\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-Grace) {\n        set beresp.grace = std.duration(bereq.http.X-Haptic-Cache-Grace + \"s\", 0s);\n    }\n    if (bereq.http.X-Haptic-Cache-Keep) {\n        set beresp.keep = std.duration(bereq.http.X-Haptic-Cache-Keep + \"s\", 0s);\n    }\n}\n\nsub vcl_backend_error {\n    # Same fallback for a fetch that never produced a response at all.\n    if (bereq.http.X-Haptic-Cache-Stale-If-Error) {\n        return (abandon);\n    }\n}\n\nsub vcl_deliver {\n    if (obj.hits > 0) {\n        if (obj.ttl <= 0s) {\n            set resp.http.X-Cache = \"STALE\";\n        } else {\n            set resp.http.X-Cache = \"HIT\";\n        }\n    } else {\n        set resp.http.X-Cache = \"MISS\";\n    }\n}\n" %}
       {%- var vclHash = sha256(vcl) %}
       apiVersion: v1
       kind: ConfigMap
