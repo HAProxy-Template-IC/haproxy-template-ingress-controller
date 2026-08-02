@@ -137,8 +137,32 @@
   {{- $wafSettings = $configuredExtraContext.waf }}
 {{- end }}
 {{- range $field := keys $wafSettings }}
-  {{- if not (has $field (list "dispatch" "ingressPermissions" "customRules" "policies")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.waf contains unknown field %q. Valid fields: dispatch, ingressPermissions, customRules, policies." $field) }}
+  {{- if not (has $field (list "dispatch" "ingressPermissions" "customRules" "policies" "crs")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf contains unknown field %q. Valid fields: dispatch, ingressPermissions, customRules, policies, crs." $field) }}
+  {{- end }}
+{{- end }}
+{{- /* CRS source. A typo in a field name here would silently leave the
+       default in place — an hourly refresh that never happens, or a fetch
+       against no URL — so unknown fields are rejected rather than ignored. */ -}}
+{{- if hasKey $wafSettings "crs" }}
+  {{- $crs := $wafSettings.crs }}
+  {{- if not (kindIs "map" $crs) }}
+    {{- fail "controller.config.templatingSettings.extraContext.waf.crs must be a map." }}
+  {{- end }}
+  {{- range $field := keys $crs }}
+    {{- if not (has $field (list "url" "refreshInterval" "timeout" "retries")) }}
+      {{- fail (printf "controller.config.templatingSettings.extraContext.waf.crs contains unknown field %q. Valid fields: url, refreshInterval, timeout, retries." $field) }}
+    {{- end }}
+  {{- end }}
+  {{- $crsURL := $crs.url | default "" }}
+  {{- if and (ne $crsURL "") (not (or (hasPrefix "https://" $crsURL) (hasPrefix "http://" $crsURL))) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.crs.url must be an http:// or https:// URL, got %q." $crsURL) }}
+  {{- end }}
+  {{- /* The ruleset governs what the WAF blocks. Fetching it over plaintext
+         lets anyone on the path replace it, and the result still validates and
+         still looks healthy — so this is refused rather than warned about. */ -}}
+  {{- if hasPrefix "http://" $crsURL }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.crs.url uses plaintext http://, so the ruleset can be replaced in transit by anyone on the network path and the substituted WAF would still validate. Use https://. Got %q." $crsURL) }}
   {{- end }}
 {{- end }}
 {{- $wafDispatch := dict }}
@@ -1165,10 +1189,16 @@ spec:
       {{- if eq .name "spoa-hub" }}{{- $hasSpoa = true }}{{- end }}
     {{- end }}
     {{- if not $hasSpoa }}
+      {{- /* dataFiles carries the fetched CRS to the validator. It runs in the
+             controller pod and cannot read the HAProxy pod's disk, so without
+             the content travelling with the request the coraza plugin sees an
+             Include that matches nothing — which it reports as an error, since
+             a ruleset that never arrived must not validate clean. */ -}}
       {{- $entries = append $entries (dict
           "name" "spoa-hub"
           "socketPath" (include "haptic.validators.socketPath" .)
-          "files" (list "general/spoa-hub-config.toml")) }}
+          "files" (list "general/spoa-hub-config.toml")
+          "dataFiles" (list "general/crs-*.conf" "general/*.data")) }}
     {{- end }}
   {{- end }}
   {{- end }}

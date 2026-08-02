@@ -58,7 +58,7 @@ templateSnippets:
           if !wafOK { fail("extraContext.waf must be a map.") }
           var allowedWafSettings = map[string]bool{
             "dispatch": true, "ingressPermissions": true,
-            "customRules": true, "policies": true,
+            "customRules": true, "policies": true, "crs": true,
           }
           for _, field := range keys(waf) {
             if !allowedWafSettings[field] {

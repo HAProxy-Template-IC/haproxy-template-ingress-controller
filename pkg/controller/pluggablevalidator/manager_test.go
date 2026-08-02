@@ -520,3 +520,63 @@ func TestManager_ValidateAll_ChangedDataFileBypassesCache(t *testing.T) {
 		t.Fatalf("identical input missed the cache: server saw %d requests, want 2", got)
 	}
 }
+
+// The validator resolves a config's references against the data files by their
+// runtime path, which is not the path the controller identifies them by. It has
+// to be told the root, so the request must carry it.
+func TestManager_ValidateAll_SendsStagedRoot(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	if err := srv.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultValid,
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+
+	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{{
+		Name:       "coraza",
+		SocketPath: srv.SocketPath,
+		Files:      tomlGlob(),
+		DataFiles:  []string{"/etc/haproxy/general/crs/*"},
+		Timeout:    time.Second,
+	}}, pv.WithStagedRoot("/etc/haproxy"))
+
+	mgr.ValidateAll(context.Background(), []pv.File{
+		tomlFile(),
+		{Path: "/etc/haproxy/general/crs/rules.conf", Content: "SecAction id:1"},
+	})
+
+	reqs := srv.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("server saw %d requests, want 1", len(reqs))
+	}
+	var req pv.Request
+	if err := json.Unmarshal(reqs[0], &req); err != nil {
+		t.Fatalf("decoding request: %v", err)
+	}
+	if req.StagedRoot != "/etc/haproxy" {
+		t.Fatalf("staged_root=%q, want /etc/haproxy — without it the validator cannot resolve the config's file references", req.StagedRoot)
+	}
+}
+
+// Omitted when unset, so a deployment with no data files sends exactly what it
+// sent before the field existed.
+func TestManager_ValidateAll_OmitsStagedRootWhenUnset(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	if err := srv.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultValid,
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+
+	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
+		{Name: "coraza", SocketPath: srv.SocketPath, Files: tomlGlob(), Timeout: time.Second},
+	})
+
+	mgr.ValidateAll(context.Background(), []pv.File{tomlFile()})
+
+	if got := string(srv.Requests()[0]); strings.Contains(got, "staged_root") {
+		t.Fatalf("request carries staged_root when none was configured: %s", got)
+	}
+}

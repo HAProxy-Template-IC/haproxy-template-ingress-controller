@@ -30,6 +30,7 @@ templateSnippets:
   # resource-agnostic per RULE #1.
   spoa-hub-config-content:
     template: |
+      {%- import "util-waf-crs-directives" for CrsDirectives -%}
       {%- var hub = extraContext | dig("spoaHub", "hub") | fallback(map[string]any{}) -%}
       {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
       {%- var socketPath = extraContext | dig_string("/run/spoa/hub.sock", "spoaHub", "haproxy", "socketPath") -%}
@@ -157,6 +158,9 @@ templateSnippets:
               into the chart-level `spoaHub.plugins.coraza.directives`
               values key. -#}
           {%- corazaDirectives = p | dig_string("", "directives") %}
+          {#- Substitutes the embedded-CRS includes when extraContext.waf.crs.url
+              is set; returns the directives unchanged otherwise. -#}
+          {%- corazaDirectives = CrsDirectives(corazaDirectives) %}
       directives = """
       {{ corazaDirectives | trimSpace() }}
       """
