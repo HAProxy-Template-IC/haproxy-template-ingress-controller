@@ -79,7 +79,8 @@ templatingSettings:
         originServiceName: haptic-cache-origin
         workload: statefulset
         replicas: 2
-        image: varnish:7.7
+        # renovate: datasource=docker depName=varnish
+        image: varnish:9.0
         imagePullPolicy: IfNotPresent
         malloc: 256m
         resources:
@@ -105,7 +106,8 @@ templatingSettings:
           serviceName: haptic-rate-limit-store
           namespace: default
           port: 6379
-          image: valkey/valkey:8-alpine
+          # renovate: datasource=docker depName=valkey/valkey
+          image: valkey/valkey:9-alpine
           imagePullPolicy: IfNotPresent
           replicas: 3
           maxMemory: 96mb

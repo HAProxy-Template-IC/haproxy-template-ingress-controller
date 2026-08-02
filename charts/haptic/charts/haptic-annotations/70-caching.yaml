@@ -257,7 +257,8 @@ k8sResources:
       {%- var vSvc = extraContext | dig("cache", "varnish", "serviceName") | fallback("haptic-varnish-cache") | tostring() %}
       {%- var vNs = extraContext | dig("cache", "varnish", "namespace") | fallback("default") | tostring() %}
       {%- var vPort = extraContext | dig("cache", "varnish", "servicePort") | fallback("6081") | tostring() %}
-      {%- var img = extraContext | dig("cache", "varnish", "image") | fallback("varnish:7.7") | tostring() %}
+      {#- renovate: datasource=docker depName=varnish #}
+      {%- var img = extraContext | dig("cache", "varnish", "image") | fallback("varnish:9.0") | tostring() %}
       {%- var imagePullPolicy = extraContext | dig("cache", "varnish", "imagePullPolicy") | fallback("IfNotPresent") | tostring() %}
       {%- var replicas = extraContext | dig("cache", "varnish", "replicas") | fallback("2") | tostring() %}
       {%- var malloc = extraContext | dig("cache", "varnish", "malloc") | fallback("256m") | tostring() %}

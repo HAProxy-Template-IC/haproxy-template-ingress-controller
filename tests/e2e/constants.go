@@ -135,7 +135,8 @@ var ChartHAProxyServiceHTTPPort = func() int {
 // VarnishImage is the stock upstream Varnish image the shared-cache tier
 // deploys. Must match charts/haptic/values.yaml cache.varnish.image.
 // Loaded into kind by the cache shard so the StatefulSet needn't reach Docker Hub.
-const VarnishImage = "varnish:7.7"
+// renovate: datasource=docker depName=varnish
+const VarnishImage = "varnish:9.0"
 
 // VarnishPolicyProbeImage runs the same-namespace NetworkPolicy denial probe.
 // Pin the multi-architecture manifest so a fresh cache shard loads exactly the
@@ -145,7 +146,8 @@ const VarnishPolicyProbeImage = "alpine/curl@sha256:71597a4f6ac6c7515c77084d2a21
 // ValkeyImage is the stock upstream Valkey image the shared-rate-limit tier
 // deploys. Must match charts/haptic/values.yaml rateLimit.shared.managedStore.image.
 // Loaded into kind by the rate-limit shard so the StatefulSet needn't reach Docker Hub.
-const ValkeyImage = "valkey/valkey:8-alpine"
+// renovate: datasource=docker depName=valkey/valkey
+const ValkeyImage = "valkey/valkey:9-alpine"
 
 // LocalSPOAHubImage is the image tag produced by `make spoa-hub-image`.
 // Local SPOA-backed shards use it when SPOA_TAG is unset, because registry
