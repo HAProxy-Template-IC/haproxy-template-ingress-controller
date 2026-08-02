@@ -96,7 +96,25 @@ func TestNewServer_Defaults(t *testing.T) {
 	assert.Equal(t, "/validate", server.config.Path)
 	assert.Equal(t, 10*time.Second, server.config.ReadTimeout)
 	assert.Equal(t, 10*time.Second, server.config.WriteTimeout)
+	assert.Equal(t, 120*time.Second, server.config.IdleTimeout)
 	assert.NotNil(t, server.validators)
+}
+
+// A zero IdleTimeout silently inherits ReadTimeout, which closed pooled API
+// server connections after 10s and surfaced as `failed calling webhook: EOF` (#133).
+func TestNewServer_IdleTimeoutOutlivesTheAPIServersIdleConnections(t *testing.T) {
+	certPEM, keyPEM, err := generateTestCertificates()
+	require.NoError(t, err)
+
+	server, err := NewServer(&ServerConfig{CertPEM: certPEM, KeyPEM: keyPEM})
+	require.NoError(t, err)
+
+	// 90s is the client-go transport default; anything at or below it lets the
+	// gate close first.
+	assert.Greater(t, server.config.IdleTimeout, 90*time.Second,
+		"idle timeout must exceed the API server's idle-connection timeout")
+	assert.Greater(t, server.config.IdleTimeout, server.config.ReadTimeout,
+		"a zero IdleTimeout silently inherits ReadTimeout — that is the bug")
 }
 
 func TestNewServer_CustomConfig(t *testing.T) {
