@@ -280,6 +280,10 @@ k8sResources:
                         fi
                       done
                     fi
+                    # Announce the stable FQDN, never the pod IP: Sentinel exchanges
+                    # hostnames between peers but learns replicas from the master's
+                    # INFO, so an IP there makes one pod two entries — and Sentinel
+                    # then tells the node it just promoted to replicate from itself.
                     if [ -n "$master_host" ] && [ -n "$master_port" ] && [ "$master_host" != "$self" ]; then
                       exec valkey-server \
                         --port "{{ port }}" \
@@ -289,6 +293,8 @@ k8sResources:
                         --appendonly "no" \
                         --maxmemory "{{ maxMemory }}" \
                         --maxmemory-policy "{{ maxMemoryPolicy }}" \
+                        --replica-announce-ip "$self" \
+                        --replica-announce-port "{{ port }}" \
                         --replicaof "$master_host" "$master_port"
                     fi
                     # Bootstrap only: no Sentinel knows a master and no peer claims to
@@ -312,7 +318,9 @@ k8sResources:
                         --save "" \
                         --appendonly "no" \
                         --maxmemory "{{ maxMemory }}" \
-                        --maxmemory-policy "{{ maxMemoryPolicy }}"
+                        --maxmemory-policy "{{ maxMemoryPolicy }}" \
+                        --replica-announce-ip "$self" \
+                        --replica-announce-port "{{ port }}"
                     fi
                     exec valkey-server \
                       --port "{{ port }}" \
@@ -322,6 +330,8 @@ k8sResources:
                       --appendonly "no" \
                       --maxmemory "{{ maxMemory }}" \
                       --maxmemory-policy "{{ maxMemoryPolicy }}" \
+                      --replica-announce-ip "$self" \
+                      --replica-announce-port "{{ port }}" \
                       --replicaof "{{ base }}-0.{{ base }}.${POD_NAMESPACE}.svc.cluster.local" "{{ port }}"
                 env:
                   - name: POD_NAME

@@ -295,6 +295,12 @@ validationTests:
       - type: contains
         target: "k8s:rate-limit-store"
         pattern: "containerPort: 26379"
+      # Without this every valkey-server announces its pod IP, Sentinel holds the
+      # same pod under both an IP and a hostname, and a failover tells the freshly
+      # promoted node to replicate from itself — leaving the tier with no primary.
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: 'replica-announce-ip "\$self"'
 
   test-haptic-rate-limit-store-requires-shared-opt-in:
     description: >-
