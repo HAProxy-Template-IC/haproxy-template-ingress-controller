@@ -38,11 +38,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
-const (
-	rateLimitStoreName          = HelmReleaseName + "-rl-store"
-	labelSelectorRateLimitStore = "app.kubernetes.io/name=haptic-rate-limit-store,app.kubernetes.io/instance=" + rateLimitStoreName
-)
-
 // TestHapticSharedRateLimit exercises the Phase-4 shared rate-limit path:
 // native haproxy-haptic.org/rate-limit-* annotations, SPOE dispatch to the
 // bundled rate-limit plugin, and a chart-deployed Valkey store. The core proof

@@ -176,6 +176,15 @@ const (
 	// LabelSelectorHAProxy matches the HAProxy pods.
 	LabelSelectorHAProxy = "app.kubernetes.io/instance=" + HelmReleaseName +
 		",app.kubernetes.io/component=loadbalancer"
+
+	// rateLimitStoreName is the StatefulSet backing the shared rate-limit tier.
+	rateLimitStoreName = HelmReleaseName + "-rl-store"
+
+	// labelSelectorRateLimitStore matches the store's Valkey + Sentinel pods.
+	// Lives here rather than beside the rate-limit test so the failure dump can
+	// reach it — a _test.go constant is invisible to cleanup.go.
+	labelSelectorRateLimitStore = "app.kubernetes.io/name=haptic-rate-limit-store," +
+		"app.kubernetes.io/instance=" + rateLimitStoreName
 )
 
 // Default timeouts used across the suite. Anything that needs a different
