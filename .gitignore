@@ -22,6 +22,7 @@ coverage.xml
 # CI-generated report files
 gl-code-quality-report.json
 report*.xml
+chart-test-results.xml
 
 # Go workspace file
 go.work

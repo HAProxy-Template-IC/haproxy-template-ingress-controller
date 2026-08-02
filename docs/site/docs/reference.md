@@ -100,7 +100,7 @@ apply) so additive CRD schema changes reach the cluster on install and upgrade.
 | `cache.varnish.originServiceName` | string | `haptic-cache-origin` | Name of the internal ClusterIP Service (in the release namespace) that fronts the dedicated backend-fetch port on the HAProxy pods |
 | `cache.varnish.workload` | string | `statefulset` | Varnish workload kind: `statefulset` (ordered rollout keeps `1/N` of the cache warm on restart) or `deployment` (ephemeral accelerator) |
 | `cache.varnish.replicas` | int | `2` | Number of Varnish cache shards |
-| `cache.varnish.image` | string | `varnish:7.7` | Varnish container image — stock upstream, since the loopback topology needs no custom build. Pin to a digest in production |
+| `cache.varnish.image` | string | `varnish:9.0` | Varnish container image — stock upstream, since the loopback topology needs no custom build. Pin to a digest in production |
 | `cache.varnish.imagePullPolicy` | string | `IfNotPresent` | Kubernetes pull policy for the Varnish image (`Always`, `IfNotPresent`, or `Never`) |
 | `cache.varnish.malloc` | string | `256m` | Varnish `-s malloc,<size>` cache size per shard; set to roughly 75% of the pod memory limit |
 | `cache.varnish.resources` | object | cpu `100m` / memory `384Mi` | Varnish pod resource requests and limits. A CPU request is required for autoscaling (the HPA's `Utilization` target is a percentage of the request); keep the memory limit above `malloc` plus overhead |
@@ -121,7 +121,7 @@ apply) so additive CRD schema changes reach the cluster on install and upgrade.
 | `spoaHub.plugins.rate-limit.storeOperationTimeoutMs` | int | `10` | Per-operation Redis/Valkey timeout rendered as the rate-limit plugin's `store_timeout_ms`. Exact `gcra` mode waits on this path per request; tune according to measured store round-trip time and failover behavior |
 | `rateLimit.shared.managedStore.enabled` | bool | `true` | Deploy chart-managed HA Valkey with Sentinel and inject its `store_url` into the rate-limit plugin, so budgets are shared across the HAProxy fleet. Leave true for the out-of-box HA store; set false only when you bring your own store via `rateLimit.shared.externalStore.urls`. Takes effect only when `rateLimit.shared.enabled` is also true — it's a sub-option of the shared limiter, so on its own it deploys nothing |
 | `rateLimit.shared.externalStore.urls` | list | `[]` | Bring-your-own Redis/Valkey/Sentinel/Cluster URLs, used with `managedStore.enabled=false` (setting both fails the render). One URL renders the plugin's `store_url`; several render `store_urls` for deployments that intentionally shard keys across independent stores. The chart owns the generated store lines and rejects a manual `store_url`/`store_urls` in `spoaHub.plugins.rate-limit.params` |
-| `rateLimit.shared.managedStore.image` | string | `valkey/valkey:8-alpine` | Valkey image for the chart-managed shared rate-limit store |
+| `rateLimit.shared.managedStore.image` | string | `valkey/valkey:9-alpine` | Valkey image for the chart-managed shared rate-limit store |
 | `rateLimit.shared.managedStore.imagePullPolicy` | string | `IfNotPresent` | Kubernetes pull policy for both the Valkey and Sentinel containers (`Always`, `IfNotPresent`, or `Never`) |
 | `rateLimit.shared.managedStore.port` | int | `6379` | Valkey Service port for the chart-managed shared rate-limit store |
 | `rateLimit.shared.managedStore.replicas` | int | `3` | Fixed Valkey pod count for the chart-managed Sentinel topology: one writable primary plus replicas for failover. Must be at least 3. This is HA, not automatic horizontal Valkey scaling |
@@ -769,7 +769,7 @@ A [Vector](https://vector.dev) container on every HAProxy pod. It receives the a
 | `vector.scrapeIntervalSecs` | int | `15` | How often Vector scrapes the HAProxy and hub endpoints it re-exports. Keep at or below Prometheus's own interval, or Prometheus samples a value Vector hasn't refreshed |
 | `vector.resources.requests.cpu` | string | `50m` | CPU request for the Vector container |
 | `vector.resources.requests.memory` | string | `1Gi` | Memory request for the Vector container. Tracks `haproxy.resources` — with metric generation Vector uses about as much memory as HAProxy beside it. Raise both together for a larger fleet. |
-| `vector.resources.limits.memory` | string | `1Gi` | Memory limit for the Vector container. Equal to the request: the container carries a readiness probe, so if it's OOMKilled the whole HAProxy pod leaves the Service. |
+| `vector.resources.limits.memory` | string | `1536Mi` | Memory limit for the Vector container. Covers the measured ~1080 MiB peak at 825 backends, and sits above the request so that headroom is burstable rather than reserved. Vector carries a readiness probe, so an OOMKill takes the whole HAProxy pod out of the Service. |
 | `vector.securityContext.allowPrivilegeEscalation` | bool | `false` | Container security context for Vector |
 | `vector.securityContext.readOnlyRootFilesystem` | bool | `true` | Read-only root filesystem; Vector's writable paths are the `data_dir` and `/tmp` emptyDir volumes |
 | `vector.securityContext.runAsNonRoot` | bool | `true` | Refuse to run as root |

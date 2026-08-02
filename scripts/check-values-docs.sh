@@ -10,6 +10,10 @@
 #   2. Extracts the DOCUMENTED set from reference.md: the backticked first
 #      cell of every table row.
 #   3. Fails listing every leaf key that no documented parameter covers.
+#   4. Compares every documented DEFAULT against the value values.yaml holds,
+#      for rows where both sides are a scalar. Key coverage alone does not
+#      catch a default that rots: Renovate bumps values.yaml and the reference
+#      keeps advertising the old image tag.
 #
 # A leaf is covered when:
 #   - a documented parameter matches it exactly, or
@@ -129,3 +133,63 @@ fi
 
 total="$(leaf_keys | wc -l)"
 echo "OK: all $total values.yaml leaf keys are covered by the chart values reference"
+
+# ---------------------------------------------------------------------------
+# Documented defaults must equal the values.yaml scalar they describe.
+#
+# Scalars only, both sides: a row documenting a map or list writes a summary
+# ({}, `see below`) rather than the literal, and a commented-out key has no
+# value to compare against. Those rows are skipped, not failed — this gate
+# tightens the rows it can prove, it does not demand a literal everywhere.
+# ---------------------------------------------------------------------------
+
+# `key<TAB>value` for every scalar leaf, same path filter as leaf_keys.
+leaf_values() {
+  yq eval '.. | select(tag != "!!map" and tag != "!!seq")
+              | select((path | length) > 0 and (path | all_c(tag == "!!str")))
+              | (path | join(".")) + "\t" + (. | tostring)' "$VALUES"
+}
+
+# `key<TAB>default` for every row whose default cell is backticked.
+documented_defaults() {
+  grep -oE '^\| `[^`]+` \| [^|]* \| `[^`]*` \|' "$DOCS" \
+    | sed -E 's/^\| `([^`]+)` \| [^|]* \| `([^`]*)` \|$/\1\t\2/'
+}
+
+# Either extraction coming back empty would make every row "skipped" and the
+# comparison pass unconditionally. Fail instead — a silent pass is worse than
+# no gate, because it reads as coverage.
+for extractor in leaf_values documented_defaults; do
+  if [ "$($extractor | wc -l)" -eq 0 ]; then
+    echo "FAIL: $extractor extracted nothing — the gate cannot compare anything."
+    echo "Its yq/grep expression no longer matches the file it parses; fix it"
+    echo "rather than letting the comparison pass on an empty set."
+    exit 1
+  fi
+done
+
+drifted="$(awk -F'\t' '
+  NR == FNR { val[$1] = $2; seen[$1] = 1; next }
+  {
+    key = $1; documented = $2
+    if (index(key, "<name>") > 0) next     # placeholder row, no single value
+    if (!(key in seen)) next               # map/list/commented-out: nothing to compare
+    # A quoted YAML scalar is documented with its quotes; compare the content.
+    gsub(/^"|"$/, "", documented)
+    if (documented != val[key]) printf "%s\tdocumented %s\tactual %s\n", key, documented, val[key]
+  }
+' <(leaf_values) <(documented_defaults))"
+
+if [ -n "$drifted" ]; then
+  echo
+  echo "FAIL: $DOCS documents defaults that $VALUES does not hold:"
+  printf '  %s\n' "$drifted"
+  echo
+  echo "Update the reference row to the current default (and its description, if"
+  echo "the change invalidated it). If a bot bumped values.yaml, every other copy"
+  echo "of that pin needs the same bump — see the customManagers in renovate.json."
+  exit 1
+fi
+
+compared="$(documented_defaults | wc -l)"
+echo "OK: every documented scalar default matches values.yaml ($compared rows checked)"

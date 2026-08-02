@@ -387,7 +387,10 @@ func varnishImage() string {
 	if img := os.Getenv("HAPTIC_VARNISH_IMAGE"); img != "" {
 		return img
 	}
-	return "varnish:7.6"
+	// Must match charts/haptic/values.yaml cache.varnish.image — a VCL that
+	// compiles here but not on the deployed varnishd defeats the gate.
+	// renovate: datasource=docker depName=varnish
+	return "varnish:9.0"
 }
 
 // collectConfigDocuments picks the HAProxyTemplateConfig and

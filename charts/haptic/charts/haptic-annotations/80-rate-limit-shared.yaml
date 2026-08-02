@@ -145,7 +145,8 @@ k8sResources:
       {%- var downAfterMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "downAfterMilliseconds") | fallback("2000") | tostring() %}
       {%- var failoverTimeoutMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "failoverTimeoutMilliseconds") | fallback("10000") | tostring() %}
       {%- var parallelSyncs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "parallelSyncs") | fallback("1") | tostring() %}
-      {%- var img = extraContext | dig("rateLimit", "shared", "managedStore", "image") | fallback("valkey/valkey:8-alpine") | tostring() %}
+      {#- renovate: datasource=docker depName=valkey/valkey #}
+      {%- var img = extraContext | dig("rateLimit", "shared", "managedStore", "image") | fallback("valkey/valkey:9-alpine") | tostring() %}
       {%- var imagePullPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "imagePullPolicy") | fallback("IfNotPresent") | tostring() %}
       {%- var maxMemory = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemory") | fallback("96mb") | tostring() %}
       {%- var maxMemoryPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemoryPolicy") | fallback("volatile-ttl") | tostring() %}
