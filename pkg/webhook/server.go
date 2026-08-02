@@ -104,6 +104,10 @@ func NewServer(config *ServerConfig) (*Server, error) {
 	if config.WriteTimeout == 0 {
 		config.WriteTimeout = 10 * time.Second
 	}
+	// Above the 90s client-go transport default, so the API server closes first.
+	if config.IdleTimeout == 0 {
+		config.IdleTimeout = 120 * time.Second
+	}
 
 	getCertificate, err := newGetCertificate(config)
 	if err != nil {
@@ -254,6 +258,7 @@ func (s *Server) Start(ctx context.Context) error {
 		TLSConfig:    tlsConfig,
 		ReadTimeout:  s.config.ReadTimeout,
 		WriteTimeout: s.config.WriteTimeout,
+		IdleTimeout:  s.config.IdleTimeout,
 	}
 
 	// Bind synchronously so callers can observe success before any

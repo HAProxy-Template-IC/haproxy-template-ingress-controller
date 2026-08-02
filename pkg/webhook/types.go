@@ -181,6 +181,11 @@ type ServerConfig struct {
 	// Default: 10s
 	WriteTimeout time.Duration
 
+	// IdleTimeout must exceed the API server's idle timeout, or we close first
+	// and race its next request into an EOF; zero means ReadTimeout (net/http).
+	// Default: 120s
+	IdleTimeout time.Duration
+
 	// OnUnregisteredGVK, when set, is called for an AdmissionReview whose GVK
 	// has no registered validator. Such a request is still admitted — nothing
 	// is registered that could judge it — but it means the API server is
