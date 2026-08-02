@@ -151,7 +151,7 @@ migrationCoverage:
       # --- Path type ---
       haproxy-ingress.github.io/path-type:
         status: different
-        note: regex, exact, prefix and begin are honoured, but only for paths with `pathType` ImplementationSpecific — the annotation is ignored on Prefix/Exact-typed paths.
+        note: regex, exact, prefix, and begin are honoured, but only for paths with `pathType` ImplementationSpecific — the annotation is ignored on Prefix/Exact-typed paths.
         doc: annotation-support
       # --- Session affinity ---
       haproxy-ingress.github.io/affinity:

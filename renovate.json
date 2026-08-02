@@ -97,6 +97,33 @@
       "depNameTemplate": "valkey/valkey",
       "packageNameTemplate": "valkey/valkey",
       "versioningTemplate": "regex:^(?<major>\\d+)(\\.(?<minor>\\d+))?(\\.(?<patch>\\d+))?-(?<compatibility>[a-z]+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Varnish pin as DOCUMENTED in the chart values reference — same reason as the Valkey entry below.",
+      "fileMatch": [
+        "^docs/site/docs/reference\\.md$"
+      ],
+      "matchStrings": [
+        "\\|\\s*`varnish:(?<currentValue>[0-9]+(\\.[0-9]+)*)`\\s*\\|"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "varnish",
+      "packageNameTemplate": "varnish"
+    },
+    {
+      "customType": "regex",
+      "description": "Valkey pin as DOCUMENTED in the chart values reference. reference.md is hand-maintained and check-values-docs.sh fails the build when a documented default drifts from values.yaml, so a bot bump that touched only values.yaml reddened every renovate MR until the row was edited by hand (!1515). Matched on the table cell rather than a `renovate:` comment anchor, because the generated-looking rows carry no comments.",
+      "fileMatch": [
+        "^docs/site/docs/reference\\.md$"
+      ],
+      "matchStrings": [
+        "\\|\\s*`valkey/valkey:(?<currentValue>[0-9]+(\\.[0-9]+)*-alpine)`\\s*\\|"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "valkey/valkey",
+      "packageNameTemplate": "valkey/valkey",
+      "versioningTemplate": "regex:^(?<major>\\d+)(\\.(?<minor>\\d+))?(\\.(?<patch>\\d+))?-(?<compatibility>[a-z]+)$"
     }
   ],
   "packageRules": [
@@ -156,7 +183,7 @@
       "groupName": "haproxy image"
     },
     {
-      "description": "Keep HAPROXY_VERSION ARGs on stable series only. Docker Hub's floating `X.Y` tag can point at a dev release before the first `X.Y.Z` patch ships (e.g. `3.4` \u2192 `3.4-dev2`), so derive the tracked version from patch tags. Covers both the `ARG HAPROXY_VERSION=` lines and the `FROM haproxytech/haproxy-debian:${HAPROXY_VERSION}` lines that Renovate's built-in dockerfile manager extracts by resolving the ARG \u2014 both need the clamp, across all three files.",
+      "description": "Keep HAPROXY_VERSION ARGs on stable series only. Docker Hub's floating `X.Y` tag can point at a dev release before the first `X.Y.Z` patch ships (e.g. `3.4` → `3.4-dev2`), so derive the tracked version from patch tags. Covers both the `ARG HAPROXY_VERSION=` lines and the `FROM haproxytech/haproxy-debian:${HAPROXY_VERSION}` lines that Renovate's built-in dockerfile manager extracts by resolving the ARG — both need the clamp, across all three files.",
       "matchFileNames": [
         "Dockerfile",
         "versions.env",
