@@ -396,3 +396,210 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.denied_by\) str\(cache_origin_internal_backend\) if origin_backend_internal'
+
+  test-haptic-cache-staleness-windows:
+    description: >-
+      stale-while-revalidate and stale-if-error collapse into one Varnish grace
+      window (the larger of the two), while stale-if-error additionally flags the
+      route so the VCL abandons an erroring background fetch instead of replacing
+      a good stale object. cache-revalidate sets beresp.keep and
+      cache-strip-set-cookie drops Set-Cookie before the cacheability test.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: stale-ingress
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+              haproxy-haptic.org/cache-stale-while-revalidate: "30"
+              haproxy-haptic.org/cache-stale-if-error: "600"
+              haproxy-haptic.org/cache-revalidate: "900"
+              haproxy-haptic.org/cache-strip-set-cookie: "true"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: stale.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      # Total window is max(swr, sie) = 600, not 30 and not 630 …
+      - { type: contains, target: "map:haptic-cache-grace.map", pattern: "(?m)^default/stale-ingress 600$" }
+      # … while proactive stale delivery stops at the swr boundary.
+      - { type: contains, target: "map:haptic-cache-swr.map", pattern: "(?m)^default/stale-ingress 30$" }
+      - { type: contains, target: "map:haptic-cache-stale-if-error.map", pattern: "(?m)^default/stale-ingress 1$" }
+      - { type: contains, target: "map:haptic-cache-keep.map", pattern: "(?m)^default/stale-ingress 900$" }
+      - { type: contains, target: "map:haptic-cache-strip-cookie.map", pattern: "(?m)^default/stale-ingress 1$" }
+      # A client must not be able to forge any of the new control headers.
+      - { type: contains, target: haproxy.cfg, pattern: "http-request del-header X-Haptic-Cache-Grace" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request del-header X-Haptic-Cache-Stale-If-Error" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request del-header X-Haptic-Cache-Keep" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request del-header X-Haptic-Cache-Strip-Cookie" }
+      # del-header must precede the set-header that re-adds the trusted value.
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - "http-request del-header X-Haptic-Cache-Grace"
+          - "http-request set-header X-Haptic-Cache-Grace %\\[var\\(txn\\.resource_id\\),map\\("
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Haptic-Cache-Stale-If-Error %\\[var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-stale-if-error\\.map\\)\\]"
+      # The VCL wires each header to the matching beresp field.
+      - { type: contains, target: "k8s:varnish-cache", pattern: "set beresp.grace = std.duration\\(bereq.http.X-Haptic-Cache-Grace" }
+      - { type: contains, target: "k8s:varnish-cache", pattern: "set beresp.keep = std.duration\\(bereq.http.X-Haptic-Cache-Keep" }
+      - { type: contains, target: "k8s:varnish-cache", pattern: "unset beresp.http.Set-Cookie" }
+      # req.grace is what enforces the split; without it the wider grace would
+      # serve stale proactively and stale-if-error would not be error-only.
+      - { type: contains, target: "k8s:varnish-cache", pattern: "set req.grace = std.duration\\(req.http.X-Haptic-Cache-SWR" }
+      # The abandon must NOT be limited to background fetches: past the swr window
+      # the refresh is synchronous, and that is the fetch the client waits on.
+      - { type: contains, target: "k8s:varnish-cache", pattern: "X-Haptic-Cache-Stale-If-Error && beresp.status >= 500\\)" }
+      - { type: not_contains, target: "k8s:varnish-cache", pattern: "bereq.is_bgfetch" }
+      - { type: contains, target: "k8s:varnish-cache", pattern: "sub vcl_backend_error" }
+      # A stale delivery is distinguishable from a fresh hit in the access log.
+      - { type: contains, target: "k8s:varnish-cache", pattern: "X-Cache = \"STALE\"" }
+
+  test-haptic-cache-ttl-auto-follows-origin:
+    description: >-
+      cache-ttl "auto" hands the lifetime back to the origin's Cache-Control via
+      std.rfc_ttl() (new in Varnish/Vinyl 9.0) instead of forcing a fixed TTL.
+      The map carries the literal so the static VCL can branch on it.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auto-ttl
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "auto"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: auto-ttl.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:haptic-cache-ttl.map", pattern: "(?m)^default/auto-ttl auto$" }
+      - { type: contains, target: "k8s:varnish-cache", pattern: "if \\(bereq.http.X-Haptic-Cache-TTL == \"auto\"\\) \\{" }
+      - { type: contains, target: "k8s:varnish-cache", pattern: "std.rfc_ttl\\(\\);" }
+      # The hit-for-pass lifetime follows the operator-tunable parameter rather
+      # than a magic number duplicated from its default.
+      - { type: contains, target: "k8s:varnish-cache", pattern: "set beresp.ttl = param.uncacheable_ttl;" }
+      - { type: not_contains, target: "k8s:varnish-cache", pattern: "set beresp.ttl = 120s;" }
+
+  test-haptic-cache-staleness-unit-suffix-rejected:
+    description: >-
+      The staleness windows share cache-ttl's unit-suffix footgun — the VCL builds
+      the duration by appending "s", so "30s" would become std.duration("30ss")=0s
+      and silently disable the window. Rejected at admission instead.
+    extraContext:
+      renderMode: admission
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bad-swr
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-stale-while-revalidate: "30s"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bad-swr.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "Invalid value '30s' for annotation 'haproxy-haptic.org/cache-stale-while-revalidate'" }
+
+  test-haptic-cache-strip-set-cookie-rejects-non-boolean:
+    description: >-
+      cache-strip-set-cookie drops a response header, so a typo must fail loudly
+      rather than being read as false and leaving the route uncached.
+    extraContext:
+      renderMode: admission
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bad-strip
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-strip-set-cookie: "yes"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bad-strip.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "Invalid value 'yes' for annotation 'haproxy-haptic.org/cache-strip-set-cookie'.*Must be \"true\" or \"false\"" }
+
+  test-haptic-cache-stale-if-error-alone-is-error-only:
+    description: >-
+      A route that sets stale-if-error WITHOUT stale-while-revalidate must not
+      serve stale on ordinary expiry. The total grace window widens to the
+      error window, but the proactive window stays 0, so a normal expiry fetches
+      synchronously and the wider grace is reachable only when that fetch fails.
+      Regression pin for the collapse-into-one-window bug: with a single grace
+      value, stale-if-error silently implied stale-while-revalidate.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sie-only
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+              haproxy-haptic.org/cache-stale-if-error: "600"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: sie-only.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:haptic-cache-grace.map", pattern: "(?m)^default/sie-only 600$" }
+      # The whole point: proactive staleness is off for this route.
+      - { type: contains, target: "map:haptic-cache-swr.map", pattern: "(?m)^default/sie-only 0$" }
+      - { type: contains, target: "map:haptic-cache-stale-if-error.map", pattern: "(?m)^default/sie-only 1$" }

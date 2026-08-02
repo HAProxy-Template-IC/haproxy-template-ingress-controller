@@ -214,6 +214,10 @@ CPU cost and the two global limits that bound it are covered in
 
 Routes cache-eligible requests through a chart-deployed, consistent-hash-sharded Varnish tier, so the cache is shared across the whole HAProxy fleet. These annotations take effect only when the tier is enabled (`cache.varnish.enabled`). The tier's default-on NetworkPolicy admits cache requests only from the same release's HAProxy pods and limits Varnish egress to DNS plus the same HAProxy HTTP origin; disable `cache.varnish.networkPolicy.enabled` only when replacing it with equivalent isolation. Per-route behaviour is driven by internal `X-Haptic-Cache-*` headers that HAProxy strips from the client request first, so a client can't influence the cache key or the exclusion rules. Source-verified Varnish cache-miss loopback requests bypass the shared rate limiter because the external request has already consumed its budget; this prevents double counting and cache-cold self-throttling.
 
+The two staleness annotations are independent, and setting one doesn't imply the other. `cache-stale-while-revalidate` trades freshness for latency: within its window nobody waits for the origin. `cache-stale-if-error` trades nothing until something breaks: an ordinary expiry still fetches and waits, and the stale copy is reached only when that fetch fails. Set both when you want fast expiry *and* an outage cushion — for example `cache-stale-while-revalidate: "30"` with `cache-stale-if-error: "600"`.
+
+Every cached response carries an `X-Cache` header: `HIT` when it was served fresh from cache, `MISS` when it came from the origin, and `STALE` when it was served past its lifetime under either annotation. The access log records the same value in its `cache` field, so you can tell a route that's serving stale from one that's genuinely fresh.
+
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
 | `haproxy-haptic.org/cache-enable` | ✅ Supported | The value `true` routes the Ingress's requests through the shared Varnish cache tier. |
@@ -221,7 +225,11 @@ Routes cache-eligible requests through a chart-deployed, consistent-hash-sharded
 | `haproxy-haptic.org/cache-exclude-paths` | ✅ Supported | Comma-separated request path prefixes that bypass the cache and go straight to the app. |
 | `haproxy-haptic.org/cache-key` | ✅ Supported | Adds a vary component to the cache key: `consumer`, `src`, `header:<h>`, `cookie:<c>`, `query:<q>`, or a comma-separated composite — so, for example, per-consumer responses are cached separately (which is what makes caching authenticated content safe). |
 | `haproxy-haptic.org/cache-max-object-size` | ✅ Supported | Maximum cacheable response size in bytes; a larger response (by `Content-Length`) stays uncacheable. |
-| `haproxy-haptic.org/cache-ttl` | ✅ Supported | Cache lifetime in seconds for the route; non-2xx or `Set-Cookie` responses stay uncacheable. |
+| `haproxy-haptic.org/cache-revalidate` | ✅ Supported | Seconds past expiry the object is kept so the refresh can be a conditional request the origin answers with `304 Not Modified` instead of a full body. Costs cache memory; defaults to `0`, which keeps nothing. |
+| `haproxy-haptic.org/cache-stale-if-error` | ✅ Supported | Seconds past expiry a stale response may still be served, but **only** when the refresh fails. On its own it doesn't change what an ordinary expiry does: that still fetches from the origin and waits. An origin error never replaces a good cached response. |
+| `haproxy-haptic.org/cache-stale-while-revalidate` | ✅ Supported | Seconds past expiry a stale response is served immediately while the cache refreshes it in the background. Without it, a route gets the cache's 10-second default. |
+| `haproxy-haptic.org/cache-strip-set-cookie` | ✅ Supported | The value `true` drops `Set-Cookie` from the response before the cache decides whether it can be stored, so a public asset behind an analytics cookie stays cacheable. Never set it where `Set-Cookie` carries a session. |
+| `haproxy-haptic.org/cache-ttl` | ✅ Supported | Cache lifetime in seconds for the route; non-2xx or `Set-Cookie` responses stay uncacheable. The value `auto` follows the origin's `Cache-Control` and `Expires` instead of forcing a fixed lifetime. |
 
 ### Rewriting, retries, and session affinity
 

@@ -136,9 +136,21 @@ migrationCoverage:
       haproxy-haptic.org/cache-max-object-size:
         status: supported
         note: "Max cacheable response size in bytes; a response larger (by Content-Length) than this stays uncacheable."
+      haproxy-haptic.org/cache-revalidate:
+        status: supported
+        note: "Seconds past expiry the object is kept for conditional revalidation (Varnish beresp.keep), so the refresh can be an If-None-Match the origin answers with 304 instead of a full body. Costs cache storage; default 0 keeps nothing."
+      haproxy-haptic.org/cache-stale-if-error:
+        status: supported
+        note: "Seconds past expiry a stale object may still be served, but only when the refresh fails. Widens beresp.grace (the total window the object may be used) while leaving req.grace at the stale-while-revalidate value, so ordinary expiry still fetches synchronously; the VCL then abandons a fetch that returns 5xx, which is what makes Varnish fall back to the object instead of serving the error."
+      haproxy-haptic.org/cache-stale-while-revalidate:
+        status: supported
+        note: "Seconds past expiry a stale object is served immediately while Varnish refreshes it in the background. Sets req.grace, which caps how much of beresp.grace is spent on proactive stale delivery. Without it a route falls back to Varnish's 10s default_grace."
+      haproxy-haptic.org/cache-strip-set-cookie:
+        status: supported
+        note: "\"true\" drops Set-Cookie from the response before the cacheability test, so a public asset behind an analytics cookie stays cacheable. Never set it on a route whose Set-Cookie carries a session."
       haproxy-haptic.org/cache-ttl:
         status: supported
-        note: "Cache TTL in seconds for the route, carried as X-Haptic-Cache-TTL and applied as the Varnish object TTL (non-2xx / Set-Cookie responses stay uncacheable)."
+        note: "Cache TTL in seconds for the route, carried as X-Haptic-Cache-TTL and applied as the Varnish object TTL (non-2xx / Set-Cookie responses stay uncacheable). \"auto\" instead follows the origin's Cache-Control/Expires via std.rfc_ttl()."
       haproxy-haptic.org/canary:
         status: supported
         note: "Marks the Ingress as a canary for a shared host; excluded from base-route ownership (features-800 registers it in gf[\"coLocatedIngresses\"]) so the main Ingress owns the map entry and the canary only overlays a use_backend split."
