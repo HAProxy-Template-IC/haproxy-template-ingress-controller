@@ -1,0 +1,17 @@
+extends: existence
+message: "Don't put a period at the end of a heading."
+link: "https://developers.google.com/style/capitalization#capitalization-in-titles-and-headings"
+nonword: true
+level: error
+scope: heading
+action:
+  name: edit
+  params:
+    - trim_right
+    - "."
+# Google's token is '[a-z0-9][.]\s*$'. Since vale 3.17 scopes a heading per
+# sentence, the enumerator in "### 1. Turn the rule on" is its own scope and
+# matches on the digit — flagging every numbered procedure step. Requiring a
+# LETTER before the period keeps the real case and drops the enumerator.
+tokens:
+  - '[a-z][.]\s*$'

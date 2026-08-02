@@ -258,7 +258,7 @@ With `PathPrefix`, the route's entry (`api.example.com…/ GW_ROUTE_ID:http:plat
 
 </div>
 
-### `spec.rules[].matches` - method, header and query matching
+### `spec.rules[].matches` - method, header, and query matching
 
 | Field | Status | Notes |
 |-------|--------|-------|
