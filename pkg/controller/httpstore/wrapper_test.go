@@ -16,6 +16,7 @@ package httpstore
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -604,4 +605,56 @@ func TestHTTPStoreWrapper_GetCachedContent_Production(t *testing.T) {
 	content, ok := wrapper.getCachedContent("http://example.com")
 	assert.False(t, ok)
 	assert.Empty(t, content)
+}
+
+// "interval" is what the option does: the first fetch is synchronous, and this
+// only sets how often the content is re-checked afterwards. "delay" was the
+// original spelling and reads like a wait BEFORE fetching, which is the one
+// thing it never was — so it stays working, but it is not the name.
+func TestParseFetchOptions_IntervalAndDelayAlias(t *testing.T) {
+	tests := []struct {
+		name string
+		in   map[string]any
+		want time.Duration
+	}{
+		{name: "interval", in: map[string]any{"interval": "60s"}, want: time.Minute},
+		{name: "delay alias still works", in: map[string]any{"delay": "60s"}, want: time.Minute},
+		{name: "neither means fetch once", in: map[string]any{}, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts, err := parseFetchOptions(tt.in)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if opts.Delay != tt.want {
+				t.Fatalf("Delay=%v want %v", opts.Delay, tt.want)
+			}
+		})
+	}
+}
+
+// Setting both has no obvious right answer, and silently preferring one would
+// leave the other looking effective when it is not.
+func TestParseFetchOptions_IntervalAndDelayTogetherIsAnError(t *testing.T) {
+	_, err := parseFetchOptions(map[string]any{"interval": "60s", "delay": "5m"})
+	if err == nil {
+		t.Fatal("expected an error when both spellings are set")
+	}
+	if !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("error should say only one may be set, got %q", err)
+	}
+}
+
+// The error names whichever spelling the caller used, so the message points at
+// their config rather than at the canonical name they did not write.
+func TestParseFetchOptions_BadValueNamesTheSpellingUsed(t *testing.T) {
+	if _, err := parseFetchOptions(map[string]any{"delay": "nope"}); err == nil ||
+		!strings.Contains(err.Error(), "invalid delay") {
+		t.Fatalf("want an error naming 'delay', got %v", err)
+	}
+	if _, err := parseFetchOptions(map[string]any{"interval": "nope"}); err == nil ||
+		!strings.Contains(err.Error(), "invalid interval") {
+		t.Fatalf("want an error naming 'interval', got %v", err)
+	}
 }
