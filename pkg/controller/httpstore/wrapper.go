@@ -29,8 +29,8 @@ import (
 //
 // It provides the Fetch method callable from templates:
 //
-//	{{ http.Fetch("https://example.com/data.txt", {"delay": "60s"}) }}
-//	{{ http.Fetch("https://api.example.com/data", {"delay": "5m"}, {"type": "bearer", "token": token}) }}
+//	{{ http.Fetch("https://example.com/data.txt", {"interval": "60s"}) }}
+//	{{ http.Fetch("https://api.example.com/data", {"interval": "5m"}, {"type": "bearer", "token": token}) }}
 //
 // The wrapper uses an overlay to determine content retrieval behavior:
 //   - With overlay (validation mode): Returns pending content if available
@@ -69,8 +69,9 @@ func NewHTTPStoreWrapper(ctx context.Context, component *Component, logger *slog
 //	Basic fetch (no refresh):
 //	  {{ http.Fetch("https://example.com/data.txt") }}
 //
-//	With refresh interval:
-//	  {{ http.Fetch("https://example.com/data.txt", {"delay": "60s"}) }}
+//	With refresh interval — the first fetch is synchronous either way; this
+//	only sets how often the content is re-checked afterwards:
+//	  {{ http.Fetch("https://example.com/data.txt", {"interval": "60s"}) }}
 //
 //	With options:
 //	  {{ http.Fetch("https://example.com/data.txt", {"delay": "5m", "timeout": "30s", "retries": 3, "critical": true}) }}
@@ -206,13 +207,35 @@ func (w *HTTPStoreWrapper) getCachedContent(url string) (string, bool) {
 }
 
 // parseFetchOptions parses a map into FetchOptions.
+// Option keys for the refresh cadence. optDelay is the original spelling: it
+// reads like a wait before the first fetch, which it never was — that fetch is
+// synchronous — so optInterval is the name and optDelay is kept working.
+const (
+	optInterval = "interval"
+	optDelay    = "delay"
+)
+
 func parseFetchOptions(m map[string]any) (httpstore.FetchOptions, error) {
 	opts := httpstore.FetchOptions{}
 
-	if v, ok := m["delay"]; ok {
+	// "interval" is the name; "delay" is the original spelling, kept working.
+	// Rejecting both together rather than letting one silently win: a config
+	// setting each to a different value has no obvious right answer, and
+	// picking one would leave the other looking effective when it is not.
+	_, hasInterval := m[optInterval]
+	_, hasDelay := m[optDelay]
+	if hasInterval && hasDelay {
+		return opts, errors.New(
+			"http.Fetch: set either \"interval\" or its deprecated alias \"delay\", not both")
+	}
+	key := optInterval
+	if hasDelay {
+		key = optDelay
+	}
+	if v, ok := m[key]; ok {
 		d, err := parseDuration(v)
 		if err != nil {
-			return opts, fmt.Errorf("invalid delay: %w", err)
+			return opts, fmt.Errorf("invalid %s: %w", key, err)
 		}
 		opts.Delay = d
 	}

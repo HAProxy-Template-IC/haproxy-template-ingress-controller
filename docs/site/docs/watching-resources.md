@@ -242,7 +242,7 @@ Applies uniformly to every watched-resource store. Fields that are referenced by
 
 ## HTTP Resources
 
-Templates can fetch arbitrary HTTP content via the `http.Fetch(url, opts, auth)` template function — a separate mechanism from Kubernetes watching. The controller auto-registers any URL that appears in an `http.Fetch()` call during template rendering, periodically refreshes it at a per-URL `delay`, and surfaces the cached body back to the template on the next render. `Fetch` returns the response body as a string.
+Templates can fetch arbitrary HTTP content via the `http.Fetch(url, opts, auth)` template function — a separate mechanism from Kubernetes watching. The controller auto-registers any URL that appears in an `http.Fetch()` call during template rendering, periodically re-checks it at a per-URL `interval`, and surfaces the cached body back to the template on the next render. The first fetch is synchronous — `interval` only sets how often the content is re-checked afterwards, and the re-check is conditional (`If-None-Match` / `If-Modified-Since`), so unchanged content costs one 304 and triggers no re-render. `Fetch` returns the response body as a string.
 
 ### Fetch parameters
 
@@ -250,7 +250,7 @@ The second argument is an options map. All keys are optional:
 
 | Key | Type | Default | Effect |
 |-----|------|---------|--------|
-| `delay` | Go duration string | none | Refresh interval. The controller re-fetches this often and serves the cached body to later renders. Omit it (or set `"0"`) to fetch once and never refresh. |
+| `interval` | Go duration string | none | How often the content is re-checked. The first fetch is synchronous regardless — this only governs what happens afterwards. Omit it (or set `"0"`) to fetch once and never re-check. Also accepted as `delay`, the original spelling, which reads like a wait before fetching and never was one; set one or the other, not both. |
 | `timeout` | Go duration string | `30s` | Per-request timeout. |
 | `retries` | integer | 2 | Retry attempts on a failed request, with a growing delay between attempts. |
 | `critical` | boolean | `false` | Failure mode. With `false`, a failed fetch returns an empty string and rendering continues (a warning is logged). With `true`, a failed fetch aborts the render with an error, like [`fail()`](./template-reference.md#functions-and-filters). |
@@ -278,7 +278,7 @@ spec:
         timeout server 30s
       frontend web
         bind :80
-        {%- var blocklist = http.Fetch("https://example.com/ip-blocklist.txt", map[string]any{"delay": "5m", "critical": false}) %}
+        {%- var blocklist = http.Fetch("https://example.com/ip-blocklist.txt", map[string]any{"interval": "5m", "critical": false}) %}
         {%- for _, ip := range split(tostring(blocklist), "\n") %}
         {%- if strip(ip) != "" %}
         http-request deny if { src {{ strip(ip) }} }

@@ -43,7 +43,7 @@ templateSnippets:
             // would block every unrelated configuration change until the
             // upstream recovered; the ladder below is what protects the WAF.
             var archive, fetchErr = http.Fetch(url, map[string]any{
-              "delay":    crs | dig_string("1h", "refreshInterval"),
+              "interval": crs | dig_string("1h", "refreshInterval"),
               "timeout":  crs | dig_string("30s", "timeout"),
               "retries":  toint(crs | dig("retries") | fallback(3)),
               "critical": false,
