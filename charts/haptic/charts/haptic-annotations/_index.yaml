@@ -107,7 +107,7 @@ templatingSettings:
           namespace: default
           port: 6379
           # renovate: datasource=docker depName=valkey/valkey
-          image: valkey/valkey:9-alpine
+          image: valkey/valkey:9.1.1-alpine
           imagePullPolicy: IfNotPresent
           replicas: 3
           maxMemory: 96mb

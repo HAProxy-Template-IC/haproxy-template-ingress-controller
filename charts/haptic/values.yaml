@@ -1674,7 +1674,7 @@ rateLimit:
       # matching grant cannot be applied and the controller retries it forever.
       enabled: true
       # renovate: datasource=docker depName=valkey/valkey
-      image: valkey/valkey:9-alpine
+      image: valkey/valkey:9.1.1-alpine
       imagePullPolicy: IfNotPresent
       port: 6379
       # One writable primary with Sentinel failover. Three replicas gives
