@@ -110,7 +110,6 @@ func (p *Publisher) createRuntimeConfig(ctx context.Context, req *PublishRequest
 	if err != nil {
 		return nil, fmt.Errorf("creating runtime config: %w", err)
 	}
-	p.recordSpecGeneration(created)
 
 	// Set validation error status if this is an invalid config
 	if req.ValidationError != "" {
@@ -146,10 +145,6 @@ func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest
 			"name", existing.Name,
 			"checksum", existing.Spec.Checksum,
 		)
-		// Still record it: an unchanged republish is how a checksum first
-		// becomes known to a leader that did not publish it originally.
-		p.recordSpecGeneration(existing)
-		p.backfillObservedGeneration(ctx, existing)
 		return existing, nil
 	}
 
@@ -166,8 +161,6 @@ func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest
 	if err != nil {
 		return nil, fmt.Errorf("updating runtime config: %w", err)
 	}
-	p.recordSpecGeneration(updated)
-	p.backfillObservedGeneration(ctx, updated)
 
 	// Only update status on validation error state transitions (ok→error or error→ok).
 	// Each UpdateStatus writes the full ~509 KB object to etcd.

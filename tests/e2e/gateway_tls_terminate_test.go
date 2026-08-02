@@ -70,7 +70,7 @@ func TestGatewayTLSTerminate(t *testing.T) {
 			// before this route), so it would pass off a pre-route render. The
 			// fragment "gtw_<ns>_echo-gateway-tls_" appears only once this
 			// route's backend renders; <ns> is unique per test.
-			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-gateway-tls_")
+			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-gateway-tls")
 			return ctx
 		}).
 		Assess(host+" returns 200 over HTTPS through the gateway", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

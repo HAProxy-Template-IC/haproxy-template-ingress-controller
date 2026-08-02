@@ -297,13 +297,13 @@ func (c *Component) handleResourcesApplied(ctx context.Context, event *events.Re
 // Outcome mapping:
 //   - Total == 0: nothing was deployed (no HAProxy pods yet). No-op — not a
 //     failure; leave the status where it is.
-//   - Succeeded > 0: at least one instance observed the new config, so the
-//     "deployed" variant reflects reality. Per-endpoint failures during a partial
-//     success surface independently via InstanceDeploymentFailedEvent.
-//   - Total > 0 && Succeeded == 0: a full failure — apply the "deployFailed"
-//     (Programmed=False) variant so the status doesn't freeze at its last value.
-//     The per-endpoint deploy path emits no ReconciliationFailedEvent, so this
-//     handler is the only signal for a fully-failed deploy.
+//   - Succeeded == Total: every instance took the config, so "deployed"
+//     (Programmed=True) is true of the whole data plane.
+//   - Succeeded < Total: apply "deployFailed". Gateway API defines Programmed as
+//     the data plane being configured, and a fleet where one replica still serves
+//     the old config is not that — a request round-robined to it gets the old
+//     routing (503 SC--, see ingress_rolling_restart_test.go). Per-endpoint detail
+//     surfaces independently via InstanceDeploymentFailedEvent.
 func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events.DeploymentCompletedEvent) {
 	// Zero-endpoint deployment (no HAProxy pods discovered yet) doesn't actually
 	// put any HAProxy on the new config — that's "nothing deployed", not a
@@ -314,15 +314,10 @@ func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events
 	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
 		return
 	}
-	// A fully-failed deploy (endpoints existed, but none took the new config)
-	// must surface Programmed=False with a reason via the "deployFailed" variant.
-	// The per-endpoint deploy path emits no ReconciliationFailedEvent, so without
-	// this the status would freeze at its last value for the whole failure window
-	// (up to the 60s drift backstop). A partial success (Succeeded>0) still
-	// applies the "deployed" variant: at least one instance observed the config,
-	// and per-endpoint failures surface independently via
-	// InstanceDeploymentFailedEvent.
-	if event.Succeeded == 0 {
+	// Anything short of the whole fleet is not Programmed. Reporting it as
+	// deployed advertises an address the fleet does not uniformly serve, which
+	// external-dns and cert-manager then act on.
+	if event.Succeeded < event.Total {
 		c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseDeployFailed)
 		return
 	}

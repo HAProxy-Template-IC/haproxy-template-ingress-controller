@@ -383,7 +383,7 @@ func TestHAProxyJSONAccessLogGatewayResource(t *testing.T) {
 			})
 			// Route-gated convergence marker (issue #71): the fragment appears
 			// only once THIS route's backend renders.
-			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-json-log-gw_")
+			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-json-log-gw")
 			marker = "/json-log-gw-" + ns
 			return ctx
 		}).

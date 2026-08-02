@@ -69,7 +69,7 @@ func TestHTTPRoutePaths(t *testing.T) {
 			// pre-route render and race the route's own throttled deploy. The
 			// fragment "gtw_<ns>_echo-paths_" appears only once this route's
 			// backends render; <ns> is unique per test.
-			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-paths_")
+			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-paths")
 			return ctx
 		}).
 		Assess("Exact /exact matches", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -140,7 +140,7 @@ func TestHTTPRouteMethods(t *testing.T) {
 			// pre-route render and race the route's own throttled deploy. The
 			// fragment "gtw_<ns>_echo-methods_" appears only once this route's
 			// backends render; <ns> is unique per test.
-			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-methods_")
+			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-methods")
 			return ctx
 		}).
 		Assess("GET /api routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -197,7 +197,7 @@ func TestHTTPRouteHeaders(t *testing.T) {
 			// pre-route render and race the route's own throttled deploy. The
 			// fragment "gtw_<ns>_echo-headers_" appears only once this route's
 			// backends render; <ns> is unique per test.
-			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-headers_")
+			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-headers")
 			return ctx
 		}).
 		Assess("Request with X-Api-Version: v2 routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -253,7 +253,7 @@ func TestHTTPRouteQuery(t *testing.T) {
 			// pre-route render and race the route's own throttled deploy. The
 			// fragment "gtw_<ns>_echo-query_" appears only once this route's
 			// backends render; <ns> is unique per test.
-			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-query_")
+			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-query")
 			return ctx
 		}).
 		Assess("Request with ?version=beta routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

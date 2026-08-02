@@ -173,7 +173,9 @@ func TestHapticSharedRateLimit(t *testing.T) {
 			// Wait until the rate-limited route is deployed without spending
 			// request budget. HTTP polling is wrong here: the poll itself can
 			// exhaust the shared limiter before the actual assertion runs.
-			waitForControllerDeployed(ctx, t, client, ns)
+			for _, ing := range ingresses {
+				waitForIngressDeployed(ctx, t, client, ns, ing.Name)
+			}
 			return StoreNamespaceInContext(ctx, ns)
 		}).
 		Assess("exact and lease budgets are shared across HAProxy pods", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

@@ -199,22 +199,6 @@ spec:
                         This field is cleared when a sync succeeds. Combined with ConsecutiveErrors,
                         this helps identify persistent vs transient issues.
                       type: string
-                    observedGeneration:
-                      description: |-
-                        ObservedGeneration is the spec generation Checksum was published as, so a
-                        pod can be ordered against the spec rather than only compared to it.
-                        Checksums are opaque: two differing values say the pod is not on the
-                        current spec, never whether it is behind or how far. Reading it as
-                        "pod is at or past generation N" needs no knowledge of intermediate
-                        versions, which an observer's watch is not guaranteed to receive.
-
-                        Zero means unknown — the publisher has no record of that checksum (it was
-                        published by a previous leader, or before a restart), or the kind does not
-                        populate it: only HAProxyCfg does today, though this type is shared with
-                        the auxiliary file kinds. Treat unknown as not-yet-converged; the next
-                        publish records it.
-                      format: int64
-                      type: integer
                     podName:
                       description: PodName is the name of the HAProxy pod.
                       minLength: 1

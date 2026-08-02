@@ -73,7 +73,7 @@ func TestHTTPRouteBasic(t *testing.T) {
 			// pre-route render and race the route's own throttled deploy. The
 			// fragment "gtw_<ns>_echo-basic_" appears only once this route's
 			// backend renders; <ns> is unique per test.
-			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-basic_")
+			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-basic")
 			return ctx
 		}).
 		Assess(host+" returns 200 from echo-server", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

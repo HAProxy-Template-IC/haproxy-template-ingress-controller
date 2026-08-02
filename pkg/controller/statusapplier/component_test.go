@@ -245,12 +245,16 @@ func TestHandleDeploymentCompleted_AppliesDeployedVariant(t *testing.T) {
 	assert.Equal(t, 1, completedEvent.AppliedCount)
 }
 
-// TestHandleDeploymentCompleted_PartialSuccessAppliesDeployedVariant: a partial
-// failure (some pods took the config, some didn't — Succeeded>0 && Failed>0) still
-// applies the "deployed" variant, because at least one instance observed the
-// config; the un-converged pods are re-driven by the deployer's fast retry. Only
-// a FULL failure (Succeeded==0) surfaces the deployFailed variant.
-func TestHandleDeploymentCompleted_PartialSuccessAppliesDeployedVariant(t *testing.T) {
+// TestHandleDeploymentCompleted_PartialSuccessIsNotProgrammed: a partial deploy
+// (Succeeded>0 && Failed>0) must NOT apply the "deployed" variant.
+//
+// This asserts the opposite of what it used to. Gateway API defines Programmed as
+// the data plane being configured, and a fleet where one replica still serves the
+// previous config is not that: NodePort round-robins, so a request landing on the
+// un-pushed replica gets the old routing (the 503 SC-- documented in
+// ingress_rolling_restart_test.go). Reporting deployed there advertises an address
+// the fleet does not uniformly serve, and external-dns and cert-manager act on it.
+func TestHandleDeploymentCompleted_PartialSuccessIsNotProgrammed(t *testing.T) {
 	bus := testutil.NewTestBus()
 	fakeClient := newFakeDynamicClientWithPatchSuccess()
 	comp := newTestComponent(bus, fakeClient, newTestResolver())
@@ -265,7 +269,8 @@ func TestHandleDeploymentCompleted_PartialSuccessAppliesDeployedVariant(t *testi
 	}))
 
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
-	assert.Equal(t, events.StatusPatchPhaseDeployed, completedEvent.Phase)
+	assert.Equal(t, events.StatusPatchPhaseDeployFailed, completedEvent.Phase,
+		"a fleet with one replica on the old config is not Programmed")
 }
 
 // TestHandleDeploymentCompleted_SkipsWithoutPatches: an event with no patches

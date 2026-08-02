@@ -101,7 +101,7 @@ func TestGRPCOverTLS(t *testing.T) {
 			// fragment "gtw_<ns>_grpc-echo-route_" appears only once this route's
 			// backend renders (GRPCRoute backends share the HTTPRoute
 			// gtw_<ns>_<routeName>_<svc>_<port> naming); <ns> is unique per test.
-			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_"+routeName+"_")
+			waitForRouteDeployed(ctx, t, client, grpcRouteGVR, ns, routeName)
 			return ctx
 		}).
 		Assess("Echo over TLS+ALPN-h2 reaches the GRPCRoute backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
