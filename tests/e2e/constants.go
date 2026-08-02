@@ -147,7 +147,7 @@ const VarnishPolicyProbeImage = "alpine/curl@sha256:71597a4f6ac6c7515c77084d2a21
 // deploys. Must match charts/haptic/values.yaml rateLimit.shared.managedStore.image.
 // Loaded into kind by the rate-limit shard so the StatefulSet needn't reach Docker Hub.
 // renovate: datasource=docker depName=valkey/valkey
-const ValkeyImage = "valkey/valkey:9-alpine"
+const ValkeyImage = "valkey/valkey:9.1.1-alpine"
 
 // LocalSPOAHubImage is the image tag produced by `make spoa-hub-image`.
 // Local SPOA-backed shards use it when SPOA_TAG is unset, because registry
