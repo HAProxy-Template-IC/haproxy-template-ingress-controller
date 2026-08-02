@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 )
@@ -209,4 +210,43 @@ func encodeFrameForTest(t *testing.T, v any) []byte {
 	binary.BigEndian.PutUint32(frame[:4], length)
 	copy(frame[4:], body)
 	return frame
+}
+
+// An oversized frame must say what to do about it. The data files are the only
+// part that scales with anything other than the config under validation, so
+// the message names them — and the failure is not cached, so every admission
+// repeats it until an operator acts.
+func TestEncodeRequest_OversizeNamesTheDataFiles(t *testing.T) {
+	big := strings.Repeat("x", MaxFrameSize)
+	req := &Request{
+		ProtocolVersion: ProtocolVersion,
+		Files: []File{
+			{Path: "/cfg.toml", Content: "[hub]"},
+			{Path: "/rules.conf", Content: big, Kind: FileKindData},
+		},
+	}
+
+	_, err := EncodeRequest(io.Discard, req)
+
+	if err == nil {
+		t.Fatal("expected an error for an oversized frame")
+	}
+	for _, want := range []string{"exceeds MaxFrameSize", "1 data file(s)", "dataFiles"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// The measured OWASP CRS must fit with room to spare, since that is the payload
+// this limit was raised for.
+func TestMaxFrameSize_FitsAFullRuleset(t *testing.T) {
+	// 51 files totalling ~713 KB on disk, ~794 KB JSON-encoded (measured
+	// against coraza-coreruleset v4.25.0).
+	const measuredCRSEncodedBytes = 794 * 1024
+	if MaxFrameSize < 4*measuredCRSEncodedBytes {
+		t.Fatalf("MaxFrameSize %d leaves less than 4x headroom over a full CRS (%d bytes); "+
+			"rule sets grow every release and the config shares the frame",
+			MaxFrameSize, measuredCRSEncodedBytes)
+	}
 }

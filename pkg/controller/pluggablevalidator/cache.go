@@ -18,6 +18,8 @@ import (
 	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -54,13 +56,40 @@ func HashContent(content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// NewCacheKey builds a CacheKey for a (validator, file-path, content)
-// tuple.
-func NewCacheKey(validatorName, path string, content []byte) CacheKey {
+// NewCacheKey builds a CacheKey for a (validator, file-path, content) tuple,
+// folding in any data files sent with it.
+//
+// The data files are part of the key because they are part of the input: a hub
+// config whose bytes did not change still validates differently once the
+// ruleset it Includes does. Keying on the config alone would serve the previous
+// verdict for exactly the change the data files exist to check.
+//
+// Files are folded in sorted path order so the key does not depend on dispatch
+// ordering.
+func NewCacheKey(validatorName, path string, content []byte, dataFiles ...File) CacheKey {
+	if len(dataFiles) == 0 {
+		return CacheKey{
+			ValidatorName: validatorName,
+			Path:          path,
+			ContentSHA256: HashContent(content),
+		}
+	}
+
+	sorted := make([]File, len(dataFiles))
+	copy(sorted, dataFiles)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path < sorted[j].Path })
+
+	h := sha256.New()
+	h.Write(content)
+	for _, f := range sorted {
+		// Length-prefixed so ("ab","c") and ("a","bc") cannot collide.
+		fmt.Fprintf(h, "\x00%d:%s\x00%d:", len(f.Path), f.Path, len(f.Content))
+		h.Write([]byte(f.Content))
+	}
 	return CacheKey{
 		ValidatorName: validatorName,
 		Path:          path,
-		ContentSHA256: HashContent(content),
+		ContentSHA256: hex.EncodeToString(h.Sum(nil)),
 	}
 }
 

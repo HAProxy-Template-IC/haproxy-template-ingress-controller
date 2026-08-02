@@ -697,6 +697,12 @@ type ValidatorConfig struct {
 	// only.
 	Files []string `yaml:"files"`
 
+	// DataFiles is the list of glob patterns for files this validator needs
+	// to check the ones it validates, but must not validate on their own.
+	// Attached to every request to this validator, marked as data. A file
+	// matching both lists is data.
+	DataFiles []string `yaml:"data_files,omitempty"`
+
 	// TimeoutMs is the per-call deadline in milliseconds, covering
 	// the request-response cycle for one file. Zero falls back to
 	// 5000 (5 seconds).

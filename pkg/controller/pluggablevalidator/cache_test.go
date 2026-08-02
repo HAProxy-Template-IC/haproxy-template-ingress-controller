@@ -192,3 +192,61 @@ func TestResultCache_PutOverwrite(t *testing.T) {
 		t.Fatalf("overwrite duplicated entry; len=%d want 1", cache.Len())
 	}
 }
+
+// The data files are part of the input, so they must be part of the key.
+// Keying on the config file alone would serve the previous verdict for a hub
+// config whose bytes did not change while the ruleset it Includes did — which
+// is exactly the change the data files exist to check, and the one where a
+// stale "valid" costs the most.
+func TestNewCacheKey_DataFilesChangeTheKey(t *testing.T) {
+	const validator, path, content = "coraza", "/etc/haproxy/general/config.toml", "[hub]"
+
+	base := NewCacheKey(validator, path, []byte(content))
+	withData := NewCacheKey(validator, path, []byte(content),
+		File{Path: "/rules.conf", Content: "SecAction id:1"})
+	changedData := NewCacheKey(validator, path, []byte(content),
+		File{Path: "/rules.conf", Content: "SecAction id:2"})
+
+	if base == withData {
+		t.Fatal("attaching data files must change the key")
+	}
+	if withData == changedData {
+		t.Fatal("changing a data file's content must change the key")
+	}
+}
+
+// Dispatch order must not affect the key, or an unchanged input would miss the
+// cache at random depending on map iteration order upstream.
+func TestNewCacheKey_DataFileOrderIsIrrelevant(t *testing.T) {
+	a := File{Path: "/a.conf", Content: "A"}
+	b := File{Path: "/b.conf", Content: "B"}
+
+	ab := NewCacheKey("v", "/c.toml", []byte("x"), a, b)
+	ba := NewCacheKey("v", "/c.toml", []byte("x"), b, a)
+
+	if ab != ba {
+		t.Fatal("key must not depend on the order data files were collected in")
+	}
+}
+
+// Length-prefixing keeps concatenations distinct: without it ("ab","c") and
+// ("a","bc") hash identically, so two different rule sets would share a verdict.
+func TestNewCacheKey_NoConcatenationCollisions(t *testing.T) {
+	one := NewCacheKey("v", "/c.toml", []byte("x"),
+		File{Path: "/ab", Content: "c"})
+	two := NewCacheKey("v", "/c.toml", []byte("x"),
+		File{Path: "/a", Content: "bc"})
+
+	if one == two {
+		t.Fatal("paths and contents must not be able to collide across the boundary")
+	}
+}
+
+// A request with no data files must key exactly as before, so the change does
+// not invalidate every cached verdict on upgrade.
+func TestNewCacheKey_NoDataFilesMatchesLegacyKey(t *testing.T) {
+	withNone := NewCacheKey("v", "/c.toml", []byte("x"))
+	if withNone.ContentSHA256 != HashContent([]byte("x")) {
+		t.Fatal("a request without data files must keep the plain content hash")
+	}
+}

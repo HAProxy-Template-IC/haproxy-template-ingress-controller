@@ -49,6 +49,7 @@ func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *corec
 			Name:           v.Name,
 			SocketPath:     v.SocketPath,
 			Files:          v.Files,
+			DataFiles:      v.DataFiles,
 			MaxConnections: int(v.MaxConnections),
 		}
 		if v.TimeoutMs > 0 {

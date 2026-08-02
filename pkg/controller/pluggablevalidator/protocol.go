@@ -30,9 +30,18 @@ import (
 const ProtocolVersion = 1
 
 // MaxFrameSize is the largest frame (length + payload) the client will encode
-// or accept on the wire. Mirrors the hub-side default
-// (haproxy-spoa-hub --validate-max-frame-bytes).
-const MaxFrameSize = 1 << 20 // 1 MiB
+// or accept on the wire. Must match the validator's own limit — the hub's
+// `DEFAULT_MAX_FRAME_BYTES`.
+//
+// 8 MiB rather than the original 1 MiB because a request now carries the data
+// files a config references, and those are whole rule sets. Measured: the
+// OWASP CRS the coraza plugin embeds (51 files, 713 KB on disk) JSON-encodes to
+// 794 KB — 76% of 1 MiB before an operator adds a single custom rule, and the
+// config file sharing the frame grows with the number of routes it describes.
+// The old ceiling would have been reached in ordinary use, and the failure is
+// the expensive kind: encoding fails, the synthetic error is deliberately not
+// cached, so every admission fails identically until someone reads the message.
+const MaxFrameSize = 8 << 20 // 8 MiB
 
 // Severity is the diagnostic severity in the wire format.
 type Severity string
@@ -64,6 +73,40 @@ const (
 type File struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
+	// Kind tells the validator whether to validate this file or merely make
+	// it available to whatever validates the others. Empty means
+	// FileKindConfig and is omitted from the wire, so a request carrying no
+	// data files is byte-identical to one from before this field existed.
+	Kind FileKind `json:"kind,omitempty"`
+}
+
+// FileKind distinguishes a file to validate from one a validated file merely
+// references.
+type FileKind string
+
+const (
+	// FileKindConfig is a file the validator parses and checks. The default.
+	FileKindConfig FileKind = ""
+
+	// FileKindData is a file the validator must not parse, sent so that a
+	// config referencing it can be checked. A WAF ruleset a hub config
+	// `Include`s is the motivating case: the validator sidecar runs in the
+	// controller pod and cannot read the HAProxy pod's filesystem, so
+	// without the content travelling with the request there is nothing to
+	// resolve the reference against.
+	FileKindData FileKind = "data"
+)
+
+// dataFileFootprint reports how many data files a request carries and how many
+// content bytes they account for.
+func dataFileFootprint(files []File) (count, bytes int) {
+	for _, f := range files {
+		if f.Kind == FileKindData {
+			count++
+			bytes += len(f.Content)
+		}
+	}
+	return count, bytes
 }
 
 // Request is the JSON payload the controller writes onto a validator socket.
@@ -138,7 +181,16 @@ func EncodeRequest(w io.Writer, req *Request) (int, error) {
 		return 0, fmt.Errorf("encode request: marshal JSON: %w", err)
 	}
 	if len(body) > MaxFrameSize {
-		return 0, fmt.Errorf("encode request: payload size %d exceeds MaxFrameSize %d", len(body), MaxFrameSize)
+		// Name the data files: they are the only part of a request that scales
+		// with something other than the config being validated, so they are
+		// what an operator has to act on. Without this the message reports a
+		// byte count and leaves them to guess.
+		dataCount, dataBytes := dataFileFootprint(req.Files)
+		return 0, fmt.Errorf(
+			"encode request: payload size %d exceeds MaxFrameSize %d "+
+				"(%d data file(s) contributing %d bytes); reduce the validator's dataFiles globs "+
+				"or raise the frame limit on both the controller and the validator",
+			len(body), MaxFrameSize, dataCount, dataBytes)
 	}
 
 	header := make([]byte, 4)

@@ -16,6 +16,7 @@ package pluggablevalidator_test
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -377,5 +378,145 @@ func TestManager_Healthy_OneDown(t *testing.T) {
 	}
 	if !strings.HasPrefix(failures[0], "otel:") {
 		t.Fatalf("failure should identify the validator name; got %q", failures[0])
+	}
+}
+
+// A validator that needs a file in order to check another one gets both in a
+// single request: the config it validates, plus every dataFiles match marked
+// as data. The motivating case is a hub config that Includes a WAF ruleset —
+// the validator runs in the controller pod and cannot read the HAProxy pod's
+// disk, so without the content travelling along there is nothing to resolve
+// the reference against.
+func TestManager_ValidateAll_AttachesDataFiles(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	if err := srv.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultValid,
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+
+	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{{
+		Name:       "coraza",
+		SocketPath: srv.SocketPath,
+		Files:      tomlGlob(),
+		DataFiles:  []string{"/etc/haproxy/general/crs/*"},
+		Timeout:    time.Second,
+	}})
+
+	files := []pv.File{
+		tomlFile(),
+		{Path: "/etc/haproxy/general/crs/REQUEST-901-INIT.conf", Content: "SecAction id:901000"},
+		{Path: "/etc/haproxy/general/crs/lfi-os-files.data", Content: "/etc/passwd"},
+		{Path: "/etc/haproxy/haproxy.cfg", Content: "frontend foo"},
+	}
+
+	out := mgr.ValidateAll(context.Background(), files)
+	if out.Result() != pv.ResultValid {
+		t.Fatalf("result=%q want %q", out.Result(), pv.ResultValid)
+	}
+
+	// One request — the data files ride along, they are not dispatched
+	// separately. Sending them on their own would have the validator parse a
+	// SecLang ruleset as TOML.
+	reqs := srv.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("server saw %d requests, want 1", len(reqs))
+	}
+
+	var req pv.Request
+	if err := json.Unmarshal(reqs[0], &req); err != nil {
+		t.Fatalf("decoding request: %v", err)
+	}
+	if len(req.Files) != 3 {
+		t.Fatalf("request carried %d files, want 3 (config + 2 data)", len(req.Files))
+	}
+	if req.Files[0].Kind != pv.FileKindConfig {
+		t.Fatalf("first file kind=%q, want config", req.Files[0].Kind)
+	}
+	for _, f := range req.Files[1:] {
+		if f.Kind != pv.FileKindData {
+			t.Fatalf("file %q kind=%q, want %q", f.Path, f.Kind, pv.FileKindData)
+		}
+	}
+}
+
+// A file matching both lists is data. Validating a reference target standalone
+// reports on the wrong thing — and for a SecLang ruleset it would be parsed as
+// TOML and produce a spurious error.
+func TestManager_ValidateAll_DataFilesWinOverConfigGlobs(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	if err := srv.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultValid,
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+
+	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{{
+		Name:       "coraza",
+		SocketPath: srv.SocketPath,
+		Files:      []string{"/etc/haproxy/general/*"},
+		DataFiles:  []string{"/etc/haproxy/general/rules.conf"},
+		Timeout:    time.Second,
+	}})
+
+	files := []pv.File{
+		{Path: "/etc/haproxy/general/config.toml", Content: "[hub]"},
+		{Path: "/etc/haproxy/general/rules.conf", Content: "SecAction id:1"},
+	}
+
+	mgr.ValidateAll(context.Background(), files)
+
+	reqs := srv.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("server saw %d requests, want 1 — rules.conf must not be dispatched as a config", len(reqs))
+	}
+}
+
+// The cache must key on the data files as well as the config. A hub config
+// whose bytes are unchanged still validates differently once the ruleset it
+// Includes changes — serving the previous verdict there would skip exactly the
+// check the data files exist for, and it would do so silently.
+func TestManager_ValidateAll_ChangedDataFileBypassesCache(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	if err := srv.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultValid,
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+
+	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{{
+		Name:       "coraza",
+		SocketPath: srv.SocketPath,
+		Files:      tomlGlob(),
+		DataFiles:  []string{"/etc/haproxy/general/crs/*"},
+		Timeout:    time.Second,
+	}})
+
+	withRules := func(content string) []pv.File {
+		return []pv.File{
+			tomlFile(),
+			{Path: "/etc/haproxy/general/crs/rules.conf", Content: content},
+		}
+	}
+
+	mgr.ValidateAll(context.Background(), withRules("SecAction id:1"))
+	if got := len(srv.Requests()); got != 1 {
+		t.Fatalf("first call: server saw %d requests, want 1", got)
+	}
+
+	// Same config file, same everything except the ruleset.
+	mgr.ValidateAll(context.Background(), withRules("SecAction id:2"))
+	if got := len(srv.Requests()); got != 2 {
+		t.Fatalf("changed ruleset served from cache: server saw %d requests, want 2", got)
+	}
+
+	// And an identical repeat must still hit the cache, or the key is simply
+	// never matching and the test above proves nothing.
+	mgr.ValidateAll(context.Background(), withRules("SecAction id:2"))
+	if got := len(srv.Requests()); got != 2 {
+		t.Fatalf("identical input missed the cache: server saw %d requests, want 2", got)
 	}
 }
