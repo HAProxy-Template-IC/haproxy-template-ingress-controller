@@ -902,6 +902,10 @@ build-playground-wasm:
         - charts/haptic/charts/haproxytech/**/*
         - charts/haptic/charts/haproxy-ingress/**/*
         - charts/haptic/charts/nginx-ingress/**/*
+        # Owns the rate-limit, cache and API-gateway SPOE wiring, each
+        # with its own e2e shard — omitting it left those shards not
+        # running for the very changes they cover (#106's fix, !1522).
+        - charts/haptic/charts/haptic-annotations/**/*
         - charts/haptic/libraries/spoa-hub/**/*
         - charts/haptic/values.yaml
         - charts/haptic/templates/_helpers.tpl
@@ -941,6 +945,10 @@ build-playground-wasm:
         - charts/haptic/charts/haproxytech/**/*
         - charts/haptic/charts/haproxy-ingress/**/*
         - charts/haptic/charts/nginx-ingress/**/*
+        # Owns the rate-limit, cache and API-gateway SPOE wiring, each
+        # with its own e2e shard — omitting it left those shards not
+        # running for the very changes they cover (#106's fix, !1522).
+        - charts/haptic/charts/haptic-annotations/**/*
         - charts/haptic/libraries/spoa-hub/**/*
         - charts/haptic/values.yaml
         - charts/haptic/templates/_helpers.tpl
