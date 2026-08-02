@@ -38,7 +38,7 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 | --------------- | --------------------------------------- |
 | Hub               | `v0.12.0`                     |
 | `api-gateway`    | `v0.1.0`      |
-| `coraza`          | `v0.9.0`           |
+| `coraza`          | `v0.10.0`           |
 | `external-auth`   | `v0.5.0`    |
 | `fingerprinting`  | `v0.3.0`   |
 | `maxmind`         | `v0.4.0`          |
@@ -79,6 +79,97 @@ HAProxy pods when the bundled `spoa-hub` image changes.
 - **sso-auth** — handles OIDC and SAML2 single sign-on flows with encrypted session cookies.
 
 When several plugins are enabled, cheap source-IP shared rate limiting runs first (`025`) so rejected floods don't consume WAF CPU. Coraza follows (`050`), then external auth (`100`), then JSON request validation (`200`). Authenticated-consumer rate limits run in the selected backend after native authentication establishes the consumer identity.
+
+## Update the WAF rule set
+
+The Coraza plugin embeds an Open Worldwide Application Security Project (OWASP)
+Core Rule Set (CRS) v4 release, so the WAF has rules the moment you enable it.
+That embedded ruleset only moves when the plugin image does. To pick up a CRS
+release without waiting for a HAPTIC release, point HAPTIC at the release
+tarball:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        waf:
+          crs:
+            url: https://github.com/coreruleset/coreruleset/releases/download/v4.19.0/coreruleset-4.19.0-minimal.tar.gz
+```
+
+The URL must be `https://`. The ruleset decides what the WAF blocks, so a
+plaintext fetch could be replaced in transit and the substituted rules would
+still validate.
+
+HAPTIC fetches the archive, expands it, and writes the rule files to the HAProxy
+pods' general storage. The `.conf` files are prefixed `crs-`; the `.data` files
+keep their exact upstream names, because rules reference them by bare name
+(`@pmFromFile lfi-os-files.data`). Your `spoaHub.plugins.coraza.directives` are
+left alone apart from the two embedded-CRS includes, which are replaced by an
+include of the fetched files — so the rest of the block, including the order of
+`SecRuleEngine` and any `SecRule` you added, keeps working as written.
+
+### What a refresh costs
+
+Nothing you notice. Adopting or refreshing a ruleset reloads neither HAProxy nor
+the SPOA hub:
+
+1. HAPTIC re-fetches on `waf.crs.refreshInterval` (default `1h`) with a
+   conditional request. An unchanged ruleset answers `304` and stops there — no
+   re-render, no push, no recompile.
+2. A changed ruleset is pushed to the HAProxy pods as general files. Those files
+   carry `reloadOnPush: false`, because HAProxy itself never reads them.
+3. The Coraza plugin notices the new files, rebuilds its rules in place, and
+   swaps them in. Requests in flight finish against the rules they started with.
+
+Step 3 needs coraza plugin v0.10.0 or later, which is what this HAPTIC version
+bundles. If you pin an older SPOA hub bundle through `spoaHub.image`, the files
+arrive but nothing rebuilds, and the WAF keeps running the previous rules until
+something else reloads the hub.
+
+### Confirm which ruleset is running
+
+The plugin logs its rule count whenever it compiles — at startup and on every
+successful refresh. The embedded ruleset compiles to 661 rules:
+
+```console
+$ kubectl -n haptic logs -l app.kubernetes.io/component=loadbalancer -c spoa-hub | grep -i coraza
+Coraza default WAF initialized with 661 rules
+Coraza reloaded its rule set after an on-disk change
+```
+
+The rule count alone doesn't identify the ruleset, since a CRS release can
+compile to a similar number. List the files to see which one is on the pods —
+`crs-` prefixed files are there only when a fetched ruleset is in use:
+
+```bash
+kubectl -n haptic exec deploy/haptic-haproxy -c haproxy -- ls /etc/haproxy/general/ | grep '^crs-'
+```
+
+`plugin_coraza_rule_reloads_total{result="failed"}` counts refreshes that didn't
+compile. It should be `0`; anything else means the WAF is still serving the
+previous ruleset — see below.
+
+### If the ruleset can't be obtained
+
+The WAF is never left without rules. HAPTIC falls back in order:
+
+1. **The fetched ruleset**, when the fetch and expansion both succeed.
+2. **The ruleset already deployed to the fleet**, read back from the published
+   file resources. This survives a controller restart while the upstream is
+   down, which an in-memory cache wouldn't.
+3. **The plugin's embedded ruleset.** Older than upstream, but it's in the
+   binary and can't be absent.
+
+A failed fetch never fails the render, so an upstream outage can't block
+unrelated configuration changes. It also can't pass unnoticed: an archive that
+downloads but contains no `.conf` rule files is rejected outright, because a WAF
+compiling zero rules looks healthy while blocking nothing.
+
+The same rule applies at the last step. If a refreshed ruleset reaches the pods
+but doesn't compile, the plugin keeps the rules it's already running and counts
+the failure rather than dropping to an unarmed WAF.
 
 ## Tune a WAF policy from detect to deny
 
