@@ -115,6 +115,21 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", SharedFixturesNamespace,
 			"logs", "--all-containers", "--prefix", "--tail=200", "-l", "")
 
+		// Valkey and Sentinel stdout from the shared rate-limit store. A stalled
+		// failover is only diagnosable from Sentinel's own election log
+		// (+odown / +selected-slave / +promoted-slave / +failover-end-for-timeout);
+		// the controller and HAProxy logs show the downstream symptom and never
+		// say which node Sentinel picked. --prefix separates the two containers,
+		// which disagree by design during a failover.
+		dumpCommand(t, dumpDir, "rate-limit-store-logs.txt",
+			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"logs", "-l", labelSelectorRateLimitStore, "--all-containers", "--prefix", "--tail=5000")
+
+		// Replication as each node sees it. Sentinel can report a promotion that
+		// the node itself contradicts (role:slave with master_link_status:down),
+		// and only the node's own INFO shows that split.
+		dumpRateLimitStoreReplication(t, dumpDir)
+
 		dumpCommand(t, dumpDir, "controller-namespace-events.txt",
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
 			"get", "events", "--sort-by=.lastTimestamp")
@@ -271,6 +286,42 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"sh", "-c", `printf '@1 show errors\n' | socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock`)
+	}
+}
+
+// dumpRateLimitStoreReplication records each store node's own view of
+// replication, plus Sentinel's, so the two can be compared directly.
+//
+// The pair is what makes a stalled failover readable: Sentinel reporting a node
+// as `master` while that node reports `role:slave` — worse, with master_host
+// equal to its own address — is the signature of Sentinel holding one pod under
+// two identities and reconfiguring the node it just promoted.
+func dumpRateLimitStoreReplication(t *testing.T, dumpDir string) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	podsCmd := exec.CommandContext(ctx, "kubectl",
+		"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+		"get", "pods", "-l", labelSelectorRateLimitStore,
+		"-o", "jsonpath={.items[*].metadata.name}")
+	podsOut, err := podsCmd.Output()
+	if err != nil {
+		// The store only exists in the rate-limit shard; absence is normal.
+		return
+	}
+
+	for _, podBytes := range bytes.Fields(podsOut) {
+		pod := string(podBytes)
+		dumpCommand(t, dumpDir, "rate-limit-store-replication-"+pod+".txt",
+			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"exec", pod, "-c", "valkey", "--",
+			"valkey-cli", "-p", "6379", "info", "replication")
+		dumpCommand(t, dumpDir, "rate-limit-store-sentinel-"+pod+".txt",
+			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"exec", pod, "-c", "sentinel", "--",
+			"valkey-cli", "-p", "26379", "sentinel", "master", "haptic-rate-limit")
 	}
 }
 
