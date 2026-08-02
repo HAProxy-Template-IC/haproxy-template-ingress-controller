@@ -74,6 +74,14 @@ validationTests:
         description: The deployed ruleset is included, not the embedded one
       - type: not_contains
         target: file:spoa-hub-config.toml
+        pattern: 'Include \S*//'
+        description: >-
+          The rule path is not prefixed twice. pathResolver returns a relative
+          path in production but an absolute one here, so prefixing it
+          unconditionally doubles it, and the doubled path matches no staged
+          file -- admission then rejects the config via the empty-glob gate.
+      - type: not_contains
+        target: file:spoa-hub-config.toml
         pattern: 'Include @owasp_crs/\*\.conf'
         description: The embedded include is substituted away
       - type: contains

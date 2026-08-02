@@ -56,7 +56,24 @@ templateSnippets:
               }
             }
 
-            var includeLine = "Include " + pathResolver.GetBaseDir() + "/general/crs-*.conf"
+            // The directory segment comes from pathResolver, not a literal:
+            // dataplane.generalStorageDir is configurable, and a hardcoded
+            // "general" would point the Include at a directory the files were
+            // never pushed to, matching nothing.
+            var crsRelPath, crsPathErr = pathResolver.GetPath("crs-*.conf", "file")
+            if crsPathErr != nil {
+              fail("Fetched CRS: resolving the rule-file path failed: " + crsPathErr.Error())
+            }
+            // GetPath returns a path relative to the base dir in production but
+            // an absolute one under the validation harness, which points the
+            // resolver at a temp tree. Prefixing unconditionally doubles it
+            // there, and the doubled path matches no staged file, so admission
+            // rejects the config through the empty-glob gate.
+            var crsPath = tostring(crsRelPath)
+            if !hasPrefix(crsPath, "/") {
+              crsPath = pathResolver.GetBaseDir() + "/" + crsPath
+            }
+            var includeLine = "Include " + crsPath
             var confCount = 0
 
             if len(files) > 0 {
