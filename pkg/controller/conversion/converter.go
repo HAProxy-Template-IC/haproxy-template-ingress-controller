@@ -268,6 +268,7 @@ func convertValidators(crdValidators []v1alpha1.ValidatorConfig) []config.Valida
 			Name:       v.Name,
 			SocketPath: v.SocketPath,
 			Files:      append([]string(nil), v.Files...),
+			DataFiles:  append([]string(nil), v.DataFiles...),
 		}
 		if v.TimeoutMs != nil {
 			entry.TimeoutMs = *v.TimeoutMs

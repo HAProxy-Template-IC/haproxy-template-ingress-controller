@@ -1246,6 +1246,11 @@ func (in *ValidatorConfig) DeepCopyInto(out *ValidatorConfig) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.DataFiles != nil {
+		in, out := &in.DataFiles, &out.DataFiles
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.TimeoutMs != nil {
 		in, out := &in.TimeoutMs, &out.TimeoutMs
 		*out = new(int32)

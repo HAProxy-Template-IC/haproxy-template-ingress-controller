@@ -73,8 +73,19 @@ The validator MUST handle multiple concurrent connections from the same controll
 | `files` | array | yes (non-empty) | One or more files to validate. Order-preserving. The controller typically sends one file per request frame; the array is multi-element for forward compatibility. |
 | `files[].path` | string | yes | Operator-facing identifier echoed back in diagnostics. The validator MUST NOT open this path on disk; it processes `content` directly. |
 | `files[].content` | string | yes | UTF-8 file body. Format is whatever the validator expects for that path. |
+| `files[].kind` | string | no | `"config"` (default, omitted) or `"data"`. A `data` file is one the validator must NOT validate on its own — it is sent so that a `config` file referencing it can be checked. Validators that predate this field see only `config` files, since the controller omits the key unless it is `"data"`. |
 
 The controller does not interpret file contents in any way before sending; it relays the rendered bytes verbatim.
+
+### Data files
+
+A validator declares `spec.validators[i].dataFiles` (glob patterns) for files it needs in order to check the files it validates. Every match is attached to **every** request sent to that validator, marked `kind: "data"`, in the same frame as the config file.
+
+This exists because a validator sidecar runs in the **controller** pod and cannot read the HAProxy pod's filesystem. A hub config that `Include`s a WAF ruleset by path can only be checked if the ruleset's content travels with the request; otherwise the validator either reports a spurious "no such file" or — worse — silently validates a config whose referenced rules it never saw.
+
+A file matching both `files` and `dataFiles` is treated as data: validating a reference target standalone reports on the wrong thing, and parsing a SecLang ruleset as TOML would produce a parse error rather than a finding about the config that includes it.
+
+The result cache keys on the data files' content as well as the config file's, so a ruleset change re-validates a byte-identical config.
 
 ## Response
 

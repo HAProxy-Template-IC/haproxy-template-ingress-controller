@@ -81,6 +81,24 @@ type ValidatorConfig struct {
 	// +listType=set
 	Files []string `json:"files"`
 
+	// DataFiles lists glob patterns for files this validator needs in order
+	// to check the files it validates, but must not validate on their own.
+	//
+	// Every matching file is attached to every request sent to this
+	// validator, marked as data. The validator does not parse them; it
+	// resolves references from the validated file into them.
+	//
+	// A WAF ruleset is the motivating case: the validator sidecar runs in
+	// the controller pod and cannot read the HAProxy pod's filesystem, so a
+	// hub config that `Include`s a ruleset by path can only be checked if
+	// the ruleset's content travels with the request.
+	//
+	// A file matching both `files` and `dataFiles` is treated as data —
+	// validating a reference target standalone reports on the wrong thing.
+	// +optional
+	// +listType=set
+	DataFiles []string `json:"dataFiles,omitempty"`
+
 	// TimeoutMs is the per-call deadline, in milliseconds, covering
 	// the request-response cycle for one file (connect-or-acquire +
 	// write + read).

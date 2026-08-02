@@ -50,6 +50,16 @@ type ManagerConfig struct {
 	// Patterns follow Go's `path/filepath.Match` rules; absolute
 	// paths only.
 	Files []string
+	// DataFiles is the list of glob patterns for files this validator needs
+	// in order to check the ones it validates, but must not validate on
+	// their own — a WAF ruleset a hub config `Include`s. Every matching
+	// file is attached to every request sent to this validator, marked
+	// FileKindData.
+	//
+	// A file matching both lists is data: it is the reference target, and
+	// parsing it as a config would produce a spurious error rather than a
+	// finding about the config that references it.
+	DataFiles []string
 	// Timeout is the per-call deadline for one (file, validator)
 	// request-response cycle. Zero falls back to DefaultTimeout.
 	Timeout time.Duration
@@ -113,6 +123,11 @@ func NewManager(logger *slog.Logger, configs []ManagerConfig) (*Manager, error) 
 				return nil, fmt.Errorf("validator %q: invalid file glob %q: %w", cfg.Name, g, err)
 			}
 		}
+		for _, g := range cfg.DataFiles {
+			if _, err := filepath.Match(g, "/probe"); err != nil {
+				return nil, fmt.Errorf("validator %q: invalid data-file glob %q: %w", cfg.Name, g, err)
+			}
+		}
 		clients[cfg.Name] = NewClient(cfg.Name, cfg.SocketPath, cfg.Timeout, cfg.MaxConnections)
 	}
 	return &Manager{
@@ -171,6 +186,9 @@ type dispatchTask struct {
 	validatorName string
 	client        *Client
 	file          File
+	// dataFiles ride along with every request to this validator so the
+	// config file can be checked against what it references.
+	dataFiles []File
 }
 
 // ValidateAll fans the rendered files out to every configured
@@ -203,11 +221,22 @@ func (m *Manager) ValidateAll(ctx context.Context, files []File) *ValidationOutc
 	var tasks []dispatchTask
 	for _, vcfg := range m.configs {
 		client := m.clients[vcfg.Name]
+		data := matchFiles(files, vcfg.DataFiles)
+		for i := range data {
+			data[i].Kind = FileKindData
+		}
 		for _, f := range matchFiles(files, vcfg.Files) {
+			// Data wins over config for a file matching both globs: it is
+			// the reference target, and validating it standalone would
+			// report on the wrong thing.
+			if matchesAny(f.Path, vcfg.DataFiles) {
+				continue
+			}
 			tasks = append(tasks, dispatchTask{
 				validatorName: vcfg.Name,
 				client:        client,
 				file:          f,
+				dataFiles:     data,
 			})
 		}
 	}
@@ -249,7 +278,7 @@ func (m *Manager) ValidateAll(ctx context.Context, files []File) *ValidationOutc
 		go func(task dispatchTask) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			resp := m.validateOne(ctx, task.client, task.validatorName, task.file)
+			resp := m.validateOne(ctx, task.client, task.validatorName, task.file, task.dataFiles)
 			mu.Lock()
 			warnings = append(warnings, resp.Warnings...)
 			errs = append(errs, resp.Errors...)
@@ -288,8 +317,18 @@ func sortDiagnostics(diags []Diagnostic) {
 
 // validateOne dispatches a single file to a validator with cache
 // hit-skip. Used internally by ValidateAll.
-func (m *Manager) validateOne(ctx context.Context, client *Client, validatorName string, file File) *Response {
-	key := NewCacheKey(validatorName, file.Path, []byte(file.Content))
+func (m *Manager) validateOne(
+	ctx context.Context,
+	client *Client,
+	validatorName string,
+	file File,
+	dataFiles []File,
+) *Response {
+	// The key covers the data files too. Keying on the config file alone
+	// would serve a cached verdict for an unchanged hub config after its
+	// ruleset changed underneath — precisely the case the data files exist
+	// to check, and the one where a stale "valid" is most expensive.
+	key := NewCacheKey(validatorName, file.Path, []byte(file.Content), dataFiles...)
 	if cached, hit := m.cache.Get(key); hit {
 		m.logger.Debug("Cache hit",
 			slog.String("validator", validatorName),
@@ -299,7 +338,7 @@ func (m *Manager) validateOne(ctx context.Context, client *Client, validatorName
 
 	req := &Request{
 		ProtocolVersion: ProtocolVersion,
-		Files:           []File{file},
+		Files:           append([]File{file}, dataFiles...),
 	}
 	resp, err := client.Validate(ctx, req)
 	if err != nil {
@@ -323,6 +362,17 @@ func (m *Manager) validateOne(ctx context.Context, client *Client, validatorName
 	}
 	m.cache.Put(key, resp)
 	return resp
+}
+
+// matchesAny reports whether path matches any of the globs. A malformed glob
+// cannot reach here — the Manager rejects those at construction.
+func matchesAny(path string, globs []string) bool {
+	for _, g := range globs {
+		if ok, err := filepath.Match(g, path); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // matchFiles returns the subset of `files` whose path matches any
