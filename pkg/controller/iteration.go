@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
@@ -57,7 +58,12 @@ func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *corec
 		}
 		configs = append(configs, mc)
 	}
-	mgr, err := pluggablevalidator.NewManager(logger, configs)
+	// The rendered files land under the parent of the maps directory on the
+	// HAProxy pod — the same derivation the renderer uses for the template
+	// PathResolver's BaseDir, so what a validator is told matches what the
+	// templates emit.
+	mgr, err := pluggablevalidator.NewManager(logger, configs,
+		pluggablevalidator.WithStagedRoot(filepath.Dir(cfg.Dataplane.MapsDir)))
 	if err != nil {
 		logger.Error("Pluggable-validator manager construction failed; feature disabled for this iteration",
 			slog.Any("error", err))

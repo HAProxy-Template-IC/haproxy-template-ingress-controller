@@ -1,0 +1,153 @@
+# SPOA hub library — CRS source, batch 25.
+#
+# Replaces the ruleset compiled into the coraza plugin with one fetched over
+# HTTP, so a CRS release can be adopted without rebuilding the plugin image.
+# Off unless extraContext.waf.crs.url is set; the embedded CRS stays the
+# default and the floor.
+#
+# Delivery: http.Fetch -> untar_gz -> general files (reloadOnPush: false, so
+# HAProxy is not reloaded for files it never reads) -> the hub's file-watch
+# sees the TOML change and the coraza plugin recompiles its WAF.
+#
+# Refresh belongs to the fetcher, not this template: `delay` registers a
+# refresher that issues a conditional GET, and a 304 or an unchanged checksum
+# is a silent no-op — no re-render, no push, no recompile.
+
+templateSnippets:
+  # Resolves where the ruleset comes from and registers its files. Emits
+  # nothing. Sets, in shared state:
+  #   gf["wafCrsSource"]   "fetched" | "last-deployed" | "embedded"
+  #   gf["wafCrsIncludes"] SecLang Include line, "" when embedded
+  #
+  # `.conf` entries are prefixed `crs-` so the Include is a clean `crs-*.conf`
+  # instead of an enumeration of CRS's own filename prefixes. `.data` entries
+  # keep their exact upstream names: rules reference them by bare name
+  # (`@pmFromFile lfi-os-files.data`) resolved relative to the including
+  # `.conf`, so prefixing them would break every @pm rule.
+  #
+  # Not wrapped in shared.ComputeIfAbsent: that recovers panics, which would
+  # swallow the fail() calls below. Guarded on the shared key instead, and
+  # fileRegistry.Register is idempotent for identical content anyway.
+  util-waf-crs-source:
+    template: |
+      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- if gf["wafCrsSource"] == nil -%}
+        {%- var crs = extraContext | dig("waf", "crs") | fallback(map[string]any{}) -%}
+        {%- var url = crs | dig_string("", "url") -%}
+        {%- gf["wafCrsSource"] = "embedded" -%}
+        {%- gf["wafCrsIncludes"] = "" -%}
+        {%- if url != "" -%}
+          {%%
+            // critical:false — a failed fetch must never fail the render. That
+            // would block every unrelated configuration change until the
+            // upstream recovered; the ladder below is what protects the WAF.
+            var archive, fetchErr = http.Fetch(url, map[string]any{
+              "delay":    crs | dig_string("1h", "refreshInterval"),
+              "timeout":  crs | dig_string("30s", "timeout"),
+              "retries":  toint(crs | dig("retries") | fallback(3)),
+              "critical": false,
+            })
+            var files map[string]string = nil
+            if fetchErr == nil {
+              var expanded, untarErr = untar_gz(tostring(archive))
+              if untarErr == nil {
+                files = expanded
+              }
+            }
+
+            var includeLine = "Include " + pathResolver.GetBaseDir() + "/general/crs-*.conf"
+            var confCount = 0
+
+            if len(files) > 0 {
+              for _, name := range keys(files) {
+                var parts = split(name, "/")
+                var base = parts[len(parts)-1]
+                if hasSuffix(base, ".conf") {
+                  var _, err = fileRegistry.Register("file", "crs-"+base, files[name], false)
+                  if err != nil {
+                    fail("Fetched CRS: registering rule file '" + base + "' failed: " + err.Error())
+                  }
+                  confCount = confCount + 1
+                } else if hasSuffix(base, ".data") {
+                  var _, derr = fileRegistry.Register("file", base, files[name], false)
+                  if derr != nil {
+                    fail("Fetched CRS: registering data file '" + base + "' failed: " + derr.Error())
+                  }
+                }
+              }
+              if confCount == 0 {
+                fail("extraContext.waf.crs.url served an archive with no .conf rule files, so the WAF would compile no rules. Point it at an OWASP CRS release tarball.")
+              }
+              gf["wafCrsSource"] = "fetched"
+              gf["wafCrsIncludes"] = includeLine
+            } else {
+              // Tier 2: the ruleset already on the fleet, read back from the
+              // published aux-file CRDs. Survives a controller restart with the
+              // upstream down, which the in-memory fetch cache does not.
+              for _, name := range keys(currentFiles) {
+                if hasPrefix(name, "crs-") && hasSuffix(name, ".conf") {
+                  var _, kerr = fileRegistry.Register("file", name, tostring(currentFiles[name]), false)
+                  if kerr != nil {
+                    fail("Keeping deployed CRS: re-registering '" + name + "' failed: " + kerr.Error())
+                  }
+                  confCount = confCount + 1
+                } else if hasSuffix(name, ".data") {
+                  var _, kderr = fileRegistry.Register("file", name, tostring(currentFiles[name]), false)
+                  if kderr != nil {
+                    fail("Keeping deployed CRS: re-registering '" + name + "' failed: " + kderr.Error())
+                  }
+                }
+              }
+              if confCount > 0 {
+                gf["wafCrsSource"] = "last-deployed"
+                gf["wafCrsIncludes"] = includeLine
+              }
+              // Tier 3 is the default set above: the plugin's embedded CRS.
+              // Older than upstream, but in the binary and therefore never
+              // absent — the WAF degrades, it is never unarmed.
+            }
+          %%}
+        {%- end -%}
+      {%- end -%}
+
+  # Rewrites the operator's coraza `directives` to use the fetched ruleset.
+  #
+  # Substitutes the two embedded-CRS includes rather than replacing the whole
+  # block, so everything else the operator set — @coraza.conf-recommended,
+  # SecRxPreFilter, SecRuleEngine and their ORDER, which decides whether the
+  # WAF blocks or only detects — is preserved exactly.
+  #
+  # Fails when neither embedded include is present and a URL is set: silently
+  # emitting nothing would leave a WAF with no ruleset, looking healthy.
+  util-waf-crs-directives:
+    template: |-
+      {%- macro CrsDirectives(base string) string %}
+        {%%
+          var _ = render "util-waf-crs-source"
+          var gfRaw = shared.Get("globalFeatures")
+          var includes = ""
+          if gfRaw != nil {
+            includes = tostring(gfRaw.(map[string]any) | dig_string("", "wafCrsIncludes"))
+          }
+          if includes == "" {
+            show base
+          } else {
+            var out = base
+            var hadSetup = out contains "Include @crs-setup.conf.example"
+            var hadRules = out contains "Include @owasp_crs/*.conf"
+            if !hadSetup && !hadRules {
+              fail("extraContext.waf.crs.url is set but spoaHub.plugins.coraza.directives no longer includes the embedded CRS (@crs-setup.conf.example / @owasp_crs/*.conf), so HAPTIC cannot tell where to substitute the fetched ruleset. Restore those includes, or clear waf.crs.url and Include the ruleset yourself.")
+            }
+            if hadSetup {
+              out = replace(out, "Include @crs-setup.conf.example", includes)
+              if hadRules {
+                out = replace(out, "Include @owasp_crs/*.conf", "")
+              }
+            } else {
+              out = replace(out, "Include @owasp_crs/*.conf", includes)
+            }
+            show out
+          }
+        %%}
+      {%- end %}

@@ -113,6 +113,19 @@ func dataFileFootprint(files []File) (count, bytes int) {
 type Request struct {
 	ProtocolVersion int    `json:"protocol_version"`
 	Files           []File `json:"files"`
+	// StagedRoot is the directory the data files' paths are relative to, as
+	// the process that will load them sees it at runtime.
+	//
+	// A validated config references its files by their runtime path
+	// (`/etc/haproxy/general/crs-*.conf`) while the request carries them under
+	// the controller's own identifiers (`general/crs-….conf`). The validator
+	// cannot bridge the two on its own, and inferring the link by matching a
+	// path suffix would resolve a mistyped directory just as readily as the
+	// right one — so it is stated rather than guessed.
+	//
+	// Omitted when empty, so a request without data files is byte-identical to
+	// one from before this field existed.
+	StagedRoot string `json:"staged_root,omitempty"`
 }
 
 // Diagnostic is one finding in a Response.

@@ -1,0 +1,151 @@
+# SPOA hub library — fetched-CRS validation tests
+#
+# The fetch itself is covered by Go tests (pkg/templating's untar_gz): a real
+# gzip tarball is binary and cannot round-trip through the CR's JSON, so no
+# httpResources fixture can carry one. What these tests own is the part that
+# decides whether the WAF ends up armed — the fallback ladder and the failure
+# modes — none of which need an archive.
+
+validationTests:
+  test-spoa-hub-crs-embedded-by-default:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: "With no waf.crs.url the coraza directives keep the plugin's embedded CRS includes untouched."
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub: &crsHub
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              Include @coraza.conf-recommended
+              Include @crs-setup.conf.example
+              Include @owasp_crs/*.conf
+              SecRuleEngine On
+            params: ""
+    assertions:
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'Include @owasp_crs/\*\.conf'
+        description: The embedded ruleset is used when no URL is configured
+      - type: not_contains
+        target: file:spoa-hub-config.toml
+        pattern: 'Include \S*/general/crs-'
+        description: No fetched-ruleset include is emitted
+
+  test-spoa-hub-crs-falls-back-to-last-deployed:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    # No httpResources fixture, so the fetch yields nothing — the same state an
+    # upstream outage produces. currentFiles carries what the fleet is already
+    # running, and that must be kept rather than silently dropping to the older
+    # embedded ruleset.
+    description: "When the ruleset cannot be fetched, the CRS already deployed to the fleet is kept and re-registered."
+    extraContext:
+      haproxyVersion: "3.2"
+      waf:
+        crs:
+          url: https://example.test/coreruleset.tar.gz
+      spoaHub: *crsHub
+    currentFiles:
+      crs-REQUEST-901-INITIALIZATION.conf: |
+        SecAction "id:901001,phase:1,pass,nolog"
+      lfi-os-files.data: |
+        /etc/passwd
+    assertions:
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'Include \S*/general/crs-\*\.conf'
+        description: The deployed ruleset is included, not the embedded one
+      - type: not_contains
+        target: file:spoa-hub-config.toml
+        pattern: 'Include @owasp_crs/\*\.conf'
+        description: The embedded include is substituted away
+      - type: contains
+        target: file:crs-REQUEST-901-INITIALIZATION.conf
+        pattern: 'id:901001'
+        description: The deployed rule file is re-registered so it survives the reconcile
+      - type: contains
+        target: file:lfi-os-files.data
+        pattern: '/etc/passwd'
+        description: "@pmFromFile data files are kept under their bare upstream names"
+
+  test-spoa-hub-crs-unfetchable-with-nothing-deployed-uses-embedded:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    # First install with the upstream unreachable. The WAF must still come up
+    # armed — degraded to the plugin's embedded ruleset, never with no rules.
+    description: "A first install whose CRS fetch fails falls through to the embedded ruleset rather than rendering a WAF with no rules."
+    extraContext:
+      haproxyVersion: "3.2"
+      waf:
+        crs:
+          url: https://example.test/coreruleset.tar.gz
+      spoaHub: *crsHub
+    assertions:
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'Include @owasp_crs/\*\.conf'
+        description: The embedded ruleset is the floor, so the WAF is never unarmed
+      - type: not_contains
+        target: file:spoa-hub-config.toml
+        pattern: 'Include \S*/general/crs-\*\.conf'
+        description: No include is emitted for files that were never registered
+
+  test-spoa-hub-crs-requires-substitutable-directives:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    # Emitting nothing here would leave a WAF with no ruleset that still
+    # renders, validates and looks healthy — so it has to be loud.
+    description: "Setting waf.crs.url while the coraza directives no longer include the embedded CRS fails the render with an actionable message."
+    extraContext:
+      haproxyVersion: "3.2"
+      waf:
+        crs:
+          url: https://example.test/coreruleset.tar.gz
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              Include @coraza.conf-recommended
+              SecRuleEngine On
+            params: ""
+    currentFiles:
+      crs-REQUEST-901-INITIALIZATION.conf: |
+        SecAction "id:901001,phase:1,pass,nolog"
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'cannot tell where to substitute the fetched ruleset'
+        description: The operator is told what to restore rather than getting a silently ruleless WAF

@@ -91,51 +91,79 @@ type Manager struct {
 	clients map[string]*Client
 	cache   *ResultCache
 	configs []ManagerConfig // preserved for Healthy() iteration order
+	// stagedRoot is where the rendered files will live on the HAProxy pod. It
+	// describes the controller's own file namespace, so it is one value for
+	// every validator rather than a per-validator setting.
+	stagedRoot string
+}
+
+// ManagerOption configures a Manager beyond its per-validator entries.
+type ManagerOption func(*Manager)
+
+// WithStagedRoot declares the directory rendered files will live in at
+// runtime, so a validator can resolve a config's references to the data files
+// sent alongside it. See Request.StagedRoot.
+func WithStagedRoot(root string) ManagerOption {
+	return func(m *Manager) { m.stagedRoot = root }
+}
+
+// validateManagerConfig checks one validator entry against the entries already
+// accepted. Split out of NewManager to keep that function under the cognitive-
+// complexity limit as the config surface grows.
+func validateManagerConfig(cfg *ManagerConfig, seen map[string]*Client) error {
+	if cfg.Name == "" {
+		return errors.New("validator config: empty name")
+	}
+	if cfg.SocketPath == "" {
+		return fmt.Errorf("validator %q: empty socketPath", cfg.Name)
+	}
+	if len(cfg.Files) == 0 {
+		return fmt.Errorf("validator %q: empty files glob list", cfg.Name)
+	}
+	if _, exists := seen[cfg.Name]; exists {
+		return fmt.Errorf("validator %q: duplicate name", cfg.Name)
+	}
+	// Every glob is checked by matching an arbitrary string: filepath.Match
+	// returns ErrBadPattern for a syntactically broken pattern, and the match
+	// result itself is irrelevant.
+	for _, g := range cfg.Files {
+		if _, err := filepath.Match(g, "/probe"); err != nil {
+			return fmt.Errorf("validator %q: invalid file glob %q: %w", cfg.Name, g, err)
+		}
+	}
+	for _, g := range cfg.DataFiles {
+		if _, err := filepath.Match(g, "/probe"); err != nil {
+			return fmt.Errorf("validator %q: invalid data-file glob %q: %w", cfg.Name, g, err)
+		}
+	}
+	return nil
 }
 
 // NewManager builds a Manager from the parsed `spec.validators`
 // slice. A zero-length slice produces a no-op Manager whose
 // Configured() returns false.
-func NewManager(logger *slog.Logger, configs []ManagerConfig) (*Manager, error) {
+func NewManager(logger *slog.Logger, configs []ManagerConfig, opts ...ManagerOption) (*Manager, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	clients := make(map[string]*Client, len(configs))
 	for _, cfg := range configs {
-		if cfg.Name == "" {
-			return nil, errors.New("validator config: empty name")
-		}
-		if cfg.SocketPath == "" {
-			return nil, fmt.Errorf("validator %q: empty socketPath", cfg.Name)
-		}
-		if len(cfg.Files) == 0 {
-			return nil, fmt.Errorf("validator %q: empty files glob list", cfg.Name)
-		}
-		if _, exists := clients[cfg.Name]; exists {
-			return nil, fmt.Errorf("validator %q: duplicate name", cfg.Name)
-		}
-		// Validate every glob is well-formed by trying to match an
-		// arbitrary string. filepath.Match returns ErrBadPattern
-		// for syntactically broken globs; the actual match result
-		// is irrelevant.
-		for _, g := range cfg.Files {
-			if _, err := filepath.Match(g, "/probe"); err != nil {
-				return nil, fmt.Errorf("validator %q: invalid file glob %q: %w", cfg.Name, g, err)
-			}
-		}
-		for _, g := range cfg.DataFiles {
-			if _, err := filepath.Match(g, "/probe"); err != nil {
-				return nil, fmt.Errorf("validator %q: invalid data-file glob %q: %w", cfg.Name, g, err)
-			}
+		if err := validateManagerConfig(&cfg, clients); err != nil {
+			return nil, err
 		}
 		clients[cfg.Name] = NewClient(cfg.Name, cfg.SocketPath, cfg.Timeout, cfg.MaxConnections)
 	}
-	return &Manager{
+
+	m := &Manager{
 		logger:  logger.With(slog.String("component", "pluggablevalidator")),
 		clients: clients,
 		cache:   NewResultCache(DefaultCacheCapacity),
 		configs: append([]ManagerConfig(nil), configs...),
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m, nil
 }
 
 // Configured reports whether any validators are registered. Callers
@@ -339,6 +367,7 @@ func (m *Manager) validateOne(
 	req := &Request{
 		ProtocolVersion: ProtocolVersion,
 		Files:           append([]File{file}, dataFiles...),
+		StagedRoot:      m.stagedRoot,
 	}
 	resp, err := client.Validate(ctx, req)
 	if err != nil {

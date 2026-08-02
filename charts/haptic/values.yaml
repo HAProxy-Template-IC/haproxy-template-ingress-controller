@@ -930,6 +930,34 @@ controller:
             # Enforcement for default-on routes without a policy or route
             # override. Ignored in opt-in mode. Valid values: deny, detect.
             defaultEnforcement: deny
+          # Replaces the OWASP CRS compiled into the coraza plugin with one
+          # fetched over HTTP, so a CRS release can be adopted without
+          # rebuilding and redeploying the plugin image.
+          #
+          # Empty (the default) uses the embedded ruleset. When set, HAPTIC
+          # substitutes the fetched files for the `@crs-setup.conf.example` and
+          # `@owasp_crs/*.conf` includes in spoaHub.plugins.coraza.directives;
+          # everything else there, including the ORDER that decides whether the
+          # WAF blocks or only detects, is left alone.
+          #
+          # The URL must serve a gzip-compressed tar of a CRS release. HAPTIC
+          # writes each `.conf` to general storage prefixed `crs-`, and each
+          # `.data` under its exact upstream name — CRS rules reference those by
+          # bare name via @pmFromFile, so they cannot be renamed.
+          #
+          # If the ruleset cannot be obtained, HAPTIC falls back in order:
+          # the last ruleset deployed to the fleet, then the plugin's embedded
+          # CRS. A failed fetch never fails the render, so an upstream outage
+          # cannot block unrelated configuration changes.
+          crs:
+            url: ""
+            # Refresh interval. The fetcher issues a conditional GET
+            # (If-None-Match / If-Modified-Since); a 304 or unchanged content
+            # costs nothing — no re-render, no push, no WAF recompile.
+            refreshInterval: 1h
+            timeout: 30s
+            retries: 3
+
           # Capabilities granted to Ingress authors whenever an administrator-
           # owned WAF baseline exists: reusable policies are enabled or dispatch
           # mode is default-on. They are deliberately outside `policies` because
