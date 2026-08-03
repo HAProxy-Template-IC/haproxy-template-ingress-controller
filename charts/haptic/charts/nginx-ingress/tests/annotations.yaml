@@ -217,7 +217,7 @@ validationTests:
         pattern: "http-after-response set-header Access-Control-Allow-Origin '%\\[var\\(txn\\.cors_origin\\)\\]'"
       - type: contains
         target: haproxy.cfg
-        pattern: "http-after-response set-header Vary Origin"
+        pattern: "http-after-response add-header Vary Origin"
       - type: contains
         target: haproxy.cfg
         pattern: "status 204 .*METH_OPTIONS"

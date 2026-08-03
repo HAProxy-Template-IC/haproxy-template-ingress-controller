@@ -74,6 +74,67 @@ templateSnippets:
   # ==========================================================================
   # API-key check + consumer identity (backend-directives; inherit_context)
   # ==========================================================================
+  # ==========================================================================
+  # Client-leg API-key enforcement for CACHE-ENABLED routes.
+  #
+  # backend-directives-806 puts the identity and the 401 in the application
+  # backend. A cache-enabled route never enters that backend on the client leg —
+  # frontend-filters-865 switches it to `backend varnish_cache` — so without this
+  # the deny never runs for a cached request, and an uncredentialed caller is
+  # served the authenticated response straight from cache. Varnish's builtin does
+  # not save us: it only refuses to serve cached responses to requests carrying
+  # Authorization or Cookie, and an API key is neither.
+  #
+  # Emitted at band 860, before the cache switch. Every rule is scoped to its own
+  # route by resource_id. The backend copy stays: it is what enforces on the
+  # cache-miss origin leg, and its `unless { var(txn.haptic_consumer) -m found }`
+  # guard makes the second execution idempotent.
+  # ==========================================================================
+  frontend-filters-860-haptic-api-key-cache-routes:
+    template: |
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
+          {%- var key = ns + "/" + name %}
+          {%- var apiKeySecret = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-secret"] %}
+          {%- if apiKeySecret != "" %}
+            {%- var secretNs = ns %}
+            {%- var secretName = apiKeySecret %}
+            {%- if strings_contains(apiKeySecret, "/") %}
+              {%- var sparts = split(apiKeySecret, "/") %}
+              {%- secretNs = sparts[0] %}
+              {%- secretName = sparts[1] %}
+            {%- end %}
+            {%- var hdr = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-header"] %}
+            {%- var qparam = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-query"] %}
+            {%- var fetch = "" %}
+            {%- if qparam != "" %}
+              {%- fetch = "url_param(" + ValidateConfigValue(qparam, "haproxy-haptic.org/api-key-query", key, false) + ")" %}
+            {%- else %}
+              {%- var h = hdr %}
+              {%- if h == "" %}{%- h = "X-API-Key" %}{%- end %}
+              {%- fetch = "req.hdr(" + ValidateConfigValue(h, "haproxy-haptic.org/api-key-header", key, false) + ")" %}
+            {%- end %}
+            {%- var mapName = "haptic-apikeys-" + secretNs + "-" + secretName + ".map" %}
+            {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_apikey_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
+            {%- var secret, _ = secretAny.(*resources.secrets.T) %}
+      {{ "\n" }}# haptic/api-key on the client leg — cache-enabled route ({{ key }})
+            {%- if secret == nil %}
+      http-request set-var(txn.denied_by) str(api_key_unavailable) if { var(txn.resource_id) -m str {{ key }} }
+      http-request deny deny_status 503 if { var(txn.resource_id) -m str {{ key }} }
+            {%- else %}
+              {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
+      http-request set-var(txn.haptic_apikey) {{ fetch }} if { var(txn.resource_id) -m str {{ key }} }
+      http-request set-var(txn.denied_by) str(api_key) if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_apikey),map({{ mapPath }}) -m found }
+      http-request deny deny_status 401 if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_apikey),map({{ mapPath }}) -m found }
+      http-request set-var(txn.haptic_consumer) var(txn.haptic_apikey),map({{ mapPath }}) if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_consumer) -m found }
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
   backend-directives-806-haptic-api-key:
     template: |
       {#-
