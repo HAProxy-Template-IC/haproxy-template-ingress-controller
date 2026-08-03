@@ -250,6 +250,8 @@ render.
 | `term` | HAProxy's 4-character termination state — separates a client abort from a server abort, a timeout, and a response HAProxy generated itself |
 | `resource` | `<namespace>/<name>` of the Ingress, HTTPRoute or custom resource that owns the matched route — the join key back to Kubernetes |
 | `denied_by` | Which gate blocked the request; empty when the backend answered |
+| `route` | The matched route **key** — the path template an operator wrote, host included, with a prefix match marked `*` (`echo.example.com/api/*`). Unlike `path` it's bounded by the number of rules, which is what makes it usable as a metric label. Present when tracing is on, or when [request metrics](operations/monitoring.md#request-metrics) use it for their `path` label; it costs a four-step map-lookup cascade per request, so it's absent when neither wants it |
+| `bytes_in` | Request **body** bytes from the client (`%U`) — no request line or headers, which HAProxy doesn't count. Present only when the `request_size` request metric is enabled, since nothing else reads it |
 
 Template libraries add fields for the features you configure, each only when
 that feature is in use: `waf_action`, `waf_rule_id` and `waf_score`;
@@ -478,7 +480,7 @@ apply at the destination.
 ### Vector sidecar
 
 Every HAProxy pod runs a [Vector](https://vector.dev) container by default
-(`vector.enabled`). It does two jobs.
+(`vector.enabled`). It does three jobs.
 
 **It receives the access log.** HAProxy writes records to a Unix datagram socket
 (`vector.socketPath`, default `/run/vector/haproxy.sock`) on a volume shared with
@@ -498,6 +500,17 @@ vector:
     enabled: true
 ```
 
+**It derives per-request metrics from the log.** One counter and six histograms,
+dimensioned by route rather than request URI, with the upstream call split into
+connect, headers and full response — signals HAProxy's own exporter doesn't offer.
+See [Request metrics](operations/monitoring.md#request-metrics).
+
+The two byte-size histograms are exported on a second port
+(`vector.sizeMetricsPort`, default `9599`), because Vector's exporter takes one
+set of histogram buckets per sink and bytes and seconds are different domains.
+That port exists only while a size family is enabled, and the same `PodMonitor`
+declares both endpoints.
+
 Because Vector reaches both endpoints over loopback, neither needs to answer on the
 pod IP, and the chart binds them accordingly:
 
@@ -505,7 +518,7 @@ pod IP, and the chart binds them accordingly:
 |---|---|---|
 | HAProxy `/metrics` | answered only for connections arriving on `127.0.0.0/8` | answered on any address |
 | Hub `/metrics` (`spoaHub.hub.metricsAddr: auto`) | `127.0.0.1:9095` | `0.0.0.0:9095` |
-| Prometheus scrapes | `vector.podMonitor` (one target) | `spoaHub.monitoring.podMonitor` (two targets) |
+| Prometheus scrapes | `vector.podMonitor` (`9598`, plus `9599` while a size family is on) | `spoaHub.monitoring.podMonitor` (two targets) |
 
 HAProxy's `/healthz` and `/ready` stay reachable on the pod IP in both cases — the
 kubelet's probes connect there, so only the exporter is restricted, not the

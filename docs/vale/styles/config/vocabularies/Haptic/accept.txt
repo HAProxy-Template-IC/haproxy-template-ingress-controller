@@ -168,6 +168,8 @@ HAProxyTemplateConfig
 HAPTIC
 HAPTIC's
 hardcoded
+hardcodes
+hardcoding
 HEAD
 healthz
 Helm
@@ -302,6 +304,8 @@ PrometheusRule
 protobuf
 PROXY
 PUT
+quantile
+quantiles
 Quantizes
 QUIC
 RBAC

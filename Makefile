@@ -60,6 +60,8 @@ version: ## Display version information
 lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	@echo "Checking test inventory (every test must run somewhere)..."
 	./scripts/check-test-inventory.sh
+	@echo "Checking template libraries parse as YAML..."
+	./scripts/check-library-yaml.sh
 	@echo "Checking migration-coverage drift (declared vs. annotations read)..."
 	./scripts/check-migration-coverage.sh
 	@echo "Checking vendor annotation docs coverage..."

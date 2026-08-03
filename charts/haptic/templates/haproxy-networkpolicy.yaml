@@ -58,10 +58,20 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
 
-    # Allow stats checks
+    # Stats plus the vector exporters. With vector on, HAProxy's own /metrics
+    # answers over loopback only, so `stats` alone leaves Prometheus nothing to
+    # scrape and the failure is silent.
     - ports:
         - port: {{ $ports.stats }}
           protocol: TCP
+        {{- if .Values.vector.enabled }}
+        - port: {{ .Values.vector.metricsPort | int }}
+          protocol: TCP
+        {{- if include "haptic.vector.sizeExporterEnabled" . }}
+        - port: {{ .Values.vector.sizeMetricsPort | int }}
+          protocol: TCP
+        {{- end }}
+        {{- end }}
       from:
         {{- with $np.allowedSources }}
         {{- toYaml . | nindent 8 }}

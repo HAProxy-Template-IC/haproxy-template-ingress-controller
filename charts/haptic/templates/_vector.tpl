@@ -52,29 +52,40 @@ guard that lives only here would not protect a hand-written CR.
 {{- if not (kindIs "map" $v) -}}
   {{- fail "vector must be a map." -}}
 {{- end -}}
+{{- /* `global` is Helm's, not the operator's: naming the subchart `vector` makes
+       Helm inject .Values.vector.global into its values namespace. */ -}}
 {{- range $field := keys $v -}}
-  {{- if not (has $field (list "enabled" "image" "metricsPort" "socketPath" "scrapeIntervalSecs" "excludeMetrics" "excludeMaintServerMetrics" "omitEmptyLogFields" "logMetrics" "resources" "securityContext" "podMonitor" "extraVolumeMounts")) -}}
-    {{- fail (printf "vector contains unknown field %q. Valid fields: enabled, image, metricsPort, socketPath, scrapeIntervalSecs, excludeMetrics, excludeMaintServerMetrics, omitEmptyLogFields, resources, securityContext, podMonitor, extraVolumeMounts." $field) -}}
+  {{- if eq $field "global" -}}{{- continue -}}{{- end -}}
+  {{- if not (has $field (list "enabled" "image" "metricsPort" "sizeMetricsPort" "socketPath" "scrapeIntervalSecs" "excludeMetrics" "excludeMaintServerMetrics" "omitEmptyLogFields" "logMetrics" "requestMetrics" "resources" "securityContext" "podMonitor" "extraVolumeMounts")) -}}
+    {{- fail (printf "vector contains unknown field %q. Valid fields: enabled, image, metricsPort, sizeMetricsPort, socketPath, scrapeIntervalSecs, excludeMetrics, excludeMaintServerMetrics, omitEmptyLogFields, logMetrics, requestMetrics, resources, securityContext, podMonitor, extraVolumeMounts." $field) -}}
   {{- end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $v.enabled) -}}
   {{- fail "vector.enabled must be a boolean." -}}
 {{- end -}}
 {{- if $v.enabled -}}
-  {{- $port := $v.metricsPort | int -}}
-  {{- if or (lt $port 1) (gt $port 65535) -}}
-    {{- fail (printf "vector.metricsPort must be a TCP port between 1 and 65535, got %v." $v.metricsPort) -}}
-  {{- end -}}
-  {{- /* A collision here renders a pod that crash-loops on bind, so catch it at
-         render time rather than in CrashLoopBackOff. */ -}}
-  {{- range $name, $p := .Values.haproxy.ports -}}
-    {{- if and (ne ($p | int) 0) (eq ($p | int) ($v.metricsPort | int)) -}}
-      {{- fail (printf "vector.metricsPort (%v) collides with haproxy.ports.%s. Both bind in the same pod network namespace; pick a different port." $v.metricsPort $name) -}}
+  {{- /* sizeMetricsPort is validated even when unused: an invalid one would
+         otherwise crash-loop the sidecar the moment request_size comes back. */ -}}
+  {{- $ports := dict "metricsPort" ($v.metricsPort | int) -}}
+  {{- $_ := set $ports "sizeMetricsPort" ($v.sizeMetricsPort | int) -}}
+  {{- $hubPort := include "haptic.spoaHub.metricsPort" . -}}
+  {{- range $key, $port := $ports -}}
+    {{- if or (lt $port 1) (gt $port 65535) -}}
+      {{- fail (printf "vector.%s must be a TCP port between 1 and 65535, got %v." $key $port) -}}
+    {{- end -}}
+    {{- /* A collision here renders a pod that crash-loops on bind, so catch it at
+           render time rather than in CrashLoopBackOff. */ -}}
+    {{- range $name, $p := $.Values.haproxy.ports -}}
+      {{- if and (ne ($p | int) 0) (eq ($p | int) $port) -}}
+        {{- fail (printf "vector.%s (%v) collides with haproxy.ports.%s. Both bind in the same pod network namespace; pick a different port." $key $port $name) -}}
+      {{- end -}}
+    {{- end -}}
+    {{- if and (ne $hubPort "") (eq ($hubPort | int) $port) -}}
+      {{- fail (printf "vector.%s (%v) collides with the spoa-hub metrics port. Pick a different port." $key $port) -}}
     {{- end -}}
   {{- end -}}
-  {{- $hubPort := include "haptic.spoaHub.metricsPort" . -}}
-  {{- if and (ne $hubPort "") (eq ($hubPort | int) ($v.metricsPort | int)) -}}
-    {{- fail (printf "vector.metricsPort (%v) collides with the spoa-hub metrics port. Pick a different port." $v.metricsPort) -}}
+  {{- if eq ($v.metricsPort | int) ($v.sizeMetricsPort | int) -}}
+    {{- fail (printf "vector.metricsPort and vector.sizeMetricsPort are both %v. They are two prometheus_exporter sinks with different histogram buckets, so they cannot share a port." ($v.metricsPort | int)) -}}
   {{- end -}}
   {{- if not (hasPrefix "/" ($v.socketPath | toString)) -}}
     {{- fail (printf "vector.socketPath must be an absolute path, got %q. HAProxy's `log <path>` form requires one." $v.socketPath) -}}
@@ -126,8 +137,15 @@ guard that lives only here would not protect a hand-written CR.
       {{- fail (printf "vector.excludeMetrics.%s must be a map with `pattern` and `enabled`, got %T." $name $ex) -}}
     {{- end -}}
     {{- range $field, $_ := $ex -}}
-      {{- if not (has $field (list "enabled" "pattern" "families")) -}}
-        {{- fail (printf "vector.excludeMetrics.%s contains unknown field %q. Valid fields: enabled, pattern, families." $name $field) -}}
+      {{- if not (has $field (list "enabled" "pattern" "families" "requires")) -}}
+        {{- fail (printf "vector.excludeMetrics.%s contains unknown field %q. Valid fields: enabled, pattern, families, requires." $name $field) -}}
+      {{- end -}}
+    {{- end -}}
+    {{- /* An exclusion whose replacement is off would drop a family with nothing
+           standing in for it. Resolved via haptic.vector.valuePath. */ -}}
+    {{- if hasKey $ex "requires" -}}
+      {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$" ($ex.requires | toString)) -}}
+        {{- fail (printf "vector.excludeMetrics.%s.requires must be a dotted values path such as `vector.requestMetrics.enabled`, got %q." $name $ex.requires) -}}
       {{- end -}}
     {{- end -}}
     {{- /* `enabled` is required, not defaulted. Defaulting it to false means an
@@ -191,6 +209,7 @@ guard that lives only here would not protect a hand-written CR.
   {{- if lt ($v.scrapeIntervalSecs | int) 1 -}}
     {{- fail (printf "vector.scrapeIntervalSecs must be a positive integer, got %v." $v.scrapeIntervalSecs) -}}
   {{- end -}}
+  {{- include "haptic.vector.validateRequestMetrics" . -}}
   {{- /* Refuse the combination that silently stops all scraping. With the sidecar
          on, the chart skips the spoaHub PodMonitor (vector fronts both endpoints)
          — so if vector's own PodMonitor is off, an operator who HAD working hub +
@@ -209,6 +228,146 @@ guard that lives only here would not protect a hand-written CR.
   {{- end -}}
   {{- if eq (trim ($v.image.tag | toString)) "" -}}
     {{- fail "vector.image.tag must be pinned to an explicit tag so a silent upstream bump can't change the log pipeline under a running fleet." -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The emitted name suffixes. Keep in step with values.yaml and vector.yaml. */}}
+{{- define "haptic.vector.requestMetricNames" -}}
+requests request_duration_seconds response_duration_seconds connect_duration_seconds header_duration_seconds request_size response_size
+{{- end -}}
+
+{{/* Shared by the container port, the PodMonitor endpoint and the projection, so
+the three cannot disagree about whether sizeMetricsPort is listening. */}}
+{{- define "haptic.vector.sizeExporterEnabled" -}}
+{{- $rm := .Values.vector.requestMetrics | default dict -}}
+{{- if and .Values.vector.enabled $rm.enabled -}}
+  {{- $m := $rm.metrics | default dict -}}
+  {{- if or (index $m "request_size") (index $m "response_size") -}}
+true
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Walk a dotted .Values path; emit "true" when truthy. Backs `requires` on both
+logMetrics and excludeMetrics. Here, not in the library, because the flags live
+in values rather than extraContext.
+
+Usage: include "haptic.vector.valuePath" (dict "root" $.Values "path" "a.b.c")
+*/}}
+{{- define "haptic.vector.valuePath" -}}
+{{- $cur := .root -}}
+{{- range $seg := splitList "." .path -}}
+  {{- if kindIs "map" $cur -}}
+    {{- $cur = index $cur $seg -}}
+  {{- else -}}
+    {{- $cur = nil -}}
+  {{- end -}}
+{{- end -}}
+{{- if $cur -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/* Mirrored in the Scriggo library: a hand-written CR bypasses Helm, and a bad
+value fails vector's config load and crash-loops the sidecar. */}}
+{{- define "haptic.vector.validateRequestMetrics" -}}
+{{- $rm := .Values.vector.requestMetrics | default dict -}}
+{{- if not (kindIs "map" $rm) -}}
+  {{- fail "vector.requestMetrics must be a map." -}}
+{{- end -}}
+{{- range $field, $_ := $rm -}}
+  {{- if not (has $field (list "enabled" "prefix" "controllerClass" "terminationStateLabel" "pathLabel" "hostLabel" "durationBuckets" "sizeBuckets" "cardinalityLimit" "metrics")) -}}
+    {{- fail (printf "vector.requestMetrics contains unknown field %q. Valid fields: enabled, prefix, controllerClass, terminationStateLabel, pathLabel, hostLabel, durationBuckets, sizeBuckets, cardinalityLimit, metrics." $field) -}}
+  {{- end -}}
+{{- end -}}
+{{- if not (kindIs "bool" $rm.enabled) -}}
+  {{- fail (printf "vector.requestMetrics.enabled must be a boolean, got %v." $rm.enabled) -}}
+{{- end -}}
+{{- if $rm.enabled -}}
+  {{- /* A trailing underscore is accepted (operators think of this as
+         `nginx_ingress_controller_`) and stripped, so the name never doubles up. */ -}}
+  {{- $prefix := $rm.prefix | toString | trimSuffix "_" -}}
+  {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" $prefix) -}}
+    {{- fail (printf "vector.requestMetrics.prefix must be a Prometheus metric-name prefix (letters, digits, underscore; not starting with a digit), got %q." $rm.prefix) -}}
+  {{- end -}}
+  {{- /* Same reason as omitEmptyLogFields: a quoted "false" is truthy in
+         Scriggo, so a string here would silently keep the label on. */ -}}
+  {{- range $flag := list "terminationStateLabel" "pathLabel" "hostLabel" -}}
+    {{- if not (kindIs "bool" (index $rm $flag)) -}}
+      {{- fail (printf "vector.requestMetrics.%s must be a boolean, got %v. A quoted \"false\" is truthy in the render and would leave the label on." $flag (index $rm $flag)) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- /* `le` boundaries are cumulative: out of order the counts are nonsense and
+         nothing reports it. */ -}}
+  {{- range $which := list "durationBuckets" "sizeBuckets" -}}
+    {{- $bs := index $rm $which -}}
+    {{- if not (kindIs "slice" $bs) -}}
+      {{- fail (printf "vector.requestMetrics.%s must be a list of numbers." $which) -}}
+    {{- end -}}
+    {{- if eq (len $bs) 0 -}}
+      {{- fail (printf "vector.requestMetrics.%s is empty. A histogram with no boundaries reports only +Inf, which carries no information beyond the count." $which) -}}
+    {{- end -}}
+    {{- $prev := 0.0 -}}
+    {{- range $i, $b := $bs -}}
+      {{- if not (or (kindIs "float64" $b) (kindIs "int" $b) (kindIs "int64" $b)) -}}
+        {{- fail (printf "vector.requestMetrics.%s[%d] must be a number, got %v (%T). Quote-wrapped numbers reach vector as strings and fail its config load." $which $i $b $b) -}}
+      {{- end -}}
+      {{- $f := $b | float64 -}}
+      {{- if le $f 0.0 -}}
+        {{- fail (printf "vector.requestMetrics.%s[%d] must be greater than zero, got %v." $which $i $b) -}}
+      {{- end -}}
+      {{- /* The render formats with 9 decimals, so anything smaller emits a
+             le="0" boundary — and two such values collapse onto one. */ -}}
+      {{- if lt $f 0.000000001 -}}
+        {{- fail (printf "vector.requestMetrics.%s[%d] is %v, smaller than the exporter renders (9 decimals); it would emit a le=\"0\" boundary." $which $i $b) -}}
+      {{- end -}}
+      {{- if and (gt $i 0) (le $f $prev) -}}
+        {{- fail (printf "vector.requestMetrics.%s must be strictly ascending; %v follows %v. Prometheus reads these as cumulative `le` boundaries, so out-of-order values produce silently wrong quantiles." $which $b $prev) -}}
+      {{- end -}}
+      {{- $prev = $f -}}
+    {{- end -}}
+  {{- end -}}
+  {{- $cl := $rm.cardinalityLimit | default dict -}}
+  {{- if not (kindIs "map" $cl) -}}
+    {{- fail "vector.requestMetrics.cardinalityLimit must be a map with `enabled`, `valueLimit` and `action`." -}}
+  {{- end -}}
+  {{- range $field, $_ := $cl -}}
+    {{- if not (has $field (list "enabled" "valueLimit" "action")) -}}
+      {{- fail (printf "vector.requestMetrics.cardinalityLimit contains unknown field %q. Valid fields: enabled, valueLimit, action." $field) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- if not (kindIs "bool" $cl.enabled) -}}
+    {{- fail (printf "vector.requestMetrics.cardinalityLimit.enabled must be a boolean, got %v." $cl.enabled) -}}
+  {{- end -}}
+  {{- if $cl.enabled -}}
+    {{- if lt ($cl.valueLimit | int) 1 -}}
+      {{- fail (printf "vector.requestMetrics.cardinalityLimit.valueLimit must be a positive integer, got %v." $cl.valueLimit) -}}
+    {{- end -}}
+    {{- if not (has ($cl.action | toString) (list "drop_tag" "drop_event")) -}}
+      {{- fail (printf "vector.requestMetrics.cardinalityLimit.action must be \"drop_tag\" or \"drop_event\", got %q. drop_tag collapses the runaway label and keeps the totals; drop_event discards the requests, so a cardinality problem would read as an outage." $cl.action) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- $known := splitList " " (include "haptic.vector.requestMetricNames" .) -}}
+  {{- $m := $rm.metrics | default dict -}}
+  {{- if not (kindIs "map" $m) -}}
+    {{- fail "vector.requestMetrics.metrics must be a map of metric name to boolean." -}}
+  {{- end -}}
+  {{- $on := 0 -}}
+  {{- range $name, $val := $m -}}
+    {{- if not (has $name $known) -}}
+      {{- fail (printf "vector.requestMetrics.metrics contains unknown metric %q. Valid names: %s." $name (join ", " $known)) -}}
+    {{- end -}}
+    {{- if not (kindIs "bool" $val) -}}
+      {{- fail (printf "vector.requestMetrics.metrics.%s must be a boolean, got %v." $name $val) -}}
+    {{- end -}}
+    {{- if $val -}}
+      {{- $on = add1 $on -}}
+    {{- end -}}
+  {{- end -}}
+  {{- if eq $on 0 -}}
+    {{- fail "vector.requestMetrics.enabled is true but every entry in `metrics` is false, so the pipeline would parse each access-log record and emit nothing. Set vector.requestMetrics.enabled: false instead." -}}
   {{- end -}}
 {{- end -}}
 {{- end -}}

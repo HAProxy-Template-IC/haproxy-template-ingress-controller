@@ -39,10 +39,16 @@ spec:
   namespaceSelector:
     matchNames:
       - {{ .Release.Namespace }}
+  {{- /* vector-metrics carries everything; vector-sizes exists only when a size
+         family is on, purely because `buckets` is per-sink. Both take the same
+         settings, so tuning `interval` needs no knowledge of the second. */ -}}
+  {{- $ports := list "vector-metrics" }}
+  {{- if include "haptic.vector.sizeExporterEnabled" . }}
+  {{- $ports = append $ports "vector-sizes" }}
+  {{- end }}
   podMetricsEndpoints:
-    # Everything on one port: haproxy_* (re-exported), spoa_* / plugin_coraza_*
-    # (re-exported when the hub is enabled), and vector_* internal metrics.
-    - port: vector-metrics
+  {{- range $port := $ports }}
+    - port: {{ $port }}
       path: /metrics
       {{- with $pm.interval }}
       interval: {{ . }}
@@ -58,5 +64,6 @@ spec:
       metricRelabelings:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+  {{- end }}
 {{- end }}
 {{- end }}

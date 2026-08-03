@@ -1871,7 +1871,7 @@ test-vector-spans:
       when: never
     - if: $SCHEDULE_KIND == "nightly"
     - changes:
-        - charts/haptic/libraries/vector.yaml
+        - charts/haptic/charts/vector/library.yaml
         - charts/haptic/libraries/base.yaml
         - scripts/test-vector-spans.sh
         - .gitlab-ci.yml

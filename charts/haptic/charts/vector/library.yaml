@@ -26,6 +26,9 @@ _helm_load:
     # ~10 KB of span-building VRL, absent unless spans are actually exported.
     - path: templateSnippets.vector-span-transform
       when: '{{- if not (dig "tracing" "otlp" "endpoint" "" (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end -}}'
+    # Likewise the per-request metric pipeline when nothing consumes it.
+    - path: templateSnippets.vector-request-metrics-transform
+      when: '{{- if not (dig "requestMetrics" "enabled" false .Values.vector) }}true{{ end -}}'
 
 files:
   vector.yaml:
@@ -40,18 +43,18 @@ files:
       {%- var hubPort = vec | dig("spoaHubMetricsPort") | fallback(0) -%}
       {%- var dataDir = vec | dig_string("/var/lib/vector", "dataDir") -%}
       {%- var excludes = vec | dig("excludeMetrics") | fallback([]any{}) | toSlice() -%}
-      {#- Source-side twin of `excludes`: never parsed, so it cuts the scrape
-          burst, not just retention. See values.yaml vector.excludeMetrics. -#}
+      {# Source-side twin of `excludes`: never parsed, so it cuts the scrape
+          burst, not just retention. See values.yaml vector.excludeMetrics. #}
       {%- var excludeFams = vec | dig("excludeMetricFamilies") | fallback([]any{}) | toSlice() -%}
-      {#- Endpoint lives under extraContext.tracing, not vector: it describes the
-          deployment's tracing setup. Empty = no span pipeline. -#}
-      {#- vector interpolates a field into a tag with its own {{...}} syntax, which
+      {# Endpoint lives under extraContext.tracing, not vector: it describes the
+          deployment's tracing setup. Empty = no span pipeline. #}
+      {# vector interpolates a field into a tag with its own {{...}} syntax, which
           collides with Scriggo's. Built as a string so the braces reach the config
-          instead of being evaluated here. -#}
+          instead of being evaluated here. #}
       {%- var metricValueTag = "{{haptic_metric_value}}" -%}
-      {#- Log-derived metric registry. Keyed map, not a list: an operator adding an
+      {# Log-derived metric registry. Keyed map, not a list: an operator adding an
           entry must not replace the ones the chart ships (charts/CLAUDE.md). Only
-          enabled entries are rendered, so a disabled one costs no per-record work. -#}
+          enabled entries are rendered, so a disabled one costs no per-record work. #}
       {%- var logMetricsAll = vec | dig("logMetrics") | fallback(map[string]any{}) %}
       {%- var logMetrics = map[string]any{} %}
       {%- for _, k := range keys(logMetricsAll.(map[string]any)) %}
@@ -60,13 +63,70 @@ files:
         {%- if !ok %}{{ fail("extraContext.vector.logMetrics." + k + " must set `enabled`: an entry without it would sit inert and quietly emit nothing.") }}{%- end %}
         {%- if tostring(en) == "true" %}{%- logMetrics[k] = entry %}{%- end %}
       {%- end %}
+      {# Sink wiring only; vector-request-metrics-transform owns these names.
+         test-vector-request-metrics-sink-wiring pins the two together. #}
+      {%- var rm = vec | dig("requestMetrics") | fallback(map[string]any{}) -%}
+      {%- var rmOn = (rm | dig("enabled")) == true -%}
+      {%- var rmMetrics = rm | dig("metrics") | fallback(map[string]any{}) -%}
+      {%- var rmOnMetric = func(n string) bool { v, ok := rmMetrics.(map[string]any)[n]; return ok && tostring(v) == "true" } -%}
+      {%- var rmGuarded = rmOn && ((rm | dig("cardinalityLimit")) | dig("enabled")) == true -%}
+      {%- var rmCoreOn = rmOn && (rmOnMetric("requests") || rmOnMetric("request_duration_seconds")) -%}
+      {%- var rmConnOn = rmOn && rmOnMetric("connect_duration_seconds") -%}
+      {%- var rmRespOn = rmOn && (rmOnMetric("header_duration_seconds") || rmOnMetric("response_duration_seconds")) -%}
+      {%- var rmSizeOn = rmOn && (rmOnMetric("request_size") || rmOnMetric("response_size")) -%}
+      {%- var rmCoreInputs = []string{} -%}
+      {%- var rmSizeInputs = []string{} -%}
+      {%- if rmCoreOn %}{% rmCoreInputs = append(rmCoreInputs, "request_metrics_core") %}{% end -%}
+      {%- if rmConnOn %}{% rmCoreInputs = append(rmCoreInputs, "request_metrics_connect") %}{% end -%}
+      {%- if rmRespOn %}{% rmCoreInputs = append(rmCoreInputs, "request_metrics_response") %}{% end -%}
+      {%- if rmSizeOn %}{% rmSizeInputs = append(rmSizeInputs, "request_metrics_sizes") %}{% end -%}
+      {%- if rmGuarded && len(rmCoreInputs) > 0 %}{% rmCoreInputs = []string{"request_metrics_guard"} %}{% end -%}
+      {%- if rmGuarded && len(rmSizeInputs) > 0 %}{% rmSizeInputs = []string{"request_metrics_size_guard"} %}{% end -%}
+      {# %.9f then trim, never tostring(): a float64 1e8 formats as "1e+08",
+         which YAML 1.1 reads as a STRING and vector rejects. #}
+      {%- var fmtBucket = func(v any) string {
+            var fv, _ = tofloat(v)
+            var s = sprintf("%.9f", fv)
+            for hasSuffix(s, "0") { s = s[0:len(s)-1] }
+            if hasSuffix(s, ".") { s = s[0:len(s)-1] }
+            return s
+          } -%}
+      {%- var bucketList = func(field string) string {
+            var vals = rm | dig(field) | fallback([]any{}) | toSlice()
+            if len(vals) == 0 {
+              fail("extraContext.vector.requestMetrics." + field + " is empty; a histogram with no boundaries reports only +Inf.")
+            }
+            var out = []string{}
+            var prev = 0.0
+            for i, b := range vals {
+              var f, _ = tofloat(b)
+              if f <= 0.0 {
+                fail("extraContext.vector.requestMetrics." + field + " entries must be greater than zero, got '" + tostring(b) + "'.")
+              }
+              {# Checked on the RENDERED value, not the input: fmtBucket has 9
+                 decimals, so anything under 5e-10 formats as "0" and two such
+                 inputs collapse onto one boundary. Comparing the inputs would
+                 pass both and emit le="0" plus a duplicate. #}
+              var shown = fmtBucket(b)
+              var rf, _ = tofloat(shown)
+              if rf <= 0.0 {
+                fail("extraContext.vector.requestMetrics." + field + " entry '" + tostring(b) + "' is smaller than the exporter renders (9 decimals) and would emit a le=\"0\" boundary.")
+              }
+              if i > 0 && rf <= prev {
+                fail("extraContext.vector.requestMetrics." + field + " must be strictly ascending; '" + tostring(b) + "' does not exceed its predecessor once rendered.")
+              }
+              prev = rf
+              out = append(out, shown)
+            }
+            return "[" + join(out, ", ") + "]"
+          } -%}
       {%- var otlpEndpoint = extraContext | dig_string("", "tracing", "otlp", "endpoint") -%}
       {%- var otlpService = extraContext | dig_string("haptic", "tracing", "otlp", "serviceName") -%}
-      {#- Resource attributes describe the EMITTER, so they identify this HAPTIC:
+      {# Resource attributes describe the EMITTER, so they identify this HAPTIC:
           several per cluster (internal vs external, or one per tenant) would
           otherwise all report service.name=haptic. Chart-derived, except the
           cluster name — Kubernetes exposes none to a pod. Each is omitted when
-          empty rather than sent blank. -#}
+          empty rather than sent blank. #}
       {%- var resAttrs = []string{} -%}
       {%- var addRes = func(k string, v string) { if v != "" { resAttrs = append(resAttrs, "{\"key\":\"" + k + "\",\"value\":{\"stringValue\":\"" + v + "\"}}") } } -%}
       {%- addRes("service.name", otlpService) -%}
@@ -76,8 +136,8 @@ files:
       {%- addRes("k8s.deployment.name", tostring(extraContext | dig_string("", "tracing", "otlp", "deploymentName"))) -%}
       {%- addRes("k8s.cluster.name", tostring(extraContext | dig_string("", "tracing", "otlp", "clusterName"))) -%}
       {%- var resJSON = join(resAttrs, ",") -%}
-      {#- Scriggo's `if` treats any non-empty string as truthy, so a CR with the
-          string "false" would ENABLE this. No isbool(); fallback() is nil-only. -#}
+      {# Scriggo's `if` treats any non-empty string as truthy, so a CR with the
+          string "false" would ENABLE this. No isbool(); fallback() is nil-only. #}
       {%- var omitEmptyRaw = vec | dig("omitEmptyLogFields") -%}
       {%- var omitEmpty = true -%}
       {%- if omitEmptyRaw != nil -%}
@@ -96,9 +156,9 @@ files:
         {%- end -%}
         {%- noMaint = noMaintBool -%}
       {%- end -%}
-      {#- Each pattern is embedded in a VRL r'...' literal, so a quote or newline
+      {# Each pattern is embedded in a VRL r'...' literal, so a quote or newline
           would break vector's config and crash-loop the sidecar. Reject those here
-          as well as in Helm: a hand-written CR bypasses Helm entirely. -#}
+          as well as in Helm: a hand-written CR bypasses Helm entirely. #}
       {%- for _, pat := range excludes -%}
         {%- var ps = tostring(pat) -%}
         {%- if ps == "" -%}
@@ -107,14 +167,14 @@ files:
         {%- if regex_search(ps, "['\"\n\r\\\\]") -%}
           {%- fail("extraContext.vector.excludeMetrics pattern '" + ps + "' contains a quote, backslash or newline. Patterns are embedded in a VRL r'...' literal, so those characters would break vector's config and crash-loop the sidecar.") -%}
         {%- end -%}
-        {#- Compile check. Note the argument order: regex_search(subject, pattern),
+        {# Compile check. Note the argument order: regex_search(subject, pattern),
             so the operator's string goes SECOND to be compiled as the pattern —
             passing it first (as above, for the charset test) compiles nothing.
-            regex_search calls env.Fatal on an uncompilable pattern. -#}
+            regex_search calls env.Fatal on an uncompilable pattern. #}
         {%- var _ = regex_search("", ps) -%}
       {%- end -%}
-      {#- Re-validated here because a hand-written CR bypasses Helm: HAProxy drops
-          an unknown name silently and one '%' blanks the whole scrape. -#}
+      {# Re-validated here because a hand-written CR bypasses Helm: HAProxy drops
+          an unknown name silently and one '%' blanks the whole scrape. #}
       {%- var scrapeParams = []string{} -%}
       {%- if noMaint -%}
         {%- scrapeParams = append(scrapeParams, "no-maint") -%}
@@ -134,9 +194,9 @@ files:
       {%- if len(scrapeParams) > 0 -%}
         {%- haproxyScrapeQuery = "?" + join(scrapeParams, "&") -%}
       {%- end -%}
-      {#- Mirror of haptic.vector.validateValues in _vector.tpl. Duplicated on
+      {# Mirror of haptic.vector.validateValues in _vector.tpl. Duplicated on
           purpose: the HAProxyTemplateConfig CR is a first-class API that bypasses
-          Helm, so a Helm-only guard protects nothing for a hand-written CR. -#}
+          Helm, so a Helm-only guard protects nothing for a hand-written CR. #}
       {%- if !hasPrefix(socketPath, "/") -%}
         {%- fail("extraContext.vector.socketPath must be an absolute path, got '" + socketPath + "'. HAProxy's `log <path>` form requires one.") -%}
       {%- end -%}
@@ -150,11 +210,11 @@ files:
       data_dir: {{ dataDir }}
 
       sources:
-        # HAProxy's log target is in the `global` section, which carries BOTH
-        # access-log records and runtime process messages. The two have different
-        # shapes, so this is a byte passthrough: parsing as JSON here would drop
-        # every process line as a decode error. A future log-derived-metrics step
-        # can parse in a transform without changing this source.
+        {# HAProxy's log target is in the `global` section, which carries BOTH
+           access-log records and runtime process messages. The two have different
+           shapes, so this is a byte passthrough: parsing as JSON here would drop
+           every process line as a decode error. A future log-derived-metrics step
+           can parse in a transform without changing this source. #}
         haproxy_log:
           type: socket
           mode: unix_datagram
@@ -166,33 +226,21 @@ files:
             codec: bytes
       {%- if toint(statsPort) > 0 %}
 
-        # Re-export HAProxy's own Prometheus exporter so Prometheus scrapes one
-        # endpoint per pod instead of one per container.
-        #
-        # NO instance_tag on purpose. It stamps the SCRAPED target onto every
-        # series — "127.0.0.1:8404", identical on every pod, so it identifies
-        # nothing — and Prometheus adds its own `instance` from the pod target
-        # anyway, so vector's copy lands as `exported_instance`. Measured on a real
-        # fleet: 15116 series × that label was 393 KB, two thirds of the 36% byte
-        # growth the re-export was adding.
-        #
-        # honor_labels DOES stay: it preserves the labels HAProxy set (proxy,
-        # server, code, state), which every existing dashboard and rule matches on.
+        {# NO instance_tag on purpose: it stamps the SCRAPED target onto every
+            series — "127.0.0.1:8404", identical on every pod — and Prometheus adds
+            its own `instance` from the pod target anyway, so vector's copy lands as
+            `exported_instance`. Measured: 393 KB across 15116 series.
+
+            honor_labels DOES stay: it preserves the labels HAProxy set (proxy,
+            server, code, state), which every dashboard and rule matches on. #}
+        # Re-export HAProxy's exporter, so Prometheus scrapes one endpoint per pod.
       {%- if noMaint %}
         #
-        # `?no-maint` asks HAProxy's own exporter to omit servers in MAINT state.
-        # In HAPTIC's model MAINT means "reserved slot with no backing pod": backends
-        # render a fixed number of slots so scaling needs no reload, and the spare
-        # ones sit disabled. They emit a full metric set of zeros each, which on a
-        # measured real fleet was 10,176 of 15,116 series (67%) and 1.15 MB of every
-        # 1.67 MB scrape. No metric NAME disappears — only the empty slots — and the
-        # per-backend census haproxy_backend_agg_server_status{state="MAINT"} still
-        # reports how many slots are free, which is why that family is NOT in the
-        # excludeMetrics defaults. Turn it off with vector.excludeMaintServerMetrics.
+        {# In HAPTIC's model MAINT means "reserved slot with no backing pod", which
+            on a measured fleet was 67% of the series. vector rewrites this URL as
+            `?no-maint=`; verified that `?no-maint`, `?no-maint=` and `?no-maint=1`
+            filter identically. Rationale: values.yaml vector.excludeMaintServerMetrics. #}
         #
-        # vector rewrites this URL as `?no-maint=` (it appends the `=` for a valueless
-        # parameter). Verified against the real exporter: `?no-maint`, `?no-maint=` and
-        # `?no-maint=1` all filter identically, so the rewrite is harmless.
       {%- end %}
         haproxy_metrics:
           type: prometheus_scrape
@@ -203,9 +251,9 @@ files:
       {%- end %}
       {%- if toint(hubPort) > 0 %}
 
-        # Same for the spoa-hub sidecar's metrics (spoa_*, plugin_coraza_*).
-        # honor_labels keeps the hub's own label set intact so existing
-        # dashboards and recording rules keep matching.
+        {# Same for the spoa-hub sidecar's metrics (spoa_*, plugin_coraza_*).
+           honor_labels keeps the hub's own label set intact so existing
+           dashboards and recording rules keep matching. #}
         spoa_hub_metrics:
           type: prometheus_scrape
           endpoints:
@@ -217,46 +265,43 @@ files:
         vector_metrics:
           type: internal_metrics
 
-      {%- if len(excludes) > 0 || omitEmpty || otlpEndpoint != "" || len(logMetrics) > 0 %}
+      {%- if len(excludes) > 0 || omitEmpty || otlpEndpoint != "" || len(logMetrics) > 0 || rmOn %}
 
       transforms:
       {%- end %}
       {%- if otlpEndpoint != "" %}
       {{ render "vector-span-transform" default "" }}
       {%- end %}
+      {%- if rmOn %}
+        {{ render "vector-request-metrics-transform" default "" }}
+      {%- end %}
       {%- if omitEmpty %}
-        # Strip fields whose value is the empty string, so a record carries only what
-        # actually happened. HAProxy's JSON encoder has no way to do this: the full
-        # option set for %{...} is M/Q/X/E/bin/json/cbor (src/log.c) with no omit flag,
-        # unknown options are silently ignored, and the closest one (+M) does the
-        # OPPOSITE — it substitutes "-" for an empty value, and under +json that path
-        # is unreachable anyway. So an unresolved field always renders as "key": "".
-        # Measured on a real fleet: 27% smaller records (815 -> 595 bytes average),
-        # because a feature that did not fire still costs its field on every line —
-        # trace_id, denied_by, waf_matched_var, consumer and cache were empty in 100%
-        # of sampled records.
-        #
-        # Deliberately a STRING rewrite, not parse_json + encode_json. Re-encoding
-        # would save a further ~6% by compacting separators, but VRL objects are
-        # key-sorted, so every field would come back alphabetically — burying `ts`,
-        # which the log-format puts first precisely because `format raw` drops the
-        # syslog timestamp. It also parses every record; this does not.
-        #
-        # SAFETY: the patterns anchor on the pair separator and restrict the key to
-        # the field-name charset the log-fields framework already enforces. A crafted
-        # field value cannot forge a match, because inside a JSON string an embedded
-        # quote is escaped as \" and so cannot supply the unescaped opening quote.
-        # Verified against a value containing a literal `", "client_ip": "", "`.
-        # Numbers are untouched: only `: ""` matches, so `queue_time_ms: 0` survives.
+        {# HAProxy cannot do this itself: its JSON encoder's option set is
+            M/Q/X/E/bin/json/cbor with no omit flag, and the nearest one (+M)
+            substitutes "-" instead. Rationale and measurements: values.yaml
+            vector.omitEmptyLogFields.
+
+            Deliberately a STRING rewrite, not parse_json + encode_json:
+            re-encoding sorts keys alphabetically and would bury `ts`, which the
+            log-format puts first precisely because `format raw` drops the syslog
+            timestamp. It also parses every record; this does not.
+
+            SAFETY: the patterns anchor on the pair separator and restrict the key
+            to the field-name charset the log-fields framework enforces. A crafted
+            value cannot forge a match, because inside a JSON string an embedded
+            quote is escaped as \" and so cannot supply the opening quote.
+            Verified against a value containing a literal `", "client_ip": "", `.
+            Numbers are untouched: only `: ""` matches. #}
+        # Drop fields whose value is empty, so a record carries only what happened.
         log_drop_empty:
           type: remap
           inputs: [haproxy_log]
           source: |
-            # The FALLIBLE string(), never string!(). remap defaults drop_on_abort=true,
-            # so an abort DISCARDS the event rather than passing it on — verified: with
-            # .message absent, string!() aborts and the record is gone. The socket source
-            # always sets .message today, but a dropped log line is invisible, so the
-            # passthrough guarantee is made structural instead of resting on the codec.
+            {# The FALLIBLE string(), never string!(). remap defaults drop_on_abort=true,
+               so an abort DISCARDS the event rather than passing it on — verified: with
+               .message absent, string!() aborts and the record is gone. The socket source
+               always sets .message today, but a dropped log line is invisible, so the
+               passthrough guarantee is made structural instead of resting on the codec. #}
             m, err = string(.message)
             if err == null && starts_with(m, "{") {
               m = replace(m, r', "[A-Za-z_][A-Za-z0-9_]*": ""', "")
@@ -266,23 +311,13 @@ files:
             }
       {%- end %}
       {%- if len(logMetrics) > 0 %}
-        # Log-derived metrics. Varnish and several other in-path components expose
-        # no scrape endpoint of their own, but the access log already carries their
-        # verdict per request, so a metric is a projection of a field that is
-        # present anyway.
-        #
-        # Driven by extraContext.vector.logMetrics — adding one is a data entry,
-        # not new template code. Each entry names the access-log FIELD it reads and
-        # how to turn it into a metric:
-        #   kind: enum    -> counter, tagged with the field's value. `values` lists
-        #                    the accepted literals, so an unexpected value cannot
-        #                    invent an unbounded label.
-        #   kind: numeric -> counter incremented BY the field's value, for a
-        #                    quantity rather than an occurrence.
-        #
-        # Extraction is a REGEX over the raw record, never parse_json: this pipeline
-        # does not parse access-log records (see omitEmptyLogFields above), and
-        # paying a JSON parse per request per metric would undo that.
+        {# Driven by extraContext.vector.logMetrics — adding one is a data entry,
+            not new template code. Extraction is a REGEX over the raw record, never
+            parse_json: this pipeline does not parse access-log records, and paying
+            a JSON parse per metric per request would undo that. Rationale:
+            values.yaml vector.logMetrics. #}
+        # Metrics projected from access-log fields, for components that expose no
+        # scrape endpoint of their own.
       {%- for _, key := range keys(logMetrics) %}
         {%- var m = logMetrics[key].(map[string]any) %}
         {%- var field = m | dig_string("", "field") %}
@@ -290,9 +325,9 @@ files:
         {%- var metricName = m | dig_string("", "metric") %}
         {%- var tagName = m | dig_string("value", "tag") %}
         {%- var vals = m | dig("values") | fallback([]any{}) | toSlice() %}
-        {#- Field and metric names are embedded in a VRL regex and a metric name;
+        {# Field and metric names are embedded in a VRL regex and a metric name;
             an unvalidated one would break vector's config load and crash-loop the
-            sidecar, exactly as excludeMetrics guards against. -#}
+            sidecar, exactly as excludeMetrics guards against. #}
         {%- if !regex_search(field, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".field must be an access-log field name (letters, digits, underscore), got '" + field + "'.") }}{%- end %}
         {%- if !regex_search(metricName, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".metric must be a Prometheus metric name, got '" + metricName + "'.") }}{%- end %}
         {%- if !regex_search(tagName, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".tag must be a Prometheus label name, got '" + tagName + "'.") }}{%- end %}
@@ -303,9 +338,9 @@ files:
           {%- var esc = []any{} %}
           {%- for _, val := range vals %}
             {%- if !regex_search(tostring(val), "^[A-Za-z0-9_.:-]+$") %}{{ fail("extraContext.vector.logMetrics." + key + ".values entry '" + tostring(val) + "' may only contain letters, digits, and _.:- — it is embedded in a VRL regex.") }}{%- end %}
-            {#- Escape before embedding: '.' passes the charset check but is a
+            {# Escape before embedding: '.' passes the charset check but is a
                 regex wildcard, so a declared value of "1.5" would also match
-                "125" — widening the very set `values` exists to bound. -#}
+                "125" — widening the very set `values` exists to bound. #}
             {%- esc = append(esc, sanitize_regex(tostring(val))) %}
           {%- end %}
           {%- pattern = esc | toStringSlice() | join("|") %}
@@ -315,10 +350,10 @@ files:
           type: remap
           inputs: [haproxy_log]
           source: |
-            # abort, not a filter transform: remap defaults drop_on_abort=true, so a
-            # record without this field is dropped from THIS branch only — each
-            # transform consumes its own copy of haproxy_log, so the access log and
-            # the span pipeline are untouched.
+            {# abort, not a filter transform: remap defaults drop_on_abort=true, so a
+               record without this field is dropped from THIS branch only — each
+               transform consumes its own copy of haproxy_log, so the access log and
+               the span pipeline are untouched. #}
             m, err = string(.message)
             if err != null {
               abort
@@ -329,12 +364,12 @@ files:
             }
             .haptic_metric_value = caps.v
         {%- if kind == "numeric" %}
-            # parse_regex yields a STRING. Measured against vector 0.57.0: a
-            # numeric string is parsed fine by increment_by_value, so this is not
-            # load-bearing for the shipped `[0-9]+` pattern. It earns its place on
-            # the failure path — given a NON-numeric value vector logs
-            # "Failed to parse field as float" and drops the event, once per
-            # record; converting here drops it quietly instead.
+            {# parse_regex yields a STRING. Measured against vector 0.57.0: a
+               numeric string is parsed fine by increment_by_value, so this is not
+               load-bearing for the shipped `[0-9]+` pattern. It earns its place on
+               the failure path — given a NON-numeric value vector logs
+               "Failed to parse field as float" and drops the event, once per
+               record; converting here drops it quietly instead. #}
             n, nerr = to_float(.haptic_metric_value)
             if nerr != null {
               abort
@@ -359,29 +394,20 @@ files:
       {%- end %}
       {%- end %}
       {%- if len(excludes) > 0 %}
-        # Drop metric families before they are re-exported. HAProxy's exporter
-        # publishes host-computed aggregates — running maxima "since the process
-        # started" and averages over "the last 1024 connections" — which are a
-        # Prometheus anti-pattern: they cannot be aggregated across pods, a
-        # since-boot maximum never resets, and the equivalent is derivable from the
-        # raw series with max_over_time() / count by (). Dropping them at the source
-        # is cheaper than paying for them in every scrape and in TSDB.
-        #
-        # Operator-controlled via extraContext.vector.excludeMetrics; each entry is
-        # a regex matched against the METRIC NAME. Patterns are validated (charset +
-        # compile) before they get here, because an invalid one would fail vector's
-        # config load and crash-loop the sidecar.
+        {# Operator-controlled via extraContext.vector.excludeMetrics; each entry is
+            a regex matched against the METRIC NAME, validated (charset + compile)
+            before it gets here because an invalid one fails vector's config load and
+            crash-loops the sidecar. Rationale: values.yaml vector.excludeMetrics. #}
+        # Drop metric families before they are re-exported.
         metrics_filtered:
           type: filter
-        {%- if toint(statsPort) > 0 && toint(hubPort) > 0 %}
-          inputs: [haproxy_metrics, spoa_hub_metrics, vector_metrics{% for _, k := range keys(logMetrics) %}, {{ k }}_metric{% end %}]
-        {%- else if toint(statsPort) > 0 %}
-          inputs: [haproxy_metrics, vector_metrics{% for _, k := range keys(logMetrics) %}, {{ k }}_metric{% end %}]
-        {%- else if toint(hubPort) > 0 %}
-          inputs: [spoa_hub_metrics, vector_metrics{% for _, k := range keys(logMetrics) %}, {{ k }}_metric{% end %}]
-        {%- else %}
-          inputs: [vector_metrics{% for _, k := range keys(logMetrics) %}, {{ k }}_metric{% end %}]
-        {%- end %}
+        {%- var primaryInputs = []string{} %}
+        {%- if toint(statsPort) > 0 %}{% primaryInputs = append(primaryInputs, "haproxy_metrics") %}{% end %}
+        {%- if toint(hubPort) > 0 %}{% primaryInputs = append(primaryInputs, "spoa_hub_metrics") %}{% end %}
+        {%- primaryInputs = append(primaryInputs, "vector_metrics") %}
+        {%- for _, k := range keys(logMetrics) %}{% primaryInputs = append(primaryInputs, k + "_metric") %}{% end %}
+        {%- for _, i := range rmCoreInputs %}{% primaryInputs = append(primaryInputs, i) %}{% end %}
+          inputs: [{{ join(primaryInputs, ", ") }}]
           condition:
             type: vrl
             source: |
@@ -390,12 +416,28 @@ files:
                 r'{{ tostring(pat) }}',
         {%- end %}
               ])
+        {%- if len(rmSizeInputs) > 0 %}
+
+        {# excludeMetrics is documented as matching any metric name, so the sizes
+           branch needs the same filter or it is a silent exception. #}
+        size_metrics_filtered:
+          type: filter
+          inputs: [{{ join(rmSizeInputs, ", ") }}]
+          condition:
+            type: vrl
+            source: |
+              !match_any(string!(.name), [
+          {%- for _, pat := range excludes %}
+                r'{{ tostring(pat) }}',
+          {%- end %}
+              ])
+        {%- end %}
       {%- end %}
 
       sinks:
-        # For now the access log just goes to stdout, so `kubectl logs -c vector`
-        # shows it. Point this at a real sink by overriding this file's template
-        # through controller.config.templateSnippets.
+        {# For now the access log just goes to stdout, so `kubectl logs -c vector`
+           shows it. Point this at a real sink by overriding this file's template
+           through controller.config.templateSnippets. #}
         stdout:
           type: console
           inputs: [{% if omitEmpty %}log_drop_empty{% else %}haproxy_log{% end %}]
@@ -403,12 +445,12 @@ files:
             codec: text
       {%- if otlpEndpoint != "" %}
 
-        # OTLP/HTTP + JSON. The generic `http` sink, NOT the `opentelemetry` sink:
-        # that sink's `otlp` codec only encodes resourceLogs / resourceMetrics and
-        # rejects resourceSpans, and vector has no way to turn a log line into the
-        # Trace-typed event its trace branch needs. payload_prefix/suffix wrap the
-        # sink's batched JSON array into one valid ExportTraceServiceRequest, so a
-        # batch is one document rather than several concatenated ones.
+        {# OTLP/HTTP + JSON. The generic `http` sink, NOT the `opentelemetry` sink:
+           that sink's `otlp` codec only encodes resourceLogs / resourceMetrics and
+           rejects resourceSpans, and vector has no way to turn a log line into the
+           Trace-typed event its trace branch needs. payload_prefix/suffix wrap the
+           sink's batched JSON array into one valid ExportTraceServiceRequest, so a
+           batch is one document rather than several concatenated ones. #}
         otlp_traces:
           type: http
           inputs: [spans]
@@ -423,28 +465,269 @@ files:
               content-type: application/json
       {%- end %}
 
-        # The single scrape target. Its presence is ALSO the readiness gate — see
+        # The primary scrape target. Its presence is ALSO the readiness gate — see
         # the header comment.
         metrics:
           type: prometheus_exporter
       {%- if len(excludes) > 0 %}
           inputs: [metrics_filtered]
       {%- else %}
+        {%- var sinkInputs = []string{} %}
+        {%- if toint(statsPort) > 0 %}{% sinkInputs = append(sinkInputs, "haproxy_metrics") %}{% end %}
+        {%- if toint(hubPort) > 0 %}{% sinkInputs = append(sinkInputs, "spoa_hub_metrics") %}{% end %}
+        {%- for _, k := range keys(logMetrics) %}{% sinkInputs = append(sinkInputs, k + "_metric") %}{% end %}
+        {%- for _, i := range rmCoreInputs %}{% sinkInputs = append(sinkInputs, i) %}{% end %}
+        {%- sinkInputs = append(sinkInputs, "vector_metrics") %}
           inputs:
-        {%- if toint(statsPort) > 0 %}
-            - haproxy_metrics
+        {%- for _, i := range sinkInputs %}
+            - {{ i }}
         {%- end %}
-        {%- if toint(hubPort) > 0 %}
-            - spoa_hub_metrics
-        {%- end %}
-        {%- for _, k := range keys(logMetrics) %}
-            - {{ k }}_metric
-        {%- end %}
-            - vector_metrics
       {%- end %}
           address: 0.0.0.0:{{ toint(metricsPort) }}
+      {%- if rmCoreOn || rmConnOn || rmRespOn %}
+          {# Per-SINK in vector, no per-metric override — which is why the size
+             histograms get their own exporter below. #}
+          buckets: {{ bucketList("durationBuckets") }}
+      {%- end %}
+      {%- if len(rmSizeInputs) > 0 %}
+
+        {# Bytes and seconds cannot share one `buckets` list. #}
+        # Byte-size histograms only; same PodMonitor, second endpoint.
+        metrics_sizes:
+          type: prometheus_exporter
+        {%- if len(excludes) > 0 %}
+          inputs: [size_metrics_filtered]
+        {%- else %}
+          inputs:
+          {%- for _, i := range rmSizeInputs %}
+            - {{ i }}
+          {%- end %}
+        {%- end %}
+          address: 0.0.0.0:{{ toint(vec | dig("sizeMetricsPort") | fallback(9599)) }}
+          buckets: {{ bucketList("sizeBuckets") }}
+      {%- end %}
 
 templateSnippets:
+
+  vector-request-metrics-transform:
+    template: |-
+      {#- Grouped by VALIDITY GATE, not by metric: log_to_metric emits every metric
+          it lists from one event, and a HAProxy timer reads -1 when its phase never
+          happened — recording that as 0 claims the backend answered instantly on a
+          request that never reached one. Grouped by SINK too, because
+          prometheus_exporter takes one `buckets` list per sink. -#}
+      {%- var rm = extraContext | dig("vector", "requestMetrics") | fallback(map[string]any{}) -%}
+      {%- if (rm | dig("enabled")) != true %}{% return %}{% end -%}
+      {%- var mm = rm | dig("metrics") | fallback(map[string]any{}) -%}
+      {%- var mOn = func(n string) bool { v, ok := mm.(map[string]any)[n]; return ok && tostring(v) == "true" } -%}
+      {%- var prefix = rm | dig_string("haptic_ingress_controller", "prefix") -%}
+      {#- Re-validated here: a hand-written CR bypasses Helm, and a bad value fails
+          vector's config load and crash-loops the sidecar. -#}
+      {%- if !regex_search(prefix, "^[A-Za-z_][A-Za-z0-9_]*$") -%}
+        {%- fail("extraContext.vector.requestMetrics.prefix must be a Prometheus metric-name prefix, got '" + prefix + "'.") -%}
+      {%- end -%}
+      {%- var ctrlClass = rm | dig_string("", "controllerClass") -%}
+      {%- var ctrlNs = rm | dig_string("", "controllerNamespace") -%}
+      {%- for _, cv := range []string{ctrlClass, ctrlNs} -%}
+        {%- if regex_search(cv, "['\"\n\r\\\\]") -%}
+          {%- fail("extraContext.vector.requestMetrics.controllerClass and controllerNamespace are embedded in a quoted YAML scalar; '" + cv + "' contains a quote, backslash or newline and would break vector's config.") -%}
+        {%- end -%}
+      {%- end -%}
+      {#- A tag template naming a field the event lacks makes vector drop the whole
+          metric, so every tag field is assigned unconditionally below. -#}
+      {%- var tagLines = []string{
+            "status: \"{{rm_status}}\"",
+            "method: \"{{rm_method}}\"",
+            "namespace: \"{{rm_ns}}\"",
+            "ingress: \"{{rm_ing}}\"",
+            "service: \"{{rm_svc}}\"",
+            "controller_pod: \"{{rm_pod}}\"",
+          } -%}
+      {%- if (rm | dig("pathLabel")) == true %}{% tagLines = append(tagLines, "path: \"{{rm_path}}\"") %}{% end -%}
+      {%- if (rm | dig("hostLabel")) == true %}{% tagLines = append(tagLines, "host: \"{{rm_host}}\"") %}{% end -%}
+      {%- if (rm | dig("terminationStateLabel")) == true %}{% tagLines = append(tagLines, "term: \"{{rm_term}}\"") %}{% end -%}
+      {%- tagLines = append(tagLines, "controller_class: \"" + ctrlClass + "\"") -%}
+      {%- tagLines = append(tagLines, "controller_namespace: \"" + ctrlNs + "\"") -%}
+      {#- Absolute output indentation: these are emitted straight after `tags:`. -#}
+      {%- var tagBlock = "" -%}
+      {%- for _, t := range tagLines %}{% tagBlock = tagBlock + "\n          " + t %}{% end -%}
+      {%- var coreOn = mOn("requests") || mOn("request_duration_seconds") -%}
+      {%- var sizeOn = mOn("request_size") || mOn("response_size") -%}
+      {%- var connOn = mOn("connect_duration_seconds") -%}
+      {%- var respOn = mOn("header_duration_seconds") || mOn("response_duration_seconds") -%}
+      {#- parse_json ONCE, unlike the logMetrics regex extractors: those read one
+      field each, while this reads eleven, and eleven regexes cost more than a parse. -#}
+        # Per-request metrics, projected from fields the access log already carries.
+        request_metrics_base:
+          type: remap
+          inputs: [haproxy_log]
+      {#- This branch only: the stdout sink still gets every line, including HAProxy's
+      process messages and the TCP-mode records dropped below. -#}
+          drop_on_abort: true
+          reroute_dropped: false
+          source: |
+            m, merr = string(.message)
+            if merr != null { abort }
+            r, perr = parse_json(m)
+            if perr != null { abort }
+            o = object(r) ?? {}
+            # HTTP-record discriminator: a TCP record has no status, and HAProxy's
+            # process lines are not JSON. Doubles as the numeric check.
+            st = to_int(o.status) ?? -1
+            if st < 0 { abort }
+            .rm_status = to_string(st)
+            # Empty when HAProxy answered the request itself; it still counts.
+            res = split(string(o.resource) ?? "", "/")
+            .rm_ns = ""
+            .rm_ing = ""
+            if length(res) > 1 {
+              .rm_ns = string(res[0]) ?? ""
+              .rm_ing = string(res[1]) ?? ""
+            }
+            .rm_svc = string(o.service) ?? ""
+            .rm_method = string(o.method) ?? ""
+            .rm_pod = string(o.instance_pod) ?? ""
+            .rm_host = string(o.host) ?? ""
+            # The route key carries the host as a prefix; the label wants the path.
+            .rm_path = replace(string(o.route) ?? "", r'^[^/]*', "")
+            .rm_term = string(o.term) ?? ""
+            .rm_one = 1
+            .rm_bytes = to_int(o.bytes) ?? 0
+            .rm_bytes_in = to_int(o.bytes_in) ?? 0
+            # A timer reads -1 when its phase never happened. The two that gate a
+            # filter below keep the -1; these three are always meaningful.
+            ta = to_int(o.total_time_ms) ?? 0
+            if ta < 0 { ta = 0 }
+            trq = to_int(o.request_time_ms) ?? 0
+            if trq < 0 { trq = 0 }
+            tw = to_int(o.queue_time_ms) ?? 0
+            if tw < 0 { tw = 0 }
+            # The whole upstream call: Ta - TR - Tw is exactly Tc + Tr + Td, and
+            # unlike Td itself needs no tracing-gated log field.
+            up = ta - trq - tw
+            if up < 0 { up = 0 }
+            .rm_req_dur = to_float(ta) / 1000.0
+            .rm_upstream = to_float(up) / 1000.0
+            .rm_connect = to_float(to_int(o.connect_time_ms) ?? -1) / 1000.0
+            .rm_header = to_float(to_int(o.response_time_ms) ?? -1) / 1000.0
+      {#- (log_to_metric type, remap field); the group decides gate and exporter. -#}
+      {%- var defs = map[string][]string{
+            "requests":                  []string{"counter",   "rm_one"},
+            "request_duration_seconds":  []string{"histogram", "rm_req_dur"},
+            "request_size":              []string{"histogram", "rm_bytes_in"},
+            "response_size":             []string{"histogram", "rm_bytes"},
+            "connect_duration_seconds":  []string{"histogram", "rm_connect"},
+            "header_duration_seconds":   []string{"histogram", "rm_header"},
+            "response_duration_seconds": []string{"histogram", "rm_upstream"},
+          } -%}
+      {%- var emit = func(names []string) string {
+            var out = ""
+            for _, n := range names {
+              if mOn(n) {
+                out = out + "\n      - type: " + defs[n][0] +
+                      "\n        field: " + defs[n][1] +
+                      "\n        name: " + n +
+                      "\n        namespace: " + prefix +
+                      "\n        tags:" + tagBlock
+              }
+            }
+            return out
+          } -%}
+      {%- if coreOn %}
+
+        request_metrics_core:
+          type: log_to_metric
+          inputs: [request_metrics_base]
+          metrics:{{ emit([]string{"requests", "request_duration_seconds"}) }}
+      {%- end %}
+      {%- if sizeOn %}
+      {# Its own log_to_metric because these two go to the SIZES exporter, whose
+         buckets are byte boundaries. Same source event as the core metrics. #}
+
+        request_metrics_sizes:
+          type: log_to_metric
+          inputs: [request_metrics_base]
+          metrics:{{ emit([]string{"request_size", "response_size"}) }}
+      {%- end %}
+      {%- if connOn %}
+      {# Without this gate every request HAProxy answered itself — a deny, a
+         redirect, a 503 with no live endpoint — would report a 0-second connect. #}
+
+        # A backend connection was established.
+        request_metrics_connected:
+          type: filter
+          inputs: [request_metrics_base]
+          condition:
+            type: vrl
+      {# to_float, not a bare comparison: VRL types the field as unknown here and
+         refuses a fallible expression in a condition. -1.0 excludes the record. #}
+            source: '(to_float(.rm_connect) ?? -1.0) >= 0.0'
+
+        request_metrics_connect:
+          type: log_to_metric
+          inputs: [request_metrics_connected]
+          metrics:{{ emit([]string{"connect_duration_seconds"}) }}
+      {%- end %}
+      {%- if respOn %}
+      {# A connection accepted and then hung up (term sH--) has Tr = -1 and belongs
+         in neither histogram; `requests` and its `term` label are where it shows up. #}
+
+        # The upstream produced response headers.
+        request_metrics_responded:
+          type: filter
+          inputs: [request_metrics_base]
+          condition:
+            type: vrl
+            source: '(to_float(.rm_header) ?? -1.0) >= 0.0'
+
+        request_metrics_response:
+          type: log_to_metric
+          inputs: [request_metrics_responded]
+          metrics:{{ emit([]string{"header_duration_seconds", "response_duration_seconds"}) }}
+      {%- end %}
+      {%- var cl = rm | dig("cardinalityLimit") | fallback(map[string]any{}) -%}
+      {%- if (cl | dig("enabled")) == true -%}
+      {%- var limit = cl | dig("valueLimit") | fallback(500) -%}
+      {%- var action = cl | dig_string("drop_tag", "action") -%}
+      {%- if action != "drop_tag" && action != "drop_event" -%}
+        {%- fail("extraContext.vector.requestMetrics.cardinalityLimit.action must be \"drop_tag\" or \"drop_event\", got '" + action + "'.") -%}
+      {%- end -%}
+      {%- if toint(limit) < 1 -%}
+        {%- fail("extraContext.vector.requestMetrics.cardinalityLimit.valueLimit must be a positive integer, got '" + tostring(limit) + "'.") -%}
+      {%- end -%}
+      {#- Per sink branch. Only these metrics: the haproxy_* re-export has bounded
+          labels and must keep honor_labels. -#}
+      {%- var coreGuarded = []string{} -%}
+      {%- if coreOn %}{% coreGuarded = append(coreGuarded, "request_metrics_core") %}{% end -%}
+      {%- if connOn %}{% coreGuarded = append(coreGuarded, "request_metrics_connect") %}{% end -%}
+      {%- if respOn %}{% coreGuarded = append(coreGuarded, "request_metrics_response") %}{% end -%}
+      {%- if len(coreGuarded) > 0 %}
+
+      {#- drop_tag collapses the offending label onto one series and keeps the totals
+      correct; drop_event would discard the requests, so a cardinality problem would
+      read as an outage. State is in memory and resets on restart. -#}
+        # Backstop for a label that goes unbounded anyway.
+        request_metrics_guard:
+          type: tag_cardinality_limit
+          inputs: [{{ join(coreGuarded, ", ") }}]
+      {#- exact_fingerprint: 8 bytes per distinct value instead of the string.
+      per_metric: a runaway `path` on one family must not spend the others' budget. -#}
+          mode: exact_fingerprint
+          tracking_scope: per_metric
+          value_limit: {{ toint(limit) }}
+          limit_exceeded_action: {{ action }}
+      {%- end %}
+      {%- if sizeOn %}
+
+        request_metrics_size_guard:
+          type: tag_cardinality_limit
+          inputs: [request_metrics_sizes]
+          mode: exact_fingerprint
+          tracking_scope: per_metric
+          value_limit: {{ toint(limit) }}
+          limit_exceeded_action: {{ action }}
+      {%- end %}
+      {%- end %}
 
   vector-span-transform:
     template: |-
@@ -1011,10 +1294,12 @@ validationTests:
     assertions:
       - type: haproxy_valid
         description: HAProxy config must still be valid
+      # Named, not `type: filter`: the request-metrics pipeline uses filters for
+      # its validity gates, and those are unrelated to exclusions.
       - type: not_contains
         target: file:vector.yaml
-        pattern: 'type: filter'
-        description: No filter transform when there is nothing to drop
+        pattern: 'metrics_filtered:'
+        description: No exclusion filter, on either branch, when there is nothing to drop
       - type: contains
         target: file:vector.yaml
         pattern: '- haproxy_metrics'
@@ -1301,3 +1586,440 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: 'logMetrics\.bad is kind "enum" and must list its accepted `values`'
+
+  test-vector-request-metrics-families:
+    description: >-
+      All seven families render with the full label set including `term`, each
+      reaching the exporter its bucket domain belongs to.
+    fixtures: {}
+    extraContext:
+      vector:
+        metricsPort: 9598
+        sizeMetricsPort: 9599
+        haproxyStatsPort: 8404
+        excludeMetrics: []
+        logMetrics:
+          __replace__: true
+        requestMetrics:
+          enabled: true
+          prefix: haptic_ingress_controller
+          controllerClass: haproxy-haptic.org/controller
+          controllerNamespace: haptic
+          terminationStateLabel: true
+          pathLabel: true
+          hostLabel: true
+          durationBuckets: [0.001, 0.005, 10, 30, 60]
+          sizeBuckets: [100, 1000, 100000000]
+          cardinalityLimit:
+            enabled: true
+            valueLimit: 500
+            action: drop_tag
+          metrics:
+            __replace__: true
+            requests: true
+            request_duration_seconds: true
+            response_duration_seconds: true
+            connect_duration_seconds: true
+            header_duration_seconds: true
+            request_size: true
+            response_size: true
+    assertions:
+      - type: haproxy_valid
+      # Every family, under the configured prefix.
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^        name: requests$'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^        name: request_duration_seconds$'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^        name: response_duration_seconds$'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^        name: connect_duration_seconds$'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^        name: header_duration_seconds$'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^        name: request_size$'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^        name: response_size$'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^        namespace: haptic_ingress_controller$'
+      # vector's own {{...}} interpolation shares Scriggo's delimiters. Evaluated
+      # here, every tag would render empty and collapse the whole family onto one
+      # series — silently, since the config would still load.
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'status: "\{\{rm_status\}\}"'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'term: "\{\{rm_term\}\}"'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'path: "\{\{rm_path\}\}"'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'host: "\{\{rm_host\}\}"'
+      # Constants, resolved at render time rather than per record.
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'controller_class: "haproxy-haptic\.org/controller"'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'controller_namespace: "haptic"'
+      # Two exporters, each with its own domain's boundaries. A shared list would
+      # give latency byte buckets and bytes sub-second ones.
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^    address: 0\.0\.0\.0:9598$'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^    address: 0\.0\.0\.0:9599$'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^    buckets: \[0\.001, 0\.005, 10, 30, 60\]$'
+      # 1e8 must render as an integer: YAML 1.1 reads "1e+08" as a STRING, which
+      # vector rejects at config load.
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^    buckets: \[100, 1000, 100000000\]$'
+      # The size families must not reach the primary sink, whose buckets are
+      # seconds — scoped to the sizes sink block so it cannot pass vacuously.
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?s)metrics_sizes:\s+type: prometheus_exporter.{0,200}address: 0\.0\.0\.0:9599'
+
+  test-vector-request-metrics-validity-gates:
+    description: >-
+      The upstream timers are grouped by validity gate: recording a -1 timer as
+      zero would claim the backend answered instantly on a request that never
+      reached one.
+    fixtures: {}
+    extraContext:
+      vector:
+        metricsPort: 9598
+        sizeMetricsPort: 9599
+        haproxyStatsPort: 8404
+        excludeMetrics: []
+        logMetrics:
+          __replace__: true
+        requestMetrics:
+          enabled: true
+          prefix: haptic_ingress_controller
+          controllerClass: c
+          controllerNamespace: n
+          terminationStateLabel: true
+          pathLabel: true
+          hostLabel: true
+          durationBuckets: [0.001, 1]
+          sizeBuckets: [100, 1000]
+          cardinalityLimit:
+            enabled: true
+            valueLimit: 500
+            action: drop_tag
+          metrics:
+            __replace__: true
+            requests: true
+            request_duration_seconds: true
+            response_duration_seconds: true
+            connect_duration_seconds: true
+            header_duration_seconds: true
+            request_size: true
+            response_size: true
+    assertions:
+      - type: haproxy_valid
+      # Both gates exist and read the timer, not the derived value.
+      - type: contains
+        target: file:vector.yaml
+        pattern: "source: '\\(to_float\\(\\.rm_connect\\) \\?\\? -1\\.0\\) >= 0\\.0'"
+      - type: contains
+        target: file:vector.yaml
+        pattern: "source: '\\(to_float\\(\\.rm_header\\) \\?\\? -1\\.0\\) >= 0\\.0'"
+      # Each pair below binds a metric to the transform that feeds it, using
+      # `[^\[]*` as the block delimiter: every transform's `inputs: [...]` line
+      # contains a bracket and nothing inside a metric entry does, so the match
+      # cannot run past the end of its own block. RE2 has no lookahead, and a
+      # plain `.{0,N}` window silently stops testing anything once the rendered
+      # block outgrows N.
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?s)inputs: \[request_metrics_connected\][^\[]*name: connect_duration_seconds'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?s)inputs: \[request_metrics_responded\][^\[]*name: header_duration_seconds'
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: '(?s)inputs: \[request_metrics_base\][^\[]*name: connect_duration_seconds'
+        description: A record that never reached a backend must not report a 0s connect
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: '(?s)inputs: \[request_metrics_base\][^\[]*name: header_duration_seconds'
+        description: An upstream that never sent headers must not report a 0s wait
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: '(?s)inputs: \[request_metrics_base\][^\[]*name: response_duration_seconds'
+      # The upstream total is Tc+Tr+Td expressed without a tracing-gated field.
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'up = ta - trq - tw'
+      # One JSON parse for all eleven fields, not one regex per field.
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?s)request_metrics_base:.{0,900}parse_json\(m\)'
+
+  test-vector-request-metrics-label-opt-outs:
+    description: >-
+      Each label opt-out removes its tag from every family rather than blanking
+      it, so the rest aggregate exactly as the ingress-nginx set does.
+    fixtures: {}
+    extraContext:
+      vector:
+        metricsPort: 9598
+        sizeMetricsPort: 9599
+        haproxyStatsPort: 8404
+        excludeMetrics: []
+        logMetrics:
+          __replace__: true
+        requestMetrics:
+          enabled: true
+          prefix: nginx_ingress_controller
+          controllerClass: k8s.io/ingress-nginx
+          controllerNamespace: ingress-nginx
+          terminationStateLabel: false
+          pathLabel: false
+          hostLabel: false
+          durationBuckets: [0.001, 1]
+          sizeBuckets: [100, 1000]
+          cardinalityLimit:
+            enabled: false
+          metrics:
+            __replace__: true
+            requests: true
+    assertions:
+      - type: haproxy_valid
+      # The prefix is what makes these a drop-in for an ingress-nginx install.
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^        namespace: nginx_ingress_controller$'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'controller_class: "k8s\.io/ingress-nginx"'
+      # Positive control: the labels that stay are still emitted, so the absence
+      # assertions below are testing the opt-outs rather than a broken render.
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'status: "\{\{rm_status\}\}"'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'service: "\{\{rm_svc\}\}"'
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'term: "\{\{rm_term\}\}"'
+        description: terminationStateLabel false must drop the tag, not blank it
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'path: "\{\{rm_path\}\}"'
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'host: "\{\{rm_host\}\}"'
+      # Only `requests` is on, so neither the size exporter nor the upstream
+      # branches should exist at all.
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'metrics_sizes:'
+        description: No size family enabled means no second exporter to scrape
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: '(?m)^    address: 0\.0\.0\.0:9599$'
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'request_metrics_connected:'
+      # cardinalityLimit off: the guard disappears and the sink reads the
+      # log_to_metric transform directly.
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'tag_cardinality_limit'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^      - request_metrics_core$'
+
+  test-vector-request-metrics-sink-wiring:
+    description: >-
+      vector.yaml computes which transform names feed each exporter while the
+      snippet defines them; a drift between the two crash-loops the sidecar.
+    fixtures: {}
+    extraContext:
+      vector:
+        metricsPort: 9598
+        sizeMetricsPort: 9599
+        haproxyStatsPort: 8404
+        excludeMetrics:
+          - '^haproxy_backend_max_'
+        logMetrics:
+          __replace__: true
+        requestMetrics:
+          enabled: true
+          prefix: haptic_ingress_controller
+          controllerClass: c
+          controllerNamespace: n
+          terminationStateLabel: true
+          pathLabel: true
+          hostLabel: true
+          durationBuckets: [0.001, 1]
+          sizeBuckets: [100, 1000]
+          cardinalityLimit:
+            enabled: true
+            valueLimit: 250
+            action: drop_event
+          metrics:
+            __replace__: true
+            requests: true
+            connect_duration_seconds: true
+            response_size: true
+    assertions:
+      - type: haproxy_valid
+      # Guard on: it is the terminal stage, so the sink must read IT, never the
+      # log_to_metric transforms it sits in front of.
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?s)request_metrics_guard:\s+type: tag_cardinality_limit\s+inputs: \[request_metrics_core, request_metrics_connect\]'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'value_limit: 250'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'limit_exceeded_action: drop_event'
+      # With exclusions configured, both branches route through a filter — the
+      # sizes branch included. Without its own filter an operator's exclusion
+      # pattern would silently apply to every metric except the size families.
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?s)metrics_filtered:\s+type: filter\s+inputs: \[[^\]]*request_metrics_guard[^\]]*\]'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?s)size_metrics_filtered:\s+type: filter\s+inputs: \[request_metrics_size_guard\]'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?s)metrics_sizes:\s+type: prometheus_exporter\s+inputs: \[size_metrics_filtered\]'
+      # The guard applies to these metrics only: honor_labels on the HAProxy
+      # re-export means its label set is already bounded and must stay intact.
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: '(?s)tag_cardinality_limit[\s\S]{0,300}haproxy_metrics'
+        description: Guarding the re-export would rewrite labels dashboards match on
+
+  test-vector-request-metrics-disabled:
+    description: >-
+      With the feature off, nothing is rendered: no transforms, no second
+      exporter, no `buckets` on the primary sink.
+    fixtures: {}
+    extraContext:
+      vector:
+        metricsPort: 9598
+        sizeMetricsPort: 9599
+        haproxyStatsPort: 8404
+        excludeMetrics: []
+        logMetrics:
+          __replace__: true
+        requestMetrics:
+          enabled: false
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'request_metrics_'
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: '(?m)^    buckets:'
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'metrics_sizes:'
+      # Positive control: the rest of the pipeline is untouched.
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^    address: 0\.0\.0\.0:9598$'
+
+  test-vector-request-metrics-rejects-bad-prefix:
+    description: >-
+      An invalid prefix fails vector's config load, which crash-loops the sidecar
+      and takes the HAProxy pod out of its Service.
+    fixtures: {}
+    extraContext:
+      renderMode: admission
+      vector:
+        metricsPort: 9598
+        sizeMetricsPort: 9599
+        haproxyStatsPort: 8404
+        excludeMetrics: []
+        logMetrics:
+          __replace__: true
+        requestMetrics:
+          enabled: true
+          prefix: '9nope-'
+          durationBuckets: [0.001, 1]
+          sizeBuckets: [100, 1000]
+          metrics:
+            __replace__: true
+            requests: true
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'requestMetrics\.prefix must be a Prometheus metric-name prefix'
+
+  test-vector-request-metrics-rejects-sub-precision-buckets:
+    description: >-
+      A boundary below the exporter's 9-decimal precision renders as "0", and two
+      of them collapse onto one — so the check runs on the rendered value, not the
+      input, where both would pass.
+    fixtures: {}
+    extraContext:
+      renderMode: admission
+      vector:
+        metricsPort: 9598
+        sizeMetricsPort: 9599
+        haproxyStatsPort: 8404
+        excludeMetrics: []
+        requestMetrics:
+          enabled: true
+          prefix: haptic_ingress_controller
+          durationBuckets: [0.0000000001, 0.0000000002, 1]
+          sizeBuckets: [100, 1000]
+          metrics:
+            __replace__: true
+            request_duration_seconds: true
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'durationBuckets entry .0\.0000000001. is smaller than the exporter renders'
+
+  test-vector-request-metrics-rejects-unsorted-buckets:
+    description: >-
+      `le` boundaries are cumulative, so an out-of-order list produces silently
+      wrong quantiles rather than an error.
+    fixtures: {}
+    extraContext:
+      renderMode: admission
+      vector:
+        metricsPort: 9598
+        sizeMetricsPort: 9599
+        haproxyStatsPort: 8404
+        excludeMetrics: []
+        logMetrics:
+          __replace__: true
+        requestMetrics:
+          enabled: true
+          prefix: haptic_ingress_controller
+          durationBuckets: [1, 0.5, 2]
+          sizeBuckets: [100, 1000]
+          metrics:
+            __replace__: true
+            request_duration_seconds: true
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'durationBuckets must be strictly ascending'

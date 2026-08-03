@@ -67,7 +67,7 @@ tests:
           errorMessage: 'vector.image.tag must be pinned to an explicit tag so a silent upstream bump can''t change the log pipeline under a running fleet.'
 
   # excludeMetrics guards. These cover the Helm path, which is what every normal
-  # install goes through; the Scriggo copies in libraries/vector.yaml only matter
+  # install goes through; the Scriggo copies in charts/vector/library.yaml only matter
   # for a hand-written HAProxyTemplateConfig CR. Every pattern below reaches the
   # rendered vector config verbatim, and a bad one fails vector's config LOAD —
   # i.e. it crash-loops the sidecar rather than degrading, so the render must refuse.
@@ -171,6 +171,11 @@ tests:
             - ^haproxy_backend_agg_server_check_status$
             - ^haproxy_backend_http_cache_
             - ^haproxy_(server_backup|backend_backup_servers)$
+            # The two requires-gated entries. Both are superseded by a
+            # requestMetrics family, and both disappear from this list when that
+            # feature is off — pinned in its own test below.
+            - ^haproxy_(backend_http_requests_total|backend_http_responses_total|frontend_http_responses_total)$
+            - ^haproxy_(backend|server)_(connect|queue|response|total)_time_average_seconds$
             - ^haproxy_(server|backend)_max_
       # haproxy_backend_agg_server_status is deliberately NOT excluded. With
       # excludeMaintServerMetrics on, agg_server_status{state="MAINT"} is the only
@@ -197,7 +202,7 @@ tests:
       # the whole exposition is already parsed into events).
       - lengthEqual:
           path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          count: 20
+          count: 31
       - contains:
           path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
           content: haproxy_backend_http_cache_hits_total
@@ -219,7 +224,7 @@ tests:
       # ...and its two families leave the source-side list with it.
       - lengthEqual:
           path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          count: 18
+          count: 29
 
   # Trace-export guards. Both live in HELM rather than in the Scriggo render, and
   # that placement is the point: a validationTest legitimately pins individual
@@ -303,3 +308,149 @@ tests:
       - matchRegex:
           path: spec.templatingSettings.extraContext.spoaHub.hub.metricsAddr
           pattern: '^0\.0\.0\.0:9095$'
+
+  - it: should reject an unknown requestMetrics field
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.requestMetrics.terminationStateLabels: false
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.requestMetrics contains unknown field "terminationStateLabels". Valid fields: enabled, prefix, controllerClass, terminationStateLabel, pathLabel, hostLabel, durationBuckets, sizeBuckets, cardinalityLimit, metrics.'
+
+  - it: should reject an unknown metric name rather than leaving it inert
+    template: haproxytemplateconfig.yaml
+    set:
+      # A typo here would otherwise pass validation, be skipped by the render,
+      # and emit nothing — with the operator believing the metric was on.
+      vector.requestMetrics.metrics.request_durations_seconds: true
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.requestMetrics.metrics contains unknown metric "request_durations_seconds". Valid names: requests, request_duration_seconds, response_duration_seconds, connect_duration_seconds, header_duration_seconds, request_size, response_size.'
+
+  - it: should reject a label flag given as a string
+    template: haproxytemplateconfig.yaml
+    set:
+      # Truthy in the render, so this would leave `term` on every family while
+      # reading as if it had been switched off.
+      vector.requestMetrics.terminationStateLabel: "false"
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.requestMetrics.terminationStateLabel must be a boolean, got false. A quoted "false" is truthy in the render and would leave the label on.'
+
+  - it: should reject bucket boundaries that are not ascending
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.requestMetrics.durationBuckets: [0.005, 0.01, 0.005]
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.requestMetrics.durationBuckets must be strictly ascending; 0.005 follows 0.01. Prometheus reads these as cumulative `le` boundaries, so out-of-order values produce silently wrong quantiles.'
+
+  - it: should reject an empty bucket list
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.requestMetrics.sizeBuckets: []
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.requestMetrics.sizeBuckets is empty. A histogram with no boundaries reports only +Inf, which carries no information beyond the count.'
+
+  - it: should reject requestMetrics enabled with every metric switched off
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.requestMetrics.metrics:
+        requests: false
+        request_duration_seconds: false
+        response_duration_seconds: false
+        connect_duration_seconds: false
+        header_duration_seconds: false
+        request_size: false
+        response_size: false
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.requestMetrics.enabled is true but every entry in `metrics` is false, so the pipeline would parse each access-log record and emit nothing. Set vector.requestMetrics.enabled: false instead.'
+
+  - it: should reject a sizeMetricsPort that collides with the primary one
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.sizeMetricsPort: 9598
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.metricsPort and vector.sizeMetricsPort are both 9598. They are two prometheus_exporter sinks with different histogram buckets, so they cannot share a port.'
+
+  - it: should reject an unparseable cardinalityLimit action
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.requestMetrics.cardinalityLimit.action: drop
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.requestMetrics.cardinalityLimit.action must be "drop_tag" or "drop_event", got "drop". drop_tag collapses the runaway label and keeps the totals; drop_event discards the requests, so a cardinality problem would read as an outage.'
+
+  - it: should default controller_class to the IngressClass controller name
+    template: haproxytemplateconfig.yaml
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.vector.requestMetrics.controllerClass
+          value: haproxy-haptic.org/controller
+
+  - it: should let controller_class be set to the ingress-nginx value for a drop-in
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.requestMetrics.controllerClass: k8s.io/ingress-nginx
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.vector.requestMetrics.controllerClass
+          value: k8s.io/ingress-nginx
+
+  - it: should strip a trailing underscore from the prefix
+    template: haproxytemplateconfig.yaml
+    set:
+      # Operators think of this as `nginx_ingress_controller_`; the exporter joins
+      # namespace and name with an underscore itself, so keeping it would render
+      # nginx_ingress_controller__requests.
+      vector.requestMetrics.prefix: nginx_ingress_controller_
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.vector.requestMetrics.prefix
+          value: nginx_ingress_controller
+
+  - it: should exclude the superseded HAProxy families while request metrics are on
+    template: haproxytemplateconfig.yaml
+    asserts:
+      - contains:
+          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
+          content: haproxy_backend_response_time_average_seconds
+      - contains:
+          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
+          content: haproxy_backend_http_responses_total
+      # Per-server, and the request metrics carry no server dimension — so this
+      # one has no replacement and must survive.
+      - notContains:
+          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
+          content: haproxy_server_http_responses_total
+
+  - it: should restore the superseded families when request metrics are off
+    template: haproxytemplateconfig.yaml
+    set:
+      # `requires` exists for exactly this: without it, turning the replacement
+      # off would drop the originals with nothing standing in for them.
+      vector.requestMetrics.enabled: false
+    asserts:
+      - notContains:
+          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
+          content: haproxy_backend_response_time_average_seconds
+      - notContains:
+          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
+          content: haproxy_backend_http_responses_total
+      # A group without `requires` is unaffected either way.
+      - contains:
+          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
+          content: haproxy_backend_backup_servers
+
+  - it: should reject a bucket boundary below the exporter's precision
+    template: haproxytemplateconfig.yaml
+    set:
+      # Renders as "0" at 9 decimals, so it would emit a le="0" boundary — and a
+      # second such value would collapse onto the same one.
+      vector.requestMetrics.durationBuckets: [0.0000000001, 1]
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.requestMetrics.durationBuckets[0] is 1e-10, smaller than the exporter renders (9 decimals); it would emit a le="0" boundary.'

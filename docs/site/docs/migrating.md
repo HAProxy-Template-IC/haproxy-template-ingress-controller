@@ -191,6 +191,65 @@ With it on, the moment HAPTIC's HAProxy Service has an address it stamps
 `.status.loadBalancer` onto every adopted Ingress, and `external-dns`
 switches DNS to it — a premature, unverified cutover.
 
+### Metrics
+
+HAPTIC derives the same per-request metric set from its access log, so your
+existing dashboards, recording rules and alerts keep working. They're named
+`haptic_ingress_controller_*` by default; set the prefix to make them a literal
+drop-in:
+
+```yaml
+vector:
+  requestMetrics:
+    prefix: nginx_ingress_controller
+    controllerClass: k8s.io/ingress-nginx
+```
+
+That reproduces `nginx_ingress_controller_requests` and the six histograms, with
+the label set `ingress-nginx` uses — `status`, `method`, `path`, `namespace`,
+`ingress`, `service`, `host`, `controller_class`, `controller_namespace`,
+`controller_pod`. See [Request metrics](operations/monitoring.md#request-metrics)
+for what each family measures.
+
+You gain one label: `term`, HAProxy's termination state, which distinguishes a
+backend that refused the connection (`SC--`) from one that timed out without
+sending headers (`sH--`) from a client that gave up (`cD--`). Turn it off with
+`vector.requestMetrics.terminationStateLabel: false` if the extra cardinality
+isn't worth it.
+
+Four differences to expect:
+
+- **Two scrape ports, not one.** Byte sizes and latencies can't share one set of
+  histogram buckets, so the size families are exported on `9599` and everything
+  else on `9598`. The bundled `PodMonitor` declares both — set
+  `vector.podMonitor.enabled: true`.
+- **No `canary` label.** HAPTIC has no per-request canary marker. PromQL
+  `{canary=""}`, which the stock dashboards use, matches a series without the
+  label, so those queries are unaffected.
+- **Different bucket boundaries.** Durations are a strict superset of
+  `--time-buckets`, so a query hardcoding `le="0.5"` still resolves. Sizes
+  deliberately differ: `ingress-nginx` measures them against 10–100 **bytes**, so
+  every real payload lands in `+Inf` and those `_bucket` series carry no
+  information. `_sum` and `_count` are unaffected. To restore both lists exactly:
+
+    ```yaml
+    vector:
+      requestMetrics:
+        durationBuckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+        sizeBuckets: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    ```
+
+- **`request_size` reads lower.** It counts request **body** bytes; nginx's
+  `$request_length` also counts the request line and headers. HAProxy exposes no
+  headers-inclusive counter.
+
+!!! warning "These are counted from the access log, not in the data path"
+    They report fewer requests than were served whenever HAProxy drops log records under back-pressure. Keep
+    the `HAProxyAccessLogRecordsDropped` alert on. If a request count has to stay
+    exact through a drop, set
+    `vector.excludeMetrics.httpRequestCounters.enabled: false` to keep HAProxy's
+    own counters alongside these.
+
 ### Annotation support
 
 The library covers the common `nginx.ingress.kubernetes.io/*` annotations —

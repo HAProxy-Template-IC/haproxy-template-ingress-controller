@@ -625,6 +625,13 @@ spec:
             - name: vector-metrics
               containerPort: {{ $vector.metricsPort | int }}
               protocol: TCP
+            {{- if include "haptic.vector.sizeExporterEnabled" . }}
+            {{- /* Own exporter: one `buckets` list per sink. Name is 12 chars; a
+                   port name is capped at 15. */}}
+            - name: vector-sizes
+              containerPort: {{ $vector.sizeMetricsPort | int }}
+              protocol: TCP
+            {{- end }}
           # Ready only once HAPTIC's rendered config has been pushed AND reloaded:
           # the exporter that serves this port exists only in the rendered config,
           # never in the bootstrap ConfigMap. Same shape as HAProxy's /ready gate.
