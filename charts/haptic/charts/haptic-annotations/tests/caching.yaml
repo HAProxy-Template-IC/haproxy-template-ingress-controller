@@ -603,3 +603,127 @@ validationTests:
       # The whole point: proactive staleness is off for this route.
       - { type: contains, target: "map:haptic-cache-swr.map", pattern: "(?m)^default/sie-only 0$" }
       - { type: contains, target: "map:haptic-cache-stale-if-error.map", pattern: "(?m)^default/sie-only 1$" }
+
+  test-haptic-cache-vary-declared-downstream:
+    description: >-
+      A cache-key built from components the CLIENT sends (header:, cookie:) is
+      declared to downstream caches as Vary, so a CDN or proxy in front of HAPTIC
+      keys on the same dimensions Varnish does instead of serving one caller's
+      response to another. add-header, so an origin's own Vary survives.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: vary-ingress
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+              haproxy-haptic.org/cache-key: "header:X-Api-Version,cookie:sess,query:page"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: vary.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      # cookie:<c> collapses to Cookie; query:<q> contributes nothing because a
+      # downstream cache already keys on the URL.
+      - { type: contains, target: "map:haptic-cache-vary.map", pattern: "(?m)^default/vary-ingress X-Api-Version,Cookie$" }
+      # No identity component here, so the response stays shareable.
+      - { type: not_contains, target: "map:haptic-cache-private.map", pattern: "default/vary-ingress" }
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-after-response add-header Vary %\\[var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-vary\\.map\\)\\]"
+
+  test-haptic-cache-identity-key-marks-response-private:
+    description: >-
+      consumer and src cannot be expressed as Vary — a downstream cache never
+      receives the discriminator, so declaring it would collapse every caller onto
+      one shared variant. Those routes are marked Cache-Control: private instead,
+      which keeps shared caches out while leaving the browser free to cache.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: consumer-ingress
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+              haproxy-haptic.org/cache-key: "consumer"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: consumer.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:haptic-cache-private.map", pattern: "(?m)^default/consumer-ingress 1$" }
+      # Nothing client-sendable to vary on, so no Vary entry for this route.
+      - { type: not_contains, target: "map:haptic-cache-vary.map", pattern: "default/consumer-ingress" }
+      # A conflicting `public` is rewritten rather than emitted alongside
+      # `private`: RFC 9111 defines no precedence for a response carrying both.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-after-response replace-header Cache-Control \\(\\?i\\)\\\\bpublic\\\\b private if \\{ var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-private\\.map\\) -m found \\}"
+      # …and the add-header is skipped when that rewrite already produced one, so
+      # the response never carries `private` twice.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-after-response add-header Cache-Control private if \\{ var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-private\\.map\\) -m found \\} !\\{ res\\.hdr\\(Cache-Control\\) -m sub -i private \\}"
+      # The rewrite must run before the add, or the guard reads a stale value.
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - "replace-header Cache-Control \\(\\?i\\)\\\\bpublic\\\\b private"
+          - "add-header Cache-Control private"
+
+  test-haptic-cache-vary-dedup-is-case-insensitive:
+    description: >-
+      HTTP header names are case-insensitive, so two cache-key components naming
+      the same header in different case are one Vary dimension, not two. The
+      operator's original spelling is what gets emitted.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: dedup-ingress
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+              haproxy-haptic.org/cache-key: "header:X-Api-Version,header:x-api-version"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: dedup.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:haptic-cache-vary.map", pattern: "(?m)^default/dedup-ingress X-Api-Version$" }
+      - { type: not_contains, target: "map:haptic-cache-vary.map", pattern: "x-api-version" }

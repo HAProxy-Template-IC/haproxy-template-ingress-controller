@@ -44,6 +44,8 @@ templateSnippets:
         {%- var sieLines = []any{} %}
         {%- var keepLines = []any{} %}
         {%- var stripLines = []any{} %}
+        {%- var varyLines = []any{} %}
+        {%- var privateLines = []any{} %}
         {%- for _, ingress := range resources.ingresses.List() %}
           {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" %}
             {%- var rid = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
@@ -105,6 +107,49 @@ templateSnippets:
               {%- if !regex_search(keep, "^[0-9]+$") %}{{ fail("Invalid value '" + keep + "' for annotation 'haproxy-haptic.org/cache-revalidate' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"600\" not \"10m\".") }}{%- end %}
               {%- keepLines = append(keepLines, rid + " " + keep) %}
             {%- end %}
+            {#- Declare the variance to caches DOWNSTREAM of HAPTIC. Varnish keys
+                on X-Haptic-Cache-Vary internally, but that header is ours: a CDN
+                or proxy in front of HAPTIC sees one publicly-cacheable response
+                with no declared variance and will serve one consumer's body to
+                another. Split by what the CLIENT actually sends, because that is
+                what a downstream cache can key on:
+                  header:<h>  -> Vary: <h>          exact, the client sends it
+                  cookie:<c>  -> Vary: Cookie       coarse but correct
+                  query:<q>   -> nothing            already part of the URL
+                  consumer    -> Cache-Control: private
+                  src         -> Cache-Control: private
+                consumer and src are NOT expressible as Vary: emitting
+                `Vary: X-Haptic-Consumer` would have every downstream client
+                present it as absent, collapsing back to one shared variant — the
+                same leak. Origin-sent Vary is untouched and still honoured by
+                Varnish natively; this only adds what WE introduced.
+                cache-key is parsed again here (it is also parsed in
+                backends-870 to build the key expression) because the two need
+                different things from it: the value there, the classification
+                here. -#}
+            {%- var ckeyForVary = ingress.Metadata.Annotations["haproxy-haptic.org/cache-key"] %}
+            {%- if ckeyForVary != "" %}
+              {%- var varyHdrs = []any{} %}
+              {%- var needPrivate = false %}
+              {%- for _, comp := range split(ckeyForVary, ",") %}
+                {%- var c = strip(comp) %}
+                {%- if c == "consumer" || c == "src" %}{%- needPrivate = true %}
+                {%- else if hasPrefix(c, "header:") %}{%- varyHdrs = append(varyHdrs, strip(c[7:])) %}
+                {%- else if hasPrefix(c, "cookie:") %}{%- varyHdrs = append(varyHdrs, "Cookie") %}
+                {%- end %}
+              {%- end %}
+              {%- if len(varyHdrs) > 0 %}
+                {%- var seenVary = map[string]bool{} %}
+                {%- var uniq = []any{} %}
+                {%- for _, h := range varyHdrs %}
+                  {#- Header names are case-insensitive, so dedup on the folded
+                      name while emitting the operator's original spelling. -#}
+                  {%- if !seenVary[toLower(tostring(h))] %}{%- seenVary[toLower(tostring(h))] = true %}{%- uniq = append(uniq, h) %}{%- end %}
+                {%- end %}
+                {%- varyLines = append(varyLines, rid + " " + (uniq | toStringSlice() | join(",")) ) %}
+              {%- end %}
+              {%- if needPrivate %}{%- privateLines = append(privateLines, rid + " 1") %}{%- end %}
+            {%- end %}
             {%- var stripCookie = ingress.Metadata.Annotations["haproxy-haptic.org/cache-strip-set-cookie"] %}
             {%- if stripCookie != "" %}
               {%- if stripCookie != "true" && stripCookie != "false" %}{{ fail("Invalid value '" + stripCookie + "' for annotation 'haproxy-haptic.org/cache-strip-set-cookie' on Ingress '" + rid + "'. Must be \"true\" or \"false\".") }}{%- end %}
@@ -130,6 +175,10 @@ templateSnippets:
         {%- if e7 != nil %}{{ fail("failed to register haptic-cache-keep.map: " + tostring(e7)) }}{%- end %}
         {%- var _, e8 = fileRegistry.Register("map", "haptic-cache-strip-cookie.map", (stripLines | toStringSlice() | join("\n")) + "\n") %}
         {%- if e8 != nil %}{{ fail("failed to register haptic-cache-strip-cookie.map: " + tostring(e8)) }}{%- end %}
+        {%- var _, e9 = fileRegistry.Register("map", "haptic-cache-vary.map", (varyLines | toStringSlice() | join("\n")) + "\n") %}
+        {%- if e9 != nil %}{{ fail("failed to register haptic-cache-vary.map: " + tostring(e9)) }}{%- end %}
+        {%- var _, e10 = fileRegistry.Register("map", "haptic-cache-private.map", (privateLines | toStringSlice() | join("\n")) + "\n") %}
+        {%- if e10 != nil %}{{ fail("failed to register haptic-cache-private.map: " + tostring(e10)) }}{%- end %}
       {%- end %}
 
   # ==========================================================================
@@ -200,6 +249,8 @@ templateSnippets:
         {%- var sieMap, _ = pathResolver.GetPath("haptic-cache-stale-if-error.map", "map") %}
         {%- var keepMap, _ = pathResolver.GetPath("haptic-cache-keep.map", "map") %}
         {%- var stripMap, _ = pathResolver.GetPath("haptic-cache-strip-cookie.map", "map") %}
+        {%- var varyMap, _ = pathResolver.GetPath("haptic-cache-vary.map", "map") %}
+        {%- var privateMap, _ = pathResolver.GetPath("haptic-cache-private.map", "map") %}
       {{ "\n" }}# haptic/varnish-cache — shared, consistent-hash-sharded cache tier
       backend varnish_cache
           balance uri
@@ -260,6 +311,23 @@ templateSnippets:
               http-after-response (not http-response) so it also covers responses
               HAProxy generates itself, and backend scope so routes that don't go
               through the cache evaluate nothing. -#}
+          {#- Tell caches downstream of HAPTIC what this route varies on. add-header
+              (not set-header) because both fields are comma-combinable lists per
+              RFC 9110: the origin's own Vary / Cache-Control survives and ours is
+              unioned with it, instead of one silently overwriting the other. -#}
+          http-after-response add-header Vary %[var(txn.resource_id),map({{ varyMap }})] if { var(txn.resource_id),map({{ varyMap }}) -m found }
+          {#- consumer/src keying cannot be expressed as Vary at all, so the only
+              correct downstream signal is to keep shared caches out entirely. A
+              browser may still cache it under any max-age the origin set.
+              Rewrite a conflicting `public` to `private` FIRST rather than
+              emitting both: RFC 9111 gives no precedence for a response carrying
+              both directives, and while mainstream shared caches treat `private`
+              as authoritative, relying on that convention is a weaker signal than
+              simply not contradicting ourselves. The add-header then covers the
+              responses that carried no `public` to rewrite, and is skipped when
+              the rewrite already produced one. -#}
+          http-after-response replace-header Cache-Control (?i)\bpublic\b private if { var(txn.resource_id),map({{ privateMap }}) -m found }
+          http-after-response add-header Cache-Control private if { var(txn.resource_id),map({{ privateMap }}) -m found } !{ res.hdr(Cache-Control) -m sub -i private }
           http-after-response set-var(txn.cache_status) res.hdr(X-Cache) if { res.hdr(X-Cache) -m found }
           default-server check
       {{ BackendServers(vSvc, 0, vPort, map[string]any{"flags": []any{}}, "", "varnish_cache", vNs) | indent(4, true) }}
