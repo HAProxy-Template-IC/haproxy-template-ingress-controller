@@ -210,7 +210,12 @@ templateSnippets:
       http-after-response set-header Access-Control-Expose-Headers '{{ exposeHeaders }}' if {{ cond }} {{ aclName }}
             {%- end %}
             {%- if !allowAny %}
-      http-after-response set-header Vary Origin if {{ cond }} {{ aclName }}
+      {#- add-header, never set-header: Vary is a comma-combinable list per RFC 9110
+          and several producers contribute to it. set-header replaced the whole
+          field, destroying both the origin's own Vary and the one the cache tier
+          adds to declare its key — so a CDN in front of HAPTIC keyed on Origin
+          alone and served one caller's keyed body to another. -#}
+      http-after-response add-header Vary Origin if {{ cond }} {{ aclName }}
             {%- end %}
       http-request return status 204 if {{ cond }} {{ aclName }} METH_OPTIONS { req.hdr(Access-Control-Request-Method) -m found }
           {%- end %}

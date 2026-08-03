@@ -881,3 +881,137 @@ validationTests:
         patterns:
           - "http-request del-header X-Haptic-Cache-Auth"
           - "http-request set-header X-Haptic-Cache-Auth 1"
+
+  test-haptic-cache-auth-enforced-on-client-leg:
+    description: >-
+      A cache-enabled route is switched to `backend varnish_cache` in the
+      frontend, so the application backend holding the 401 is never entered on
+      the client leg. Without client-leg enforcement an uncredentialed caller is
+      served the authenticated response straight from cache — Varnish's builtin
+      does not help, because it only refuses cached responses to requests
+      carrying Authorization or Cookie, and an API key is neither. The deny and
+      the consumer identity must therefore be emitted BEFORE the cache switch.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: api-keys }
+          type: Opaque
+          data:
+            # apikey-abc123:alice / apikey-def456:bob
+            keys: YXBpa2V5LWFiYzEyMzphbGljZQphcGlrZXktZGVmNDU2OmJvYgo=
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cached-api
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+              haproxy-haptic.org/cache-key: "consumer"
+              haproxy-haptic.org/api-key-secret: api-keys
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cached-api.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      # The 401 exists on the client leg, scoped to this route.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 401 if \\{ var\\(txn\\.resource_id\\) -m str default/cached-api \\} !\\{ var\\(txn\\.haptic_apikey\\),map\\("
+      # THE ORDERING IS THE FIX: deny before the cache switch, or it never runs.
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - "http-request deny deny_status 401 if \\{ var\\(txn\\.resource_id\\) -m str default/cached-api \\}"
+          - "use_backend varnish_cache if \\{ var\\(txn\\.resource_id\\),map\\("
+      # And the consumer identity must resolve before the key is built, or
+      # cache-key: consumer hashes the empty string and collapses every caller
+      # onto one entry.
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - "http-request set-var\\(txn\\.haptic_consumer\\) var\\(txn\\.haptic_apikey\\),map\\([^)]*\\) if \\{ var\\(txn\\.resource_id\\) -m str default/cached-api \\}"
+          - "use_backend varnish_cache if \\{ var\\(txn\\.resource_id\\),map\\("
+
+  test-haptic-cache-refuses-unenforceable-auth-combination:
+    description: >-
+      HMAC and consumer-group credentials are checked only in the application
+      backend, which a cache-enabled route never enters on the client leg. Until
+      that enforcement moves, the combination is refused at admission rather than
+      shipped serving authenticated responses to callers with no credential.
+    extraContext:
+      renderMode: admission
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cached-hmac
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/hmac-secret: hmac-keys
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cached-hmac.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "combines 'haproxy-haptic.org/cache-enable' with 'haproxy-haptic.org/hmac-secret'"
+      - type: contains
+        target: rendering_error
+        pattern: "returned to callers who present none"
+
+  test-haptic-cache-cert-header-without-cache-key:
+    description: >-
+      A route forwarding client-certificate details must vary on the certificate
+      even when it sets no cache-key of its own — the injected header is a
+      per-caller identity either way.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cert-only
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+              haproxy-haptic.org/auth-tls-cert-header: "true"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cert-only.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Haptic-Cache-Vary %\\[ssl_c_s_dn\\(CN\\)\\] if \\{ var\\(txn\\.resource_id\\) -m str default/cert-only \\}"
+      - { type: contains, target: "map:haptic-cache-private.map", pattern: "(?m)^default/cert-only 1$" }
