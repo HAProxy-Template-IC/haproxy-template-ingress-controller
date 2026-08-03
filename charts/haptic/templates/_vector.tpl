@@ -53,7 +53,7 @@ guard that lives only here would not protect a hand-written CR.
   {{- fail "vector must be a map." -}}
 {{- end -}}
 {{- range $field := keys $v -}}
-  {{- if not (has $field (list "enabled" "image" "metricsPort" "socketPath" "scrapeIntervalSecs" "excludeMetrics" "excludeMaintServerMetrics" "omitEmptyLogFields" "resources" "securityContext" "podMonitor" "extraVolumeMounts")) -}}
+  {{- if not (has $field (list "enabled" "image" "metricsPort" "socketPath" "scrapeIntervalSecs" "excludeMetrics" "excludeMaintServerMetrics" "omitEmptyLogFields" "logMetrics" "resources" "securityContext" "podMonitor" "extraVolumeMounts")) -}}
     {{- fail (printf "vector contains unknown field %q. Valid fields: enabled, image, metricsPort, socketPath, scrapeIntervalSecs, excludeMetrics, excludeMaintServerMetrics, omitEmptyLogFields, resources, securityContext, podMonitor, extraVolumeMounts." $field) -}}
   {{- end -}}
 {{- end -}}

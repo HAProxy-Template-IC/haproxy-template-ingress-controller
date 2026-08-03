@@ -398,6 +398,27 @@ spec:
       {{- end }}
     {{- end }}
     {{- $vectorExcludeFamilies = $vectorExcludeFamilies | sortAlpha | uniq }}
+    {{- /* Log-derived metrics. An entry may name a `requires` values path — a
+           metric can only work if whatever emits its access-log field is on, and
+           rendering a transform that can never match costs a regex per record.
+           Resolved here rather than in the library because the feature flags live
+           in values, not in extraContext. */ -}}
+    {{- $vectorLogMetrics := dict }}
+    {{- range $name, $entry := (.Values.vector.logMetrics | default dict) }}
+      {{- if not (kindIs "map" $entry) }}{{- fail (printf "vector.logMetrics.%s must be a map." $name) }}{{- end }}
+      {{- if not (hasKey $entry "enabled") }}{{- fail (printf "vector.logMetrics.%s must set `enabled`." $name) }}{{- end }}
+      {{- $on := $entry.enabled }}
+      {{- if and $on (hasKey $entry "requires") }}
+        {{- $cur := $.Values }}
+        {{- range $seg := splitList "." $entry.requires }}
+          {{- if kindIs "map" $cur }}{{- $cur = index $cur $seg }}{{- else }}{{- $cur = nil }}{{- end }}
+        {{- end }}
+        {{- if not $cur }}{{- $on = false }}{{- end }}
+      {{- end }}
+      {{- $resolved := omit $entry "requires" }}
+      {{- $_ := set $resolved "enabled" $on }}
+      {{- $_ := set $vectorLogMetrics $name $resolved }}
+    {{- end }}
     {{- $_ := set $extraContext "vector" (dict
           "socketPath" .Values.vector.socketPath
           "metricsPort" (.Values.vector.metricsPort | int)
@@ -408,6 +429,7 @@ spec:
           "excludeMetricFamilies" $vectorExcludeFamilies
           "excludeMaintServerMetrics" .Values.vector.excludeMaintServerMetrics
           "omitEmptyLogFields" .Values.vector.omitEmptyLogFields
+          "logMetrics" $vectorLogMetrics
           "dataDir" "/var/lib/vector") }}
 
     {{- /* Point the access log at the socket — but only if the operator hasn't

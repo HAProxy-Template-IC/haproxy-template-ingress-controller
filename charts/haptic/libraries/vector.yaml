@@ -45,6 +45,21 @@ files:
       {%- var excludeFams = vec | dig("excludeMetricFamilies") | fallback([]any{}) | toSlice() -%}
       {#- Endpoint lives under extraContext.tracing, not vector: it describes the
           deployment's tracing setup. Empty = no span pipeline. -#}
+      {#- vector interpolates a field into a tag with its own {{...}} syntax, which
+          collides with Scriggo's. Built as a string so the braces reach the config
+          instead of being evaluated here. -#}
+      {%- var metricValueTag = "{{haptic_metric_value}}" -%}
+      {#- Log-derived metric registry. Keyed map, not a list: an operator adding an
+          entry must not replace the ones the chart ships (charts/CLAUDE.md). Only
+          enabled entries are rendered, so a disabled one costs no per-record work. -#}
+      {%- var logMetricsAll = vec | dig("logMetrics") | fallback(map[string]any{}) %}
+      {%- var logMetrics = map[string]any{} %}
+      {%- for _, k := range keys(logMetricsAll.(map[string]any)) %}
+        {%- var entry = logMetricsAll.(map[string]any)[k].(map[string]any) %}
+        {%- var en, ok = entry["enabled"] %}
+        {%- if !ok %}{{ fail("extraContext.vector.logMetrics." + k + " must set `enabled`: an entry without it would sit inert and quietly emit nothing.") }}{%- end %}
+        {%- if tostring(en) == "true" %}{%- logMetrics[k] = entry %}{%- end %}
+      {%- end %}
       {%- var otlpEndpoint = extraContext | dig_string("", "tracing", "otlp", "endpoint") -%}
       {%- var otlpService = extraContext | dig_string("haptic", "tracing", "otlp", "serviceName") -%}
       {#- Resource attributes describe the EMITTER, so they identify this HAPTIC:
@@ -202,7 +217,7 @@ files:
         vector_metrics:
           type: internal_metrics
 
-      {%- if len(excludes) > 0 || omitEmpty || otlpEndpoint != "" %}
+      {%- if len(excludes) > 0 || omitEmpty || otlpEndpoint != "" || len(logMetrics) > 0 %}
 
       transforms:
       {%- end %}
@@ -250,6 +265,99 @@ files:
               .message = m
             }
       {%- end %}
+      {%- if len(logMetrics) > 0 %}
+        # Log-derived metrics. Varnish and several other in-path components expose
+        # no scrape endpoint of their own, but the access log already carries their
+        # verdict per request, so a metric is a projection of a field that is
+        # present anyway.
+        #
+        # Driven by extraContext.vector.logMetrics — adding one is a data entry,
+        # not new template code. Each entry names the access-log FIELD it reads and
+        # how to turn it into a metric:
+        #   kind: enum    -> counter, tagged with the field's value. `values` lists
+        #                    the accepted literals, so an unexpected value cannot
+        #                    invent an unbounded label.
+        #   kind: numeric -> counter incremented BY the field's value, for a
+        #                    quantity rather than an occurrence.
+        #
+        # Extraction is a REGEX over the raw record, never parse_json: this pipeline
+        # does not parse access-log records (see omitEmptyLogFields above), and
+        # paying a JSON parse per request per metric would undo that.
+      {%- for _, key := range keys(logMetrics) %}
+        {%- var m = logMetrics[key].(map[string]any) %}
+        {%- var field = m | dig_string("", "field") %}
+        {%- var kind = m | dig_string("enum", "kind") %}
+        {%- var metricName = m | dig_string("", "metric") %}
+        {%- var tagName = m | dig_string("value", "tag") %}
+        {%- var vals = m | dig("values") | fallback([]any{}) | toSlice() %}
+        {#- Field and metric names are embedded in a VRL regex and a metric name;
+            an unvalidated one would break vector's config load and crash-loop the
+            sidecar, exactly as excludeMetrics guards against. -#}
+        {%- if !regex_search(field, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".field must be an access-log field name (letters, digits, underscore), got '" + field + "'.") }}{%- end %}
+        {%- if !regex_search(metricName, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".metric must be a Prometheus metric name, got '" + metricName + "'.") }}{%- end %}
+        {%- if !regex_search(tagName, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".tag must be a Prometheus label name, got '" + tagName + "'.") }}{%- end %}
+        {%- if kind != "enum" && kind != "numeric" %}{{ fail("extraContext.vector.logMetrics." + key + ".kind must be \"enum\" or \"numeric\", got '" + kind + "'.") }}{%- end %}
+        {%- if kind == "enum" && len(vals) == 0 %}{{ fail("extraContext.vector.logMetrics." + key + " is kind \"enum\" and must list its accepted `values`, or the label would be unbounded.") }}{%- end %}
+        {%- var pattern = "[0-9]+" %}
+        {%- if kind == "enum" %}
+          {%- var esc = []any{} %}
+          {%- for _, val := range vals %}
+            {%- if !regex_search(tostring(val), "^[A-Za-z0-9_.:-]+$") %}{{ fail("extraContext.vector.logMetrics." + key + ".values entry '" + tostring(val) + "' may only contain letters, digits, and _.:- — it is embedded in a VRL regex.") }}{%- end %}
+            {#- Escape before embedding: '.' passes the charset check but is a
+                regex wildcard, so a declared value of "1.5" would also match
+                "125" — widening the very set `values` exists to bound. -#}
+            {%- esc = append(esc, sanitize_regex(tostring(val))) %}
+          {%- end %}
+          {%- pattern = esc | toStringSlice() | join("|") %}
+        {%- end %}
+
+        {{ key }}_extract:
+          type: remap
+          inputs: [haproxy_log]
+          source: |
+            # abort, not a filter transform: remap defaults drop_on_abort=true, so a
+            # record without this field is dropped from THIS branch only — each
+            # transform consumes its own copy of haproxy_log, so the access log and
+            # the span pipeline are untouched.
+            m, err = string(.message)
+            if err != null {
+              abort
+            }
+            caps, cerr = parse_regex(m, r'"{{ field }}": "(?P<v>{{ pattern }})"')
+            if cerr != null {
+              abort
+            }
+            .haptic_metric_value = caps.v
+        {%- if kind == "numeric" %}
+            # parse_regex yields a STRING. Measured against vector 0.57.0: a
+            # numeric string is parsed fine by increment_by_value, so this is not
+            # load-bearing for the shipped `[0-9]+` pattern. It earns its place on
+            # the failure path — given a NON-numeric value vector logs
+            # "Failed to parse field as float" and drops the event, once per
+            # record; converting here drops it quietly instead.
+            n, nerr = to_float(.haptic_metric_value)
+            if nerr != null {
+              abort
+            }
+            .haptic_metric_value = n
+        {%- end %}
+
+        {{ key }}_metric:
+          type: log_to_metric
+          inputs: [{{ key }}_extract]
+          metrics:
+            - type: counter
+              field: haptic_metric_value
+              name: {{ metricName }}
+              namespace: haptic
+        {%- if kind == "enum" %}
+              tags:
+                {{ tagName }}: "{{ metricValueTag }}"
+        {%- else %}
+              increment_by_value: true
+        {%- end %}
+      {%- end %}
+      {%- end %}
       {%- if len(excludes) > 0 %}
         # Drop metric families before they are re-exported. HAProxy's exporter
         # publishes host-computed aggregates — running maxima "since the process
@@ -266,13 +374,13 @@ files:
         metrics_filtered:
           type: filter
         {%- if toint(statsPort) > 0 && toint(hubPort) > 0 %}
-          inputs: [haproxy_metrics, spoa_hub_metrics, vector_metrics]
+          inputs: [haproxy_metrics, spoa_hub_metrics, vector_metrics{% for _, k := range keys(logMetrics) %}, {{ k }}_metric{% end %}]
         {%- else if toint(statsPort) > 0 %}
-          inputs: [haproxy_metrics, vector_metrics]
+          inputs: [haproxy_metrics, vector_metrics{% for _, k := range keys(logMetrics) %}, {{ k }}_metric{% end %}]
         {%- else if toint(hubPort) > 0 %}
-          inputs: [spoa_hub_metrics, vector_metrics]
+          inputs: [spoa_hub_metrics, vector_metrics{% for _, k := range keys(logMetrics) %}, {{ k }}_metric{% end %}]
         {%- else %}
-          inputs: [vector_metrics]
+          inputs: [vector_metrics{% for _, k := range keys(logMetrics) %}, {{ k }}_metric{% end %}]
         {%- end %}
           condition:
             type: vrl
@@ -328,6 +436,9 @@ files:
         {%- end %}
         {%- if toint(hubPort) > 0 %}
             - spoa_hub_metrics
+        {%- end %}
+        {%- for _, k := range keys(logMetrics) %}
+            - {{ k }}_metric
         {%- end %}
             - vector_metrics
       {%- end %}
@@ -1084,3 +1195,109 @@ validationTests:
         # string there would be meaningless.
         pattern: '(?m)^\s+- http://127\.0\.0\.1:9101/metrics\?'
         description: The source-side filter must not leak onto the spoa-hub endpoint
+
+  test-vector-log-derived-metrics-registry:
+    description: >-
+      Log-derived metrics are generated from extraContext.vector.logMetrics, so
+      adding one is a data entry rather than new template code. Both kinds render:
+      enum as a tagged counter, numeric as a counter incremented by the value.
+    fixtures: {}
+    extraContext:
+      vector:
+        socketPath: /run/vector/haproxy.sock
+        metricsPort: 9598
+        scrapeIntervalSecs: 15
+        haproxyStatsPort: 8404
+        spoaHubMetricsPort: 0
+        dataDir: /var/lib/vector
+        excludeMetrics: []
+        logMetrics:
+          __replace__: true
+          cacheStatus:
+            enabled: true
+            field: cache
+            kind: enum
+            values: ["HIT", "MISS", "STALE"]
+            metric: cache_status_total
+            tag: status
+          cacheAge:
+            enabled: true
+            field: cache_age
+            kind: numeric
+            metric: cache_age_seconds_total
+          switchedOff:
+            enabled: false
+            field: never
+            kind: enum
+            values: ["x"]
+            metric: never_total
+    assertions:
+      - type: haproxy_valid
+      # enum: a regex bounded to the declared values, and a tagged counter.
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'parse_regex\(m, r''"cache": "\(\?P<v>HIT\|MISS\|STALE\)"''\)'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'name: cache_status_total'
+      # vector's own {{...}} interpolation must survive Scriggo, which shares the
+      # delimiters — an evaluated tag renders empty and silently collapses every
+      # value onto one series.
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'status: "\{\{haptic_metric_value\}\}"'
+      # numeric: no tag, incremented by the value itself.
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'name: cache_age_seconds_total'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'increment_by_value: true'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'parse_regex\(m, r''"cache_age": "\(\?P<v>\[0-9\]\+\)"''\)'
+      # Both reach the scrape endpoint, not just exist.
+      - type: contains
+        target: file:vector.yaml
+        pattern: '- cacheStatus_metric'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '- cacheAge_metric'
+      # A disabled entry costs no per-record work at all.
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'switchedOff'
+      # Scoped: parse_json is legitimate in the span branch and named in this
+      # block's own comment. Only a real call inside an extract is a defect.
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'cacheStatus_extract:[\s\S]{0,900}parse_json\('
+        description: Parsing every record per metric would undo the design
+
+  test-vector-log-metric-rejects-unbounded-enum:
+    description: >-
+      An enum entry without `values` would let an unexpected field value invent a
+      Prometheus label, so it is refused at render time rather than shipping an
+      unbounded-cardinality metric.
+    fixtures: {}
+    extraContext:
+      renderMode: admission
+      vector:
+        socketPath: /run/vector/haproxy.sock
+        metricsPort: 9598
+        scrapeIntervalSecs: 15
+        haproxyStatsPort: 8404
+        spoaHubMetricsPort: 0
+        dataDir: /var/lib/vector
+        excludeMetrics: []
+        logMetrics:
+          __replace__: true
+          bad:
+            enabled: true
+            field: something
+            kind: enum
+            metric: bad_total
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'logMetrics\.bad is kind "enum" and must list its accepted `values`'
