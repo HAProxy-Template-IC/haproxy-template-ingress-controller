@@ -136,6 +136,9 @@ migrationCoverage:
       haproxy-haptic.org/cache-max-object-size:
         status: supported
         note: "Max cacheable response size in bytes; a response larger (by Content-Length) than this stays uncacheable."
+      haproxy-haptic.org/cache-negative-ttl:
+        status: supported
+        note: "Seconds to cache a 404 or 410 so scanning traffic stops reaching the origin. Independent of cache-ttl (nesting it there made the annotation a silent no-op on routes that leave lifetimes to the origin) and on its own clock — a cached 404 during a bad deploy pins the outage for its lifetime. Only 404/410; 5xx is never negatively cached, and stale-if-error covers the outage case instead."
       haproxy-haptic.org/cache-revalidate:
         status: supported
         note: "Seconds past expiry the object is kept for conditional revalidation (Varnish beresp.keep), so the refresh can be an If-None-Match the origin answers with 304 instead of a full body. Costs cache storage; default 0 keeps nothing."

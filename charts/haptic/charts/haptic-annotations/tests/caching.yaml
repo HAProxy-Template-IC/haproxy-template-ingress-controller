@@ -727,3 +727,87 @@ validationTests:
       - type: haproxy_valid
       - { type: contains, target: "map:haptic-cache-vary.map", pattern: "(?m)^default/dedup-ingress X-Api-Version$" }
       - { type: not_contains, target: "map:haptic-cache-vary.map", pattern: "x-api-version" }
+
+  test-haptic-cache-negative-caching:
+    description: >-
+      cache-negative-ttl makes 404 and 410 cacheable on their own shorter clock,
+      so scanning traffic stops reaching the origin. It is deliberately separate
+      from cache-ttl: a cached 404 during a bad deploy pins the outage for its
+      lifetime, so it must be shortenable without shortening everything else.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: neg-ingress
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "600"
+              haproxy-haptic.org/cache-negative-ttl: "30"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: neg.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:haptic-cache-negative-ttl.map", pattern: "(?m)^default/neg-ingress 30$" }
+      # Its own clock, not the route's 600.
+      - { type: not_contains, target: "map:haptic-cache-negative-ttl.map", pattern: "default/neg-ingress 600" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request del-header X-Haptic-Cache-Negative-TTL" }
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Haptic-Cache-Negative-TTL %\\[var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-negative-ttl\\.map\\)\\]"
+      # 404 and 410 only — a 5xx must never be negatively cached, or an origin
+      # outage would be served back for the whole window.
+      - { type: contains, target: "k8s:varnish-cache", pattern: "beresp.status == 404 \\|\\| beresp.status == 410" }
+      # The check must stand OUTSIDE the cache-ttl branch. Nested, the annotation
+      # silently did nothing on a route that leaves lifetimes to the origin.
+      - type: match_order
+        target: "k8s:varnish-cache"
+        patterns:
+          - "X-Haptic-Cache-Negative-TTL && !beresp.http.Set-Cookie"
+          - "if \\(bereq.http.X-Haptic-Cache-TTL\\) \\{"
+      # The stale windows are applied through one shared sub, so the three paths
+      # that need them cannot drift apart.
+      - { type: contains, target: "k8s:varnish-cache", pattern: "sub haptic_stale_windows" }
+      - { type: match_count, target: "k8s:varnish-cache", pattern: "call haptic_stale_windows;", expected: "3" }
+
+  test-haptic-cache-negative-ttl-unit-suffix-rejected:
+    description: >-
+      cache-negative-ttl shares cache-ttl's unit-suffix footgun — the VCL appends
+      "s" to build the duration, so "30s" would yield 0s and silently disable
+      negative caching rather than failing.
+    extraContext:
+      renderMode: admission
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bad-neg
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-negative-ttl: "30s"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bad-neg.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "Invalid value '30s' for annotation 'haproxy-haptic.org/cache-negative-ttl'" }
