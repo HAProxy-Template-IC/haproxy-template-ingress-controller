@@ -239,12 +239,13 @@ Each entry in `$libraryFiles` is either:
     "subchart:haproxy-ingress"
     "subchart:nginx-ingress"
     "libraries/spoa-hub/"
-    "libraries/vector.yaml"
+    "subchart:vector"
 }}
-{{- /* vector.yaml is last on purpose: it contributes only its own `files:` entry
-       (the vector config) and reads the settings the chart projects into
-       extraContext, so it depends on every earlier library's port/feature
-       decisions and nothing depends on it. */}}
+{{- /* vector is last on purpose: it contributes only its own `files:` entry (the
+       vector config) and reads what the chart projects into extraContext, so it
+       depends on every earlier library's port/feature decisions and nothing
+       depends on it. A subchart because its source is ~97 KB the release Secret
+       would otherwise store on top of the rendered copy. */}}
 {{- range $file := $libraryFiles }}
   {{- $library := dict }}
   {{- $skip := false }}
@@ -464,3 +465,22 @@ Each entry in `$libraryFiles` is either:
 {{- /* Return merged config as YAML */ -}}
 {{- $merged | toYaml }}
 {{- end }}
+
+{{/*
+True when the frontend should compute txn.route, the matched route key. A
+predicate rather than `if tracing` because two features want it: spans for
+http.route, request metrics for their `path` label. It costs a four-step lookup
+cascade per request. Mirrored Scriggo-side by util-want-route, for a CR that
+bypasses Helm.
+*/}}
+{{- define "haptic.routeKeyEnabled" -}}
+{{- $ec := .Values.controller.config.templatingSettings.extraContext | default dict -}}
+{{- if dig "tracing" "enabled" false $ec -}}
+true
+{{- else -}}
+  {{- $rm := .Values.vector.requestMetrics | default dict -}}
+  {{- if and .Values.vector.enabled $rm.enabled $rm.pathLabel -}}
+true
+  {{- end -}}
+{{- end -}}
+{{- end -}}

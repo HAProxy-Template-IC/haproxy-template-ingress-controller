@@ -1,0 +1,4 @@
+apiVersion: v2
+name: vector
+description: Vector sidecar library — the access-log pipeline, the merged metrics exporters, and the per-request metrics derived from the log. Carries only library YAML; the parent chart merges it into the HAProxyTemplateConfig.
+version: 0.1.0

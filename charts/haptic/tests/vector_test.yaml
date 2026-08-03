@@ -1,6 +1,8 @@
 suite: vector sidecar
 templates:
   - haproxy-deployment.yaml
+  - vector-podmonitor.yaml
+  - haproxy-networkpolicy.yaml
 tests:
   - it: should render the sidecar by default with readiness gated on the metrics port
     template: haproxy-deployment.yaml
@@ -96,3 +98,132 @@ tests:
           content:
             name: vector
           any: true
+
+  - it: should declare the sizes exporter port alongside the primary one
+    template: haproxy-deployment.yaml
+    asserts:
+      # prometheus-operator only builds targets from DECLARED container ports, so
+      # an undeclared one is silently never scraped.
+      - contains:
+          path: spec.template.spec.containers[?(@.name=="vector")].ports
+          content:
+            name: vector-metrics
+            containerPort: 9598
+            protocol: TCP
+      - contains:
+          path: spec.template.spec.containers[?(@.name=="vector")].ports
+          content:
+            name: vector-sizes
+            containerPort: 9599
+            protocol: TCP
+
+  - it: should omit the sizes port when no size family is enabled
+    template: haproxy-deployment.yaml
+    set:
+      vector.requestMetrics.metrics.request_size: false
+      vector.requestMetrics.metrics.response_size: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[?(@.name=="vector")].ports
+          content:
+            name: vector-sizes
+            containerPort: 9599
+            protocol: TCP
+      # The primary port is unaffected, and still gates readiness.
+      - contains:
+          path: spec.template.spec.containers[?(@.name=="vector")].ports
+          content:
+            name: vector-metrics
+            containerPort: 9598
+            protocol: TCP
+      - equal:
+          path: spec.template.spec.containers[?(@.name=="vector")].readinessProbe.httpGet.port
+          value: vector-metrics
+
+  - it: should scrape both exporters from one PodMonitor
+    template: vector-podmonitor.yaml
+    set:
+      vector.podMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].port
+          value: vector-metrics
+      - equal:
+          path: spec.podMetricsEndpoints[1].port
+          value: vector-sizes
+      # Both endpoints take the same scrape settings, so tuning `interval` never
+      # requires knowing there are two.
+      - equal:
+          path: spec.podMetricsEndpoints[1].interval
+          value: 30s
+
+  - it: should declare one PodMonitor endpoint when the sizes exporter is off
+    template: vector-podmonitor.yaml
+    set:
+      vector.podMonitor.enabled: true
+      vector.requestMetrics.enabled: false
+    asserts:
+      - lengthEqual:
+          path: spec.podMetricsEndpoints
+          count: 1
+      - equal:
+          path: spec.podMetricsEndpoints[0].port
+          value: vector-metrics
+
+  - it: should let Prometheus reach the vector exporters in restrictive mode
+    template: haproxy-networkpolicy.yaml
+    set:
+      haproxy.networkPolicy.allowExternal: false
+      haproxy.networkPolicy.allowedSources:
+        - podSelector:
+            matchLabels:
+              app: prometheus
+    asserts:
+      # With the sidecar on, HAProxy's own /metrics answers over loopback only,
+      # so allowing 8404 alone leaves Prometheus with nothing reachable to
+      # scrape — and nothing reports it, the scrape just never succeeds.
+      - contains:
+          path: spec.ingress[?(@.ports[0].port==8404)].ports
+          content:
+            port: 9598
+            protocol: TCP
+      - contains:
+          path: spec.ingress[?(@.ports[0].port==8404)].ports
+          content:
+            port: 9599
+            protocol: TCP
+
+  - it: should not open the sizes port when its exporter is not rendered
+    template: haproxy-networkpolicy.yaml
+    set:
+      haproxy.networkPolicy.allowExternal: false
+      haproxy.networkPolicy.allowedSources:
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      vector.requestMetrics.enabled: false
+    asserts:
+      - contains:
+          path: spec.ingress[?(@.ports[0].port==8404)].ports
+          content:
+            port: 9598
+            protocol: TCP
+      - notContains:
+          path: spec.ingress[?(@.ports[0].port==8404)].ports
+          content:
+            port: 9599
+            protocol: TCP
+
+  - it: should open only the HAProxy stats port when the sidecar is off
+    template: haproxy-networkpolicy.yaml
+    set:
+      haproxy.networkPolicy.allowExternal: false
+      haproxy.networkPolicy.allowedSources:
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      vector.enabled: false
+    asserts:
+      - lengthEqual:
+          path: spec.ingress[?(@.ports[0].port==8404)].ports
+          count: 1

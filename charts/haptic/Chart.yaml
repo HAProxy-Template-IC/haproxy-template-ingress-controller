@@ -26,6 +26,9 @@ dependencies:
   - name: nginx-ingress
     version: 0.1.0
     condition: controller.templateLibraries.nginxIngress.enabled
+  - name: vector
+    version: 0.1.0
+    condition: vector.enabled
 keywords:
   - haproxy
   - ingress

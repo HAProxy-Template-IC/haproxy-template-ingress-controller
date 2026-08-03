@@ -383,30 +383,28 @@ haptic_reconciliation_total * on() group_left(version) haptic_build_info{version
 
 Every metric above comes from the **controller** (`haptic_*`, port `9090`) — they describe reconciliation, deployment, and leader-election health, not live traffic. HAProxy itself exposes a separate Prometheus endpoint carrying the data-plane signals operators usually watch most closely: per-frontend request rates, per-backend response-code breakdowns, and session counts.
 
-The bundled config enables HAProxy's built-in [Prometheus exporter](https://github.com/haproxy/haproxy/tree/master/addons/promex) on the status frontend (port `8404`, path `/metrics`) by default — it's served from the always-on `status-extra-100-prometheus-exporter` snippet, so no extra flag is required. The HAProxy Service exposes that port under the name `stats`.
+The bundled config enables HAProxy's built-in [Prometheus exporter](https://github.com/haproxy/haproxy/tree/master/addons/promex) on the status frontend (port `8404`, path `/metrics`) by default — it's served from the always-on `status-extra-100-prometheus-exporter` snippet, so no extra flag is required.
 
-!!! warning "The chart's ServiceMonitor / PodMonitor don't scrape HAProxy"
-    Both bundled monitors collect the controller's `haptic_*` metrics only: the `PodMonitor` selects `app.kubernetes.io/component: controller`, and the `ServiceMonitor` scrapes the `metrics` port (`9090`) that only the controller Service exposes. Neither targets HAProxy's `8404`. To collect HAProxy's `haproxy_*` metrics, add a separate scrape (or `ServiceMonitor`) pointed at the HAProxy pods.
+!!! warning "The chart's ServiceMonitor and PodMonitor don't scrape HAProxy"
+    Both bundled monitors collect the controller's `haptic_*` metrics only: the `PodMonitor` selects `app.kubernetes.io/component: controller`, and the `ServiceMonitor` scrapes the `metrics` port (`9090`) that only the controller Service exposes. Neither targets an HAProxy pod. Use the Vector `PodMonitor` below, or add your own scrape.
 
-### Scrape Configuration
+### Where to scrape
 
-Plain Prometheus — keep HAProxy pods (`component: loadbalancer`) and scrape their `8404` container port:
+Which endpoint carries `haproxy_*` depends on whether the [Vector sidecar](../haproxy-deployment.md#vector-sidecar) is running. It's enabled by default.
+
+**With the sidecar (`vector.enabled: true`, the default).** Vector scrapes HAProxy over loopback and re-exports everything on its own ports, so Prometheus collects one target per pod instead of one per container. HAProxy's own `/metrics` answers **only** over `127.0.0.0/8` in this mode, so a scrape aimed at `8404` from outside the pod returns nothing.
+
+Turn on the bundled `PodMonitor`:
 
 ```yaml
-scrape_configs:
-  - job_name: 'haproxy'
-    kubernetes_sd_configs:
-      - role: pod
-    relabel_configs:
-      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
-        regex: loadbalancer
-        action: keep
-      - source_labels: [__meta_kubernetes_pod_container_port_number]
-        regex: "8404"
-        action: keep
+vector:
+  podMonitor:
+    enabled: true
 ```
 
-Prometheus Operator — a `ServiceMonitor` against the HAProxy Service's `stats` port:
+It declares both endpoints: `vector-metrics` (`9598`) carrying `haproxy_*`, `spoa_*`, `vector_*` and the request counter and duration histograms, and `vector-sizes` (`9599`) carrying the byte-size histograms. The second endpoint exists only while a size family is enabled, and both use the same `interval`, `scrapeTimeout` and relabeling settings.
+
+**Without the sidecar (`vector.enabled: false`).** Scrape HAProxy's exporter directly, either with a `ServiceMonitor` against the HAProxy Service's `stats` port:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -423,22 +421,141 @@ spec:
       path: /metrics
 ```
 
+or with a plain Prometheus job that keeps HAProxy pods and their `8404` container port:
+
+```yaml
+scrape_configs:
+  - job_name: 'haproxy'
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+        regex: loadbalancer
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: "8404"
+        action: keep
+```
+
 ### Key queries
 
-HAProxy labels frontend/backend metrics with `proxy` (the section name) and server metrics with `server`:
+HAProxy labels frontend and backend metrics with `proxy` (the section name), and server metrics with `server`:
 
 ```promql
 # Request rate per frontend
 sum by (proxy) (rate(haproxy_frontend_http_requests_total[5m]))
 
-# 5xx response rate per backend
-sum by (proxy) (rate(haproxy_backend_http_responses_total{code="5xx"}[5m]))
-
 # Active sessions per backend
 sum by (proxy) (haproxy_backend_current_sessions)
+
+# Backends with no live endpoint
+sum by (proxy) (haproxy_backend_active_servers) == 0
 ```
 
 The full metric set is HAProxy's own, not HAPTIC's — see the [HAProxy Prometheus exporter reference](https://github.com/haproxy/haproxy/tree/master/addons/promex) for every exposed series and its labels.
+
+!!! note "Some families are dropped before they reach Prometheus"
+    With the sidecar on, `vector.excludeMetrics` drops HAProxy's since-boot maxima and its 1024-connection rolling averages, and — while [request metrics](#request-metrics) are enabled — `haproxy_backend_http_requests_total`, `haproxy_backend_http_responses_total` and `haproxy_frontend_http_responses_total`, which those metrics supersede with an exact status code and far more dimensions. `haproxy_server_http_responses_total` is kept: it's per-server, and the request metrics carry no server dimension. See [Chart values reference](../reference.md#vector-sidecar) to turn any of it back on.
+
+## Request metrics
+
+These are the rate, errors, and duration signals derived from the access log and dimensioned by **route** rather than by request URI. They answer questions the `haproxy_*` families can't: which Ingress is slow, which path returns 502 responses, whether latency is the backend or the network.
+
+They're on whenever the Vector sidecar is, and are named `haptic_ingress_controller_*` by default. The names, label set and semantics deliberately match `ingress-nginx`, so its dashboards, recording rules and alerts work against them — see [Migrating](../migrating.md#metrics) for a drop-in configuration.
+
+### Families
+
+| Metric | Type | Measures | Endpoint |
+|--------|------|----------|----------|
+| `haptic_ingress_controller_requests` | counter | One per logged request | `9598` |
+| `haptic_ingress_controller_request_duration_seconds` | histogram | Total active time — what the client experienced (`%Ta`) | `9598` |
+| `haptic_ingress_controller_response_duration_seconds` | histogram | The whole upstream call: connect, headers, and body transfer | `9598` |
+| `haptic_ingress_controller_connect_duration_seconds` | histogram | Establishing the backend connection (`%Tc`) | `9598` |
+| `haptic_ingress_controller_header_duration_seconds` | histogram | Waiting for the upstream's response headers (`%Tr`) | `9598` |
+| `haptic_ingress_controller_request_size` | histogram | Request body bytes from the client (`%U`) | `9599` |
+| `haptic_ingress_controller_response_size` | histogram | Bytes returned to the client (`%B`) | `9599` |
+
+Splitting the upstream call into three timers is what makes these worth more than a single latency histogram. A rise in `connect_duration` is a saturated or unhealthy backend; a rise in `header_duration` while connect stays flat is the application itself; a rise in `request_duration` while both stay flat is the client or the network.
+
+**The upstream timers are only recorded when the phase happened.** A request HAProxy answered itself — a deny, a redirect, a 503 with no live endpoint — increments `requests` and `request_duration_seconds` and contributes to neither `connect_duration_seconds` nor `header_duration_seconds`. Recording a zero there would report that the backend answered instantly on a request that never reached one. Look at `term` instead.
+
+### Labels
+
+Every family carries the same set:
+
+| Label | Value |
+|-------|-------|
+| `status` | HTTP status code, exact |
+| `method` | Request method |
+| `path` | The matched **route** — the path template you wrote, not the request URI |
+| `namespace`, `ingress` | The routing resource that owns the route; both empty when HAProxy answered the request itself |
+| `service` | The Kubernetes Service behind the chosen backend |
+| `host` | Request host |
+| `term` | HAProxy's 4-character termination state |
+| `controller_class`, `controller_namespace`, `controller_pod` | Which HAPTIC served it |
+
+`term` is the one label `ingress-nginx` has no equivalent of, and it's usually the fastest route from "5% of requests are failing" to a cause:
+
+| Value | Meaning |
+|-------|---------|
+| `----` | Normal completion |
+| `SC--` | The backend refused or failed the connection |
+| `sH--` | The backend accepted the connection, then never sent response headers — a server timeout |
+| `sQ--` | The request timed out waiting in the queue, before any backend was picked |
+| `cD--` | The client stopped reading mid-transfer |
+| `PR--` | HAProxy rejected the request itself, before routing |
+
+The full list is in HAProxy's [session state at disconnection](https://docs.haproxy.org/3.0/configuration.html#8.5) reference.
+
+```promql
+# Error rate per Ingress
+sum by (namespace, ingress) (rate(haptic_ingress_controller_requests{status=~"5.."}[5m]))
+
+# p99 latency per route
+histogram_quantile(0.99, sum by (le, namespace, ingress, path) (
+  rate(haptic_ingress_controller_request_duration_seconds_bucket[5m])))
+
+# Is it the backend, or the app? Compare connect against header time.
+histogram_quantile(0.95, sum by (le) (rate(haptic_ingress_controller_connect_duration_seconds_bucket[5m])))
+histogram_quantile(0.95, sum by (le) (rate(haptic_ingress_controller_header_duration_seconds_bucket[5m])))
+
+# Backends timing out or refusing connections
+sum by (namespace, ingress, service, term) (
+  rate(haptic_ingress_controller_requests{term=~"sH..|SC..|sQ.."}[5m])) > 0
+
+# Bandwidth per Ingress
+sum by (namespace, ingress) (rate(haptic_ingress_controller_response_size_sum[5m]))
+```
+
+### Controlling cardinality
+
+Series per pod is roughly `routes × statuses × methods × hosts × terminations`, once per family, and the six histograms multiply that again by their bucket count. That dimensionality is the point, but it has a price. The levers, cheapest first:
+
+```yaml
+vector:
+  requestMetrics:
+    # Each removes a label from ALL families, so the remaining series aggregate
+    # exactly as they would have without it.
+    terminationStateLabel: false   # `term` — the biggest saving, it multiplies the histograms too
+    pathLabel: false               # also switches off the HAProxy-side route lookup, saving per-request work
+    hostLabel: false               # the equivalent of ingress-nginx's --metrics-per-host
+
+    # Or drop whole families. The four durations are independent of each other.
+    metrics:
+      connect_duration_seconds: false
+      header_duration_seconds: false
+      request_size: false
+      response_size: false
+```
+
+Bucket boundaries are the other multiplier — `durationBuckets` and `sizeBuckets` in [Chart values reference](../reference.md#vector-sidecar).
+
+**A backstop runs by default.** `requestMetrics.cardinalityLimit` caps how many distinct values any one label may take, at 500 per metric. Past that, the offending label is dropped from new series and they collapse onto one — request totals stay correct, and only that dimension is lost. It protects against a label going unbounded despite the design: a route matched by regex, a Host header an attacker controls, a path template with an id in it. The state is in memory and resets when the sidecar restarts, so treat a tripped limit as something to fix rather than a solution.
+
+!!! warning "The access log is lossy under back-pressure"
+    These metrics are counted from access-log records, not in the data path, so they report fewer requests than were served whenever HAProxy drops records — see [The access log is lossy under back-pressure](../haproxy-deployment.md#the-access-log-is-lossy-under-back-pressure). Keep the `HAProxyAccessLogRecordsDropped` alert on. If you need a request count that stays exact through a drop, set `vector.excludeMetrics.httpRequestCounters.enabled: false` to keep HAProxy's own counters alongside these.
+
+A route that receives no requests for over a minute drops out of the exposition and its counter restarts from zero when traffic returns. `rate()` and `increase()` handle the reset, and it keeps idle routes from accumulating series.
 
 ## Alerting rules
 

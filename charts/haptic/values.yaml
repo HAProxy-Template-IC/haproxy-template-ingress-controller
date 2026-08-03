@@ -2244,56 +2244,86 @@ vector:
     # renovate: datasource=docker depName=timberio/vector
     tag: "0.57.0-debian"
 
-  # Port the single merged /metrics endpoint listens on. 9598 is vector's own
+  # Port the merged /metrics endpoint listens on. 9598 is vector's own
   # documented default for prometheus_exporter.
   metricsPort: 9598
 
-  # Metrics derived from the access log, as a keyed map so an operator adding an
-  # entry does not replace the ones the chart ships. Several in-path components
-  # expose no scrape endpoint of their own — Varnish has none at all, its counters
-  # living in shared memory behind varnishstat — but the access log already carries
-  # their verdict per request, so the metric is a projection of a field that is
-  # present anyway. Extraction is a regex over the raw record, never a JSON parse:
-  # the pipeline deliberately does not parse access-log records.
+  # Second endpoint, carrying only the requestMetrics size histograms. Exists
+  # because vector's prometheus_exporter takes ONE `buckets` list per sink and
+  # bytes and seconds are different domains
+  # (github.com/vectordotdev/vector/discussions/16543). Rendered, with its
+  # container port and PodMonitor endpoint, only while a size family is on.
+  sizeMetricsPort: 9599
+
+  # Per-request metrics from the access log: the RED signals keyed by ROUTE, with
+  # the upstream call split into the phases HAProxy measures separately. HAProxy's
+  # own exporter offers no per-route dimension, no quantiles and no phase
+  # breakdown. Reference: docs/site/docs/operations/monitoring.md#request-metrics.
   #
-  # Every entry needs `enabled`; one without it is refused at render time rather
-  # than sitting inert. Fields:
-  #   field    the access-log field name to read
-  #   kind     enum    -> counter tagged with the value; `values` lists the accepted
-  #                      literals so an unexpected one cannot invent a label
-  #            numeric -> counter incremented BY the value, for a quantity
-  #   metric   the Prometheus metric name, under the `haptic` namespace
-  #   tag      label name for kind: enum (default "value")
-  #   requires optional dotted values path that must be truthy; a metric whose
-  #            emitter is switched off would otherwise cost a regex per record
-  logMetrics:
-    cacheStatus:
+  # Series per pod is roughly routes x statuses x methods x hosts x terminations,
+  # per family, and the histograms multiply again by bucket count. The label
+  # opt-outs below are the cheapest lever, then `metrics`.
+  requestMetrics:
+    enabled: true
+
+    # Mirrors ingress-nginx's `nginx_ingress_controller_` shape. Set it to that
+    # value to keep existing dashboards and alerts working after a migration.
+    # A trailing underscore is accepted and stripped.
+    prefix: haptic_ingress_controller
+
+    # `controller_class` label. Empty means ingressClass.controllerName;
+    # ingress-nginx uses `k8s.io/ingress-nginx`.
+    controllerClass: ""
+
+    # Each removes its label from ALL families rather than blanking it, so the
+    # rest aggregate exactly as they would have without it.
+    #
+    # `term` is HAProxy's termination state (%tsc): sH-- is a server timeout, SC--
+    # a refused connection, cD-- a client that gave up. It answers "who ended this
+    # request, and why", which a 5xx rate never does — and it is the most
+    # expensive, multiplying the histograms too.
+    terminationStateLabel: true
+    # `path` is the matched route template, bounded by rule count. Off also
+    # switches off the HAProxy-side route lookup, saving per-request work.
+    pathLabel: true
+    # The equivalent of ingress-nginx's --metrics-per-host.
+    hostLabel: true
+
+    # Not ingress-nginx's, which are weak in both domains; the migration guide has
+    # a snippet to restore them. Durations are a strict SUPERSET of its
+    # --time-buckets, so a rule hardcoding le="0.5" still resolves, extended to
+    # 1ms (backends answer in 1-3ms) and 60s (it stops at 10s, below the server
+    # timeouts this chart ships).
+    durationBuckets: [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
+                      1, 2.5, 5, 10, 30, 60]
+    # A 1-3-10 ladder. ingress-nginx measures sizes against 10..100 BYTES, so
+    # every real payload lands in +Inf and its _bucket series say nothing.
+    sizeBuckets: [100, 300, 1000, 3000, 10000, 30000, 100000, 300000,
+                  1000000, 3000000, 10000000, 100000000]
+
+    # Backstop for a label that goes unbounded anyway — a regex route, a Host an
+    # attacker controls. drop_tag collapses it onto one series and keeps totals
+    # correct; drop_event would discard the requests. In-memory, resets on restart.
+    cardinalityLimit:
       enabled: true
-      requires: cache.varnish.enabled
-      field: cache
-      kind: enum
-      values: ["HIT", "MISS", "STALE"]
-      metric: cache_status_total
-      tag: status
-    # How old served objects are. A healthy-looking hit rate with ages near zero is
-    # churn — objects evicted or expiring before reuse — which the hit rate alone
-    # cannot distinguish from a genuinely warm cache.
-    cacheAge:
-      enabled: true
-      requires: cache.varnish.enabled
-      field: cache_age
-      kind: numeric
-      metric: cache_age_seconds_total
-    # Why responses were NOT stored, which is otherwise invisible: a route that
-    # silently never caches looks identical to one that is always missing.
-    cacheReason:
-      enabled: true
-      requires: cache.varnish.enabled
-      field: cache_uncacheable_reason
-      kind: enum
-      values: ["content_type_excluded", "too_large", "set_cookie", "status_not_cacheable"]
-      metric: cache_uncacheable_total
-      tag: reason
+      valueLimit: 500
+      action: drop_tag
+
+    # Keys are the emitted name suffixes; an unknown one fails the render.
+    # Sources: requests (one per record), request_duration_seconds %Ta,
+    # response_duration_seconds Tc+Tr+Td, connect_duration_seconds %Tc,
+    # header_duration_seconds %Tr, request_size %U, response_size %B.
+    #
+    # The three upstream timers are recorded only when the phase happened, so a
+    # request HAProxy answered itself lands in `requests` and nowhere else.
+    metrics:
+      requests: true
+      request_duration_seconds: true
+      response_duration_seconds: true
+      connect_duration_seconds: true
+      header_duration_seconds: true
+      request_size: true
+      response_size: true
 
   # UNIX datagram socket HAProxy writes access-log records to. Lives on its own
   # emptyDir shared with the haproxy container. HAProxy's `log <path>` form is a
@@ -2373,10 +2403,11 @@ vector:
   #       rather than duplicate it. Add '^haproxy_backend_agg_' here if you keep the
   #       per-server series instead (excludeMaintServerMetrics: false), where
   #       count by (proxy) (haproxy_server_status == 1) reproduces it sliceably.
-  #   haproxy_*_average_seconds — an average over the last 1024 connections, but
-  #       HAProxy's exporter publishes NO histogram, summary, _sum or _count anywhere
-  #       (verified), so these averages are the only latency signal it offers. Add
-  #       '_average_seconds$' if you take latency from the access log instead.
+  #   haproxy_server_http_responses_total — per SERVER, so requestMetrics does not
+  #       cover it (those metrics carry no server dimension, by design).
+  #
+  # Two groups carry `requires: vector.requestMetrics.enabled` and drop out by
+  # themselves if you turn that off — each is superseded by a family it emits.
   #
   # Patterns may not contain quotes, backslashes or newlines: they are embedded in
   # the rendered vector config, and an invalid one would crash-loop the sidecar.
@@ -2478,6 +2509,39 @@ vector:
         - haproxy_backend_backup_servers
         - haproxy_server_backup
 
+    # An average over the last 1024 connections: not aggregatable across pods and
+    # blind to the tail. requestMetrics' duration histograms measure the same four
+    # phases with real quantiles.
+    requestTimingAverages:
+      enabled: true
+      requires: vector.requestMetrics.enabled
+      pattern: '^haproxy_(backend|server)_(connect|queue|response|total)_time_average_seconds$'
+      families:
+        - haproxy_backend_connect_time_average_seconds
+        - haproxy_backend_queue_time_average_seconds
+        - haproxy_backend_response_time_average_seconds
+        - haproxy_backend_total_time_average_seconds
+        - haproxy_server_connect_time_average_seconds
+        - haproxy_server_queue_time_average_seconds
+        - haproxy_server_response_time_average_seconds
+        - haproxy_server_total_time_average_seconds
+
+    # Status counts bucketed into 1xx..5xx per proxy; <prefix>_requests carries the
+    # exact code plus route, method, host and service. What you give up: HAProxy
+    # counts in the data path, these come from the access log, which is lossy under
+    # back-pressure — set false to keep an exact census.
+    #
+    # haproxy_server_http_responses_total is NOT matched: it is per-server, a
+    # dimension requestMetrics does not carry.
+    httpRequestCounters:
+      enabled: true
+      requires: vector.requestMetrics.enabled
+      pattern: '^haproxy_(backend_http_requests_total|backend_http_responses_total|frontend_http_responses_total)$'
+      families:
+        - haproxy_backend_http_requests_total
+        - haproxy_backend_http_responses_total
+        - haproxy_frontend_http_responses_total
+
   # Vector is NOT a small sidecar — budget it against the HAProxy container, not
   # as a log shipper. Measured in production, with metric generation enabled it
   # uses about as much memory as the HAProxy instance beside it, so this tracks
@@ -2515,9 +2579,10 @@ vector:
   #
   # Raise BOTH together with `haproxy.resources` for a larger fleet. The biggest
   # lever in the other direction is cardinality — see `noMaint` and
-  # `excludeMetrics` above, and keep an eye on the label sets of any metrics you
-  # generate: a per-route metric labelled by status code AND termination state
-  # multiplies out to route_count x codes x states series.
+  # `excludeMetrics` above.
+  #
+  # `requestMetrics` is the other half of the budget and scales with TRAFFIC SHAPE
+  # rather than fleet size. Its label opt-outs are the cheapest lever there.
   #
   # The cap covers the measured ~1080 MiB peak at 825 backends; the request stays
   # lower so that headroom is burstable rather than reserved.

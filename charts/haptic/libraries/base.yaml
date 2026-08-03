@@ -19,10 +19,19 @@ _helm_load:
   unset:
     - templateSnippets.frontend-routing-logic-regex-last
     # Tracing plumbing: absent from the config entirely unless tracing is on.
-    - path: templateSnippets.util-route-key
-      when: '{{- if not (dig "tracing" "enabled" false (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end -}}'
     - path: templateSnippets.log-fields-110-tracing
       when: '{{- if not (dig "tracing" "enabled" false (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end -}}'
+    # The route key is wanted by spans AND by the request metrics' `path` label,
+    # so it outlives tracing — see haptic.routeKeyEnabled.
+    - path: templateSnippets.util-route-key
+      when: '{{- if not (include "haptic.routeKeyEnabled" .) }}true{{ end -}}'
+    - path: templateSnippets.log-fields-108-route
+      when: '{{- if not (include "haptic.routeKeyEnabled" .) }}true{{ end -}}'
+    - path: templateSnippets.util-want-route
+      when: '{{- if not (include "haptic.routeKeyEnabled" .) }}true{{ end -}}'
+    # %U costs every record its bytes_in field, so only when request_size is on.
+    - path: templateSnippets.log-fields-107-request-bytes
+      when: '{{- if not (and .Values.vector.enabled (dig "requestMetrics" "enabled" false .Values.vector) (dig "requestMetrics" "metrics" "request_size" false .Values.vector)) }}true{{ end -}}'
 #   - Composable macros: import and extend utility functions
 #
 # SSL/TLS infrastructure is in ssl.yaml (loaded separately when needed)
@@ -661,6 +670,33 @@ templateSnippets:
       %(namespace)[var(txn.namespace)]
       %(service)[var(txn.service)]
 
+  util-want-route:
+    template: |-
+      {#- "true" when txn.route should be computed. Two features want it — spans for
+          http.route, request metrics for `path` — so the condition lives here once
+          rather than at each of its three call sites. Mirrored Helm-side by
+          haptic.routeKeyEnabled; this copy is what holds for a hand-written CR. -#}
+      {%- var rm = extraContext | dig("vector", "requestMetrics") | fallback(map[string]any{}) -%}
+      {%- if (extraContext | dig("tracing", "enabled")) == true -%}true{%- return %}{%- end -%}
+      {%- if (rm | dig("enabled")) == true && (rm | dig("pathLabel")) == true -%}true{%- end -%}
+
+  log-fields-108-route:
+    template: |-
+      {#- Its own snippet, not part of the tracing block, because the request
+          metrics want it with tracing off. Base deduplicates identical items. -#}
+      {%- var want = render "util-want-route" default "" %}
+      {%- if strip(want) != "true" %}{% return %}{% end %}
+      %(route)[var(txn.route)]
+
+  log-fields-107-request-bytes:
+    template: |-
+      {#- %U is the request BODY only; nginx's $request_length also counts the
+          request line and headers, so a migrated histogram reads lower. Gated on
+          the one metric that reads it. -#}
+      {%- var rm = extraContext | dig("vector", "requestMetrics") | fallback(map[string]any{}) %}
+      {%- if (rm | dig("enabled")) != true || (rm | dig("metrics", "request_size")) != true %}{% return %}{% end %}
+      %(bytes_in:sint)U
+
   log-fields-105-server-pod:
     template: |-
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
@@ -831,8 +867,9 @@ templateSnippets:
           like it ends at the response HEADERS (%Tr), so a backend's own span
           overruns ours for any response with a body. -#}
       %(transfer_time_ms:sint)Td
-      {#- The map ENTRY that matched, for http.route — see util-route-key. -#}
-      %(route)[var(txn.route)]
+      {#- `route` (for http.route) is contributed by log-fields-108-route, which
+          the request metrics also want — so it is gated on util-want-route rather
+          than on tracing alone. -#}
       {#- Exact transaction end, epoch microseconds: the log line is emitted when
           the response completes, so `date` at log time IS that instant. req+Ta
           closes early by whatever Ta's whole-ms truncation dropped (0.824ms
@@ -851,11 +888,13 @@ templateSnippets:
           alone). A prefix match is marked `*`: prefix keys already end in `/`
           and boundary keys never do, so both render `/api/*`.
 
-          Its own snippet so _helm_load.unset can drop it entirely when tracing
-          is off: it repeats the lookup cascade and a prefix map is a list, so a
-          deployment that does not trace should carry neither the cost nor the
-          config. util-routing-suffix renders it with `default ""`. -#}
-      {%- if (extraContext | dig("tracing", "enabled")) != true %}{% return %}{% end %}
+          Its own snippet so _helm_load.unset can drop it entirely when nothing
+          wants it: it repeats the lookup cascade and a prefix map is a list, so a
+          deployment that neither traces nor labels metrics by route should carry
+          neither the cost nor the config. util-routing-suffix renders it with
+          `default ""`. -#}
+      {%- var want = render "util-want-route" default "" %}
+      {%- if strip(want) != "true" %}{% return %}{% end %}
       {%- var rk = []any{[]string{"path-exact.map", "map_str_key", ""}, []string{"path-regex.map", "map_reg_key", ""}, []string{"path-prefix-exact.map", "map_str_key", ",concat(/*)"}, []string{"path-prefix.map", "map_beg_key", ",concat(*)"}} %}
       {%- for i, e := range rk %}{%- var m = e.([]string) %}
       http-request set-var(txn.route) var(txn.host_match),concat(,txn.path,),{{ m[1] }}({{ mapPath(m[0]) }}){{ m[2] }} if { var(txn.path_match) -m found }{% if i > 0 %} !{ var(txn.route) -m found }{% end %}
@@ -4530,3 +4569,108 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: 'bind \*:[0-9]+ accept-proxy'
+
+  test-access-log-route-and-request-bytes-for-metrics:
+    description: >-
+      `route` and `bytes_in` are wanted by the per-request metrics, not only by
+      tracing, so both render with tracing off.
+    extraContext:
+      tracing:
+        enabled: false
+      vector:
+        requestMetrics:
+          enabled: true
+          pathLabel: true
+          metrics:
+            request_size: true
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: rt }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: log.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(route\)\[var\(txn\.route\)\]'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(bytes_in:sint\)U'
+      # The field is worthless without the lookup that fills it.
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-var\(txn\.route\) var\(txn\.host_match\)'
+
+  test-access-log-route-and-request-bytes-absent-when-unused:
+    description: >-
+      With neither tracing nor the request metrics asking, the route cascade and
+      %U are absent — four map lookups and a field on every record.
+    extraContext:
+      tracing:
+        enabled: false
+      vector:
+        requestMetrics:
+          enabled: false
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      # Positive control: the log-format is still assembled, so the absences
+      # below are about these two fields rather than a log-format that vanished.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(term\)tsc'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '%\(route\)'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '%\(bytes_in:sint\)U'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'set-var\(txn\.route\)'
+
+  test-access-log-route-still-follows-tracing:
+    description: >-
+      Moving `route` out of the tracing block must not change what tracing alone
+      produces; a span without http.route loses the attribute UIs group on.
+    extraContext:
+      tracing:
+        enabled: true
+      vector:
+        requestMetrics:
+          enabled: false
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: rt }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: log.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(route\)\[var\(txn\.route\)\]'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-var\(txn\.route\) var\(txn\.host_match\)'
+      # request_size is off, so its field must not ride along with tracing.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '%\(bytes_in:sint\)U'

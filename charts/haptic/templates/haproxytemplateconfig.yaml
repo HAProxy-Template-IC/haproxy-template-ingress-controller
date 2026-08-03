@@ -386,11 +386,17 @@ spec:
            without restating the rest. The render only ever needs the patterns
            that are on. Sorted so the rendered config is deterministic: Helm map
            iteration order is not. */ -}}
+    {{- /* On an exclusion, `requires` means "the family replacing this one is
+           actually emitted" — else disabling it drops the originals too. */ -}}
     {{- $vectorExcludePatterns := list }}
     {{- $vectorExcludeFamilies := list }}
     {{- range $name := (keys (.Values.vector.excludeMetrics | default dict) | sortAlpha) }}
       {{- $ex := index $.Values.vector.excludeMetrics $name }}
-      {{- if $ex.enabled }}
+      {{- $on := $ex.enabled }}
+      {{- if and $on (hasKey $ex "requires") }}
+        {{- $on = eq (include "haptic.vector.valuePath" (dict "root" $.Values "path" ($ex.requires | toString))) "true" }}
+      {{- end }}
+      {{- if $on }}
         {{- $vectorExcludePatterns = append $vectorExcludePatterns ($ex.pattern | toString) }}
         {{- range $fam := ($ex.families | default list) }}
           {{- $vectorExcludeFamilies = append $vectorExcludeFamilies ($fam | toString) }}
@@ -409,19 +415,42 @@ spec:
       {{- if not (hasKey $entry "enabled") }}{{- fail (printf "vector.logMetrics.%s must set `enabled`." $name) }}{{- end }}
       {{- $on := $entry.enabled }}
       {{- if and $on (hasKey $entry "requires") }}
-        {{- $cur := $.Values }}
-        {{- range $seg := splitList "." $entry.requires }}
-          {{- if kindIs "map" $cur }}{{- $cur = index $cur $seg }}{{- else }}{{- $cur = nil }}{{- end }}
-        {{- end }}
-        {{- if not $cur }}{{- $on = false }}{{- end }}
+        {{- $on = eq (include "haptic.vector.valuePath" (dict "root" $.Values "path" ($entry.requires | toString))) "true" }}
       {{- end }}
       {{- $resolved := omit $entry "requires" }}
       {{- $_ := set $resolved "enabled" $on }}
       {{- $_ := set $vectorLogMetrics $name $resolved }}
     {{- end }}
+    {{- /* Prefix normalised and controller_class resolved here, so the library
+           renders values rather than re-deriving chart identity. */ -}}
+    {{- $rm := .Values.vector.requestMetrics | default dict }}
+    {{- $vectorRequestMetrics := dict "enabled" false }}
+    {{- if $rm.enabled }}
+      {{- $enabledMetrics := dict }}
+      {{- range $mname, $mon := ($rm.metrics | default dict) }}
+        {{- if $mon }}{{- $_ := set $enabledMetrics $mname true }}{{- end }}
+      {{- end }}
+      {{- $controllerClass := $rm.controllerClass | toString }}
+      {{- if eq (trim $controllerClass) "" }}
+        {{- $controllerClass = .Values.ingressClass.controllerName | toString }}
+      {{- end }}
+      {{- $vectorRequestMetrics = dict
+            "enabled" true
+            "prefix" ($rm.prefix | toString | trimSuffix "_")
+            "controllerClass" $controllerClass
+            "controllerNamespace" .Release.Namespace
+            "terminationStateLabel" $rm.terminationStateLabel
+            "pathLabel" $rm.pathLabel
+            "hostLabel" $rm.hostLabel
+            "durationBuckets" $rm.durationBuckets
+            "sizeBuckets" $rm.sizeBuckets
+            "cardinalityLimit" ($rm.cardinalityLimit | default dict)
+            "metrics" $enabledMetrics }}
+    {{- end }}
     {{- $_ := set $extraContext "vector" (dict
           "socketPath" .Values.vector.socketPath
           "metricsPort" (.Values.vector.metricsPort | int)
+          "sizeMetricsPort" (.Values.vector.sizeMetricsPort | int)
           "scrapeIntervalSecs" (.Values.vector.scrapeIntervalSecs | int)
           "haproxyStatsPort" (.Values.haproxy.ports.stats | int)
           "spoaHubMetricsPort" $hubScrape
@@ -430,6 +459,7 @@ spec:
           "excludeMaintServerMetrics" .Values.vector.excludeMaintServerMetrics
           "omitEmptyLogFields" .Values.vector.omitEmptyLogFields
           "logMetrics" $vectorLogMetrics
+          "requestMetrics" $vectorRequestMetrics
           "dataDir" "/var/lib/vector") }}
 
     {{- /* Point the access log at the socket — but only if the operator hasn't
