@@ -1,0 +1,53 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: bundled HAProxy dataplane storage dirs
+# The bundled pod spec resolves every auxiliary path against /etc/haproxy, and
+# mounts general-storage as a SEPARATE emptyDir at the fixed /etc/haproxy/general
+# so the spoa-hub sidecar can read rendered files without reaching SSL private
+# keys. Point a dataplane dir outside those limits and nothing errors: the files
+# land in the haproxy-runtime volume, and the sidecar mounting only
+# general-storage reads an empty directory.
+#
+# Neither validation nor `haproxy -c` can catch it. The validation sandbox mirrors
+# the layout from the BASENAMES alone, so it is self-consistent whatever the real
+# parents are. Helm render time is the only place the mismatch is visible.
+templates:
+  - templates/haproxy-deployment.yaml
+tests:
+  - it: accepts the defaults
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  # Both the dataplane API (workingDir) and HAProxy (default-path origin) resolve
+  # against /etc/haproxy, so any basename under it genuinely works. The guard must
+  # not over-reach into rejecting that.
+  - it: accepts a renamed ssl dir under the base dir
+    set:
+      controller.config.dataplane.sslCertsDir: /etc/haproxy/mycerts
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: rejects a general dir the general-storage volume is not mounted at
+    set:
+      controller.config.dataplane.generalStorageDir: /etc/haproxy/files
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.dataplane.generalStorageDir is "/etc/haproxy/files", but the bundled HAProxy pod mounts its general-storage volume at the fixed path /etc/haproxy/general. Rendered files would land in the HAProxy config volume instead, where the spoa-hub and vector sidecars cannot read them. Leave it at /etc/haproxy/general, or set haproxy.enabled=false.'
+
+  - it: rejects a maps dir outside the base dir
+    set:
+      controller.config.dataplane.mapsDir: /opt/haproxy/maps
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.dataplane.mapsDir is "/opt/haproxy/maps", but the bundled HAProxy pod mounts its config volume at /etc/haproxy and resolves every auxiliary path against it. Files written outside that tree are invisible to HAProxy and to the sidecars. Put mapsDir directly under /etc/haproxy, or set haproxy.enabled=false to manage the fleet yourself.'
+
+  # With the bundled fleet off, HAPTIC drives an external dataplane whose layout
+  # this chart neither renders nor constrains.
+  - it: leaves an externally managed fleet alone
+    set:
+      haproxy.enabled: false
+      controller.config.dataplane.generalStorageDir: /var/lib/haproxy/files
+    asserts:
+      - hasDocuments:
+          count: 0

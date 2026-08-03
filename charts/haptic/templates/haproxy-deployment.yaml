@@ -12,6 +12,30 @@
 {{- $ports := $haproxy.ports }}
 {{- $proxyProtocol := include "haptic.proxyProtocol" . | fromYaml }}
 {{- $dataplane := $haproxy.dataplane }}
+
+{{/*
+  The pod spec below hardcodes /etc/haproxy: haproxy-runtime mounts there, the
+  dataplane sidecar's workingDir is the maps dir's parent, and general-storage
+  is a SEPARATE emptyDir mounted at /etc/haproxy/general so the spoa-hub sidecar
+  can read rendered files without reaching SSL private keys.
+
+  So the dataplane dirs are only configurable within those limits. Point them
+  elsewhere and nothing errors -- the files land in the haproxy-runtime volume
+  instead of general-storage, and the sidecar that mounts only general-storage
+  reads an empty directory. Fail here instead, while the operator can still see
+  why.
+
+  Scoped to haproxy.enabled: with the bundled fleet off, HAPTIC drives an
+  external dataplane whose layout is none of this chart's business.
+*/}}
+{{- range $key, $path := dict "mapsDir" $dataplaneConfig.mapsDir "sslCertsDir" $dataplaneConfig.sslCertsDir "generalStorageDir" $dataplaneConfig.generalStorageDir }}
+  {{- if ne (dir $path) "/etc/haproxy" }}
+    {{- fail (printf "controller.config.dataplane.%s is %q, but the bundled HAProxy pod mounts its config volume at /etc/haproxy and resolves every auxiliary path against it. Files written outside that tree are invisible to HAProxy and to the sidecars. Put %s directly under /etc/haproxy, or set haproxy.enabled=false to manage the fleet yourself." $key $path $key) }}
+  {{- end }}
+{{- end }}
+{{- if ne $dataplaneConfig.generalStorageDir "/etc/haproxy/general" }}
+  {{- fail (printf "controller.config.dataplane.generalStorageDir is %q, but the bundled HAProxy pod mounts its general-storage volume at the fixed path /etc/haproxy/general. Rendered files would land in the HAProxy config volume instead, where the spoa-hub and vector sidecars cannot read them. Leave it at /etc/haproxy/general, or set haproxy.enabled=false." $dataplaneConfig.generalStorageDir) }}
+{{- end }}
 {{- $selectorLabels := include "haptic.selectorLabels" . }}
 apiVersion: apps/v1
 kind: Deployment

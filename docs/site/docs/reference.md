@@ -326,9 +326,9 @@ For HAProxy behind a layer-4 load balancer. See [PROXY protocol](haproxy-deploym
 |-----------|------|---------|-------------|
 | `controller.config.dataplane.minDeploymentInterval` | duration | `5s` | Minimum time between deployments |
 | `controller.config.dataplane.driftPreventionInterval` | duration | `60s` | Periodic drift prevention interval |
-| `controller.config.dataplane.mapsDir` | string | `/etc/haproxy/maps` | HAProxy maps directory |
-| `controller.config.dataplane.sslCertsDir` | string | `/etc/haproxy/ssl` | SSL certificates directory |
-| `controller.config.dataplane.generalStorageDir` | string | `/etc/haproxy/general` | General storage directory |
+| `controller.config.dataplane.mapsDir` | string | `/etc/haproxy/maps` | HAProxy maps directory. With the bundled fleet (`haproxy.enabled=true`) it must sit directly under `/etc/haproxy`, which is where the pod mounts its config volume and resolves every auxiliary path |
+| `controller.config.dataplane.sslCertsDir` | string | `/etc/haproxy/ssl` | SSL certificates directory. Same `/etc/haproxy` constraint as `mapsDir` when the bundled fleet is enabled; the directory name itself is free |
+| `controller.config.dataplane.generalStorageDir` | string | `/etc/haproxy/general` | General storage directory. With the bundled fleet this exact path is required: it's a separate volume the spoa-hub and vector sidecars mount to read rendered files without reaching SSL private keys. The chart fails the render rather than deploy a pod where those sidecars see an empty directory |
 | `controller.config.dataplane.configFile` | string | `/etc/haproxy/haproxy.cfg` | HAProxy config file path |
 
 ## Watched Resources
