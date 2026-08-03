@@ -2248,6 +2248,53 @@ vector:
   # documented default for prometheus_exporter.
   metricsPort: 9598
 
+  # Metrics derived from the access log, as a keyed map so an operator adding an
+  # entry does not replace the ones the chart ships. Several in-path components
+  # expose no scrape endpoint of their own — Varnish has none at all, its counters
+  # living in shared memory behind varnishstat — but the access log already carries
+  # their verdict per request, so the metric is a projection of a field that is
+  # present anyway. Extraction is a regex over the raw record, never a JSON parse:
+  # the pipeline deliberately does not parse access-log records.
+  #
+  # Every entry needs `enabled`; one without it is refused at render time rather
+  # than sitting inert. Fields:
+  #   field    the access-log field name to read
+  #   kind     enum    -> counter tagged with the value; `values` lists the accepted
+  #                      literals so an unexpected one cannot invent a label
+  #            numeric -> counter incremented BY the value, for a quantity
+  #   metric   the Prometheus metric name, under the `haptic` namespace
+  #   tag      label name for kind: enum (default "value")
+  #   requires optional dotted values path that must be truthy; a metric whose
+  #            emitter is switched off would otherwise cost a regex per record
+  logMetrics:
+    cacheStatus:
+      enabled: true
+      requires: cache.varnish.enabled
+      field: cache
+      kind: enum
+      values: ["HIT", "MISS", "STALE"]
+      metric: cache_status_total
+      tag: status
+    # How old served objects are. A healthy-looking hit rate with ages near zero is
+    # churn — objects evicted or expiring before reuse — which the hit rate alone
+    # cannot distinguish from a genuinely warm cache.
+    cacheAge:
+      enabled: true
+      requires: cache.varnish.enabled
+      field: cache_age
+      kind: numeric
+      metric: cache_age_seconds_total
+    # Why responses were NOT stored, which is otherwise invisible: a route that
+    # silently never caches looks identical to one that is always missing.
+    cacheReason:
+      enabled: true
+      requires: cache.varnish.enabled
+      field: cache_uncacheable_reason
+      kind: enum
+      values: ["content_type_excluded", "too_large", "set_cookie", "status_not_cacheable"]
+      metric: cache_uncacheable_total
+      tag: reason
+
   # UNIX datagram socket HAProxy writes access-log records to. Lives on its own
   # emptyDir shared with the haproxy container. HAProxy's `log <path>` form is a
   # datagram target (deliberately not `unix@` — HAProxy 3.4 rejects a UNIX ring

@@ -224,7 +224,9 @@ The cache is memory-only and doesn't survive a restart. Of the storage engines t
 
 The two staleness annotations are independent, and setting one doesn't imply the other. `cache-stale-while-revalidate` trades freshness for latency: within its window nobody waits for the origin. `cache-stale-if-error` trades nothing until something breaks: an ordinary expiry still fetches and waits, and the stale copy is reached only when that fetch fails. Set both when you want fast expiry *and* an outage cushion — for example `cache-stale-while-revalidate: "30"` with `cache-stale-if-error: "600"`.
 
-Every cached response carries an `X-Cache` header: `HIT` when it was served fresh from cache, `MISS` when it came from the origin, and `STALE` when it was served past its lifetime under either annotation. The access log records the same value in its `cache` field, so you can tell a route that's serving stale from one that's genuinely fresh.
+Every cached response carries an `X-Cache` header: `HIT` when it was served fresh from cache, `MISS` when it came from the origin, and `STALE` when it was served past its lifetime under either annotation. The access log records the same value in its `cache` field, so you can tell a route that's serving stale from one that's genuinely fresh. Two more cache fields ride along: `cache_age`, how many seconds old the served object was, and `cache_uncacheable_reason`, which says why a response wasn't stored (`content_type_excluded`, `too_large`, `set_cookie`, `status_not_cacheable`) — otherwise a route that silently never caches looks identical to one that's always missing.
+
+The Vector sidecar projects all three into Prometheus counters on the metrics port it already serves — `haptic_cache_status_total{status}`, `haptic_cache_age_seconds_total`, and `haptic_cache_uncacheable_total{reason}` — because Varnish serves no metrics endpoint of its own. They're declared in `vector.logMetrics`, so you can switch one off or add your own from any log field. Counters are tagged by status or reason only; use the log when you need it per route.
 
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
