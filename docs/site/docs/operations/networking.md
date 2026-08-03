@@ -25,6 +25,13 @@ policy for that tier:
   the same HAProxy pods' HTTP container port for cache-miss loopback requests.
   The HAProxy policy contains the reciprocal ingress rule, including when
   `haproxy.networkPolicy.allowExternal` is false.
+- The HAProxy policy admits the metrics ports Prometheus needs without extra
+  configuration, including when `haproxy.networkPolicy.allowExternal` is false:
+  HAProxy's own stats port, and — while the Vector sidecar is enabled — its
+  exporter ports (`vector.metricsPort`, plus `vector.sizeMetricsPort` when a
+  [request-metrics](./monitoring.md#request-metrics) size family is on). With the
+  sidecar on, HAProxy's own `/metrics` answers over loopback only, so allowing the
+  stats port alone would leave Prometheus nothing to reach.
 - `rateLimit.shared.managedStore.networkPolicy.enabled` admits Valkey and Sentinel
   only from the same release's HAProxy/SPOA pods and from the managed store pods
   themselves. Store egress is limited to DNS and store-internal replication,

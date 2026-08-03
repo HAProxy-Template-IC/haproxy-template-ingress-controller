@@ -70,7 +70,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 
 - **High availability** - Leader election with automatic failover
 - **Layered validation** - Admission webhook, template validation, and tests you can run in CI before anything reaches a cluster
-- **Observability** - Prometheus metrics, structured logging, and debug endpoints
+- **Observability** - Per-route request metrics (rate, errors, latency by phase) derived from the access log, JSON structured logging, and debug endpoints
 
 !!! warning "Project maturity"
     The current release is `0.2.0-alpha.1`, a pre-1.0 alpha, and the custom resources are served at API version `v1alpha1` — their schemas can still change before 1.0. The high-availability, validation, and observability features above are implemented and covered by tests, but pin an exact chart version (`--version 0.2.0-alpha.1`) and read the [changelog](changelog.md) before you upgrade.
