@@ -142,7 +142,22 @@ k8sResources:
       {%- var sentinelMaster = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "masterName") | fallback("haptic-rate-limit") | tostring() %}
       {%- var replicas = extraContext | dig("rateLimit", "shared", "managedStore", "replicas") | fallback("3") | tostring() %}
       {%- var quorum = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "quorum") | fallback("2") | tostring() %}
-      {%- var downAfterMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "downAfterMilliseconds") | fallback("2000") | tostring() %}
+      {%- var downAfterMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "downAfterMilliseconds") | fallback("5000") | tostring() %}
+      {#- Sentinel resolves the monitored primary by hostname on its single event
+          loop. When that pod's DNS record disappears, the blocking lookup stalls
+          the loop past the 2s TILT trigger and Sentinel goes blind for a fixed
+          30s (SENTINEL_PING_PERIOD * 30, valkey 9.1 sentinel.c). By the time it
+          declares the primary down, each replica's link has been down ~30s
+          longer — and sentinelSelectReplica rejects any replica whose link has
+          been down longer than downAfterMilliseconds * 10. That allowance and
+          the replica's downtime advance at the same rate, so a head start the
+          allowance cannot absorb is never made up: failover aborts with
+          -failover-abort-no-good-slave on every retry, permanently.
+          Surviving one full TILT needs downAfterMs * 10 > 30000 + downAfterMs,
+          i.e. downAfterMs > 3333. -#}
+      {%- if toint(downAfterMs) * 9 <= 30000 %}
+        {{- fail("rateLimit.shared.managedStore.sentinel.downAfterMilliseconds is " + downAfterMs + ", below the 3334 ms minimum. Sentinel's 30s TILT window then outlasts its replica-selection allowance (downAfterMilliseconds x 10) and Valkey failover never completes, so the rate-limit store stays without a primary. Set it to 5000 or higher.") -}}
+      {%- end %}
       {%- var failoverTimeoutMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "failoverTimeoutMilliseconds") | fallback("10000") | tostring() %}
       {%- var parallelSyncs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "parallelSyncs") | fallback("1") | tostring() %}
       {#- renovate: datasource=docker depName=valkey/valkey #}
@@ -223,6 +238,19 @@ k8sResources:
               app.kubernetes.io/name: haptic-rate-limit-store
               app.kubernetes.io/instance: {{ base }}
           spec:
+            {# Sentinel and valkey both resolve peers by hostname with blocking
+               getaddrinfo on their event loop. The stock resolver gives a deleted
+               peer 5s x 2 attempts per search domain, long enough to trip
+               Sentinel's 2s TILT trigger and blind it for 30s exactly when a
+               failover is due. One attempt, one second bounds the stall.
+               The comment must not strip on its left, or the newline after
+               `spec:` is eaten and the two keys fuse into one line. -#}
+            dnsConfig:
+              options:
+                - name: timeout
+                  value: "1"
+                - name: attempts
+                  value: "1"
             affinity:
               podAntiAffinity:
                 preferredDuringSchedulingIgnoredDuringExecution:

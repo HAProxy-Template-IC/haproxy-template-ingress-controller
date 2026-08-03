@@ -367,3 +367,91 @@ validationTests:
         target: "k8s:rate-limit-store"
         pattern: "kind: StatefulSet"
         description: The operator's own store is in use, so the chart deploys none
+
+  test-haptic-rate-limit-store-sentinel-tilt-safe-defaults:
+    description: >-
+      Sentinel blinds itself for a fixed 30s (TILT) when the deleted primary's
+      hostname stalls its event loop, then rejects any replica whose link has
+      been down longer than downAfterMilliseconds x 10. The default must survive
+      a full TILT window, and the resolver must be bounded so TILT is unlikely.
+    extraContext:
+      rateLimit:
+        shared:
+          enabled: true
+          managedStore:
+            enabled: true
+            serviceName: haptic-rate-limit-store
+            namespace: default
+            replicas: 3
+    fixtures:
+      ingresses: []
+    assertions:
+      # 5000 x 10 = 50s allowance vs a ~35s gap. 2000 gave 20s and wedged forever.
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: 'sentinel down-after-milliseconds haptic-rate-limit 5000'
+      - type: not_contains
+        target: "k8s:rate-limit-store"
+        pattern: 'sentinel down-after-milliseconds haptic-rate-limit (2000|3000)\b'
+      # Bounded resolver: the stock 5s x 2 per search domain is what trips TILT.
+      # Anchored on newlines: a bare `contains dnsConfig` passed while the key was
+      # fused onto the previous line as `spec:dnsConfig:`, which is invalid YAML
+      # the API server rejects — the render looked fine and the store never applied.
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: '\n      dnsConfig:\n'
+      - type: not_contains
+        target: "k8s:rate-limit-store"
+        pattern: '[a-zA-Z]:dnsConfig'
+      - type: match_order
+        target: "k8s:rate-limit-store"
+        patterns:
+          - 'dnsConfig'
+          - 'name: timeout'
+          - 'value: "1"'
+
+  test-haptic-rate-limit-store-sentinel-down-after-too-low-rejected:
+    description: >-
+      An operator-set downAfterMilliseconds at or below 3333 makes Valkey
+      failover abort permanently, so the render refuses it rather than shipping
+      a store that silently cannot fail over.
+    extraContext:
+      rateLimit:
+        shared:
+          enabled: true
+          managedStore:
+            enabled: true
+            serviceName: haptic-rate-limit-store
+            namespace: default
+            replicas: 3
+            sentinel:
+              downAfterMilliseconds: 2000
+    fixtures:
+      ingresses: []
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "below the 3334 ms minimum"
+
+  test-haptic-rate-limit-store-sentinel-down-after-boundary-accepted:
+    description: >-
+      3334 is the lowest value that survives a full 30s TILT window
+      (3334 x 9 = 30006 > 30000) and must be accepted. Pins the guard's boundary
+      against an off-by-one in either direction.
+    extraContext:
+      rateLimit:
+        shared:
+          enabled: true
+          managedStore:
+            enabled: true
+            serviceName: haptic-rate-limit-store
+            namespace: default
+            replicas: 3
+            sentinel:
+              downAfterMilliseconds: 3334
+    fixtures:
+      ingresses: []
+    assertions:
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: 'sentinel down-after-milliseconds haptic-rate-limit 3334'

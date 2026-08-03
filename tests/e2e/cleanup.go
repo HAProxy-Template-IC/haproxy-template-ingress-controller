@@ -322,6 +322,14 @@ func dumpRateLimitStoreReplication(t *testing.T, dumpDir string) {
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "sentinel", "--",
 			"valkey-cli", "-p", "26379", "sentinel", "master", "haptic-rate-limit")
+		// Why a stalled failover picked nobody. `-failover-abort-no-good-slave`
+		// names no replica and no reason; sentinelSelectReplica's rejections are
+		// only visible as per-replica flags, master-link-down-time and
+		// info-refresh, which the `master` view above does not carry.
+		dumpCommand(t, dumpDir, "rate-limit-store-sentinel-replicas-"+pod+".txt",
+			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"exec", pod, "-c", "sentinel", "--",
+			"valkey-cli", "-p", "26379", "sentinel", "replicas", "haptic-rate-limit")
 	}
 }
 

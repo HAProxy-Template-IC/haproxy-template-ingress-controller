@@ -110,6 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Helm chart
 
+- The managed rate-limit store could never fail over. Sentinel resolves the monitored primary by hostname on its event loop, so when that pod's DNS record disappeared the blocking lookup stalled the loop past Sentinel's 2s TILT trigger and blinded it for a fixed 30s. By the time it declared the primary down, every replica's link had been down ~30s longer than Sentinel's own clock — and it refuses any replica whose link has been down longer than `downAfterMilliseconds` x 10. Both figures advance at the same rate, so the head start was never made up: failover aborted with `-failover-abort-no-good-slave` on every retry, permanently, leaving the tier with no primary. `downAfterMilliseconds` now defaults to `5000` (a 50s allowance against a ~35s gap) and the chart **refuses** a value at or below `3334`, which cannot survive a full TILT window. The store's pods also bound the resolver to a single 1s attempt, so the stall that trips TILT is far less likely in the first place.
 - Enabling `rateLimit.shared` without the spoaHub coraza plugin no longer fails the load gate and crash-loops the controller; the bundled shared rate-limit test no longer requires a WAF. Check your own values with `haptic-controller preflight -f values.yaml`.
 
 #### Added
