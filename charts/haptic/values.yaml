@@ -1700,7 +1700,12 @@ rateLimit:
       sentinel:
         port: 26379
         quorum: 2
-        downAfterMilliseconds: 2000
+        # Must stay above 3333. Sentinel blinds itself for a fixed 30s (TILT)
+        # when a blocking hostname lookup for the deleted primary stalls its
+        # event loop, and then refuses any replica whose link has been down
+        # longer than this value x 10 — so a lower setting makes failover abort
+        # forever rather than merely run late. The chart rejects unsafe values.
+        downAfterMilliseconds: 5000
         failoverTimeoutMilliseconds: 10000
         parallelSyncs: 1
         resources:
