@@ -446,3 +446,302 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: any, port: { number: 80 } } } }
     assertions:
       - type: haproxy_valid
+
+  test-haptic-auth-tls-cert-header-cannot-be-forged:
+    description: >-
+      The X-SSL-Client-* headers are set only when a client certificate is
+      present, so without a strip a caller on plain HTTP — or on HTTPS presenting
+      no certificate — had their own value forwarded to the application as the
+      verified subject. The strip is unconditional for the route; the set stays
+      gated on ssl_fc_has_crt.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-app
+            annotations:
+              haproxy-haptic.org/auth-tls-cert-header: "true"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mtls.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      # Unconditional: a host-scoped strip missed wildcard and host-less rules.
+      - { type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-SSL-Client-CN\n' }
+      - { type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-SSL-Client-DN\n' }
+      - { type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-SSL-Client-Cert\n' }
+      # The strip must precede the set, or the forged value survives.
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - 'http-request del-header X-SSL-Client-CN\n'
+          - "http-request set-header X-SSL-Client-CN %\\[ssl_c_s_dn\\(CN\\)\\] if \\{ ssl_fc_has_crt \\}"
+  test-haptic-basic-auth-missing-secret-rejected-at-admission:
+    description: >-
+      Writing an Ingress that asks for basic auth with a Secret that does not
+      exist is refused when the resource is written, so the mistake surfaces at
+      kubectl apply rather than as a 503 nobody sees until traffic arrives.
+    extraContext:
+      renderMode: admission
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: protected
+            annotations:
+              haproxy-haptic.org/auth-type: basic
+              haproxy-haptic.org/auth-secret: does-not-exist
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "that Secret does not exist"
+
+  test-haptic-basic-auth-secret-deleted-later-fails-closed:
+    description: >-
+      An Ingress already admitted, whose Secret is deleted afterwards, must
+      degrade CLOSED rather than abort the whole render or serve unauthenticated.
+      Emitting no rule left the backend with no authentication at all, so a
+      deleted Secret silently turned the gate off.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: protected
+            annotations:
+              haproxy-haptic.org/auth-type: basic
+              haproxy-haptic.org/auth-secret: does-not-exist
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request set-var\\(txn.denied_by\\) str\\(basic_auth_unavailable\\)" }
+      # Must not reference a userlist that was never produced.
+      - { type: not_contains, target: haproxy.cfg, pattern: "http_auth\\(haptic_auth_default_does-not-exist\\)" }
+
+  test-haptic-auth-tls-missing-secret-rejected-at-admission:
+    description: >-
+      Writing an Ingress whose auth-tls-secret does not exist is refused when the
+      resource is written. It previously rendered clean and served the host with
+      client-certificate verification silently absent.
+    extraContext:
+      renderMode: admission
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-missing-ca
+            annotations:
+              haproxy-haptic.org/auth-tls-secret: no-such-ca
+              haproxy-haptic.org/auth-tls-verify-client: "on"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mtls-missing.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "that Secret does not exist"
+
+  test-haptic-auth-tls-secret-deleted-later-fails-closed:
+    description: >-
+      An already-admitted route whose CA Secret is deleted afterwards must stop
+      serving rather than serve with verification absent. HAPTIC terminates every
+      HTTPS host on one shared bind and the verify clause is a per-entry option,
+      so there is no separate mTLS listener to refuse the handshake.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-missing-ca
+            annotations:
+              haproxy-haptic.org/auth-tls-secret: no-such-ca
+              haproxy-haptic.org/auth-tls-verify-client: "on"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mtls-missing.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 503 if \\{ var\\(txn\\.host\\) -m str mtls-missing\\.example\\.com \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.denied_by\\) str\\(mtls_unavailable\\)"
+      # The host must NOT be silently served with verification absent.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "ca-file [^ ]*no-such-ca"
+
+  test-haptic-auth-tls-wildcard-host-fails-closed:
+    description: >-
+      A wildcard Ingress host must be denied by a single-label regex. An exact
+      -m str match on the literal '*.example.com' never fires against a concrete
+      request host, so the route kept serving with verification absent.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-wildcard
+            annotations:
+              haproxy-haptic.org/auth-tls-secret: no-such-ca
+              haproxy-haptic.org/auth-tls-verify-client: "on"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: "*.wild.example.com"
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 503 if \{ var\(txn\.host\) -m reg \^\[\^\.\]\+\\\.wild\\\.example\\\.com\$ \}'
+      # The literal wildcard must never reach an exact matcher — that is the bug.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '-m str \*\.wild\.example\.com'
+
+  test-haptic-auth-tls-secret-without-ca-crt-fails-closed:
+    description: >-
+      A CA Secret that exists but carries no data.ca.crt is the same exposure as
+      a missing Secret. It previously warned and served the host unverified.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: empty-ca }
+          type: Opaque
+          data:
+            tls.crt: Zm9v
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-empty-ca
+            annotations:
+              haproxy-haptic.org/auth-tls-secret: empty-ca
+              haproxy-haptic.org/auth-tls-verify-client: "on"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mtls-emptyca.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 503 if \{ var\(txn\.host\) -m str mtls-emptyca\.example\.com \}'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'ca-file [^ ]*empty-ca'
+
+  test-haptic-auth-tls-secret-without-ca-crt-rejected-at-admission:
+    description: >-
+      Writing an Ingress whose auth-tls-secret carries no ca.crt is refused when
+      the resource is written, same as a wholly missing Secret.
+    extraContext:
+      renderMode: admission
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: empty-ca }
+          type: Opaque
+          data:
+            tls.crt: Zm9v
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-empty-ca
+            annotations:
+              haproxy-haptic.org/auth-tls-secret: empty-ca
+              haproxy-haptic.org/auth-tls-verify-client: "on"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mtls-emptyca.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "that Secret has no data.ca.crt"
+
+  test-haptic-auth-tls-cert-header-strip-covers-wildcard-and-hostless:
+    description: >-
+      The X-SSL-Client-* strip must not be host-scoped. A wildcard host never
+      matched the exact -m str condition and a host-less rule skipped the block
+      entirely, so a client-supplied identity header reached a backend this
+      annotation tells to trust it.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: certhdr-wild
+            annotations:
+              haproxy-haptic.org/auth-tls-cert-header: "true"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: "*.certhdr.example.com"
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      # Unconditional strip — no trailing `if`.
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request del-header X-SSL-Client-CN\n'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request del-header X-SSL-Client-Cert\n'
+      # The strip must never be gated on a host match again.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'del-header X-SSL-Client-[A-Za-z]+ if'

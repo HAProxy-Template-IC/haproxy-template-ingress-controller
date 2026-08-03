@@ -161,6 +161,15 @@ templateSnippets:
       http-request set-var(txn.haptic_jwt_exp) http_auth_bearer,jwt_payload_query('$.exp','int')
       http-request set-var(txn.denied_by) str(jwt_expired) if { var(txn.haptic_jwt_exp) -m found } { var(txn.haptic_jwt_exp),sub(txn.haptic_jwt_now) -m int lt 0 }
       http-request deny deny_status 401 if { var(txn.haptic_jwt_exp) -m found } { var(txn.haptic_jwt_exp),sub(txn.haptic_jwt_now) -m int lt 0 }
+      {#- nbf, the other half of the token's validity window. Without it a token
+          minted for a future window is accepted the moment it is issued, so a
+          credential intended to become valid later — a scheduled hand-over, a
+          pre-issued token held by a party who should not yet be able to use it —
+          works immediately. Same shape as exp, inverted: deny while nbf is still
+          ahead of now. Absent nbf means no lower bound, which is valid. -#}
+      http-request set-var(txn.haptic_jwt_nbf) http_auth_bearer,jwt_payload_query('$.nbf','int')
+      http-request set-var(txn.denied_by) str(jwt_not_yet_valid) if { var(txn.haptic_jwt_nbf) -m found } { var(txn.haptic_jwt_nbf),sub(txn.haptic_jwt_now) -m int gt 0 }
+      http-request deny deny_status 401 if { var(txn.haptic_jwt_nbf) -m found } { var(txn.haptic_jwt_nbf),sub(txn.haptic_jwt_now) -m int gt 0 }
             {%- var iss = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-issuer"] %}
             {%- if iss != "" %}
               {%- var issV = ValidateConfigValue(iss, "haproxy-haptic.org/jwt-issuer", key, false) %}

@@ -53,6 +53,20 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Consumer-ID %\\[var\\(txn.haptic_consumer\\)\\] if \\{ var\\(txn.haptic_consumer\\) -m found \\}"
+      # The set is conditional on an identity existing, so without a strip a
+      # caller's own X-Consumer-ID survives on any path that reaches the backend
+      # without one — a `satisfy: any` route admitted by its IP allowlist — and
+      # is forwarded to the application as the consumer.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request del-header X-Consumer-ID"
+      # Ordering is the fix, not presence: a strip after the set would erase the
+      # value HAPTIC just established.
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - "http-request del-header X-Consumer-ID"
+          - "http-request set-header X-Consumer-ID %\\[var\\(txn.haptic_consumer\\)\\]"
 
   test-haptic-api-key-missing-secret-fails-closed:
     description: >-
