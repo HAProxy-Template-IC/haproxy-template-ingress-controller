@@ -173,9 +173,14 @@ validationTests:
       - type: contains
         target: "k8s:varnish-cache"
         pattern: "sub vcl_recv"
+      # The builtin refuses to serve a cached response to a request carrying
+      # Authorization or Cookie. Overriding that is only safe when the key
+      # identifies the caller, so the bypass demands the auth flag as well —
+      # gating on the vary header alone leaked one caller's authenticated
+      # response to the next.
       - type: contains
         target: "k8s:varnish-cache"
-        pattern: "if \\(req.http.X-Haptic-Cache-Vary && \\(req.method == \"GET\" \\|\\| req.method == \"HEAD\"\\)\\) \\{"
+        pattern: "if \\(req.http.X-Haptic-Cache-Vary && req.http.X-Haptic-Cache-Auth && \\(req.method == \"GET\" \\|\\| req.method == \"HEAD\"\\)\\) \\{"
       - type: contains
         target: "k8s:varnish-cache"
         pattern: "set resp.http.X-Cache = \"HIT\""
@@ -811,3 +816,68 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
       - { type: contains, target: rendering_error, pattern: "Invalid value '30s' for annotation 'haproxy-haptic.org/cache-negative-ttl'" }
+
+  test-haptic-cache-auth-bypass-requires-consumer-key:
+    description: >-
+      Caching a response to an authenticated request is only safe when the cache
+      key identifies the caller. A route keyed on something that does not —
+      header:, cookie:, query:, src — must NOT get the auth flag, so Varnish keeps
+      its builtin refusal and never serves one caller's authenticated response to
+      another. Regression pin for a cross-user leak: the bypass used to fire on
+      the presence of any cache-key at all.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hdr-keyed
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+              haproxy-haptic.org/cache-key: "header:X-Api-Version"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hdr.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: consumer-keyed
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+              haproxy-haptic.org/cache-key: "consumer"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: consumer.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      # Only the consumer-keyed route may cache authenticated requests.
+      - { type: contains, target: "map:haptic-cache-authkey.map", pattern: "(?m)^default/consumer-keyed 1$" }
+      - { type: not_contains, target: "map:haptic-cache-authkey.map", pattern: "default/hdr-keyed" }
+      # The flag additionally requires a consumer to have been RESOLVED: an empty
+      # identity would put every caller in one bucket, which is the leak itself.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Haptic-Cache-Auth 1 if \\{ var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-authkey\\.map\\) -m found \\} \\{ var\\(txn\\.haptic_consumer\\),length gt 0 \\}"
+      # A client must not be able to forge the flag.
+      - { type: contains, target: haproxy.cfg, pattern: "http-request del-header X-Haptic-Cache-Auth" }
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - "http-request del-header X-Haptic-Cache-Auth"
+          - "http-request set-header X-Haptic-Cache-Auth 1"
