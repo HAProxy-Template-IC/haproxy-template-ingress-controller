@@ -619,6 +619,15 @@ controller:
       driftPreventionInterval: 60s
       # Directory paths for HAProxy auxiliary files
       # These paths are used for both validation and deployment
+      #
+      # With the bundled fleet (haproxy.enabled=true) these are constrained by
+      # the pod spec: it mounts its config volume at /etc/haproxy and resolves
+      # every auxiliary path against it, so all three must live directly under
+      # that. generalStorageDir must be exactly /etc/haproxy/general, because a
+      # separate volume is mounted there for the spoa-hub and vector sidecars to
+      # read rendered files without reaching SSL private keys. The chart fails
+      # the render rather than deploy a pod whose sidecars see an empty dir.
+      # Set haproxy.enabled=false to drive an external fleet with any layout.
       # See: https://www.haproxy.com/documentation/haproxy-data-plane-api/reference/configuration-file/#resources
       mapsDir: /etc/haproxy/maps
       sslCertsDir: /etc/haproxy/ssl
