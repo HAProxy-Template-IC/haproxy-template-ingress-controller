@@ -159,8 +159,41 @@ templateSnippets:
   # ============================================================================
   # Basic auth — backend challenge (backend-directives)
   # ============================================================================
+  # ==========================================================================
+  # Runtime half of the mTLS fail-closed. features-110 registers a host here when
+  # its auth-tls-secret cannot be resolved, which happens to an ALREADY ADMITTED
+  # Ingress whenever the Secret is deleted, renamed or briefly unfetchable.
+  #
+  # Without this the host keeps being served: HAPTIC terminates every HTTPS host
+  # on one shared `bind *:443 ssl crt-list` and client-cert verification is a
+  # per-entry option, so dropping the entry's verify clause leaves ordinary
+  # server-side TLS answering on the same port. There is no separate mTLS
+  # listener to refuse the handshake.
+  # ==========================================================================
+  frontend-filters-830-haptic-mtls-unavailable:
+    template: |
+      {%- var blockedAny, _ = shared.ComputeIfAbsent("hapticMtlsBlockedHosts", func() any { return map[string]any{} }) %}
+      {%- var blocked = blockedAny.(map[string]any) %}
+      {%- if len(blocked) > 0 %}
+      {{ "\n" }}# haptic/mtls-unavailable — client-cert verification could not be configured
+        {%- for _, host := range keys(blocked) %}
+          {#- A wildcard Ingress host needs a single-label regex, not `-m end`: the
+              suffix form would also deny deeper names (a.b.example.com), which the
+              DNS wildcard does not cover and which may be a separate, correctly
+              verified route. txn.host is host-header lowercased with the port
+              stripped, so the anchors hold. -#}
+          {%- var cond = "{ var(txn.host) -m str " + host + " }" %}
+          {%- if hasPrefix(host, "*.") %}
+            {%- cond = "{ var(txn.host) -m reg ^[^.]+\\." + sanitize_regex(host[2:]) + "$ }" %}
+          {%- end %}
+      http-request set-var(txn.denied_by) str(mtls_unavailable) if {{ cond }}
+      http-request deny deny_status 503 if {{ cond }}
+        {%- end %}
+      {%- end %}
+
   backend-directives-820-haptic-auth:
     template: |
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#-
         HAPTIC Basic Auth Backend Directive
 
@@ -215,6 +248,22 @@ templateSnippets:
             {%- if authSecretObj != nil && SatisfyAnyMode(ingress) == "" %}
       # haptic/auth-challenge ({{ key }})
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
+            {%- else if authSecretObj == nil %}
+      {#- Reject the Ingress at ADMISSION so a typo'd or absent Secret is caught
+          when the resource is written, rather than becoming a 503 nobody sees
+          until traffic arrives. Under reconcile this warns and falls through to
+          the deny below, so an already-admitted Ingress whose Secret is deleted
+          later degrades closed instead of aborting the whole render. -#}
+      {{- WebhookRejectOrWarn(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/auth-type: basic' with 'auth-secret: " + secretNs + "/" + secretName + "', but that Secret does not exist. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
+      {#- The Secret could not be resolved, so there is no userlist to check
+          against. Emitting nothing would leave the backend with NO authentication
+          rule at all and serve every request — a deleted, renamed or mistyped
+          Secret silently turning the gate off. Fail closed instead, matching what
+          the JWT, api-key, HMAC and consumer-group paths already do for the same
+          event. -#}
+      # WARNING haproxy-haptic.org/auth-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until it is present.
+      http-request set-var(txn.denied_by) str(basic_auth_unavailable)
+      http-request deny deny_status 503
             {%- end %}
           {%- end %}
         {%- end %}
@@ -331,6 +380,7 @@ templateSnippets:
   # ============================================================================
   features-110-haptic-auth-tls:
     template: |
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#-
         HAPTIC Client-Cert Verification Registration
 
@@ -377,21 +427,36 @@ templateSnippets:
             {%- secretName = parts[1] %}
           {%- end %}
           {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
+          {#- An unusable CA bundle used to warn and `continue`, which dropped the
+              `ca-file … verify required` clause from the crt-list entry while
+              LEAVING THE HOST SERVED — HAPTIC terminates every HTTPS host on one
+              shared `bind *:443 ssl crt-list`, and client-cert verification is a
+              per-entry option, so there is no separate mTLS listener to refuse the
+              handshake. The route kept answering with ordinary server-side TLS and
+              mTLS was simply gone.
+
+              Both causes (no Secret, Secret without ca.crt) are the same exposure
+              and are handled together: rejected at admission, and denied at runtime
+              by frontend-filters-830 so an already-admitted route whose Secret is
+              deleted or emptied later fails closed instead of serving unverified. -#}
+          {%- var failReason = "" %}
+          {%- var failCause = "" %}
           {%- if secret == nil %}
-            {#- Missing Secret — warn and skip mTLS for this ingress rather than
-                fail the whole cluster render (the webhook re-renders every
-                Ingress on each CREATE; fail() would cascade). The webhook still
-                rejects an Ingress whose OWN Secret is missing — it just doesn't
-                cascade to unrelated ingresses. -#}
-            # WARNING haproxy-haptic.org/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
+            {%- failReason = "AuthTLSSecretMissing" %}
+            {%- failCause = "that Secret does not exist" %}
+          {%- else if secret.Data["ca.crt"] == "" %}
+            {%- failReason = "AuthTLSSecretMissingCACert" %}
+            {%- failCause = "that Secret has no data.ca.crt" %}
+          {%- end %}
+          {%- if failReason != "" %}
+            {{- WebhookRejectOrWarn(ingress, failReason, "Ingress " + ns + "/" + name + " sets 'haproxy-haptic.org/auth-tls-secret: " + secretNs + "/" + secretName + "', but " + failCause + ". Client-certificate verification cannot be configured without a CA bundle, so this route fails closed with 503. Fix the Secret, or remove the mTLS annotations.") -}}
+            {%- var blocked, _ = shared.ComputeIfAbsent("hapticMtlsBlockedHosts", func() any { return map[string]any{} }) %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- blocked.(map[string]any)[rule.Host] = true %}{%- end %}
+            {%- end %}
             {%- continue %}
           {%- end %}
-          {%- var caBundleB64 = secret.Data["ca.crt"] %}
-          {%- if caBundleB64 == "" %}
-            # WARNING haproxy-haptic.org/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' (referenced on Ingress {{ ns }}/{{ name }}) is missing data.ca.crt; skipping mTLS for this ingress.
-            {%- continue %}
-          {%- end %}
-          {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
+          {%- var caBundle = secret.Data["ca.crt"] | b64decode() | tostring() %}
           {#- Register the CA bundle as a "file" (general/) not "cert" (ssl/):
               the Dataplane API validates ssl/ uploads as cert+key bundles, but a
               CA bundle has no private key. HAProxy's crt-list `[ca-file <path>]`
@@ -457,6 +522,28 @@ templateSnippets:
           http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } <host-match>
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {#- The strip is deliberately NOT host-scoped, and runs whenever any route
+          enables the annotation. Host-scoping it left two ways for a client to
+          keep its own X-SSL-Client-*: a wildcard rule host, where the exact
+          `-m str *.example.com` match never fires against a concrete request
+          host, and a rule with no host at all, where the whole block was
+          skipped. Both leave the caller's header in place on a route whose
+          backend this annotation has told to trust it. A missed set-header is
+          fail-closed — the backend gets no identity — but a missed del-header
+          is forgery, so the two are scoped differently on purpose. -#}
+      {%- var anyCertHeader = false %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"] == "true" %}
+          {%- anyCertHeader = true %}
+          {%- break %}
+        {%- end %}
+      {%- end %}
+      {%- if anyCertHeader %}
+      # haptic/auth-tls-cert-header — drop any client-supplied identity headers
+      http-request del-header X-SSL-Client-CN
+      http-request del-header X-SSL-Client-DN
+      http-request del-header X-SSL-Client-Cert
+      {%- end %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
