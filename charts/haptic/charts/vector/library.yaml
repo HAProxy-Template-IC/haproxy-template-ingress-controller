@@ -946,6 +946,26 @@ templateSnippets:
             . = spans
 
 validationTests:
+  test-vector-shipped-log-metrics-are-present:
+    description: >-
+      The chart's default log-derived metrics must actually render. All three
+      cache counters were silently dropped from values.yaml while the library,
+      the CR template and two docs pages still promised them, so operators lost
+      their cache dashboards on upgrade with nothing to show why.
+    fixtures:
+      ingresses: []
+    assertions:
+      # The three cache counters carry `requires: cache.varnish.enabled`, which is
+      # resolved at helm time, so a validationTest cannot switch them back on —
+      # scripts/check-shipped-log-metrics.sh guards those. This pins the entry
+      # that has no `requires` and would have been dropped just as silently.
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'name: denied_total'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'rate_limit_shared_unavailable'
+
   test-vector-config-rendered:
     description: Vector config renders with the log socket, both scrape sources, and the exporter
     fixtures: {}

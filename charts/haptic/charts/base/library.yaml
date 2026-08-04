@@ -814,6 +814,12 @@ templateSnippets:
       %(retries:sint)rc
       %(term)tsc
       %(resource)[var(txn.resource_id)]
+      {#- Paired with denied_by: that names the control that REFUSED a request,
+          these name controls that could not be consulted and were skipped. One
+          per control, not one shared field — several can degrade in the same
+          request, and a shared variable would keep only the last. -#}
+      %(rate_limit_degraded)[var(txn.rate_limit_degraded)]
+      %(waf_degraded)[var(txn.waf_degraded)]
       %(denied_by)[var(txn.denied_by)]
 
   # ============================================================================

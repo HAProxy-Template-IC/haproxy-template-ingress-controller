@@ -67,7 +67,7 @@ validationTests:
         pattern: "default/validate-cm configmap/default/api-schema/schema\\.json/application/json,application/merge-patch\\+json 4096 false application/json,application/merge-patch\\+json"
       - type: contains
         target: map:request-schema.map
-        pattern: "default/validate-cm-alt configmap/default/api-schema/schema\\.json/application/vnd\\.api\\+json 8192 false application/vnd\\.api\\+json"
+        pattern: "default/validate-cm-alt configmap/default/api-schema/schema\\.json/application/vnd\\.api\\+json 8192 true application/vnd\\.api\\+json"
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: "\\[plugins\\.params\\.schemas\\.\"configmap/default/api-schema/schema\\.json/application/json,application/merge-patch\\+json\"\\]"
@@ -148,7 +148,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: map:request-schema.map
-        pattern: "default/validate-secret secret/default/secret-schema/schema\\.json/application/json 8192 false application/json"
+        pattern: "default/validate-secret secret/default/secret-schema/schema\\.json/application/json 8192 true application/json"
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: "\\[plugins\\.params\\.schemas\\.\"secret/default/secret-schema/schema\\.json/application/json\"\\]"

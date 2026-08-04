@@ -923,9 +923,15 @@ controller:
               # request-schema-max-body-size. Oversized requests are rejected
               # before JSON parsing or schema-validation CPU is spent.
               defaultMaxBytes: 8192
-            # Default behavior when a schema id is absent inside the plugin.
-            # Missing referenced Kubernetes objects still fail at render time.
-            defaultFailOpen: false
+            # Default when the plugin returns no verdict — an unknown schema id,
+            # a hub reload, a timeout. True allows the request: schema validation
+            # reduces risk, it does not establish identity, so a blip in our own
+            # sidecar must not refuse callers who did nothing wrong. See the
+            # runtime-failure rule in charts/CLAUDE.md. The event is still
+            # recorded, and missing referenced Kubernetes objects still fail at
+            # render time. Set false where a malformed body reaching the backend
+            # is worse than refusing the caller.
+            defaultFailOpen: true
 
         # WAF routing and policy behavior. This remains engine-neutral; Coraza
         # implementation/runtime settings belong under spoaHub.plugins.coraza.
@@ -1665,6 +1671,17 @@ cache:
 # whole HAProxy fleet.
 rateLimit:
   shared:
+    # What happens when the SPOA hub or rate-limit plugin cannot answer — a
+    # reload, a restart, a timeout. Default false: the request is ALLOWED. A rate
+    # limit protects the origin from abuse, and turning an internal blip into
+    # 429s sheds legitimate traffic for a reason the client cannot act on.
+    # Either way the event is counted (haptic_denied_total, and the
+    # rate_limit_unavailable access-log field), so a limiter that is silently not
+    # limiting stays visible.
+    #
+    # Set true only where letting a caller past the budget is worse than refusing
+    # them — a contractual cap rather than DoS protection.
+    failClosed: false
     # Enables the native shared rate-limit annotations and auto-enables the
     # spoaHub.plugins.rate-limit plugin. Off by default; annotations fail the
     # render loudly while this is false so a missing opt-in cannot become an
@@ -2385,6 +2402,70 @@ vector:
   #
   # Verified honoured on HAProxy 3.0 (the supported floor) and 3.4.
   excludeMaintServerMetrics: true
+
+  # Metrics derived from the access log. Several in-path components expose no
+  # scrape endpoint of their own — Varnish has none at all — but the access log
+  # already carries their verdict per request.
+  #
+  # Each entry names a log `field` and how to project it: `enum` becomes a
+  # counter tagged with the value (accepted `values` listed, so an unexpected one
+  # cannot invent an unbounded label), `numeric` a counter incremented BY the
+  # value. `requires` is a dotted values path that must be truthy, so an entry
+  # whose emitter is off costs nothing per record.
+  logMetrics:
+    cacheStatus:
+      enabled: true
+      requires: cache.varnish.enabled
+      field: cache
+      kind: enum
+      values: ["HIT", "MISS", "STALE"]
+      metric: cache_status_total
+      tag: status
+    # How old served objects are. A healthy-looking hit rate with ages near zero
+    # is churn — objects evicted or expiring before reuse — which the hit rate
+    # alone cannot distinguish from a genuinely warm cache.
+    cacheAge:
+      enabled: true
+      requires: cache.varnish.enabled
+      field: cache_age
+      kind: numeric
+      metric: cache_age_seconds_total
+    # Why responses were NOT stored, otherwise invisible: a route that silently
+    # never caches looks identical to one that is always missing.
+    cacheReason:
+      enabled: true
+      requires: cache.varnish.enabled
+      field: cache_uncacheable_reason
+      kind: enum
+      values: ["content_type_excluded", "too_large", "set_cookie", "status_not_cacheable"]
+      metric: cache_uncacheable_total
+      tag: reason
+    # Requests ALLOWED because a non-identity control could not be consulted —
+    # the hub reloading, a plugin timing out. Not a denial, so denied_by is
+    # unset and haptic_denied_total does not see these: without their own
+    # counters a control that has silently stopped protecting anything looks
+    # exactly like one with nothing to report.
+    rateLimitDegraded:
+      enabled: true
+      field: rate_limit_degraded
+      kind: numeric
+      metric: degraded_rate_limit_total
+    wafDegraded:
+      enabled: true
+      field: waf_degraded
+      kind: numeric
+      metric: degraded_waf_total
+    # Which control rejected a request. The `*_unavailable` reasons are the ones
+    # to alert on: they mean a control could not reach its dependency and shed
+    # legitimate traffic rather than a client hitting a limit it was given.
+    # scripts/check-shipped-log-metrics.sh keeps this list in step with the chart.
+    deniedBy:
+      enabled: true
+      field: denied_by
+      kind: enum
+      values: ["api_key", "api_key_unavailable", "backend_tls_unavailable", "basic_auth", "basic_auth_unavailable", "body_too_large", "cache_origin_internal_backend", "consumer_groups", "consumer_groups_unavailable", "content_type", "external_auth", "gw_sni_host_mismatch", "hmac", "hmac_unavailable", "jwt_algorithm", "jwt_audience", "jwt_expired", "jwt_issuer", "jwt_key_unavailable", "jwt_not_yet_valid", "jwt_required_claim", "jwt_signature", "jwt_unavailable", "method_not_allowed", "mtls_unavailable", "rate_limit_connections", "rate_limit_local", "rate_limit_shared", "rate_limit_shared_unavailable", "required_header", "schema_body_incomplete", "schema_body_too_large", "schema_duplicate_content_length", "schema_invalid", "schema_no_content_length", "schema_unavailable", "schema_unsupported_media_type", "waf", "waf_body_chunked", "waf_body_content_type", "waf_body_duplicate_content_length", "waf_body_incomplete", "waf_body_too_large", "waf_policy_unavailable", "waf_status_400", "waf_status_413", "waf_unavailable"]
+      metric: denied_total
+      tag: reason
 
   # Metric families to DROP before re-exporting. Each entry is a regex matched
   # against the metric name (not the labels). Set to [] to re-export everything.

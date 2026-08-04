@@ -120,12 +120,25 @@ validationTests:
         description: >-
           The marker carries the gate's own condition and precedes it — `deny`
           ends rule processing, so a marker placed after would never run.
+      # A limiter that cannot answer no longer denies: the request is allowed and
+      # the event recorded. Denying on an internal blip sheds legitimate traffic
+      # for a reason the client cannot act on.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 429 hdr Retry-After 1 if .*!\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
+        description: >-
+          No verdict must not produce a 429 under the default posture.
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.denied_by\) str\(rate_limit_shared_unavailable\) if .*!\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
+        pattern: 'http-request set-var\(txn\.rate_limit_degraded\) str\(1\) if .*!\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
+      # The variable is worthless if it never reaches a log line: this is the
+      # only signal that a control silently stopped protecting anything.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(rate_limit_degraded\)\[var\(txn\.rate_limit_degraded\)\]'
         description: >-
-          Distinct from rate_limit_shared: one means a client hit its budget, the
-          other means the hub is down and legitimate traffic is being shed.
+          Allowed, but never silently: this feeds the access log and the counter,
+          so a limiter that is not limiting is visible.
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.denied_by\) str\(external_auth\) if \{ var\(txn\.auth_url\) -m found \}'
@@ -160,3 +173,151 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: 'waf_action|rate_limit_allowed|auth_status|schema_outcome'
+
+  test-spoa-hub-rate-limit-fail-closed-opt-in:
+    description: >-
+      rateLimit.shared.failClosed restores denying on a missing verdict, for
+      operators enforcing a contractual cap where letting a caller past the
+      budget is worse than refusing them. Off by default.
+    extraContext:
+      rateLimit:
+        shared:
+          enabled: true
+          failClosed: true
+      spoaHub:
+        haproxy:
+          messages: ["check-ratelimit"]
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-strict
+            annotations:
+              haproxy-haptic.org/rate-limit-requests: "5"
+              haproxy-haptic.org/rate-limit-period: "60s"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rl-strict.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 429 hdr Retry-After 1 if .*!\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'str\(rate_limit_shared_unavailable\)'
+
+  test-spoa-hub-waf-unavailable-fails-open-by-default:
+    description: >-
+      A WAF that cannot be consulted must not 503 the caller. It reduces risk, it
+      does not establish identity, so a blip in our own sidecar must not refuse
+      traffic that did nothing wrong. The event is recorded instead.
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: waf-posture
+            annotations:
+              haproxy-haptic.org/waf: "on"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: waf-posture.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'http-request return status 503 if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.__status\) -m found \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.waf_degraded\) str\(1\) if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.__status\) -m found \}'
+
+  test-spoa-hub-waf-fail-closed-opt-in:
+    description: >-
+      waf.failClosed restores the 503 for operators who would rather refuse
+      traffic than let it past uninspected. Off by default.
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    extraContext:
+      waf:
+        failClosed: true
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: waf-posture
+            annotations:
+              haproxy-haptic.org/waf: "on"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: waf-posture.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request return status 503 if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.__status\) -m found \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'str\(waf_unavailable\)'
+      # Recorded in both postures, so an uninspecting WAF is never silent.
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.waf_degraded\) str\(1\)'
