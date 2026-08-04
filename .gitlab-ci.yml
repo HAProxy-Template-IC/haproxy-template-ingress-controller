@@ -1977,9 +1977,10 @@ test-install-without-gateway-api:
 # it — measured 103 tests where the sharded core job ran 63 and skipped 46.
 #
 # The combination used to exceed etcd's ~1.5 MiB per-object limit, which is what
-# forced one shard per vendor. Since ADR-0014 the chart renders one config per
-# template library and the largest is ~35% of the limit; `make cr-size-check`
-# renders exactly this profile on every chart-test run. The libraries co-exist
+# forced one shard per vendor. ADR-0014's per-library split was reverted (!1450);
+# the chart renders ONE config object plus a companion tests object, and the
+# largest is ~67% of the limit. `make cr-size-check` renders exactly this profile
+# on every chart-test run. The libraries co-exist
 # because a mixed-family Ingress is an error the chart raises per resource, not
 # per install.
 
