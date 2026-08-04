@@ -936,6 +936,18 @@ controller:
         # WAF routing and policy behavior. This remains engine-neutral; Coraza
         # implementation/runtime settings belong under spoaHub.plugins.coraza.
         waf:
+          # What happens when the SPOA hub or coraza plugin cannot answer — a
+          # reload, a restart, a timeout. Default false: the request is ALLOWED.
+          # A WAF reduces risk, it does not establish identity, so a blip in our
+          # own sidecar must not refuse traffic that did nothing wrong. Either
+          # way the event is counted (haptic_degraded_total{control="waf"} and
+          # the waf_degraded access-log field), so a WAF that is silently not
+          # inspecting stays visible.
+          #
+          # Set true only where letting a request past uninspected is worse than
+          # refusing it. Requests the WAF did inspect and rejected are denied
+          # with 403 in both postures.
+          failClosed: false
           dispatch:
             # opt-in: inspect only routes activated by a native or compatibility
             # WAF annotation. default-on: inspect every route unless an

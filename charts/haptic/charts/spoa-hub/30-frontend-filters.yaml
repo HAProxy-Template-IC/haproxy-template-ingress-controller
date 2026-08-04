@@ -380,8 +380,12 @@ templateSnippets:
       http-request return status 413 if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.status) -m int 413 }
       http-request set-var(txn.denied_by) str(waf_unavailable) if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.status) -m int 500:599 }
       http-request return status 503 if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.status) -m int 500:599 }
-      http-request set-var(txn.denied_by) str(waf) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.action) -m str allow }
-      http-request deny deny_status 403 if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.action) -m str allow }
+      {#- `-m found` first: an unset action means the plugin never answered, and
+          `!{ … -m str allow }` alone is true for it — which would 403 the very
+          requests fail-open exists to let through. Same gate the rate limiter
+          puts on its 429 above. -#}
+      http-request set-var(txn.denied_by) str(waf) if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.action) -m found } !{ var(txn.hub.coraza.action) -m str allow }
+      http-request deny deny_status 403 if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.action) -m found } !{ var(txn.hub.coraza.action) -m str allow }
       {%- end %}
 
   # External-auth wiring: looks up the per-ingress auth URL in

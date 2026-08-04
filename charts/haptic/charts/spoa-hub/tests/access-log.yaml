@@ -115,8 +115,8 @@ validationTests:
       - type: match_order
         target: haproxy.cfg
         patterns:
-          - 'http-request set-var\(txn\.denied_by\) str\(waf\) if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.action\) -m str allow \}'
-          - 'http-request deny deny_status 403 if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.action\) -m str allow \}'
+          - 'http-request set-var\(txn\.denied_by\) str\(waf\) if \{ var\(txn\.coraza_active\) -m bool \} \{ var\(txn\.hub\.coraza\.action\) -m found \} !\{ var\(txn\.hub\.coraza\.action\) -m str allow \}'
+          - 'http-request deny deny_status 403 if \{ var\(txn\.coraza_active\) -m bool \} \{ var\(txn\.hub\.coraza\.action\) -m found \} !\{ var\(txn\.hub\.coraza\.action\) -m str allow \}'
         description: >-
           The marker carries the gate's own condition and precedes it — `deny`
           ends rule processing, so a marker placed after would never run.
@@ -264,6 +264,18 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.waf_degraded\) str\(1\) if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.__status\) -m found \}'
+      # Suppressing the 503 is only half of fail-open. An unset action also
+      # satisfies `!{ ... -m str allow }`, so without `-m found` the 403 below
+      # denies exactly the requests this posture exists to let through.
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 403 if \{ var\(txn\.coraza_active\) -m bool \} \{ var\(txn\.hub\.coraza\.action\) -m found \} !\{ var\(txn\.hub\.coraza\.action\) -m str allow \}'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 403 if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.action\) -m str allow \}'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.denied_by\) str\(waf\) if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.action\) -m str allow \}'
 
   test-spoa-hub-waf-fail-closed-opt-in:
     description: >-
@@ -321,3 +333,9 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.waf_degraded\) str\(1\)'
+      # The `-m found` gate is posture-independent: here the 503 above already
+      # caught the unanswered case, so the gate costs nothing and the two
+      # postures cannot drift apart.
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 403 if \{ var\(txn\.coraza_active\) -m bool \} \{ var\(txn\.hub\.coraza\.action\) -m found \} !\{ var\(txn\.hub\.coraza\.action\) -m str allow \}'
