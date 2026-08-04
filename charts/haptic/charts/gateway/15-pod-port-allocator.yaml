@@ -82,7 +82,7 @@ templateSnippets:
   util-gateway-pod-port-allocator:
     requires: [gateways]
     template: |
-      {#- Initialise the per-Gateway-listener pod-port allocation map.
+      {# Initialise the per-Gateway-listener pod-port allocation map.
           Idempotent — multiple snippets render this; only the first
           actually computes. Downstream consumers should `{{ render
           "util-gateway-pod-port-allocator" }}` then read
@@ -102,7 +102,7 @@ templateSnippets:
             * Listeners with empty name or non-positive port are skipped
               (defensively — invalid Gateway state shouldn't crash the
               allocator, just leave them out).
-      -#}
+      #}
       {%- var _, _ = shared.ComputeIfAbsent("gatewayPodPortAllocations", func() any {
         var basePort = toint(extraContext | dig("perGatewayPodPortBase") | fallback(18000))
         var rangeSize = toint(extraContext | dig("perGatewayPodPortRange") | fallback(1000))
@@ -114,13 +114,13 @@ templateSnippets:
           var gwNs = gw.Metadata.Namespace
           var gwName = gw.Metadata.Name
           for _, listener := range gw.Spec.Listeners {
-            {#- HTTP and HTTPS listeners both get a per-Gateway bind on a
-                unique pod port, so each Gateway's routing is isolated by
-                destination (dst_port) rather than collapsing onto the
-                shared chart-static :80 / :443 binds. TLS listeners are
-                excluded — TLS-Passthrough flows through chart-static
-                `frontend ssl-tcp` and TLS-Terminate (non-default port)
-                renders its own `frontends-600` mode-tcp frontend. -#}
+            // HTTP and HTTPS listeners both get a per-Gateway bind on a
+            // unique pod port, so each Gateway's routing is isolated by
+            // destination (dst_port) rather than collapsing onto the
+            // shared chart-static :80 / :443 binds. TLS listeners are
+            // excluded — TLS-Passthrough flows through chart-static
+            // `frontend ssl-tcp` and TLS-Terminate (non-default port)
+            // renders its own `frontends-600` mode-tcp frontend.
             if listener.Protocol != "HTTPS" && listener.Protocol != "HTTP" {
               continue
             }
@@ -139,61 +139,61 @@ templateSnippets:
           }
         }
 
-        {#- Allocate ONE pod port per (Gateway, PORT) — every listener
-            sharing a Gateway+port shares the single bind and is
-            host-disambiguated downstream. Then expand to the
-            per-(Gateway,listener) keys consumers look up.
-
-            PURE HASH-AND-PROBE allocation (see the header comment for
-            why this must NOT read committed Services back from the
-            cluster cache): each key's home slot is derived from a
-            sha256 of the key itself, so the same key lands on the same
-            pod port in every render, on every replica, regardless of
-            snapshot staleness. Only genuine slot collisions between
-            keys present in THIS render probe forward, in AGE-THEN-KEY
-            order (see below) so the assignment is deterministic.
-
-            7 hex chars (28 bits) keeps parseInt inside int32 range on
-            any platform; 268M values over a ~1000-slot range is
-            uniform enough. -#}
-        {#- OLDEST-WINS probe order. Slots are handed out walking the
-            keys in ascending (Gateway creationTimestamp, key) order, so
-            a key's port depends ONLY on itself and on the keys of
-            OLDER Gateways. Creating a Gateway can therefore never move
-            an existing Gateway's pod port, no matter how the hashes
-            collide: the newcomer is processed last and probes past the
-            slots the incumbents already hold.
-
-            That invariant is what makes a moved port safe(ish) to live
-            with. Under the previous key-only order the winner of a
-            contested slot was whichever key sorted first, so a
-            newly-created Gateway could evict a long-lived one — and
-            the evicted Gateway's OLD pod port was, in the same render,
-            taken over by the newcomer's bind. Anything still addressing
-            the old pod port directly (an established keep-alive
-            connection pinned by conntrack, a `kubectl port-forward`
-            that resolved targetPort before the shift) then reached a
-            DIFFERENT Gateway's routes: its host key missed every map
-            entry (404 via default_backend) or, worse, matched that
-            Gateway's catch-all and crossed tenants. Oldest-wins removes
-            the eviction case entirely; the remaining case (deleting the
-            OLDER member of a collision pair lets the younger one move
-            down to the freed slot) vacates a port instead of handing it
-            to a neighbour, so stale clients get a clean connection
-            refusal and reconnect.
-
-            creationTimestamp is safe to read here and is NOT the
-            forbidden read-back: it is an immutable field of the watched
-            Gateway itself, arriving atomically with the object, not a
-            lagging observation of the controller's own output. It
-            cannot oscillate. Gateways whose timestamp is absent
-            (fixtures, hand-built objects) sort LAST — treated as
-            newest, so they can never evict a Gateway of known age — and
-            then fall back to key order, which is exactly the previous
-            behaviour. RFC3339 timestamps are fixed-width, so a plain
-            lexicographic sort is chronological; second granularity
-            means same-second creations tie and fall back to key order.
-            -#}
+        // Allocate ONE pod port per (Gateway, PORT) — every listener
+        // sharing a Gateway+port shares the single bind and is
+        // host-disambiguated downstream. Then expand to the
+        // per-(Gateway,listener) keys consumers look up.
+        //
+        // PURE HASH-AND-PROBE allocation (see the header comment for
+        // why this must NOT read committed Services back from the
+        // cluster cache): each key's home slot is derived from a
+        // sha256 of the key itself, so the same key lands on the same
+        // pod port in every render, on every replica, regardless of
+        // snapshot staleness. Only genuine slot collisions between
+        // keys present in THIS render probe forward, in AGE-THEN-KEY
+        // order (see below) so the assignment is deterministic.
+        //
+        // 7 hex chars (28 bits) keeps parseInt inside int32 range on
+        // any platform; 268M values over a ~1000-slot range is
+        // uniform enough.
+        // OLDEST-WINS probe order. Slots are handed out walking the
+        // keys in ascending (Gateway creationTimestamp, key) order, so
+        // a key's port depends ONLY on itself and on the keys of
+        // OLDER Gateways. Creating a Gateway can therefore never move
+        // an existing Gateway's pod port, no matter how the hashes
+        // collide: the newcomer is processed last and probes past the
+        // slots the incumbents already hold.
+        //
+        // That invariant is what makes a moved port safe(ish) to live
+        // with. Under the previous key-only order the winner of a
+        // contested slot was whichever key sorted first, so a
+        // newly-created Gateway could evict a long-lived one — and
+        // the evicted Gateway's OLD pod port was, in the same render,
+        // taken over by the newcomer's bind. Anything still addressing
+        // the old pod port directly (an established keep-alive
+        // connection pinned by conntrack, a `kubectl port-forward`
+        // that resolved targetPort before the shift) then reached a
+        // DIFFERENT Gateway's routes: its host key missed every map
+        // entry (404 via default_backend) or, worse, matched that
+        // Gateway's catch-all and crossed tenants. Oldest-wins removes
+        // the eviction case entirely; the remaining case (deleting the
+        // OLDER member of a collision pair lets the younger one move
+        // down to the freed slot) vacates a port instead of handing it
+        // to a neighbour, so stale clients get a clean connection
+        // refusal and reconnect.
+        //
+        // creationTimestamp is safe to read here and is NOT the
+        // forbidden read-back: it is an immutable field of the watched
+        // Gateway itself, arriving atomically with the object, not a
+        // lagging observation of the controller's own output. It
+        // cannot oscillate. Gateways whose timestamp is absent
+        // (fixtures, hand-built objects) sort LAST — treated as
+        // newest, so they can never evict a Gateway of known age — and
+        // then fall back to key order, which is exactly the previous
+        // behaviour. RFC3339 timestamps are fixed-width, so a plain
+        // lexicographic sort is chronological; second granularity
+        // means same-second creations tie and fall back to key order.
+        //
         var portKeys = []any{}
         var seenKeys = map[string]bool{}
         for _, tAny := range allTuples {
@@ -205,32 +205,32 @@ templateSnippets:
             if created == "" {
               created = "9999-12-31T23:59:59Z"
             }
-            {#- "\t" separates the sort prefix from the key: it can
-                appear in neither an RFC3339 timestamp nor a
-                namespace/name, so the split below is unambiguous. -#}
+            // "\t" separates the sort prefix from the key: it can
+            // appear in neither an RFC3339 timestamp nor a
+            // namespace/name, so the split below is unambiguous.
             portKeys = append(portKeys, created + "\t" + pk)
           }
         }
 
         var sortedKeys = sort_strings(portKeys)
-        {#- More keys than slots means the probe loop below could never
-            find a free slot and would spin forever, hanging the render
-            goroutine — fail loudly with the knob to turn instead. -#}
+        // More keys than slots means the probe loop below could never
+        // find a free slot and would spin forever, hanging the render
+        // goroutine — fail loudly with the knob to turn instead.
         if len(sortedKeys) > rangeSize {
           fail(sprintf("pod-port allocator: %d (Gateway,port) keys exceed the %d-slot pod-port range; raise perGatewayPodPortRange", len(sortedKeys), rangeSize))
         }
         var portPod = map[string]any{}
         var usedSlots = map[int]bool{}
         for _, sortKeyAny := range sortedKeys {
-          {#- Strip the creationTimestamp sort prefix — only the
-              (Gateway, port) key is hashed, so the home slot stays a
-              pure function of the key and is unaffected by age. -#}
+          // Strip the creationTimestamp sort prefix — only the
+          // (Gateway, port) key is hashed, so the home slot stays a
+          // pure function of the key and is unaffected by age.
           var sortKeyParts = split(tostring(sortKeyAny), "\t")
           var pk = tostring(sortKeyParts[len(sortKeyParts)-1])
           var hashVal, hashErr = parseInt(sha256(pk)[0:7], 16)
           if hashErr != nil {
-            {#- Unreachable — sha256 output is always valid hex — but
-                failing loudly beats allocating garbage. -#}
+            // Unreachable — sha256 output is always valid hex — but
+            // failing loudly beats allocating garbage.
             fail("pod-port allocator: hash parse failed for key " + pk)
           }
           var slot = hashVal % rangeSize
@@ -241,8 +241,8 @@ templateSnippets:
           portPod[pk] = basePort + slot
         }
 
-        {#- Expand to per-(Gateway,listener) keys, all pointing at their
-            (Gateway,port) pod port. -#}
+        // Expand to per-(Gateway,listener) keys, all pointing at their
+        // (Gateway,port) pod port.
         var result = map[string]any{}
         for _, tAny := range allTuples {
           var t = tAny.(map[string]any)
@@ -255,7 +255,7 @@ templateSnippets:
   util-gateway-pod-port-for:
     requires: [gateways]
     template: |
-      {#- Emit the allocated container port for a given (Gateway, listener).
+      {# Emit the allocated container port for a given (Gateway, listener).
           Renders the allocator first so callers don't need to. Falls back
           to the listener's own port when no allocation exists (the
           fallback is intentional — chart paths that bypass the allocator
@@ -264,7 +264,7 @@ templateSnippets:
           Usage:
             {%- import "util-gateway-pod-port-for" for PodPortFor %}
             bind *:{{ PodPortFor(gwNs, gwName, listenerName, listenerPort) }}
-      -#}
+      #}
       {%- macro PodPortFor(gwNs string, gwName string, listenerName string, listenerPort int) %}
         {{ render "util-gateway-pod-port-allocator" -}}
         {%%
@@ -395,7 +395,7 @@ templateSnippets:
     template: |-
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
       http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
-      {#- txn.gw_listener_port = the USER-FACING Gateway listener port (e.g. 80 /
+      {# txn.gw_listener_port = the USER-FACING Gateway listener port (e.g. 80 /
           443) the client connected to, resolved from the pod dst_port via
           pod-gw-listener-port.map. Consumed by the RequestRedirect filter's
           port-omit rule. Set here UNCONDITIONALLY (not in the redirect filter
@@ -405,7 +405,7 @@ templateSnippets:
           the map ever being loaded, so the lookup silently misses and the pod
           port leaks into Location. map_int (not map): the key is the integer
           dst_port. Chart-static binds miss the map and fall back to dst_port,
-          which already IS the listener port there. -#}
+          which already IS the listener port there. #}
       http-request set-var(txn.gw_listener_port) var(txn.dst_port),map_int({{ mapPath("pod-gw-listener-port.map") }}) if { var(txn.dst_port),map_int({{ mapPath("pod-gw-listener-port.map") }}) -m found }
       http-request set-var(txn.gw_listener_port) var(txn.dst_port) if !{ var(txn.gw_listener_port) -m found }
 

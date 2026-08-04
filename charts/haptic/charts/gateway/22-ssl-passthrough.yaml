@@ -2,10 +2,10 @@ templateSnippets:
   util-gateway-ssl-passthrough:
     requires: [gateways, httproutes, tlsroutes]
     template: |
-      {#- Caches SSL passthrough backends in shared["gateway_ssl_passthrough"].backends
+      {# Caches SSL passthrough backends in shared["gateway_ssl_passthrough"].backends
           Uses ComputeIfAbsent for race-free caching across parallel template renders.
           Note: first_seen() calls are safe inside the compute function due to the
-          deadlock-free implementation of ComputeIfAbsent. -#}
+          deadlock-free implementation of ComputeIfAbsent. #}
       {%- import "util-build-ssl-passthrough" for BuildSSLPassthrough %}
       {%%
         var _, _ = shared.ComputeIfAbsent("gateway_ssl_passthrough", func() any {
@@ -18,8 +18,8 @@ templateSnippets:
   util-build-ssl-passthrough:
     requires: [gateways, httproutes, tlsroutes]
     template: |
-      {#- Macro to populate SSL passthrough backend data.
-          Called from ComputeIfAbsent to enable use of template functions (dig, toSlice, etc.). -#}
+      {# Macro to populate SSL passthrough backend data.
+          Called from ComputeIfAbsent to enable use of template functions (dig, toSlice, etc.). #}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection %}
       {%- import "util-resource-helpers" for ListenerName, ListenerProtocol, ListenerHostname %}
       {%- macro BuildSSLPassthrough(sslData map[string]any) %}

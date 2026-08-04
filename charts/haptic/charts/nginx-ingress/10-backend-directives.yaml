@@ -114,8 +114,8 @@ templateSnippets:
 
   backend-directives-715-nginx-ingress-next-upstream:
     template: |
-      {#- A retry lands on a different server only because base.yaml's defaults set `option redispatch`. -#}
-      {#- Silently ignored, no HAProxy CE equivalent: non_idempotent, proxy-next-upstream-timeout. -#}
+      {# A retry lands on a different server only because base.yaml's defaults set `option redispatch`. #}
+      {# Silently ignored, no HAProxy CE equivalent: non_idempotent, proxy-next-upstream-timeout. #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -173,8 +173,8 @@ templateSnippets:
 
   map-body-size-720-nginx-ingress:
     template: |
-      {#- "0" means unlimited in nginx, hence no map entry. -#}
-      {#- base.yaml's frontend-filters-250-request-body-size enforces the map (deny 413) keyed on the resolved backend, so a cap change is map-only and reload-free. -#}
+      {# "0" means unlimited in nginx, hence no map entry. #}
+      {# base.yaml's frontend-filters-250-request-body-size enforces the map (deny 413) keyed on the resolved backend, so a cap change is map-only and reload-free. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var bodySize = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-body-size"] -%}
@@ -209,11 +209,11 @@ templateSnippets:
 
   backend-directives-725-nginx-ingress-limit-rate:
     template: |
-      {#- bwlim-out throttles data sent toward the client. limit-rate-after maps to
+      {# bwlim-out throttles data sent toward the client. limit-rate-after maps to
           min-size, which is HAProxy's forward-chunk size, NOT nginx's "throttle after
           N bytes" — HAProxy has no equivalent. Kept as the closest available knob and
           declared `different` in migration coverage rather than silently claimed
-          equivalent; see docs/site/docs/libraries/nginx-ingress.md. -#}
+          equivalent; see docs/site/docs/libraries/nginx-ingress.md. #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -293,7 +293,7 @@ templateSnippets:
 
   map-path-rewrite-750-nginx-ingress:
     template: |
-      {#- Literal rewrites only (no \N); base.yaml's frontend-filters-400-path-rewrite applies them as set-path. -#}
+      {# Literal rewrites only (no \N); base.yaml's frontend-filters-400-path-rewrite applies them as set-path. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -345,7 +345,7 @@ templateSnippets:
       # nginx-ingress/rate-limiting ({{ key }})
           {%- end %}
           {%- if limitRps != "" %}
-      {#- `peers localinstance` (base.yaml) carries the per-source counter across reloads. -#}
+      {# `peers localinstance` (base.yaml) carries the per-source counter across reloads. #}
       stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
       http-request track-sc0 src
       http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ limitRps }} }{{ exempt }}
@@ -369,7 +369,7 @@ templateSnippets:
   # so changing a header value is a map-only, reload-free update.
   map-reqhdr-host-760-nginx-ingress:
     template: |
-      {#- Shares the "map-reqhdr-host" first_seen namespace with the haproxytech set-host emitter. -#}
+      {# Shares the "map-reqhdr-host" first_seen namespace with the haproxytech set-host emitter. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}

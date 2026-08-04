@@ -82,8 +82,8 @@ templateSnippets:
 
   frontend-filters-775-nginx-ingress-from-to-www-redirect:
     template: |
-      {#- `redirect prefix` only sets Location; never rewrite the Host header instead,
-          that corrupts routing. Map indirection keeps host changes reload-free. -#}
+      {# `redirect prefix` only sets Location; never rewrite the Host header instead,
+          that corrupts routing. Map indirection keeps host changes reload-free. #}
       {%- var pairByHost = map[string]string{} -%}
       {%- var seen = map[string]bool{} -%}
       {%- var hostKeys = []any{} -%}
@@ -116,8 +116,8 @@ templateSnippets:
 
   frontend-filters-780-nginx-ingress-canary:
     template: |
-      {#- HAProxy takes the first matching use_backend, so emission order is the
-          documented canary precedence: header > cookie > weight. -#}
+      {# HAProxy takes the first matching use_backend, so emission order is the
+          documented canary precedence: header > cookie > weight. #}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -169,8 +169,8 @@ templateSnippets:
 
   frontend-filters-790-nginx-ingress-mtls-error:
     template: |
-      {#- auth-tls-error-page lives in features-150 (map-driven, reload-free); only
-          cert passthrough belongs here. -#}
+      {# auth-tls-error-page lives in features-150 (map-driven, reload-free); only
+          cert passthrough belongs here. #}
       {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {#- Strip unconditionally, and never host-scoped: a wildcard or host-less
           rule made the old exact host gate miss entirely, leaving the caller's
@@ -223,7 +223,7 @@ templateSnippets:
           {{- fail("Ingress " + firstKey + " sets 'nginx.ingress.kubernetes.io/mirror-target' but the spoaHub mirror plugin is not enabled. Either enable spoaHub.plugins.mirror or remove the annotation.") -}}
         {%- end %}
         {%- var mirrorWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") %}
-      {#- Content-Length-gated, not frontend-wide `option http-buffer-request`: one
+      {# Content-Length-gated, not frontend-wide `option http-buffer-request`: one
           mirrored Ingress would buffer the whole shared frontend and stall every
           gRPC/streaming route on it into a 408. Trade-off: chunked bodies are not
           mirrored. The map check honours a route's `request-buffering: off`, and
@@ -298,9 +298,9 @@ templateSnippets:
       {%- end %}
   log-fields-730-nginx-ingress-mtls:
     template: |-
-      {#- Byte-identical to the haptic-annotations and haproxy-ingress log-fields
+      {# Byte-identical to the haptic-annotations and haproxy-ingress log-fields
           contributions on purpose: base deduplicates identical items, so several
-          annotation libraries can be enabled at once. -#}
+          annotation libraries can be enabled at once. #}
       {%- var enabled = false %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-secret"] != "" || ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true" %}

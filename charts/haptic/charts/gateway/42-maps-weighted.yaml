@@ -2,9 +2,9 @@ templateSnippets:
   util-generate-httproute-weighted-backend-map-gateway:
     requires: [httproutes]
     template: |
-      {#- Generate weighted backend map entries for HTTPRoute.
+      {# Generate weighted backend map entries for HTTPRoute.
           Typed sibling — formerly GenerateWeightedBackendMap with a
-          polymorphic `routes []any` parameter. -#}
+          polymorphic `routes []any` parameter. #}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- macro GenerateHTTPRouteWeightedBackendMap(routes []*resources.httproutes.T) -%}
       {%- for _, route := range routes %}
@@ -46,9 +46,9 @@ templateSnippets:
   util-generate-grpcroute-weighted-backend-map-gateway:
     requires: [grpcroutes]
     template: |
-      {#- Generate weighted backend map entries for GRPCRoute.
+      {# Generate weighted backend map entries for GRPCRoute.
           Typed sibling of GenerateHTTPRouteWeightedBackendMap; body
-          differs only in the `route` slice type. -#}
+          differs only in the `route` slice type. #}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- macro GenerateGRPCRouteWeightedBackendMap(routes []*resources.grpcroutes.T) -%}
       {%- for _, route := range routes %}
@@ -90,9 +90,9 @@ templateSnippets:
   util-sharded-weighted-backend-map-gateway:
     requires: [grpcroutes, httproutes]
     template: |
-      {#- Per-Kind typed sharded weighted-backend-map wrappers.
+      {# Per-Kind typed sharded weighted-backend-map wrappers.
           Each calls its Kind-specific Generate macro with the typed
-          slice directly — no polymorphic indirection. -#}
+          slice directly — no polymorphic indirection. #}
       {%- import "util-generate-httproute-weighted-backend-map-gateway" for GenerateHTTPRouteWeightedBackendMap -%}
       {%- import "util-generate-grpcroute-weighted-backend-map-gateway" for GenerateGRPCRouteWeightedBackendMap -%}
       {%- import "util-macros" for CalculateShardCount -%}
@@ -122,7 +122,7 @@ templateSnippets:
   map-weighted-backend-500-gateway:
     requires: [grpcroutes, httproutes]
     template: |
-      {#- Generate weighted backend map entries for HTTPRoute and
+      {# Generate weighted backend map entries for HTTPRoute and
           GRPCRoute. Both kinds support multi-backendRef rules with
           weights — the chart's weighted-multi-backend.map is
           backend-kind-agnostic (lookups key off `<random_weight>:
@@ -133,7 +133,7 @@ templateSnippets:
           (and never to v3). Without GRPCRoute coverage here, the
           MULTIBACKEND lookup at runtime returned an empty
           backend_name and the request fell through to
-          default_backend (404). -#}
+          default_backend (404). #}
       {%- import "util-sharded-weighted-backend-map-gateway" for ShardedHTTPRouteWeightedBackendMap, ShardedGRPCRouteWeightedBackendMap %}
       # gateway/map-weighted-backend-gateway
       {{ ShardedHTTPRouteWeightedBackendMap(resources.httproutes.List()) }}

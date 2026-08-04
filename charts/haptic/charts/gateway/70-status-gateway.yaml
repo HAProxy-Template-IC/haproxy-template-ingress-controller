@@ -2,7 +2,7 @@ templateSnippets:
   util-generate-gateway-status-patches:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#-
+      {#
         Generate Gateway Status Patches
 
         For each Gateway, registers a status patch with:
@@ -13,7 +13,7 @@ templateSnippets:
           gateways: Slice of Gateway resources to process
 
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
-      -#}
+      #}
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
@@ -1353,13 +1353,13 @@ templateSnippets:
               if pNs != nsStr {
                 continue
               }
-              {#- Defer the admission decision to IsListenerSetAdmitted —
-                  the same helper the routing chain uses — so the
-                  Selector branch (and any future allowed-from rule) is
-                  handled identically. Closes
-                  ListenerSetAllowedNamespaceSelector where the previous
-                  inline switch only covered "All" and "Same" and fell
-                  through to permitted=false for Selector-admitted LSes. -#}
+              // Defer the admission decision to IsListenerSetAdmitted —
+              // the same helper the routing chain uses — so the
+              // Selector branch (and any future allowed-from rule) is
+              // handled identically. Closes
+              // ListenerSetAllowedNamespaceSelector where the previous
+              // inline switch only covered "All" and "Same" and fell
+              // through to permitted=false for Selector-admitted LSes.
               if !hasPrefix(IsListenerSetAdmitted(gateway, ls), "true") {
                 continue
               }
@@ -1583,11 +1583,11 @@ templateSnippets:
   util-sharded-gateway-status-patches:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#-
+      {#
         Sharded Gateway Status Patches
 
         Wraps GenerateGatewayStatusPatches with automatic parallel sharding.
-      -#}
+      #}
       {%- import "util-generate-gateway-status-patches" for GenerateGatewayStatusPatches -%}
       {%- import "util-macros" for CalculateShardCount -%}
       {% macro ShardedGatewayStatusPatches(gateways []*resources.gateways.T) %}
@@ -1604,7 +1604,7 @@ templateSnippets:
   status-patches-200-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#-
+      {#
         Gateway API Status Patch Registration
 
         Extension Point: status-patches-* (priority 200)
@@ -1618,7 +1618,7 @@ templateSnippets:
 
         Dependencies:
           - features-075-address-discovery (provides gf["addresses"])
-      -#}
+      #}
       {%- import "util-sharded-gateway-status-patches" for ShardedGatewayStatusPatches -%}
       {%- import "util-sharded-route-status-patches" for ShardedHTTPRouteStatusPatches, ShardedGRPCRouteStatusPatches -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
@@ -1643,17 +1643,17 @@ templateSnippets:
       {%- if len(allGRPCRoutes) > 0 -%}
         {{- ShardedGRPCRouteStatusPatches(allGRPCRoutes) -}}
       {%- end -%}
-      {#- TLSRoute status registration lives in its own extension-point
+      {# TLSRoute status registration lives in its own extension-point
           snippet (status-patches-205-gateway-tlsroute) so the typed import
-          is stripped together with the tlsroutes watch. -#}
-      {#- TCPRoute status registration lives in its own extension-point
+          is stripped together with the tlsroutes watch. #}
+      {# TCPRoute status registration lives in its own extension-point
           snippet (status-patches-210-gateway-tcproute, 90-tcproute.yaml) so
-          the typed import is stripped together with the tcproutes watch. -#}
+          the typed import is stripped together with the tcproutes watch. #}
 
   status-patches-220-listenerset:
     requires: [gateways, grpcroutes, httproutes, listenersets, referencegrants]
     template: |
-      {#-
+      {#
         ListenerSet (GEP-1713) Status Patches
 
         Reads pre-computed acceptance / conflict state from the
@@ -1695,18 +1695,18 @@ templateSnippets:
         attach to every listener on this LS).
 
         Resource-agnostic: no controller code change.
-      -#}
+      #}
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener -%}
       {%- import "util-resource-helpers" for ResourceNamespace, ResourceName -%}
       {{ render "util-effective-listeners" }}
-      {#- Read the per-LS statuses sub-key off the unified
+      {# Read the per-LS statuses sub-key off the unified
           effectiveListeners cache populated by util-effective-listeners.
           Folding statuses into the same cache value as the listener
           map guarantees that whenever effectiveListeners is populated,
           statuses is too — eliminating the race that the previous
-          separate-key listenersetStatuses cache exposed. -#}
+          separate-key listenersetStatuses cache exposed. #}
       {%%
         var effLAny = shared.Get("effectiveListeners")
         var statuses = map[string]any{}

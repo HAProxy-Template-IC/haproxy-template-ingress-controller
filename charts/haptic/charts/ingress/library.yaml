@@ -36,8 +36,8 @@ templateSnippets:
 
   features-100-ingress-bind:
     template: |
-      {#- needHTTPSTermination makes the terminating https frontend claim unmatched
-          SNIs instead of the ssl-tcp passthrough frontend rejecting them. -#}
+      {# needHTTPSTermination makes the terminating https frontend claim unmatched
+          SNIs instead of the ssl-tcp passthrough frontend rejecting them. #}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var tlsDefault bool = extraContext | dig("ingressDefaultHTTPS") | fallback(true) %}
       {%- var haveDefaultCert = tostring(extraContext | dig("tls", "defaultCertificate", "name") | fallback("")) != "" %}
@@ -102,8 +102,8 @@ templateSnippets:
             var tlsCert = map[string]any{
               "secret_namespace": namespace,
               "secret_name": secretName,
-              {#- ssl.yaml asserts .([]any) on tlsCertificates entries, which a typed
-                  []string would panic on. toSlice() returns []any{} for nil. -#}
+              // ssl.yaml asserts .([]any) on tlsCertificates entries, which a typed
+              // []string would panic on. toSlice() returns []any{} for nil.
               "sni_patterns": tls.Hosts | toSlice(),
               "sanitized_filename": sanitizedFilename,
             }
@@ -461,10 +461,10 @@ templateSnippets:
 
   map-path-prefix-501-ingress-default:
     template: |
-      {#- map_beg longest-prefix match picks the most-specific rule entry first, so
+      {# map_beg longest-prefix match picks the most-specific rule entry first, so
          these catch-alls only fire when no rule path matched. NEWEST wins per host
          (rule routes are oldest-wins): a being-deleted Ingress would otherwise keep
-         the catch-all and serve 503s. -#}
+         the catch-all and serve 503s. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- var candidates = []any{} -%}
@@ -502,7 +502,7 @@ templateSnippets:
 
   util-generate-ingress-status-patches:
     template: |
-      {#- statusPatch is mutex-guarded, so this is safe under the sharded go render. -#}
+      {# statusPatch is mutex-guarded, so this is safe under the sharded go render. #}
       {% macro GenerateIngressStatusPatches(ingresses []*resources.ingresses.T) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var addresses = gf["addresses"] %}
@@ -546,7 +546,7 @@ templateSnippets:
 
   status-patches-200-ingress:
     template: |
-      {#- gf["addresses"] comes from features-075-address-discovery. -#}
+      {# gf["addresses"] comes from features-075-address-discovery. #}
       {%- import "util-sharded-ingress-status-patches" for ShardedIngressStatusPatches -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- if gf["addresses"] != nil %}

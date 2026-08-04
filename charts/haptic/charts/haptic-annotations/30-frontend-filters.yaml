@@ -17,7 +17,7 @@ templateSnippets:
 
   frontend-filters-800-haptic-forwardfor:
     template: |
-      {#-
+      {#
         HAPTIC forwardfor Annotation (best-of-breed: haproxy-ingress semantics)
 
         Annotations:
@@ -28,7 +28,7 @@ templateSnippets:
           update    → http-request set-header X-Forwarded-For %[src]
           ifmissing → http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found }
           ignore    → (no rule)
-      -#}
+      #}
       {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -56,7 +56,7 @@ templateSnippets:
 
   frontend-filters-810-haptic-access-control:
     template: |
-      {#-
+      {#
         HAPTIC IP allow/deny-list (best-of-breed: shared CIDR-ACL macro)
 
         Annotations:
@@ -67,7 +67,7 @@ templateSnippets:
           acl <name> src <cidrs>
           http-request deny if <host-match> !<acl>   (allowlist)
           http-request deny if <host-match>  <acl>   (denylist)
-      -#}
+      #}
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
       {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -87,7 +87,7 @@ templateSnippets:
 
   frontend-filters-820-haptic-request-set-header:
     template: |
-      {#-
+      {#
         HAPTIC request header injection (best-of-breed: haproxytech newline form)
 
         Annotations:
@@ -99,7 +99,7 @@ templateSnippets:
 
         Guards: the header name (single token, no spaces) and value (control
         chars rejected) both pass ValidateConfigValue before interpolation.
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -129,7 +129,7 @@ templateSnippets:
 
   frontend-filters-825-haptic-response-set-header:
     template: |
-      {#-
+      {#
         HAPTIC response header injection (best-of-breed: haproxytech newline form)
 
         Annotations:
@@ -138,7 +138,7 @@ templateSnippets:
 
         Generated HAProxy Config (host-scoped):
           http-response set-header <name> '<value>' if <host-match>
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -168,7 +168,7 @@ templateSnippets:
 
   frontend-filters-830-haptic-cors:
     template: |
-      {#-
+      {#
         HAPTIC CORS (best-of-breed: shared EmitAnnotationCORS macro).
 
         The macro implements the ingress-nginx model — a comma-separated
@@ -188,7 +188,7 @@ templateSnippets:
           acl <name> var(txn.cors_origin) -m str|reg <allow-list>
           http-after-response set-header Access-Control-* ... if <host-match> <acl>
           http-request return status 204 if <host-match> <acl> METH_OPTIONS ...
-      -#}
+      #}
       {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {{ EmitAnnotationCORS(ingress,
@@ -200,7 +200,7 @@ templateSnippets:
 
   frontend-filters-840-haptic-src-ip-header:
     template: |
-      {#-
+      {#
         HAPTIC source-IP override (best-of-breed: haproxytech src-ip-header).
 
         Rewrites the connection source address from a request header, so
@@ -212,7 +212,7 @@ templateSnippets:
 
         Generated HAProxy Config (host-scoped):
           http-request set-src hdr(<header-name>) if <host-match>
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -221,10 +221,10 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var srcIpHeader = ingress.Metadata.Annotations["haproxy-haptic.org/src-ip-header"] %}
           {%- if srcIpHeader != "" %}
-            {#- Scoped by matched route. set-src rewrites the address every
+            {# Scoped by matched route. set-src rewrites the address every
                 src-based ACL then evaluates, so a wildcard or host-less rule
                 that skipped this left the CIDR allow/deny lists judging the
-                proxy's address instead of the client's. -#}
+                proxy's address instead of the client's. #}
       # haptic/src-ip-header ({{ key }})
       http-request set-src hdr({{ ValidateConfigValue(srcIpHeader, "haproxy-haptic.org/src-ip-header", key, false) }}) if {{ ResourceMatchCondition([]string{key}) }}
           {%- end %}
@@ -232,7 +232,7 @@ templateSnippets:
 
   frontend-filters-850-haptic-request-capture:
     template: |
-      {#-
+      {#
         HAPTIC request capture (best-of-breed: haproxytech request-capture).
 
         Captures request header values into the log line. Applied
@@ -245,7 +245,7 @@ templateSnippets:
 
         Generated HAProxy Config:
           capture request header <name> len <len>
-      -#}
+      #}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -272,7 +272,7 @@ templateSnippets:
 
   frontend-filters-860-haptic-response-cookie:
     template: |
-      {#-
+      {#
         HAPTIC upstream Set-Cookie rewriting (best-of-breed: nginx
         proxy_cookie_domain / proxy_cookie_path, host-scoped at the frontend).
 
@@ -287,7 +287,7 @@ templateSnippets:
         Generated HAProxy Config (host-scoped):
           http-response replace-header Set-Cookie (.*)Domain=<from>(.*) \1Domain=<to>\2 if <host-match>
           http-response replace-header Set-Cookie (.*)Path=<from>(.*)   \1Path=<to>\2   if <host-match>
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
@@ -330,7 +330,7 @@ templateSnippets:
 
   frontend-filters-870-haptic-response-location-rewrite:
     template: |
-      {#-
+      {#
         HAPTIC upstream Location/Refresh rewriting (adapted from nginx
         proxy_redirect).
 
@@ -348,7 +348,7 @@ templateSnippets:
         Generated HAProxy Config (host-scoped):
           http-response replace-header Location <from-regex> <to> if <host-match>
           http-response replace-header Refresh  <from-regex> <to> if <host-match>
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}

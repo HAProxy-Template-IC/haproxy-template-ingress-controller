@@ -172,8 +172,8 @@ templateSnippets:
             var caBundle = join(caBundleParts, "\n")
             var policyName = dig_string(winningPolicy, "", "metadata", "name")
             var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
-            {#- Type "ca-file" (not "file"): same path, but a content-only
-                rotation then applies via the runtime API, no reload on 3.2+. -#}
+            // Type "ca-file" (not "file"): same path, but a content-only
+            // rotation then applies via the runtime API, no reload on 3.2+.
             var resolvedPath, fileErr = fileRegistry.Register("ca-file", caFilename, caBundle)
             if fileErr == nil {
               btlsCaPath = resolvedPath
@@ -236,9 +236,9 @@ templateSnippets:
           }
           var combined = crtPem + "\n" + keyPem
           var fname = "gw-clientcert-" + gwNs + "-" + gwName + ".pem"
-          {#- Type "cert" lands the file under ssl/, and HAProxy's
-              `crt-base ssl` prepends ssl/ again — so emit the bare filename,
-              not the path fileRegistry returns. -#}
+          // Type "cert" lands the file under ssl/, and HAProxy's
+          // `crt-base ssl` prepends ssl/ again — so emit the bare filename,
+          // not the path fileRegistry returns.
           var _, fErr = fileRegistry.Register("cert", fname, combined)
           if fErr == nil {
             gwClientCertPath = fname
@@ -543,8 +543,8 @@ templateSnippets:
             var caBundle = join(caBundleParts, "\n")
             var policyName = dig_string(winningPolicy, "", "metadata", "name")
             var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
-            {#- Type "ca-file" (not "file"): same path, but a content-only
-                rotation then applies via the runtime API, no reload on 3.2+. -#}
+            // Type "ca-file" (not "file"): same path, but a content-only
+            // rotation then applies via the runtime API, no reload on 3.2+.
             var resolvedPath, fileErr = fileRegistry.Register("ca-file", caFilename, caBundle)
             if fileErr == nil {
               btlsCaPath = resolvedPath
@@ -607,9 +607,9 @@ templateSnippets:
           }
           var combined = crtPem + "\n" + keyPem
           var fname = "gw-clientcert-" + gwNs + "-" + gwName + ".pem"
-          {#- Type "cert" lands the file under ssl/, and HAProxy's
-              `crt-base ssl` prepends ssl/ again — so emit the bare filename,
-              not the path fileRegistry returns. -#}
+          // Type "cert" lands the file under ssl/, and HAProxy's
+          // `crt-base ssl` prepends ssl/ again — so emit the bare filename,
+          // not the path fileRegistry returns.
           var _, fErr = fileRegistry.Register("cert", fname, combined)
           if fErr == nil {
             gwClientCertPath = fname
@@ -676,7 +676,7 @@ templateSnippets:
   util-sharded-gateway-backends:
     requires: [gateways, grpcroutes, httproutes]
     template: |
-      {#- first_seen() dedup is thread-safe, so shards render in parallel. -#}
+      {# first_seen() dedup is thread-safe, so shards render in parallel. #}
       {%- import "util-generate-httproute-backends-gateway" for GenerateHTTPRouteBackends -%}
       {%- import "util-generate-grpcroute-backends-gateway" for GenerateGRPCRouteBackends -%}
       {%- import "util-macros" for CalculateShardCount -%}
@@ -707,8 +707,8 @@ templateSnippets:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {%- import "util-sharded-gateway-backends" for ShardedHTTPRouteBackends, ShardedGRPCRouteBackends -%}
-      {#- Populate the analysis cache here (sequential) before the map files
-          render in parallel and race on it. -#}
+      {# Populate the analysis cache here (sequential) before the map files
+          render in parallel and race on it. #}
       {{- render "util-gateway-analysis" -}}
       # gateway/backends-gateway
       {{ ShardedHTTPRouteBackends(resources.httproutes.List(), "gatewayBackends_http") }}
@@ -716,10 +716,10 @@ templateSnippets:
 
   backends-501-gateway-invalid:
     template: |
-      {#- Sink for rules whose backendRefs are all invalid; the frontend
+      {# Sink for rules whose backendRefs are all invalid; the frontend
           matcher sends them here (qualifier BACKEND:gw-invalid-backend).
           Always rendered — HAProxy refuses a config that references a
-          backend that doesn't exist. -#}
+          backend that doesn't exist. #}
       # gateway/backends-501-gateway-invalid
       backend gw-invalid-backend
           guid be:gw-invalid-backend

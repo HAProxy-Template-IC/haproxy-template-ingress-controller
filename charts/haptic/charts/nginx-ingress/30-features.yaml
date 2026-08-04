@@ -8,9 +8,9 @@ templateSnippets:
 
   util-nginx-ingress-ssl-passthrough:
     template: |
-      {#- Caches SSL passthrough backends from nginx.ingress.kubernetes.io/ssl-passthrough annotations.
+      {# Caches SSL passthrough backends from nginx.ingress.kubernetes.io/ssl-passthrough annotations.
           Build logic lives in ingress-annotations-compat.yaml's BuildAnnotationSSLPassthrough macro;
-          this snippet only owns the per-library cache key and naming-convention parameters. -#}
+          this snippet only owns the per-library cache key and naming-convention parameters. #}
       {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
       {%%
         var _, _ = shared.ComputeIfAbsent("ni_sslPassthrough", func() any {
@@ -25,7 +25,7 @@ templateSnippets:
 
   features-080-nginx-ingress-canary-coexist:
     template: |
-      {#-
+      {#
         Mark nginx canary Ingresses as base-route co-locators so they don't
         compete for host+path ownership in the core Ingress path map
         (ingress.yaml util-path-map-entry-ingress-shard).
@@ -48,7 +48,7 @@ templateSnippets:
         When the nginx-ingress library is disabled there are no canary Ingresses
         and the set stays absent (the owner computation treats a missing set as
         "no co-locators").
-      -#}
+      #}
       {%%
         var gf = shared.Get("globalFeatures").(map[string]any)
         if gf["coLocatedIngresses"] == nil {
@@ -64,7 +64,7 @@ templateSnippets:
 
   features-100-nginx-ingress-ssl-passthrough:
     template: |
-      {#-
+      {#
         Nginx Ingress SSL Passthrough Registration
 
         Annotation: nginx.ingress.kubernetes.io/ssl-passthrough: "true"
@@ -75,7 +75,7 @@ templateSnippets:
           - SSL passthrough backends
 
         Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#ssl-passthrough
-      -#}
+      #}
       {{ render "util-nginx-ingress-ssl-passthrough" }}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
@@ -91,7 +91,7 @@ templateSnippets:
 
   features-105-nginx-ingress-ssl-redirect:
     template: |
-      {#-
+      {#
         Nginx Ingress ssl-redirect / force-ssl-redirect — host registration into the
         shared map. Code = extraContext.nginxHttpRedirectCode (default 308, the nginx
         http-redirect-code equivalent). Registers redirected hosts into
@@ -99,7 +99,7 @@ templateSnippets:
         ssl.yaml builds ssl-redirect-<code>.map and emits the shared redirect rule.
         Replaces the per-ingress inline-ACL redirect, so adding/removing a redirected
         host is a map-only, reload-free update.
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- var redirectCode = extraContext | dig("nginxHttpRedirectCode") | fallback("308") | tostring() %}
       {%- if redirectCode != "301" && redirectCode != "302" && redirectCode != "303" && redirectCode != "307" && redirectCode != "308" %}
@@ -125,7 +125,7 @@ templateSnippets:
 
   features-110-nginx-ingress-mtls:
     template: |
-      {#-
+      {#
         Nginx Ingress Client-Cert Verification Registration
 
         Annotations:
@@ -161,7 +161,7 @@ templateSnippets:
                                operators wanting to accept self-signed
                                certs should set verify=optional and inspect
                                ssl_c_used in their auth-tls-error-page logic)
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var secretRef = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-secret"] %}
@@ -191,10 +191,10 @@ templateSnippets:
           {%- end %}
           {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
           {%- if secret == nil %}
-            {#- See the matching block in haproxy-ingress.yaml for why we
+            {# See the matching block in haproxy-ingress.yaml for why we
                 skip-and-continue rather than fail() here: a missing
                 referenced Secret on one Ingress should not cascade to
-                webhook-rejection of every other Ingress in the cluster. -#}
+                webhook-rejection of every other Ingress in the cluster. #}
             # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
             {%- continue %}
           {%- end %}
@@ -230,7 +230,7 @@ templateSnippets:
 
   features-140-nginx-ingress-redirects:
     template: |
-      {#-
+      {#
         nginx permanent-redirect / temporal-redirect — host registration into the
         shared host-keyed redirect map. base.yaml's frontend-filters-060-redirect-location
         emits the rule from redirect-loc-<code>.map, so adding/changing a host redirect
@@ -239,12 +239,12 @@ templateSnippets:
         Annotations:
           - nginx.ingress.kubernetes.io/permanent-redirect[-code]  (default 301)
           - nginx.ingress.kubernetes.io/temporal-redirect[-code]   (default 302)
-      -#}
-      {#- Registration iterates ingresses unconditionally (no cross-render first_seen):
+      #}
+      {# Registration iterates ingresses unconditionally (no cross-render first_seen):
           features-* renders once, so each ingress is visited once anyway, and
           features-170-redirect-location-map dedups hosts locally. This keeps the
           map registration and the rule emitter in lockstep under churn, matching
-          the features-160-ssl-redirect-map rationale. -#}
+          the features-160-ssl-redirect-map rationale. #}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -277,13 +277,13 @@ templateSnippets:
 
   features-145-nginx-ingress-app-root:
     template: |
-      {#-
+      {#
         nginx app-root — registers host→path into the shared gf["appRootHosts"].
         base.yaml features-175-app-root-map builds app-root.map and
         frontend-filters-065-app-root emits the gated rule, so changing an app-root
         is a map-only, reload-free update (replaces the inline-ACL app-root redirect).
         Annotation: nginx.ingress.kubernetes.io/app-root
-      -#}
+      #}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -302,14 +302,14 @@ templateSnippets:
 
   features-150-nginx-ingress-mtls-error:
     template: |
-      {#-
+      {#
         nginx auth-tls-error-page — registers host→error-page URL into the shared
         gf["mtlsErrorHosts"]. base.yaml features-185-mtls-error-map builds
         mtls-error.map and frontend-filters-075-mtls-error emits the
         ssl_c_verify-gated redirect, so changing the error page is map-only and
         reload-free. The cert-passthrough set-headers stay in the vendor
         frontend-filters-790 snippet. Annotation: auth-tls-error-page
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var errorPage = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-error-page"] %}
@@ -327,13 +327,13 @@ templateSnippets:
 
   features-155-nginx-ingress-hsts:
     template: |
-      {#-
+      {#
         nginx HSTS — registers host→Strict-Transport-Security value into the shared
         gf["hstsHosts"]; base.yaml features-190-hsts-map builds hsts.map and
         frontend-filters-080-hsts emits the single shared response-header rule
         (map-only, reload-free). Annotations: hsts / hsts-max-age /
         hsts-include-subdomains / hsts-preload.
-      -#}
+      #}
       {%- import "util-register-annotation-hsts" for RegisterAnnotationHSTS -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {{ RegisterAnnotationHSTS(ingress,
@@ -346,14 +346,14 @@ templateSnippets:
 
   backends-501-nginx-ingress-ssl-passthrough:
     template: |
-      {#-
+      {#
         Nginx Ingress SSL Passthrough Backends
 
         Generates TCP mode backends for Ingress resources with
         nginx.ingress.kubernetes.io/ssl-passthrough: "true" annotation.
 
         Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#ssl-passthrough
-      -#}
+      #}
       {%- import "util-render-annotation-ssl-passthrough-backends" for RenderAnnotationSSLPassthroughBackends -%}
       {{ render "util-nginx-ingress-ssl-passthrough" }}
       {{ RenderAnnotationSSLPassthroughBackends("ni_sslPassthrough", "ni_sslPassthrough_backend", "nginx-ingress") }}

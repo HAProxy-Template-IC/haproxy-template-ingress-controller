@@ -21,12 +21,12 @@ templateSnippets:
 
   util-webhook-reject-or-warn:
     template: |-
-      {#-
+      {#
         CALLER CONTRACT: the warn path returns and the render CONTINUES, so the
         caller MUST skip the offending resource's own output right after calling
         this ({% continue %} in a per-resource loop, or stop emitting in a macro)
         — otherwise it emits config built from the value it just rejected.
-      -#}
+      #}
       {%- macro WebhookRejectOrWarn(resource any, reason string, message string) -%}
         {%- if renderMode == "admission" -%}
           {{- fail(message) -}}
@@ -37,12 +37,12 @@ templateSnippets:
 
   util-build-annotation-ssl-passthrough:
     template: |
-      {#-
+      {#
         Service info is captured during this scan instead of being re-fetched by
         the consumer: a second GetSingle() could disagree with the use_backend
         pass under concurrent Ingress deletion. The backend entry shape must stay
         identical across the libraries that read sslData["backends"].
-      -#}
+      #}
       {%- import "util-service-port-resolution" for ResolveServicePort %}
       {%- macro BuildAnnotationSSLPassthrough(sslData map[string]any, annotationKey string, namePrefix string, firstSeenKey string) %}
         {%- for _, ingress := range resources.ingresses.List() %}
@@ -108,12 +108,12 @@ templateSnippets:
 
   util-register-annotation-hsts:
     template: |
-      {#-
+      {#
         Registers each host's Strict-Transport-Security value into
         gf["hstsHosts"]; base.yaml's features-190-hsts-map and
         frontend-filters-080-hsts turn it into one map-driven response-header
         rule, so changing a value stays a reload-free map update.
-      -#}
+      #}
       {%- macro RegisterAnnotationHSTS(ingress *resources.ingresses.T, enabledAnn string, maxAgeAnn string, subdomainsAnn string, preloadAnn string, defaultMaxAge string) %}
         {%- if ingress.Metadata.Annotations[enabledAnn] == "true" %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
@@ -135,12 +135,12 @@ templateSnippets:
 
   util-emit-annotation-cors:
     template: |
-      {#-
+      {#
         Mirrors ingress-nginx: cors-allow-origin is a comma-separated allow-list
         (single-level "*." wildcards allowed) matched against the request Origin;
         a lone "*" or unset allows any origin. haproxytech CORS is structurally
         different and lives in haproxytech's own library — it does NOT call this.
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
       {%- macro EmitAnnotationCORS(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) %}
         {%- var corsEnabled = ingress.Metadata.Annotations[enabledAnn] %}
@@ -184,8 +184,8 @@ templateSnippets:
             {%- var originHdr = "%[var(txn.cors_origin)]" %}
             {%- if allowAny %}{%- originHdr = "*" %}{%- end %}
       # {{ commentLabel }} ({{ key }})
-      {#- CORS headers ride on http-after-response so they also cover the
-          synthetic preflight 204; http-response is dropped for a return. -#}
+      {# CORS headers ride on http-after-response so they also cover the
+          synthetic preflight 204; http-response is dropped for a return. #}
       http-request set-var(txn.cors_origin) req.hdr(Origin) if {{ cond }}
             {%- if allowAny %}
       acl {{ aclName }} var(txn.cors_origin) -m found
@@ -210,11 +210,11 @@ templateSnippets:
       http-after-response set-header Access-Control-Expose-Headers '{{ exposeHeaders }}' if {{ cond }} {{ aclName }}
             {%- end %}
             {%- if !allowAny %}
-      {#- add-header, never set-header: Vary is a comma-combinable list per RFC 9110
+      {# add-header, never set-header: Vary is a comma-combinable list per RFC 9110
           and several producers contribute to it. set-header replaced the whole
           field, destroying both the origin's own Vary and the one the cache tier
           adds to declare its key — so a CDN in front of HAPTIC keyed on Origin
-          alone and served one caller's keyed body to another. -#}
+          alone and served one caller's keyed body to another. #}
       http-after-response add-header Vary Origin if {{ cond }} {{ aclName }}
             {%- end %}
       http-request return status 204 if {{ cond }} {{ aclName }} METH_OPTIONS { req.hdr(Access-Control-Request-Method) -m found }
@@ -260,8 +260,8 @@ templateSnippets:
   # second directive into the config and still pass `haproxy -c`.
   util-validate-cidr-list:
     template: |
-      {#- Charset guard only: malformed-but-clean values (999.0.0.0/8) are left
-          for `haproxy -c` to reject. -#}
+      {# Charset guard only: malformed-but-clean values (999.0.0.0/8) are left
+          for `haproxy -c` to reject. #}
       {%- macro ValidateCidrList(rawList string, annotation string, key string) %}
         {%- var out = []string{} %}
         {%- for _, c := range split(rawList, ",") %}

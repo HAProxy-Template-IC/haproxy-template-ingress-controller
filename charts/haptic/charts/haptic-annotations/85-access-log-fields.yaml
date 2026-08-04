@@ -18,13 +18,13 @@ templateSnippets:
 
   log-fields-800-consumer:
     template: |-
-      {#-
+      {#
         Authenticated consumer identity.
 
         Set by the native JWT (sub claim) and API-key (key id → consumer) backend
         rules, and the key a per-consumer rate limit buckets on, so it is the
         field that turns "someone is being throttled" into "which customer".
-      -#}
+      #}
       {%- var enabled = false %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- if ingress.Metadata.Annotations["haproxy-haptic.org/jwt-secret"] != "" || ingress.Metadata.Annotations["haproxy-haptic.org/api-key-secret"] != "" %}
@@ -37,7 +37,7 @@ templateSnippets:
 
   log-fields-810-cache:
     template: |-
-      {#-
+      {#
         Varnish cache verdict.
 
         cache is Varnish's own X-Cache header, captured into a transaction
@@ -62,7 +62,7 @@ templateSnippets:
         `use_backend varnish_cache`, so the core `backend` field says
         "varnish_cache" and no longer identifies the application backend the
         request was routed to.
-      -#}
+      #}
       {%- if tostring(extraContext | dig("cache", "varnish", "enabled") | fallback("false")) == "true" %}
       %(cache)[var(txn.cache_status)]
       %(cache_age)[var(txn.cache_age)]
@@ -72,7 +72,7 @@ templateSnippets:
 
   log-fields-820-peer-ip:
     template: |-
-      {#-
+      {#
         The real TCP peer, when a forwarding header has replaced the client IP.
 
         `haproxy-haptic.org/src-ip-header` makes `http-request set-src` rewrite
@@ -80,7 +80,7 @@ templateSnippets:
         reports. fc_src is the untouched connection source, so the pair is the
         only way to see that a client claimed an address it doesn't own — i.e. to
         catch a spoofed forwarding header.
-      -#}
+      #}
       {%- var enabled = false %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- if ingress.Metadata.Annotations["haproxy-haptic.org/src-ip-header"] != "" %}
@@ -93,7 +93,7 @@ templateSnippets:
 
   log-fields-830-captured-headers:
     template: |-
-      {#-
+      {#
         Request headers captured with `haproxy-haptic.org/request-capture`.
 
         %hr is the positional capture list HAProxy's own httplog carries, and it
@@ -108,7 +108,7 @@ templateSnippets:
         The haproxytech library contributes an identical item for its own
         capture annotation; base's assembler deduplicates identical
         contributions, so both libraries can be enabled at once.
-      -#}
+      #}
       {%- var enabled = false %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- if ingress.Metadata.Annotations["haproxy-haptic.org/request-capture"] != "" %}
@@ -121,7 +121,7 @@ templateSnippets:
 
   log-fields-840-mtls:
     template: |-
-      {#-
+      {#
         Client-certificate identity and verification result.
 
         ssl_c_verify is 0 on success and an X509 error code otherwise, so it is
@@ -133,7 +133,7 @@ templateSnippets:
 
         The vendor compatibility libraries contribute identical items for their
         own mTLS annotations; base's assembler deduplicates them.
-      -#}
+      #}
       {%- var enabled = false %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- if ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-secret"] != "" || ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"] == "true" %}

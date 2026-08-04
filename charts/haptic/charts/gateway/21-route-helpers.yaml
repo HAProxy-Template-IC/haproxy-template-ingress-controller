@@ -7,8 +7,8 @@ templateSnippets:
 
   util-resource-helpers:
     template: |
-      {#- Scriggo macros are text-typed: every helper returns a string, so callers wrap
-          numeric fields (listener.port) in toint(). -#}
+      {# Scriggo macros are text-typed: every helper returns a string, so callers wrap
+          numeric fields (listener.port) in toint(). #}
       {%- macro ResourceNamespace(r any) string -%}
       {{- dig(r, "metadata", "namespace") | fallback("") -}}
       {%- end macro -%}
@@ -55,15 +55,15 @@ templateSnippets:
 
   util-route-condition:
     template: |
-      {#- txn.gw_rule_id is set by frontend-matchers-advanced-500-gateway. -#}
+      {# txn.gw_rule_id is set by frontend-matchers-advanced-500-gateway. #}
       {%- macro RouteIdCondition(routeId string) string -%}
       { var(txn.gw_rule_id) -m str "{{ routeId }}" }
       {%- end macro -%}
 
   util-bounded-k8s-name:
     template: |
-      {#- 63 = the RFC 1123 label limit on K8s object names. Over-long inputs keep an 8-char hash of
-          the untruncated key so inputs that collide after truncation still get distinct names. -#}
+      {# 63 = the RFC 1123 label limit on K8s object names. Over-long inputs keep an 8-char hash of
+          the untruncated key so inputs that collide after truncation still get distinct names. #}
       {%- macro BoundedK8sName(prefix string, ns string, name string, suffix string) string -%}
       {%- var middle = ns + "-" + name -%}
       {%- var joined = prefix + "-" + middle -%}
@@ -85,9 +85,9 @@ templateSnippets:
 
   util-condition-transition-time:
     template: |
-      {#- Gateway-API status paths live here, not in the resource-agnostic transitionTime() filter
+      {# Gateway-API status paths live here, not in the resource-agnostic transitionTime() filter
           (RULE #1). Re-stamping lastTransitionTime on an unchanged status breaks the
-          status-applier checksum dedup and self-feeds an SSA-write -> re-render loop. -#}
+          status-applier checksum dedup and self-feeds an SSA-write -> re-render loop. #}
       {%- macro TopLevelTransitionTime(resource any, conditionType string, newStatus string) string -%}
       {{- transitionTime(dig(resource, "status", "conditions"), conditionType, newStatus) -}}
       {%- end macro -%}
@@ -149,8 +149,8 @@ templateSnippets:
 
   util-hostname-intersect-gateway:
     template: |
-      {#- Scriggo macros can only return text, so these return "true"/"false" strings; callers
-          compare == "true". -#}
+      {# Scriggo macros can only return text, so these return "true"/"false" strings; callers
+          compare == "true". #}
       {%- macro HostnamesIntersect(listenerHostname string, routeHostnames []any) -%}
         {%- if listenerHostname == "" -%}
           true
@@ -222,8 +222,8 @@ templateSnippets:
   util-reference-grant-permitted:
     requires: [referencegrants]
     template: |
-      {#- Scriggo macros can only return text, so this returns "true"/"false"; callers compare
-          == "true". -#}
+      {# Scriggo macros can only return text, so this returns "true"/"false"; callers compare
+          == "true". #}
       {%- macro ReferenceGrantPermitted(
           fromGroup string, fromKind string, fromNs string,
           toGroup string, toKind string, toNs string, toName string) -%}
@@ -263,12 +263,12 @@ templateSnippets:
   util-gw-mtls-blocked:
     requires: [gateways]
     template: |
-      {#- Routes on a listener whose TLS validation CA refs don't resolve must not be served: the
+      {# Routes on a listener whose TLS validation CA refs don't resolve must not be served: the
           chart's shared HTTPS frontend would otherwise route them via a SIBLING Gateway's bind
           (conformance GatewayFrontendInvalidDefaultClientCertificateValidation). Reads the live
           stores instead of features-110-gateway-frontend-mtls's state, so map-file renders don't
           depend on that snippet having run. Callers inline the same key literal
-          (20-route-analysis.yaml); keep it in sync with GetGwMtlsBlockedKey. -#}
+          (20-route-analysis.yaml); keep it in sync with GetGwMtlsBlockedKey. #}
       {%- macro GetGwMtlsBlockedKey(gw *resources.gateways.T) string -%}
         gwMtlsBlocked:{{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}
       {%- end macro -%}

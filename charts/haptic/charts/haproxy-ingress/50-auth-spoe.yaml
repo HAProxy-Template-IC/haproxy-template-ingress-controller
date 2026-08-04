@@ -9,7 +9,7 @@ templateSnippets:
 
   global-top-600-haproxy-ingress-auth:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Basic Auth Userlist Generation
 
         Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-secret
@@ -24,7 +24,7 @@ templateSnippets:
         Secret format:
           Each key is a username, value is base64-encoded bcrypt/apr1 hash
           Example: admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei4...
-      -#}
+      #}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -118,10 +118,10 @@ templateSnippets:
   #
   map-auth-url-500-haproxy-ingress:
     template: |-
-      {#- Keyed by <ns>/<name> (resource identity). The frontend looks up
+      {# Keyed by <ns>/<name> (resource identity). The frontend looks up
           via var(txn.resource_id),map(...) — see spoa-hub.yaml's
           frontend-spoe-filters-100-external-auth and base.yaml's
-          resource_id extraction at the end of frontend-routing-logic. -#}
+          resource_id extraction at the end of frontend-routing-logic. #}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
         {%- if authUrl != "" -%}
@@ -312,10 +312,10 @@ templateSnippets:
       {%- for _, pair := range pairs -%}
         {%- var pName = pair.(map[string]any)["name"].(string) -%}
         {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {#- Strip any client-supplied copy of this trusted header on auth-protected
+      {# Strip any client-supplied copy of this trusted header on auth-protected
           routes BEFORE re-adding the plugin value, so a forged inbound header
           can't survive to the backend when the auth reply omits it (the
-          set-header below is skipped when its var isn't found). -#}
+          set-header below is skipped when its var isn't found). #}
       {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
       {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
       {%- end -%}
@@ -402,14 +402,14 @@ templateSnippets:
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
               {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-request", ns, ingressName) -}}
-              {#- Dedupe on the argName (after dash→underscore) — not
+              {# Dedupe on the argName (after dash→underscore) — not
                   the lowercased original — because that's what
                   appears as the SPOE arg key. Two header spellings
                   like `X-Foo-Bar` and `X_Foo_Bar` produce different
                   lower-case names but the same argName, and emitting
                   both would put two `hdr_x_foo_bar=...` tokens on
                   the same args= line, which SPOE parses as malformed
-                  / undefined-order. -#}
+                  / undefined-order. #}
               {%- var argName = replace(toLower(name), "-", "_") -%}
               {%- if !seen[argName] -%}
                 {%- seen[argName] = true -%}
@@ -487,12 +487,12 @@ templateSnippets:
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
               {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-succeed", ns, ingressName) -}}
-              {#- Dedupe on varName so spellings that differ only in
+              {# Dedupe on varName so spellings that differ only in
                   dashes vs underscores (e.g. `X-Foo` vs `X_Foo`,
                   both → `x_foo`) collapse to a single set-header
                   directive — the plugin produces the same txn var
                   for both, so the second directive would just
-                  duplicate the first. -#}
+                  duplicate the first. #}
               {%- var varName = replace(toLower(name), "-", "_") -%}
               {%- if !seen[varName] -%}
                 {%- seen[varName] = true -%}
@@ -505,10 +505,10 @@ templateSnippets:
       {%- for _, pair := range pairs -%}
         {%- var pName = pair.(map[string]any)["name"].(string) -%}
         {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {#- Strip any client-supplied copy of this trusted header on auth-protected
+      {# Strip any client-supplied copy of this trusted header on auth-protected
           routes BEFORE re-adding the plugin value, so a forged inbound header
           can't survive to the backend when the auth reply omits it (the
-          set-header below is skipped when its var isn't found). -#}
+          set-header below is skipped when its var isn't found). #}
       {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
       {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
       {%- end -%}
@@ -564,9 +564,9 @@ templateSnippets:
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
               {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-fail", ns, ingressName) -}}
-              {#- Dedupe on varName (after dash→underscore) so
+              {# Dedupe on varName (after dash→underscore) so
                   spellings that collapse to the same plugin txn var
-                  produce one set-header directive, not two. -#}
+                  produce one set-header directive, not two. #}
               {%- var varName = replace(toLower(name), "-", "_") -%}
               {%- if !seen[varName] -%}
                 {%- seen[varName] = true -%}
@@ -613,12 +613,12 @@ templateSnippets:
   # dispatch. See ADR-0007.
   map-haproxy-ingress-waf-500-haproxy-ingress:
     template: |-
-      {#- Keyed by <ns>/<name>. The validation guards (unsupported waf
+      {# Keyed by <ns>/<name>. The validation guards (unsupported waf
           value, waf-mode without waf, invalid mode) still apply because
           they run at render time regardless of map keying. The
           coraza-plugin-enabled check fails loud at the first offending
           Ingress when the operator wires the annotation without enabling
-          the plugin — silent ignore would hide a real misconfiguration. -#}
+          the plugin — silent ignore would hide a real misconfiguration. #}
       {%- import "util-waf-governance" for WafGovernance -%}
       {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
       {%- var corazaEnabled = false -%}
@@ -716,8 +716,8 @@ templateSnippets:
       http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ userlistName }}) }
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
           {%- else %}
-            {#- No resolvable Secret means no userlist, and emitting nothing left
-                the backend serving every request unauthenticated. -#}
+            {# No resolvable Secret means no userlist, and emitting nothing left
+                the backend serving every request unauthenticated. #}
             {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-ingress.github.io/auth-secret', but that Secret could not be resolved. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
       # WARNING haproxy-ingress/auth-secret: Secret not resolvable for {{ key }}; failing closed (503) until it is present.
       http-request set-var(txn.denied_by) str(basic_auth_unavailable)

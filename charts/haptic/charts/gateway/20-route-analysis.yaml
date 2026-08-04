@@ -32,11 +32,11 @@ templateSnippets:
   util-effective-listeners:
     requires: [gateways, referencegrants]
     template: |
-      {#-
+      {#
         Provenance lives in flat `__source*` keys, not a nested `_source` map:
         Scriggo rebinds literal map keys "kind"/"namespace"/"name" to
         listener-field values ("protocol", "hostname") under this loop shape.
-      -#}
+      #}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- _ = render "util-listenersets-contrib" default "" -%}
       {%%
@@ -286,11 +286,11 @@ templateSnippets:
   util-listenerset-routing-gate:
     requires: [gateways, referencegrants]
     template: |
-      {#-
+      {#
         Returns "true" / "false" — Scriggo macros can only return text.
         Duplicates the acceptance gate util-effective-listeners applies;
         change both together or routing and status disagree.
-      -#}
+      #}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- macro IsListenerSetAdmitted(gw *resources.gateways.T, ls any) -%}
         {#- `ls any`, not *resources.listenersets.T: a typed parameter would make
@@ -393,7 +393,7 @@ templateSnippets:
   util-route-effective-hosts:
     requires: [gateways, referencegrants]
     template: |
-      {#- Which hostnames a route actually serves, per resolved parentRef.
+      {# Which hostnames a route actually serves, per resolved parentRef.
 
           Identical for the HTTPRoute and GRPCRoute passes — it reads only the
           namespace, the hostnames and the parentRefs — so both callers pass
@@ -405,7 +405,7 @@ templateSnippets:
 
           Precondition: the caller has rendered util-gateway-port-scope. Every
           call site is inside AnalyzeRoutes, which renders it once up front;
-          rendering it here instead would emit its output once per route. -#}
+          rendering it here instead would emit its output once per route. #}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank %}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener %}
       {%- import "util-resource-helpers" for ListenerProtocolOr, ListenerHostname %}
@@ -423,11 +423,11 @@ templateSnippets:
               {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
               {%- if gw != nil %}
                 {%- resolvedGwCount = resolvedGwCount + 1 %}
-                {#- Computed here, not read back from
+                {# Computed here, not read back from
                     features-110-gateway-frontend-mtls: map files render in their
                     own context, where that snippet has not run. A listener whose
                     mTLS validation ref is unresolvable can't terminate TLS, and
-                    its routes must not serve via a sibling Gateway's bind. -#}
+                    its routes must not serve via a sibling Gateway's bind. #}
                 {{ ComputeGwMtlsBlocked(gw) }}
                 {%- var gwMtlsBlockedAny, _ = shared.ComputeIfAbsent(
                       "gwMtlsBlocked:"+gwNs+"/"+gwName,

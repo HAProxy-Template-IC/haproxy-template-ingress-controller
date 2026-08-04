@@ -360,28 +360,28 @@ templateSnippets:
               }
               setupDirectives += "SecAction \"id:900110,phase:1,pass,t:none,nolog," + thresholdVars + "\"\n"
             }
-            {#- Curated CRS variable tuning. A tenant fine-tunes a rule's INPUTS
-                (allowlist a content-type, raise an upload limit) instead of
-                disabling the rule — the git-content-type case is
-                allowedRequestContentTypes, NOT disabling 920420. Each registry
-                entry stores the FULL target variable (tx.* today), so a tenant
-                never types a collection prefix and can never reach the writable
-                GLOBAL/IP/SESSION state collections; a future non-tx tunable is
-                just another entry.
-
-                mergeList entries OWN the CRS default list. The crs-setup
-                SecAction that would set the variable (e.g. 900220 for content
-                types) is COMMENTED OUT in crs-setup by default, so the variable
-                is unset at render time — a runtime `%{...}` append would build an
-                incomplete list the rule then rejects (this was a real bug: git
-                clones 403'd because 920420 wraps the type as |type| and checks
-                @within, and the appended value lacked the leading pipe and the
-                defaults). The chart therefore emits the FULL value as a REPLACE:
-                its baked CRS default plus the tenant's additions, each token
-                formatted exactly as the rule matches it (|type|-wrapped,
-                space-joined for content types). Same shape as allowedMethods,
-                spliced before the CRS include where the rule reads it. boundedInt
-                entries replace a scalar within [min,max]. No tenant secLang. -#}
+            // Curated CRS variable tuning. A tenant fine-tunes a rule's INPUTS
+            // (allowlist a content-type, raise an upload limit) instead of
+            // disabling the rule — the git-content-type case is
+            // allowedRequestContentTypes, NOT disabling 920420. Each registry
+            // entry stores the FULL target variable (tx.* today), so a tenant
+            // never types a collection prefix and can never reach the writable
+            // GLOBAL/IP/SESSION state collections; a future non-tx tunable is
+            // just another entry.
+            //
+            // mergeList entries OWN the CRS default list. The crs-setup
+            // SecAction that would set the variable (e.g. 900220 for content
+            // types) is COMMENTED OUT in crs-setup by default, so the variable
+            // is unset at render time — a runtime `%{...}` append would build an
+            // incomplete list the rule then rejects (this was a real bug: git
+            // clones 403'd because 920420 wraps the type as |type| and checks
+            // @within, and the appended value lacked the leading pipe and the
+            // defaults). The chart therefore emits the FULL value as a REPLACE:
+            // its baked CRS default plus the tenant's additions, each token
+            // formatted exactly as the rule matches it (|type|-wrapped,
+            // space-joined for content types). Same shape as allowedMethods,
+            // spliced before the CRS include where the rule reads it. boundedInt
+            // entries replace a scalar within [min,max]. No tenant secLang.
             var crsSettingsAny = policy | dig("crsSettings")
             if crsSettingsAny != nil {
               var crsSettings, crsSettingsOK = crsSettingsAny.(map[string]any)
@@ -389,16 +389,16 @@ templateSnippets:
                 return "WAF policy '" + policyName + "' from " + source + " field crsSettings must be a map of CRS tuning names to values."
               }
               var crsRegistry = map[string]any{
-                {#- crsDefault mirrors the CRS 900220 recommended content-type
-                    list (commented out in crs-setup, so the chart owns it).
-                    Revisit on a CRS major bump if that recommended set changes. -#}
+                // crsDefault mirrors the CRS 900220 recommended content-type
+                // list (commented out in crs-setup, so the chart owns it).
+                // Revisit on a CRS major bump if that recommended set changes.
                 "allowedRequestContentTypes": map[string]any{"kind": "mergeList", "target": "allowed_request_content_type", "crsDefault": "|application/x-www-form-urlencoded| |multipart/form-data| |text/xml| |application/xml| |application/soap+xml| |application/json|", "wrap": "|", "sep": " ", "charset": "^[A-Za-z0-9][A-Za-z0-9.+/_-]*$", "hint": "a media type such as application/x-git-upload-pack-request"},
                 "maxFileSize":                map[string]any{"kind": "boundedInt", "target": "max_file_size", "minimum": 1, "maximum": 536870912, "hint": "a byte count between 1 and 536870912"},
                 "maxNumArgs":                 map[string]any{"kind": "boundedInt", "target": "max_num_args", "minimum": 1, "maximum": 100000, "hint": "a count between 1 and 100000"},
                 "totalArgLength":             map[string]any{"kind": "boundedInt", "target": "total_arg_length", "minimum": 1, "maximum": 10485760, "hint": "a byte count between 1 and 10485760"},
               }
               var crsClauses = []any{}
-              {#- keys() is sorted, so the emitted setvar order is deterministic. -#}
+              // keys() is sorted, so the emitted setvar order is deterministic.
               for _, field := range keys(crsSettings) {
                 var specAny = crsRegistry[field]
                 if specAny == nil {
@@ -414,10 +414,10 @@ templateSnippets:
                   var charset = spec["charset"].(string)
                   var wrap = spec["wrap"].(string)
                   var sep = spec["sep"].(string)
-                  {#- Start from the chart-owned CRS default, then append each
-                      tenant token wrapped as the rule matches it.
-                      strings_contains dedupes against both the default and any
-                      earlier addition. Emitted as a REPLACE (full value). -#}
+                  // Start from the chart-owned CRS default, then append each
+                  // tenant token wrapped as the rule matches it.
+                  // strings_contains dedupes against both the default and any
+                  // earlier addition. Emitted as a REPLACE (full value).
                   var merged = spec["crsDefault"].(string)
                   for _, rawItem := range items {
                     var token = rawItem | tostring()
@@ -442,40 +442,40 @@ templateSnippets:
                 }
               }
               if len(crsClauses) > 0 {
-                {#- One setup SecAction carries every tuned var; id in the
-                    chart's above-CRS band (>999999) so it can't collide with a
-                    CRS rule or the 1200000+ path-scoped exclusion IDs. -#}
+                // One setup SecAction carries every tuned var; id in the
+                // chart's above-CRS band (>999999) so it can't collide with a
+                // CRS rule or the 1200000+ path-scoped exclusion IDs.
                 setupDirectives += "SecAction \"id:1210000,phase:1,pass,t:none,nolog," + join(crsClauses|toStringSlice(), ",") + "\"\n"
               }
             }
-            {#- The CRS-anchor requirement is NOT enforced here at
-                registration: a policy defined in the catalog but selected by
-                no route must not fail the whole render just because the
-                ambient coraza directives lack the anchor (that happens
-                whenever a deployment-wide allowedMethods policy merges into a
-                baked validationTest whose coraza is disabled or CRS-less).
-                The check is route-scoped instead, at the point a route
-                actually applies the policy — see the setup-anchor rejectRoute
-                below. -#}
-            {#- Structured, self-service-safe rule exclusions. Each entry is
-                (rules[] + optional excludeTarget + optional path scope) — the
-                tenant supplies only numeric CRS rule IDs, an exact target
-                variable, and a literal path string; the chart owns the
-                SecRule wrapper and its literal operator, so no tenant regex
-                is ever evaluated on the request path (the ReDoS surface every
-                raw-SecLang WAF exposes). Two lowerings:
-                  * no path  -> config-time SecRuleRemoveById /
-                    SecRuleUpdateTargetById, appended AFTER the CRS include
-                    (the rules must exist to be removed) via generatedExclusions.
-                  * with path -> runtime ctl:ruleRemove[Target]ById wrapped in
-                    a chart-generated SecRule, spliced BEFORE the CRS include
-                    (a ctl must run before the rule it targets) via
-                    setupDirectives.
-                Rule IDs are denylisted against the CRS scoring/setup/
-                correlation machinery so a tenant can silence attack rules
-                that false-positive but can NOT disable the anomaly-scoring
-                rule that makes the block decision (i.e. can't turn off their
-                own enforcement through the back door). -#}
+            // The CRS-anchor requirement is NOT enforced here at
+            // registration: a policy defined in the catalog but selected by
+            // no route must not fail the whole render just because the
+            // ambient coraza directives lack the anchor (that happens
+            // whenever a deployment-wide allowedMethods policy merges into a
+            // baked validationTest whose coraza is disabled or CRS-less).
+            // The check is route-scoped instead, at the point a route
+            // actually applies the policy — see the setup-anchor rejectRoute
+            // below.
+            // Structured, self-service-safe rule exclusions. Each entry is
+            // (rules[] + optional excludeTarget + optional path scope) — the
+            // tenant supplies only numeric CRS rule IDs, an exact target
+            // variable, and a literal path string; the chart owns the
+            // SecRule wrapper and its literal operator, so no tenant regex
+            // is ever evaluated on the request path (the ReDoS surface every
+            // raw-SecLang WAF exposes). Two lowerings:
+            // * no path  -> config-time SecRuleRemoveById /
+            // SecRuleUpdateTargetById, appended AFTER the CRS include
+            // (the rules must exist to be removed) via generatedExclusions.
+            // * with path -> runtime ctl:ruleRemove[Target]ById wrapped in
+            // a chart-generated SecRule, spliced BEFORE the CRS include
+            // (a ctl must run before the rule it targets) via
+            // setupDirectives.
+            // Rule IDs are denylisted against the CRS scoring/setup/
+            // correlation machinery so a tenant can silence attack rules
+            // that false-positive but can NOT disable the anomaly-scoring
+            // rule that makes the block decision (i.e. can't turn off their
+            // own enforcement through the back door).
             var ruleExclusionsAny = policy | dig("ruleExclusions")
             if ruleExclusionsAny != nil {
               var ruleExclusions, ruleExclusionsOK = ruleExclusionsAny.([]any)
@@ -492,9 +492,9 @@ templateSnippets:
                 "onPathSuffix": "@endsWith",
               }
               var exclusionRuleCount = 0
-              {#- Per-policy sequence for generated path-scoped SecRule IDs;
-                  policy apps compile independently so a policy-local counter
-                  is collision-free. -#}
+              // Per-policy sequence for generated path-scoped SecRule IDs;
+              // policy apps compile independently so a policy-local counter
+              // is collision-free.
               var exclusionRuleSeq = 0
               for _, rawEntry := range ruleExclusions {
                 var entry, entryOK = rawEntry.(map[string]any)
@@ -506,11 +506,11 @@ templateSnippets:
                     return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entry contains unknown field '" + field + "'. Valid fields: rules, tags, excludeTarget, onPathPrefix, onPathContains, onPathExact, onPathSuffix."
                   }
                 }
-                {#- An entry selects rules by ID (rules) and/or by CRS tag
-                    (tags). Rule IDs may be removed outright or target-excluded;
-                    tags may ONLY target-exclude (so a tenant can't silence a
-                    whole attack class by tag), hence tags requires
-                    excludeTarget. -#}
+                // An entry selects rules by ID (rules) and/or by CRS tag
+                // (tags). Rule IDs may be removed outright or target-excluded;
+                // tags may ONLY target-exclude (so a tenant can't silence a
+                // whole attack class by tag), hence tags requires
+                // excludeTarget.
                 var ruleIds = []any{}
                 if entry["rules"] != nil {
                   var rulesRaw, rulesRawOK = entry["rules"].([]any)
@@ -578,7 +578,7 @@ templateSnippets:
                   }
                 }
                 if pathOp == "" {
-                  {#- No path: config-time directives, after the CRS include. -#}
+                  // No path: config-time directives, after the CRS include.
                   for _, idAny := range ruleIds {
                     var idText = idAny | tostring()
                     if target == "" {
@@ -591,11 +591,11 @@ templateSnippets:
                     generatedExclusions += "SecRuleUpdateTargetByTag \"" + tostring(tagAny) + "\" \"!" + target + "\"\n"
                   }
                 } else {
-                  {#- Path-scoped: one chart-owned SecRule (literal operator)
-                      whose ctl removes the rule/target for this transaction,
-                      spliced before the CRS include. IDs come from a policy-
-                      local 12xxxxx band that never collides with CRS
-                      (900000-999999) or HAPTIC's setup SecActions. -#}
+                  // Path-scoped: one chart-owned SecRule (literal operator)
+                  // whose ctl removes the rule/target for this transaction,
+                  // spliced before the CRS include. IDs come from a policy-
+                  // local 12xxxxx band that never collides with CRS
+                  // (900000-999999) or HAPTIC's setup SecActions.
                   var ctlActions = ""
                   for _, idAny := range ruleIds {
                     var idText = idAny | tostring()
@@ -638,8 +638,8 @@ templateSnippets:
             }
           }
 
-          {#- keys() is sorted, so catalogs register in a stable order and a
-              duplicate-name collision always names the same winner. -#}
+          // keys() is sorted, so catalogs register in a stable order and a
+          // duplicate-name collision always names the same winner.
           for _, refName := range keys(policyConfigMapRefs) {
             var refWhere = "extraContext.waf.policies.configMapRefs." + refName
             var policyConfigMap, sourceOK = policyConfigMapRefs[refName].(map[string]any)
@@ -919,16 +919,16 @@ templateSnippets:
             if mode != "" && !active {
               rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-mode' without 'haproxy-haptic.org/waf-policy'. Select a WAF policy or remove waf-mode.")
             }
-            {#- Catalog-existence and unknown-policy handling live in the
-                scoped resolution block above (rejectRoute) — they deny at
-                admission but fail closed per-route on a live render, so a
-                policy deleted out from under an existing Ingress can no
-                longer abort the whole render. -#}
-            {#- Mixing a native WAF annotation with a vendor WAF annotation on
-                one Ingress is rejected generically (for any family pair) by
-                the cross-family feature-collision guard in the
-                ingress-annotations-compat library, which renders before these
-                map files — so no policy-scoped check is needed here. -#}
+            // Catalog-existence and unknown-policy handling live in the
+            // scoped resolution block above (rejectRoute) — they deny at
+            // admission but fail closed per-route on a live render, so a
+            // policy deleted out from under an existing Ingress can no
+            // longer abort the whole render.
+            // Mixing a native WAF annotation with a vendor WAF annotation on
+            // one Ingress is rejected generically (for any family pair) by
+            // the cross-family feature-collision guard in the
+            // ingress-annotations-compat library, which renders before these
+            // map files — so no policy-scoped check is needed here.
             if active && !corazaEnabled {
               fail("Ingress " + resourceID + " sets HAPTIC WAF annotations but the spoaHub coraza plugin is not enabled. Enable spoaHub.plugins.coraza or remove the annotations.")
             }
@@ -954,15 +954,15 @@ templateSnippets:
               rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects self-service WAF policy '" + requestedPolicy + "' with effective enforcement 'detect', which would weaken the default-on baseline enforcement 'deny'. Only trusted-catalog policies may weaken the baseline; use enforcement: deny or ask the HAPTIC administrator to adopt the policy into a trusted catalog.")
             }
 
-            {#- A route selecting a policy with setup-position fields
-                (allowedMethods/paranoiaLevel/anomalyThreshold) needs the CRS
-                include in the coraza directives to splice the SecActions
-                before — without it the tuning silently wouldn't apply. Checked
-                per-route (not at registration) so a catalog policy that no
-                route selects never trips it, and route-scoped so one such
-                route fails closed rather than aborting the whole render.
-                corazaEnabled is implied: an active route with coraza off is
-                already rejected by the coraza-not-enabled guard above. -#}
+            // A route selecting a policy with setup-position fields
+            // (allowedMethods/paranoiaLevel/anomalyThreshold) needs the CRS
+            // include in the coraza directives to splice the SecActions
+            // before — without it the tuning silently wouldn't apply. Checked
+            // per-route (not at registration) so a catalog policy that no
+            // route selects never trips it, and route-scoped so one such
+            // route fails closed rather than aborting the whole render.
+            // corazaEnabled is implied: an active route with coraza off is
+            // already rejected by the coraza-not-enabled guard above.
             if routeBrokenReason == "" && policy != "" && policySetupDirectives[policy] != "" && !strings_contains(corazaBaseDirectives, "Include @owasp_crs") {
               rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "' which sets allowedMethods/paranoiaLevel/anomalyThreshold/crsSettings or path-scoped ruleExclusions, but spoaHub.plugins.coraza.directives has no 'Include @owasp_crs' line to insert them before. Keep the CRS include in the coraza directives or remove the setup-position fields from the policy.")
             }

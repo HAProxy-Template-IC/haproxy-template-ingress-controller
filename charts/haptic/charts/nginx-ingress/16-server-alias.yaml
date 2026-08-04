@@ -8,7 +8,7 @@
 templateSnippets:
   map-host-720-nginx-ingress-server-alias:
     template: |
-      {#-
+      {#
         Nginx Ingress Server Alias
 
         Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#server-alias
@@ -26,7 +26,7 @@ templateSnippets:
 
         Generated host.map entries:
           <alias-key> <rule-host-key>
-      -#}
+      #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var aliasAnn = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/server-alias"] -%}

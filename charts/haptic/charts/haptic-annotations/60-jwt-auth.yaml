@@ -56,7 +56,7 @@ templateSnippets:
   # ==========================================================================
   features-860-haptic-jwt:
     template: |
-      {#- HAPTIC JWT — register the verification public key (one PEM per Secret). -#}
+      {# HAPTIC JWT — register the verification public key (one PEM per Secret). #}
       {%- import "util-haptic-jwt-key" for ResolveHapticJWTKey -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -171,17 +171,17 @@ templateSnippets:
       http-request deny deny_status 401 unless { var(txn.haptic_jwt_alg) -m str {{ alg }} }
       http-request set-var(txn.denied_by) str(jwt_signature) unless { http_auth_bearer,jwt_verify({{ alg }},"{{ pemPath }}") -m int 1 }
       http-request deny deny_status 401 unless { http_auth_bearer,jwt_verify({{ alg }},"{{ pemPath }}") -m int 1 }
-            {#- exp: enforce only when the claim is present (expired = exp - now < 0). -#}
+            {# exp: enforce only when the claim is present (expired = exp - now < 0). #}
       http-request set-var(txn.haptic_jwt_now) date()
       http-request set-var(txn.haptic_jwt_exp) http_auth_bearer,jwt_payload_query('$.exp','int')
       http-request set-var(txn.denied_by) str(jwt_expired) if { var(txn.haptic_jwt_exp) -m found } { var(txn.haptic_jwt_exp),sub(txn.haptic_jwt_now) -m int lt 0 }
       http-request deny deny_status 401 if { var(txn.haptic_jwt_exp) -m found } { var(txn.haptic_jwt_exp),sub(txn.haptic_jwt_now) -m int lt 0 }
-      {#- nbf, the other half of the token's validity window. Without it a token
+      {# nbf, the other half of the token's validity window. Without it a token
           minted for a future window is accepted the moment it is issued, so a
           credential intended to become valid later — a scheduled hand-over, a
           pre-issued token held by a party who should not yet be able to use it —
           works immediately. Same shape as exp, inverted: deny while nbf is still
-          ahead of now. Absent nbf means no lower bound, which is valid. -#}
+          ahead of now. Absent nbf means no lower bound, which is valid. #}
       http-request set-var(txn.haptic_jwt_nbf) http_auth_bearer,jwt_payload_query('$.nbf','int')
       http-request set-var(txn.denied_by) str(jwt_not_yet_valid) if { var(txn.haptic_jwt_nbf) -m found } { var(txn.haptic_jwt_nbf),sub(txn.haptic_jwt_now) -m int gt 0 }
       http-request deny deny_status 401 if { var(txn.haptic_jwt_nbf) -m found } { var(txn.haptic_jwt_nbf),sub(txn.haptic_jwt_now) -m int gt 0 }
@@ -212,7 +212,7 @@ templateSnippets:
                 {%- end %}
               {%- end %}
             {%- end %}
-            {#- Valid past this point. Establish the shared consumer identity (set-once). -#}
+            {# Valid past this point. Establish the shared consumer identity (set-once). #}
       http-request set-var(txn.haptic_consumer) http_auth_bearer,jwt_payload_query('$.sub') unless { var(txn.haptic_consumer) -m found }
             {%- if fwd != "" %}
               {%- for _, pair := range split(fwd, ",") %}

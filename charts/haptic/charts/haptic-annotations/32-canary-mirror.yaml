@@ -20,7 +20,7 @@ templateSnippets:
 
   features-800-haptic-canary-colocation:
     template: |
-      {#-
+      {#
         HAPTIC Canary Co-location Marker
 
         Best-of-breed source: nginx.ingress.kubernetes.io/canary (the only vendor
@@ -45,7 +45,7 @@ templateSnippets:
         at features-800 during the haproxy.cfg render, which completes before the
         aux-file (map) render reads the set. A canary with no main still owns and
         serves its own base route (it is only excluded when a main also claims it).
-      -#}
+      #}
       {%%
         var gf = shared.Get("globalFeatures").(map[string]any)
         if gf["coLocatedIngresses"] == nil {
@@ -65,7 +65,7 @@ templateSnippets:
 
   frontend-filters-810-haptic-canary:
     template: |
-      {#-
+      {#
         HAPTIC Canary Annotations
 
         Best-of-breed source: nginx.ingress.kubernetes.io canary-* (the only
@@ -97,7 +97,7 @@ templateSnippets:
           use_backend <canary-backend> if { req.hdr(<header>) -m str <value> } <host-match>
           use_backend <canary-backend> if { req.cook(<cookie>) -m str always } <host-match>
           use_backend <canary-backend> if { rand(100) lt <weight> } <host-match>
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
@@ -185,7 +185,7 @@ templateSnippets:
           {{- fail("Ingress " + firstKey + " sets 'haproxy-haptic.org/mirror-target' but the spoaHub mirror plugin is not enabled. Either enable spoaHub.plugins.mirror or remove the annotation.") -}}
         {%- end %}
         {%- var mirrorWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") %}
-      {#- Gated on Content-Length, not frontend-wide `option http-buffer-request`:
+      {# Gated on Content-Length, not frontend-wide `option http-buffer-request`:
           one mirrored Ingress turns this on for the whole shared frontend, and
           unconditional buffering deadlocks any gRPC or streaming route there
           until the wait expires and the client gets a 408 the backend never saw.

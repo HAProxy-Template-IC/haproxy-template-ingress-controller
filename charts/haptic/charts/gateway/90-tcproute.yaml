@@ -308,11 +308,11 @@ templateSnippets:
           {%- if len(refs) <= 1 %}
           {{ BackendServers(refName, 10, refPort, nil, nil, beName, refNs) | indent(4, false) }}
           {%- else %}
-          {#- Weighted TCPRoute: several routable backendRefs. `balance
+          {# Weighted TCPRoute: several routable backendRefs. `balance
               roundrobin` honours per-server weights; each Service gets its
               own slotPrefix so the reload-free slot preservation tracks each
               independently within the one backend. A weight-0 ref stays in
-              the config (emitted `weight 0`) so it takes no traffic. -#}
+              the config (emitted `weight 0`) so it takes no traffic. #}
           balance roundrobin
           {%- for ri, r := range refs %}
           {%- var rm = r.(map[string]any) %}

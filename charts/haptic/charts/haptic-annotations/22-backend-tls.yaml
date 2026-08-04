@@ -186,13 +186,13 @@ templateSnippets:
           {%- var effVerify = "none" %}
           {%- if caAdded %}
             {%- effVerify = "required" %}
-          {#- Naming a CA is the request to verify (see above), so an unusable one
-              must not fall through to `verify none`. -#}
-          {#- Verification was asked for and cannot be configured. The route is
+          {# Naming a CA is the request to verify (see above), so an unusable one
+              must not fall through to `verify none`. #}
+          {# Verification was asked for and cannot be configured. The route is
               denied — an unverified upstream leg is exactly what backend-verify
               exists to prevent — but only THIS route: a bare fail() here aborts
               the render for the whole fleet, and the Secret lookup races the
-              store the same way the admission gate did. -#}
+              store the same way the admission gate did. #}
           {%- else if wantVerify || caSec != "" %}
             {%- backendTLSBlocked = true %}
             {%- if caSec == "" %}

@@ -50,9 +50,9 @@ templateSnippets:
 
   util-macros:
     template: |
-      {#- Core utility macros for template rendering -#}
+      {# Core utility macros for template rendering #}
 
-      {#- Calculates optimal shard count: clamp(count / itemsPerShard, 1, 2*GOMAXPROCS) -#}
+      {# Calculates optimal shard count: clamp(count / itemsPerShard, 1, 2*GOMAXPROCS) #}
       {% macro CalculateShardCount(resourceCount int, itemsPerShard int) string %}
         {%%
           var override = extraContext | dig("shardCountOverride")
@@ -92,10 +92,10 @@ templateSnippets:
 
   util-ingress-helpers:
     template: |
-      {#- Generates HAProxy host match condition for use in if-expressions.
+      {# Generates HAProxy host match condition for use in if-expressions.
           Small host lists use compact inline form: { var(txn.host) -m str host1 host2 ... }
           Large host lists (>30) use file-based matching to avoid HAProxy's 64-word-per-line limit.
-      -#}
+      #}
       {% macro HostMatchCondition(hosts []string) string %}
         {%%
           if len(hosts) <= 30 {
@@ -168,7 +168,7 @@ templateSnippets:
 
   util-access-log-targets:
     template: |-
-      {#-
+      {#
         Parses and validates extraContext.accessLog.targets once per render into
         shared["accessLogTargets"], a list of normalised maps:
           {address, format, facility, level, ring}   (ring is nil or a map)
@@ -190,38 +190,38 @@ templateSnippets:
           - with a ring target, an unreachable collector costs the data plane
             nothing: 25/25 requests served in 112ms with the collector down, and
             all 25 records buffered and flushed once it came back.
-      -#}
+      #}
       {%- var _, _ = shared.ComputeIfAbsent("accessLogTargets", func() any {
         var formats = []string{"raw", "rfc3164", "rfc5424", "local", "priority", "short", "timed", "iso"}
         var facilities = []string{"kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news",
                                   "uucp", "cron", "auth2", "ftp", "ntp", "audit", "alert", "cron2",
                                   "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7"}
-        {#- Only the levels that actually emit an access record. The level is a
-            MAX severity filter and access logs are emitted at info, so anything
-            stricter (notice and up) silently drops EVERY record while
-            `haproxy -c` still returns 0 — measured: notice/warning/err each
-            produced zero records. A knob whose plausible values destroy the log
-            is not a knob. -#}
+        // Only the levels that actually emit an access record. The level is a
+        // MAX severity filter and access logs are emitted at info, so anything
+        // stricter (notice and up) silently drops EVERY record while
+        // `haproxy -c` still returns 0 — measured: notice/warning/err each
+        // produced zero records. A knob whose plausible values destroy the log
+        // is not a knob.
         var levels = []string{"info", "debug"}
         var addrRe = regexp("^(stdout|stderr|fd@[0-9]+|ring@[A-Za-z_][A-Za-z0-9_-]{0,63}|/[^[:space:]]+|\\[[0-9A-Fa-f:]+\\]:[0-9]{1,5}|[0-9A-Za-z._-]+:[0-9]{1,5})$")
         var ringNameRe = regexp("^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
-        {#- No unix@ here: HAProxy 3.4 rejects a UNIX ring server outright while
-            3.0 accepts it, so offering it would render a config that only works
-            on some of the supported versions. A UNIX socket collector is reached
-            with the plain-path address form instead, which is a datagram target. -#}
+        // No unix@ here: HAProxy 3.4 rejects a UNIX ring server outright while
+        // 3.0 accepts it, so offering it would render a config that only works
+        // on some of the supported versions. A UNIX socket collector is reached
+        // with the plain-path address form instead, which is a datagram target.
         var ringAddrRe = regexp("^(\\[[0-9A-Fa-f:]+\\]:[0-9]{1,5}|[0-9A-Za-z._-]+:[0-9]{1,5})$")
         var durationRe = regexp("^[0-9]+(us|ms|s|m|h|d)?$")
-        {#- A 5-digit shape match is not enough. HAProxy hard-ALERTs on a port
-            above 65535 ("invalid port '99999'", measured on 3.0 and 3.4), so the
-            value would pass Helm, reach the controller, and take down the config
-            load instead of being rejected where the operator set it. Port 0 it
-            ACCEPTS at config check (exit 0) even though nothing can be delivered
-            there, so only this check catches it. -#}
+        // A 5-digit shape match is not enough. HAProxy hard-ALERTs on a port
+        // above 65535 ("invalid port '99999'", measured on 3.0 and 3.4), so the
+        // value would pass Helm, reach the controller, and take down the config
+        // load instead of being rejected where the operator set it. Port 0 it
+        // ACCEPTS at config check (exit 0) even though nothing can be delivered
+        // there, so only this check catches it.
         var portRe = regexp(":([0-9]{1,5})$")
         var checkPort = func(addr string, what string) {
-          {#- An absolute path is a UNIX socket, not host:port, and a colon is a
-              legal filename character — so `/var/run/log:99999` is a valid
-              destination whose trailing digits are part of the name, not a port. -#}
+          // An absolute path is a UNIX socket, not host:port, and a colon is a
+          // legal filename character — so `/var/run/log:99999` is a valid
+          // destination whose trailing digits are part of the name, not a port.
           if hasPrefix(addr, "/") {
             return
           }
@@ -234,10 +234,10 @@ templateSnippets:
           }
         }
 
-        {#- Keyed by target name, not a list: Helm and mergo replace lists
-            wholesale, so an operator adding one target would drop every target
-            the chart ships. keys() is sorted, so the `log` lines are emitted in
-            a stable order. -#}
+        // Keyed by target name, not a list: Helm and mergo replace lists
+        // wholesale, so an operator adding one target would drop every target
+        // the chart ships. keys() is sorted, so the `log` lines are emitted in
+        // a stable order.
         var rawTargets = extraContext | dig("accessLog", "targets")
         var targets = map[string]any{}
         if rawTargets != nil {
@@ -247,10 +247,10 @@ templateSnippets:
           }
           targets = m
         }
-        {#- An ABSENT key takes the chart default. An explicitly EMPTY map does
-            not: it would fall back to stdout, which is the one destination this
-            knob exists to move records off, so the operator who wrote it would
-            silently get the opposite of what they asked for. -#}
+        // An ABSENT key takes the chart default. An explicitly EMPTY map does
+        // not: it would fall back to stdout, which is the one destination this
+        // knob exists to move records off, so the operator who wrote it would
+        // silently get the opposite of what they asked for.
         if rawTargets != nil && len(targets) == 0 {
           fail("controller.config.templatingSettings.extraContext.accessLog.targets is empty. Name at least one target — use {stdout: {address: stdout}} for the chart default; an empty map would silently fall back to stdout, which is what this setting exists to move the access log away from.")
         }
@@ -258,11 +258,11 @@ templateSnippets:
           targets = map[string]any{"stdout": map[string]any{"address": "stdout"}}
         }
 
-        {#- A `log ring@<name>` whose ring does not exist passes `haproxy -c`
-            (return code 0, so the render's validation gate accepts it) and then
-            makes HAProxy REFUSE TO START: "unknown ring named '<name>'", exit 1.
-            Validation green, data plane down. So the only ring names accepted in
-            an address are the ones this chart emits, collected here first. -#}
+        // A `log ring@<name>` whose ring does not exist passes `haproxy -c`
+        // (return code 0, so the render's validation gate accepts it) and then
+        // makes HAProxy REFUSE TO START: "unknown ring named '<name>'", exit 1.
+        // Validation green, data plane down. So the only ring names accepted in
+        // an address are the ones this chart emits, collected here first.
         var declaredRings = map[string]bool{}
         for _, tname := range keys(targets) {
           var t, ok = targets[tname].(map[string]any)
@@ -289,8 +289,8 @@ templateSnippets:
             }
           }
 
-          {#- A ring is a buffered TCP client the chart emits as its own section;
-              the target then logs to ring@<name>. Giving both is ambiguous. -#}
+          // A ring is a buffered TCP client the chart emits as its own section;
+          // the target then logs to ring@<name>. Giving both is ambiguous.
           var ringRaw = t["ring"]
           var ring any = nil
           var address = tostring(t["address"] | fallback(""))
@@ -324,13 +324,13 @@ templateSnippets:
             if ringSize < 4096 || ringSize > 134217728 {
               fail(where + ".ring.size for ring '" + ringName + "' must be between 4096 and 134217728 bytes; it is the in-memory buffer that holds records while the collector is unavailable.")
             }
-            {#- The ring section carries `maxlen <maxLineBytes>`, and HAProxy caps
-                that at the buffer minus a ~197-byte header. A size below that
-                bound is only a [WARNING] ("event max length ... forced to N") —
-                which the render's haproxy_valid gate treats as success — and then
-                every record longer than N is truncated mid-byte into invalid
-                JSON. Identical on 3.0 and 3.4; 256 is the measured overhead
-                rounded up. -#}
+            // The ring section carries `maxlen <maxLineBytes>`, and HAProxy caps
+            // that at the buffer minus a ~197-byte header. A size below that
+            // bound is only a [WARNING] ("event max length ... forced to N") —
+            // which the render's haproxy_valid gate treats as success — and then
+            // every record longer than N is truncated mid-byte into invalid
+            // JSON. Identical on 3.0 and 3.4; 256 is the measured overhead
+            // rounded up.
             var rawMaxLine = tostring(extraContext | dig("accessLog", "maxLineBytes") | fallback(16384))
             if regex_search(rawMaxLine, "^[0-9]{1,5}$") {
               var maxLine = toint(rawMaxLine)
@@ -347,10 +347,10 @@ templateSnippets:
             if !durationRe.Match(connectTimeout) || !durationRe.Match(serverTimeout) {
               fail(where + ".ring connectTimeout/serverTimeout for ring '" + ringName + "' must be HAProxy durations such as 5s or 500ms.")
             }
-            {#- serverOptions is spliced verbatim onto the `server` line, which is
-                what makes TLS and any other server keyword reachable without the
-                chart modelling each one. Spaces are therefore allowed; a newline
-                or a comment marker would let it inject a directive. -#}
+            // serverOptions is spliced verbatim onto the `server` line, which is
+            // what makes TLS and any other server keyword reachable without the
+            // chart modelling each one. Spaces are therefore allowed; a newline
+            // or a comment marker would let it inject a directive.
             var serverOptions = tostring(r["serverOptions"] | fallback(""))
             if regex_search(serverOptions, "[[:cntrl:]#]") {
               fail("Invalid " + where + ".ring.serverOptions for ring '" + ringName + "': it is appended verbatim to the ring's `server` line and must not contain control characters or '#' (config-injection guard).")
@@ -374,9 +374,9 @@ templateSnippets:
 
           checkPort(address, where + ".address")
 
-          {#- Default the framing to the target: stdout wants bare JSON so
-              `kubectl logs | jq` works, while anything else is a syslog
-              endpoint that expects a header it can parse. -#}
+          // Default the framing to the target: stdout wants bare JSON so
+          // `kubectl logs | jq` works, while anything else is a syslog
+          // endpoint that expects a header it can parse.
           var defaultFormat = "rfc5424"
           if address == "stdout" || address == "stderr" {
             defaultFormat = "raw"
@@ -394,13 +394,13 @@ templateSnippets:
             fail("Invalid " + where + ".level '" + level + "'. Valid: " + join(levels, ", ") + ". The level is a maximum-severity filter and access records are emitted at info, so a stricter level (notice and above) silently drops every one of them.")
           }
 
-          {#- Each target renders one `log` line, and HAProxy sends every record
-              down every one of them. Two targets that produce an IDENTICAL line
-              therefore log each request TWICE — accepted by `haproxy -c`, silent
-              at runtime, and visible only as doubled volume in the collector.
-              The reachable way to hit this is a ring target plus a second entry
-              addressing that same ring. Targets differing in any field are real
-              fan-out and stay allowed. -#}
+          // Each target renders one `log` line, and HAProxy sends every record
+          // down every one of them. Two targets that produce an IDENTICAL line
+          // therefore log each request TWICE — accepted by `haproxy -c`, silent
+          // at runtime, and visible only as doubled volume in the collector.
+          // The reachable way to hit this is a ring target plus a second entry
+          // addressing that same ring. Targets differing in any field are real
+          // fan-out and stay allowed.
           var lineKey = address + " " + format + " " + facility + " " + level
           if seenLines[lineKey] != "" {
             fail("accessLog.targets " + seenLines[lineKey] + " and " + tname + " render the same log line ('" + lineKey + "'), so every request would be logged twice. Drop the duplicate, or make the targets differ (a different format, facility, or level).")
@@ -416,7 +416,7 @@ templateSnippets:
 
   util-log-format-http:
     template: |-
-      {#-
+      {#
         util-log-format-http — the access-log directives for an HTTP-mode frontend.
 
         Emits, in order:
@@ -435,8 +435,8 @@ templateSnippets:
         an existing directive line in the frontend — never on a line of its own —
         and place it BEFORE any `http-request return` / `deny` rule, or the
         set-var lines never run for short-circuited requests.
-      -#}
-      {#- Off by default: writes `traceparent` onto every upstream request. -#}
+      #}
+      {# Off by default: writes `traceparent` onto every upstream request. #}
       {%- var tracingRaw = extraContext | dig("tracing", "enabled") -%}
       {%- var tracingOn = false -%}
       {%- if tracingRaw != nil -%}
@@ -595,7 +595,7 @@ templateSnippets:
       {%- end -%}
       {%- lines = append(lines, "log-format \"%{+json}o " + join(items, " ") + "\"") -%}
 
-      {#- Optional suppression of uninteresting records. OFF unless the operator
+      {# Optional suppression of uninteresting records. OFF unless the operator
           asks for it: a full log is lawful under legitimate interest (GDPR
           Art. 6(1)(f)), and the successful requests either side of a failure are
           what distinguish "one request broke" from "everything was broken" when a
@@ -609,12 +609,12 @@ templateSnippets:
           denial and a 500 are kept; with http-response, all seven are logged.
 
           The condition keeps every failure and every denial, so the records a
-          customer complains about are never the ones discarded. -#}
-      {#- Validated here as well as in Helm: the HAProxyTemplateConfig CR is a
+          customer complains about are never the ones discarded. #}
+      {# Validated here as well as in Helm: the HAProxyTemplateConfig CR is a
           first-class API that bypasses Helm entirely. A typo'd subkey would
           otherwise leave suppression silently off, which is the failure mode an
           operator would least notice — the log keeps working, just larger than
-          they asked for. -#}
+          they asked for. #}
       {%- var suppressRaw = extraContext | dig("accessLog", "suppress") -%}
       {%- if suppressRaw != nil -%}
         {%- var sup, supOk = suppressRaw.(map[string]any) -%}
@@ -639,7 +639,7 @@ templateSnippets:
 
   util-log-format-tcp:
     template: |-
-      {#-
+      {#
         util-log-format-tcp — the access-log directive for a mode-tcp frontend.
 
         Emits exactly one `log-format` line. A section may not also carry
@@ -655,7 +655,7 @@ templateSnippets:
 
         CALL CONVENTION: append `{{ render "util-log-format-tcp" }}` to the end of
         the line that preceded `option tcplog`, and delete that line.
-      -#}
+      #}
       {%- var items = []string{
             "%(ts)[accept_date(us),us_utime(%Y-%m-%dT%H:%M:%S.%6NZ)]",
             "%(client_ip)ci",
@@ -687,7 +687,7 @@ templateSnippets:
 
   log-fields-106-service:
     template: |-
-      {#- Set by the backend that was chosen, which is where they are known.
+      {# Set by the backend that was chosen, which is where they are known.
           Deriving them from the backend NAME would make the log depend on a
           generated identifier that libraries are free to change. Empty when
           HAProxy answered the request itself, so the fields drop out.
@@ -695,33 +695,33 @@ templateSnippets:
           Bare names with the namespace separate, as OTel semconv and ECS both
           have it — and so `service` and `server_pod` read the same way. This is
           the SERVICE's namespace, which a cross-namespace route makes different
-          from the routing resource's; `resource` keeps its own ns/name. -#}
+          from the routing resource's; `resource` keeps its own ns/name. #}
       %(namespace)[var(txn.namespace)]
       %(service)[var(txn.service)]
 
   util-want-route:
     template: |-
-      {#- "true" when txn.route should be computed. Two features want it — spans for
+      {# "true" when txn.route should be computed. Two features want it — spans for
           http.route, request metrics for `path` — so the condition lives here once
           rather than at each of its three call sites. Mirrored Helm-side by
-          haptic.routeKeyEnabled; this copy is what holds for a hand-written CR. -#}
+          haptic.routeKeyEnabled; this copy is what holds for a hand-written CR. #}
       {%- var rm = extraContext | dig("vector", "requestMetrics") | fallback(map[string]any{}) -%}
       {%- if (extraContext | dig("tracing", "enabled")) == true -%}true{%- return %}{%- end -%}
       {%- if (rm | dig("enabled")) == true && (rm | dig("pathLabel")) == true -%}true{%- end -%}
 
   log-fields-108-route:
     template: |-
-      {#- Its own snippet, not part of the tracing block, because the request
-          metrics want it with tracing off. Base deduplicates identical items. -#}
+      {# Its own snippet, not part of the tracing block, because the request
+          metrics want it with tracing off. Base deduplicates identical items. #}
       {%- var want = render "util-want-route" default "" %}
       {%- if strip(want) != "true" %}{% return %}{% end %}
       %(route)[var(txn.route)]
 
   log-fields-107-request-bytes:
     template: |-
-      {#- %U is the request BODY only; nginx's $request_length also counts the
+      {# %U is the request BODY only; nginx's $request_length also counts the
           request line and headers, so a migrated histogram reads lower. Gated on
-          the one metric that reads it. -#}
+          the one metric that reads it. #}
       {%- var rm = extraContext | dig("vector", "requestMetrics") | fallback(map[string]any{}) %}
       {%- if (rm | dig("enabled")) != true || (rm | dig("metrics", "request_size")) != true %}{% return %}{% end %}
       %(bytes_in:sint)U
@@ -729,15 +729,15 @@ templateSnippets:
   log-fields-105-server-pod:
     template: |-
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
-      {#- bc_dst is the backend connection's destination — the pod actually
+      {# bc_dst is the backend connection's destination — the pod actually
           talked to, after runtime address updates. Empty when no backend was
           contacted, and an unmatched lookup yields empty too, so the field
-          drops out rather than reading "-". -#}
+          drops out rather than reading "-". #}
       %(server_pod)[bc_dst,map({{ mapPath("pod-names.map") }})]
 
   log-fields-100-core:
     template: |-
-      {#-
+      {#
         Core JSON access-log fields — resource-agnostic (RULE #1).
 
         Extension point: log-fields-* (band 100, "basic config"; base sorts first
@@ -782,16 +782,16 @@ templateSnippets:
         counters and %sq/%bq queue depths (Prometheus answers saturation better,
         and queues stay 0 without an opt-in maxconn), %r (duplicates
         method/path/http_version and carries the query), and %CC/%CS cookies.
-      -#}
+      #}
       %(ts)[accept_date(us),us_utime(%Y-%m-%dT%H:%M:%S.%6NZ)]
       %(req_id)ID
       %(trace_id)[var(txn.trace_id)]
-      {#- The address the client connected TO — which VIP or entry point served
+      {# The address the client connected TO — which VIP or entry point served
           this. ECS calls it destination.ip; on the span it is
           network.local.address. What it resolves to depends on how traffic
           reaches the pod: the LoadBalancer VIP with MetalLB-style L2/BGP, the
           node IP behind externalTrafficPolicy Local, the pod IP behind a
-          DNAT-ing cloud LB. -#}
+          DNAT-ing cloud LB. #}
       %(destination_ip)[dst]
       %(instance_pod)[var(proc.self_pod)]
       %(instance_node)[var(proc.self_node)]
@@ -814,10 +814,10 @@ templateSnippets:
       %(retries:sint)rc
       %(term)tsc
       %(resource)[var(txn.resource_id)]
-      {#- Paired with denied_by: that names the control that REFUSED a request,
+      {# Paired with denied_by: that names the control that REFUSED a request,
           these name controls that could not be consulted and were skipped. One
           per control, not one shared field — several can degrade in the same
-          request, and a shared variable would keep only the last. -#}
+          request, and a shared variable would keep only the last. #}
       %(rate_limit_degraded)[var(txn.rate_limit_degraded)]
       %(waf_degraded)[var(txn.waf_degraded)]
       %(denied_by)[var(txn.denied_by)]
@@ -850,8 +850,8 @@ templateSnippets:
       http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
       http-request set-var(txn.dst_port) dst_port
       http-request set-var(txn.listener_port) var(txn.dst_port)
-      {#- Extension point: libraries may remap txn.listener_port from bind metadata.
-          The blank line before render_glob is load-bearing (charts/CLAUDE.md → Whitespace Control). -#}
+      {# Extension point: libraries may remap txn.listener_port from bind metadata.
+          The blank line before render_glob is load-bearing (charts/CLAUDE.md → Whitespace Control). #}
 
       {{ render_glob "frontend-routing-listener-port-*" }}
       # host_match cascade: full-host (port-pinned) > host:listener_port
@@ -873,21 +873,21 @@ templateSnippets:
 
   log-fields-110-tracing:
     template: |-
-      {#- Tracing-only access-log fields, in their own snippet so
+      {# Tracing-only access-log fields, in their own snippet so
           _helm_load.unset can drop them from the config when tracing is off.
           The `if` is the real gate: unset runs at Helm time, and a per-test or
           per-render extraContext can still turn tracing on afterwards.
 
           Gated on a GLOBAL value, never on which frontend renders: the field
-          set must stay identical across frontends. -#}
+          set must stay identical across frontends. #}
       {%- if (extraContext | dig("tracing", "enabled")) == true %}
       %(span_id)[var(txn.span_id)]
       %(parent_span_id)[var(txn.parent_span_id)]
       %(trace_flags)[var(txn.trace_flags)]
-      {#- The span the BACKEND adopts as its parent, so a reconstructed upstream
-          span sits between us and it rather than beside it. -#}
+      {# The span the BACKEND adopts as its parent, so a reconstructed upstream
+          span sits between us and it rather than beside it. #}
       %(upstream_span_id)[var(txn.upstream_span_id)]
-      {#- Th is the CLIENT side: TCP accept + PROXY protocol + client TLS, and
+      {# Th is the CLIENT side: TCP accept + PROXY protocol + client TLS, and
           only on a connection's first request. Nothing to do with the backend.
           Th and Ti exist only to anchor the spans. `ts` is accept_date — the
           CONNECTION accept — while every duration below is request-scoped, so a
@@ -895,21 +895,21 @@ templateSnippets:
           too early and can end before the backend it waited on. Request receipt
           is accept_date + Th + Ti; the phases then follow HAProxy's fixed order.
           Both read -1 when the phase did not happen (plaintext, first request on
-          a connection), which the span builder treats as zero. -#}
+          a connection), which the span builder treats as zero. #}
       %(handshake_time_ms:sint)Th
       %(idle_time_ms:sint)Ti
-      {#- Td is the response-payload transfer. Without it the upstream call looks
+      {# Td is the response-payload transfer. Without it the upstream call looks
           like it ends at the response HEADERS (%Tr), so a backend's own span
-          overruns ours for any response with a body. -#}
+          overruns ours for any response with a body. #}
       %(transfer_time_ms:sint)Td
-      {#- `route` (for http.route) is contributed by log-fields-108-route, which
+      {# `route` (for http.route) is contributed by log-fields-108-route, which
           the request metrics also want — so it is gated on util-want-route rather
-          than on tracing alone. -#}
-      {#- Exact transaction end, epoch microseconds: the log line is emitted when
+          than on tracing alone. #}
+      {# Exact transaction end, epoch microseconds: the log line is emitted when
           the response completes, so `date` at log time IS that instant. req+Ta
           closes early by whatever Ta's whole-ms truncation dropped (0.824ms
           measured). Raw integer, not a formatted stamp — the span builder wants
-          a number, and parsing one back would cost a parse per record. -#}
+          a number, and parsing one back would cost a parse per record. #}
       %(te_us:sint)[date(0,us)]
       {%- end %}
 
@@ -941,8 +941,8 @@ templateSnippets:
       {{ render "util-route-key" default "" }}
       # qualifier = field 1 of path_match (BACKEND | MULTIBACKEND)
       http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
-      {#- Advanced matchers (method/header/query) may rewrite path_match; re-parse
-          the qualifier afterwards, but only when a matcher actually emitted rules. -#}
+      {# Advanced matchers (method/header/query) may rewrite path_match; re-parse
+          the qualifier afterwards, but only when a matcher actually emitted rules. #}
       {%- var adv = render_glob "frontend-matchers-advanced-*" %}
       {{ adv }}
       {%- if strip(adv) != "" %}
@@ -961,21 +961,21 @@ templateSnippets:
       http-request set-var(txn.resource_name)      var(txn.backend_name),field(2,_) if { var(txn.path_match_qualifier) -m str BACKEND }
       http-request set-var(txn.resource_namespace) var(txn.route_key),field(1,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       http-request set-var(txn.resource_name)      var(txn.route_key),field(2,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      {#- The Gateway branch reads txn.gw_rule_id (set by
+      {# The Gateway branch reads txn.gw_rule_id (set by
           frontend-matchers-advanced-500-gateway for every winning route rule,
           shape <ns>_<name>_<ruleIdx>). It was `req.gw_rule_id` until MR !1412 —
           a scope nobody ever writes — so the condition was always false and
           Gateway requests fell through to the BACKEND branch above, which split
           the `gtw_<ns>_<name>_<svc>_<port>` backend name and produced
           resource_id="gtw/<ns>". Every per-resource feature map (WAF, auth,
-          rate limit, cache, schema validation) is keyed on resource_id. -#}
+          rate limit, cache, schema validation) is keyed on resource_id. #}
       http-request set-var(txn.resource_namespace) var(txn.gw_rule_id),field(1,_)   if { var(txn.gw_rule_id) -m found }
       http-request set-var(txn.resource_name)      var(txn.gw_rule_id),field(2,_)   if { var(txn.gw_rule_id) -m found }
       http-request set-var(txn.resource_id) var(txn.resource_namespace),concat(/,txn.resource_name,) if { var(txn.resource_namespace) -m found }
 
   frontend-routing-logic:
     template: |-
-      {#-
+      {#
         Path-based routing with qualifier system for backend selection.
 
         Qualifiers (set by map files, resolved here):
@@ -990,7 +990,7 @@ templateSnippets:
 
         Extension Points:
           - frontend-matchers-advanced-* → Advanced matchers (method, headers, query)
-      -#}
+      #}
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
       # base/frontend-routing-logic — host/path → backend. See https://haproxy-haptic.org/docs/latest/libraries/base/#frontend-routing-logic
       {{ render "util-routing-prefix" }}
@@ -1002,7 +1002,7 @@ templateSnippets:
 
   frontend-routing-logic-regex-last:
     template: |-
-      {#-
+      {#
         Performance-first path matching variant: Exact > Prefix-exact > Prefix > Regex.
 
         This snippet exists only to be swapped into "frontend-routing-logic" by
@@ -1014,7 +1014,7 @@ templateSnippets:
         lines below (regex moved to last); the shared prefix and suffix are
         emitted via util-routing-prefix / util-routing-suffix to eliminate
         lockstep drift.
-      -#}
+      #}
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
       # base/frontend-routing-logic (regex-last variant)
       {{ render "util-routing-prefix" }}
@@ -1035,14 +1035,14 @@ templateSnippets:
 
   util-backend-servers-helpers:
     template: |
-      {#-
+      {#
         Helper macros for BackendServers. Import these using:
           {% import "util-backend-servers-helpers" for BuildServerOptions %}
-      -#}
+      #}
 
-      {#- Builds the HAProxy server options string (flags, maxconn).
+      {# Builds the HAProxy server options string (flags, maxconn).
           Called inline in server line output.
-      -#}
+      #}
       {% macro BuildServerOptions(serverOpts map[string]any) %}
         {%- var opts = "" -%}
         {%- var flags = serverOpts | dig("flags") | toSlice() -%}
@@ -1061,7 +1061,7 @@ templateSnippets:
 
   util-service-port-resolution:
     template: |
-      {#-
+      {#
         ResolveServicePort - Resolve an Ingress/Gateway service-port reference to
         a concrete {port: int, name: string} pair by consulting the target Service.
 
@@ -1133,7 +1133,7 @@ templateSnippets:
           {%- var portName = resolved[1] -%}
           # Now: port is the Service port number; portName is "" if the Service port is unnamed.
           # Pass both to BackendServers(svcName, 0, port, nil, portName, backendKey, ns).
-      -#}
+      #}
       {% macro ResolveServicePort(namespace string, serviceName string, portRef any) string %}
         {%%
           // Accept either a {number?, name?} dict (Ingress's ServiceBackendPort shape)
@@ -1239,7 +1239,7 @@ templateSnippets:
 
   util-backend-servers:
     template: |
-      {#-
+      {#
         BackendServers - Generates HAProxy server lines from Kubernetes EndpointSlices.
 
         This macro handles the complete flow:
@@ -1275,7 +1275,7 @@ templateSnippets:
           server SRV_2 10.0.0.2:8080 enabled  # Pod: my-pod-def
           server SRV_3 192.0.2.1:1 disabled  # Placeholder
           ...
-      -#}
+      #}
       {% import "util-backend-servers-helpers" for BuildServerOptions %}
       {% macro BackendServers(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any, backendName any, namespace string) %}
         {%%
@@ -1566,7 +1566,7 @@ templateSnippets:
 
   features-075-address-discovery:
     template: |
-      {#-
+      {#
         Address Discovery
 
         Purpose: Reads controller LoadBalancer service statuses to discover
@@ -1588,9 +1588,9 @@ templateSnippets:
 
         Not used by:
           - status-patches-100-gatewayclass — GatewayClass status doesn't carry addresses.
-      -#}
+      #}
 
-      {#- Ensure globalFeatures is initialized (may not exist if SSL library is disabled) -#}
+      {# Ensure globalFeatures is initialized (may not exist if SSL library is disabled) #}
       {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any {
         return map[string]any{}
       }) -%}
@@ -1667,7 +1667,7 @@ templateSnippets:
   # or add new ones (e.g., global-settings-500-tuning).
   global-settings:
     template: |
-      {#- Renders global-settings-* snippets (global section directives) -#}
+      {# Renders global-settings-* snippets (global section directives) #}
       {{- render_glob "global-settings-*" | strip() -}}
 
   global-settings-050-experimental:
@@ -1679,16 +1679,16 @@ templateSnippets:
 
   global-settings-090-instance:
     template: |
-      {#- Read once at startup into proc-scoped variables: identity is fixed for
+      {# Read once at startup into proc-scoped variables: identity is fixed for
           the process, so a per-request fetch would be waste. An unset variable
           renders empty and omitEmptyLogFields drops the field, so a deployment
-          that does not set these is unaffected. -#}
+          that does not set these is unaffected. #}
       set-var proc.self_pod str("$SELF_POD_NAME")
       set-var proc.self_node str("$SELF_NODE_NAME")
 
   global-settings-100-logging:
     template: |
-      {#-
+      {#
         `format raw` strips the syslog header ("<134>Jul 25 21:01:17
         haproxy[1]: ") that would otherwise precede every JSON record and break
         a collector that parses lines directly. It also removes the syslog
@@ -1701,16 +1701,16 @@ templateSnippets:
         the default is generous. Raise it with
         extraContext.accessLog.maxLineBytes if custom fields or captured headers
         push records past it.
-      -#}
-      {#- The bound is enforced here as well as in the chart's Helm validation,
+      #}
+      {# The bound is enforced here as well as in the chart's Helm validation,
           because a hand-written HAProxyTemplateConfig reaches the engine without
           passing through Helm at all. Too small truncates every record into
-          invalid JSON; a negative or absurd value is an HAProxy config error. -#}
-      {#- Check the raw value's shape BEFORE converting: toint() saturates an
+          invalid JSON; a negative or absurd value is an HAProxy config error. #}
+      {# Check the raw value's shape BEFORE converting: toint() saturates an
           absurd digit string to int64 min (-9223372036854775808), which the range
           check below would reject — but reporting that number instead of what the
           operator wrote is a poor diagnostic, and it leans on an overflow
-          artifact rather than an explicit rule. Five digits covers 65535. -#}
+          artifact rather than an explicit rule. Five digits covers 65535. #}
       {%- var rawMax = tostring(extraContext | dig("accessLog", "maxLineBytes") | fallback(16384)) -%}
       {%- if !regex_search(rawMax, "^[0-9]{1,5}$") -%}
         {{- fail("controller.config.templatingSettings.extraContext.accessLog.maxLineBytes must be an integer between 1024 and 65535, got '" + rawMax + "'.") -}}
@@ -1732,17 +1732,17 @@ templateSnippets:
 
   global-settings-210-graceful-reload:
     template: |
-      {#- Graceful-stop bound: cap how long an old worker keeps draining -#}
-      {#- after a reload. Without it, a worker pinned by a persistent -#}
-      {#- keep-alive connection survives every reload and accumulates as a -#}
-      {#- stale "draining" generation; a request looped through the -#}
-      {#- http-tcp -> unix-socket -> http_frontend path can then land on a -#}
-      {#- stale worker mid-reload and be corrupted (-> <BADREQ> 400). Both -#}
-      {#- the official (haproxytech/kubernetes-ingress, default 30m) and -#}
-      {#- community (haproxy-ingress, default 10m) controllers set -#}
-      {#- hard-stop-after for this. The primary churn reducer is -#}
-      {#- minDeploymentInterval (structural reloads only; the runtime fast -#}
-      {#- path stays instant and bypasses it). -#}
+      {# Graceful-stop bound: cap how long an old worker keeps draining #}
+      {# after a reload. Without it, a worker pinned by a persistent #}
+      {# keep-alive connection survives every reload and accumulates as a #}
+      {# stale "draining" generation; a request looped through the #}
+      {# http-tcp -> unix-socket -> http_frontend path can then land on a #}
+      {# stale worker mid-reload and be corrupted (-> <BADREQ> 400). Both #}
+      {# the official (haproxytech/kubernetes-ingress, default 30m) and #}
+      {# community (haproxy-ingress, default 10m) controllers set #}
+      {# hard-stop-after for this. The primary churn reducer is #}
+      {# minDeploymentInterval (structural reloads only; the runtime fast #}
+      {# path stays instant and bypasses it). #}
       {%- var hsa = extraContext | dig("hardStopAfter") | fallback("10s") | tostring() -%}
       {%- if hsa != "" %}
       hard-stop-after {{ hsa }}
@@ -1750,15 +1750,15 @@ templateSnippets:
 
   global-settings-220-localpeer:
     template: |
-      {#- Deterministic local-peer name so the always-on `peers localinstance` -#}
-      {#- section (global-top-050-peers) recognises `peer local ...` as THIS -#}
-      {#- process and LISTENS on it. On a master-worker reload the old worker -#}
-      {#- then teaches the new worker its stick-table contents over that local -#}
-      {#- peer, so per-source counters (e.g. rate-limit http_req_rate) survive -#}
-      {#- the reload instead of resetting to zero. A static name keeps offline -#}
-      {#- `haproxy -c` validation deterministic (no $HOSTNAME dependency); the -#}
-      {#- single 127.0.0.1 peer never connects to other pods, so stick-tables -#}
-      {#- stay per-replica (matches haproxytech/kubernetes-ingress). -#}
+      {# Deterministic local-peer name so the always-on `peers localinstance` #}
+      {# section (global-top-050-peers) recognises `peer local ...` as THIS #}
+      {# process and LISTENS on it. On a master-worker reload the old worker #}
+      {# then teaches the new worker its stick-table contents over that local #}
+      {# peer, so per-source counters (e.g. rate-limit http_req_rate) survive #}
+      {# the reload instead of resetting to zero. A static name keeps offline #}
+      {# `haproxy -c` validation deterministic (no $HOSTNAME dependency); the #}
+      {# single 127.0.0.1 peer never connects to other pods, so stick-tables #}
+      {# stay per-replica (matches haproxytech/kubernetes-ingress). #}
       localpeer local
 
   global-settings-250-shm-stats:
@@ -1785,18 +1785,18 @@ templateSnippets:
   # Defaults section directives — override or extend via defaults-settings-* snippets.
   defaults-settings:
     template: |
-      {#- Renders defaults-settings-* snippets (defaults section directives) -#}
+      {# Renders defaults-settings-* snippets (defaults section directives) #}
       {{- render_glob "defaults-settings-*" | strip() -}}
 
   defaults-settings-100-options:
     template: |
       mode http
-      {#- Access-log targets, one `log` line each. This replaces the historical
+      {# Access-log targets, one `log` line each. This replaces the historical
           `log global`, which tied traffic logs to whatever the global section
           used: proxies now log where extraContext.accessLog.targets says, while
           HAProxy's own process and alert messages keep using the global stdout
           target. With the default (stdout/raw/local0/info) the rendered line is
-          what `log global` resolved to anyway. -#}
+          what `log global` resolved to anyway. #}
       {{- render "util-access-log-targets" -}}
       {%- var alTargets = shared.Get("accessLogTargets").([]any) -%}
       {%- var alMaxLen = toint(extraContext | dig("accessLog", "maxLineBytes") | fallback(16384)) -%}
@@ -1822,7 +1822,7 @@ templateSnippets:
 
   defaults-settings-150-access-log-request-id:
     template: |
-      {#-
+      {#
         Request correlation id, always available as the access log's `req_id`
         field and forwardable upstream by the request-id annotation.
 
@@ -1839,7 +1839,7 @@ templateSnippets:
 
         Emitted at band 150 so a raw `config-defaults` injection (band 800) can
         still override it — `uuid()` for UUIDv4 is the documented alternative.
-      -#}
+      #}
       unique-id-format %[uuid(7)]
 
   defaults-settings-200-balance:
@@ -1876,7 +1876,7 @@ templateSnippets:
 
   frontend-filters-095-l7-retry-idempotency:
     template: |
-      {#-
+      {#
         Bound the `retry-on` list in `defaults` to idempotent methods.
 
         An L7 retry replays a request the server already received, so retrying a
@@ -1895,7 +1895,7 @@ templateSnippets:
 
         extraContext.retryNonIdempotent = true retries every method — only when
         every backend behind this controller is safe to replay.
-      -#}
+      #}
       {%- if extraContext | dig("retryNonIdempotent") | fallback(false) %}
       {#- Operator opted in: every method may be replayed. -#}
       {%- else %}
@@ -1920,7 +1920,7 @@ templateSnippets:
 
   frontend-filters-090-request-buffering:
     template: |
-      {#-
+      {#
         Resource-agnostic request buffering (slow-client / slow-POST defence).
 
         Holds the request until the body is complete — or the buffer is full, or
@@ -1949,7 +1949,7 @@ templateSnippets:
         map-request-buffering-* snippets. The map's default value carries the
         fleet-wide setting, so one rule covers both directions and flipping a
         single route is a map-only, reload-free change.
-      -#}
+      #}
       {%- var rbWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") -%}
       {%- if !regex_search(rbWait, "^[0-9]+(us|ms|s|m|h|d)?$") -%}
         {{- fail("Invalid value '" + rbWait + "' for extraContext.requestBuffering.waitTimeout. Expected an HAProxy duration such as '10s', '500ms' or '2m'.") -}}
@@ -1975,11 +1975,11 @@ templateSnippets:
          forces the map value to a signed integer; `sub(<var>)` then does the
          dynamic comparison the literal `req.body_size gt <N>` form can't express. #}
       {{ "\n" }}http-request set-var(txn.haptic_body_limit) var(txn.backend_name),map({{ bsMap }},0),add(0)
-      {#- txn.denied_by names the gate that blocked the request in the access log.
+      {# txn.denied_by names the gate that blocked the request in the access log.
           413 is also produced by the WAF and schema-validation body caps, so the
           status code alone can't attribute it. The condition is a byte-for-byte
           copy of the deny's; `deny` ends rule processing, so the first matching
-          gate's value is the one that survives. -#}
+          gate's value is the one that survives. #}
       http-request set-var(txn.denied_by) str(body_too_large) if { var(txn.haptic_body_limit) -m int gt 0 } { req.body_size,sub(txn.haptic_body_limit) -m int gt 0 }
       http-request deny deny_status 413 if { var(txn.haptic_body_limit) -m int gt 0 } { req.body_size,sub(txn.haptic_body_limit) -m int gt 0 }
 
@@ -2016,7 +2016,7 @@ templateSnippets:
 
   features-170-redirect-location-map:
     template: |
-      {#-
+      {#
         Builds redirect-loc-<code>.map (host → location URL) per distinct redirect
         code from gf["redirectHosts"]. Resource libraries feed gf["redirectHosts"]
         with {host, location, code} entries in the features phase; the rule is
@@ -2030,7 +2030,7 @@ templateSnippets:
         host lands in exactly one code's map. A map is registered for every code
         present (even one whose hosts were all claimed by another code), so the
         rule's per-code map reference always resolves.
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var redirectHosts []any = coalesce(gf["redirectHosts"], []any{}) -%}
       {%- var locByCode = map[string]map[string]string{} -%}
@@ -2067,14 +2067,14 @@ templateSnippets:
 
   features-175-app-root-map:
     template: |
-      {#-
+      {#
         Builds app-root.map (host → root-redirect path) from gf["appRootHosts"].
         Resource libraries (haproxy-ingress / nginx app-root) register {host, path}
         entries in the features phase; frontend-filters-065-app-root emits the gated
         rule, so adding/changing an app-root is a map-only, reload-free update.
         First-writer-wins per host; hosts sorted for byte-deterministic output (no
         spurious reload). Resource-agnostic: operates only on the generic gf list.
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var appRootHosts []any = coalesce(gf["appRootHosts"], []any{}) -%}
       {%- if len(appRootHosts) > 0 -%}
@@ -2101,14 +2101,14 @@ templateSnippets:
 
   features-185-mtls-error-map:
     template: |
-      {#-
+      {#
         Builds mtls-error.map (host → client-cert-verify error page URL) from
         gf["mtlsErrorHosts"]. Resource libraries (haproxy-ingress / nginx
         auth-tls-error-page) register {host, location} entries in the features phase;
         frontend-filters-075-mtls-error emits the gated rule. The per-vendor
         cert-passthrough set-header directives stay in their own vendor snippets.
         First-writer-wins per host; hosts sorted for deterministic output.
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var mtlsErrorHosts []any = coalesce(gf["mtlsErrorHosts"], []any{}) -%}
       {%- if len(mtlsErrorHosts) > 0 -%}
@@ -2135,13 +2135,13 @@ templateSnippets:
 
   features-190-hsts-map:
     template: |
-      {#-
+      {#
         Builds hsts.map (host → Strict-Transport-Security header value) from
         gf["hstsHosts"]. Resource libraries register {host, value} entries in the
         features phase; frontend-filters-080-hsts emits the single shared
         response-header rule, so changing an HSTS value is a map-only, reload-free
         update. First-writer-wins per host; hosts sorted for deterministic output.
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var hstsHosts []any = coalesce(gf["hstsHosts"], []any{}) -%}
       {%- if len(hstsHosts) > 0 -%}
@@ -2168,14 +2168,14 @@ templateSnippets:
 
   frontend-filters-060-redirect-location:
     template: |
-      {#-
+      {#
         Host-keyed location redirect. Emits one rule per distinct code in
         gf["redirectHosts"]: the `code` must be a literal (HAProxy rejects a map
         expression there), so the location comes from redirect-loc-<code>.map and
         the code is fixed per rule. Runs after ssl-redirect (050) so a scheme-upgrade
         redirect takes precedence for a host that has both. Resource-agnostic:
         references only var(txn.host) + the per-code map.
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var redirectHosts []any = coalesce(gf["redirectHosts"], []any{}) -%}
       {%- var codes = map[string]bool{} -%}
@@ -2190,13 +2190,13 @@ templateSnippets:
 
   frontend-filters-065-app-root:
     template: |
-      {#-
+      {#
         Host-keyed app-root redirect: when a registered host is requested at the
         site root, redirect to its configured path (fixed 302). Single shared rule
         driven by app-root.map (built by features-175-app-root-map). Runs before
         path-rewrite so the gate sees the original request path. Resource-agnostic:
         references only var(txn.host), path, and the map.
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var appRootHosts []any = coalesce(gf["appRootHosts"], []any{}) -%}
       {%- if len(appRootHosts) > 0 %}
@@ -2207,13 +2207,13 @@ templateSnippets:
 
   frontend-filters-075-mtls-error:
     template: |
-      {#-
+      {#
         Host-keyed mTLS error redirect: when client-cert verification failed
         (ssl_c_verify gt 0) for a registered host, redirect to its error page
         (fixed 302). Single shared rule driven by mtls-error.map (built by
         features-185-mtls-error-map). The per-vendor X-SSL-Client-* cert-passthrough
         set-header directives stay in their own vendor snippets. Resource-agnostic.
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var mtlsErrorHosts []any = coalesce(gf["mtlsErrorHosts"], []any{}) -%}
       {%- if len(mtlsErrorHosts) > 0 %}
@@ -2224,7 +2224,7 @@ templateSnippets:
 
   frontend-filters-080-hsts:
     template: |
-      {#-
+      {#
         HSTS response header(s), gated on a TLS connection (ssl_fc):
           1. A global header on every TLS response when extraContext.hstsEnabled is
              set (value from features-085-ssl-hsts-global's gf["hstsGlobalValue"]).
@@ -2233,7 +2233,7 @@ templateSnippets:
              so a per-host value overrides the global default (set-header replaces).
         var(txn.host) set during request routing is still in scope at response time.
         Resource-agnostic: references only var(txn.host), the map, and the global value.
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var hstsHosts []any = coalesce(gf["hstsHosts"], []any{}) -%}
       {%- var hstsGlobal = tostring(coalesce(gf["hstsGlobalValue"], "")) -%}
@@ -2307,7 +2307,7 @@ templateSnippets:
 
   global-top-100-access-log-rings:
     template: |-
-      {#-
+      {#
         One `ring` section per access-log target that declares one. A ring is a
         buffered TCP client: records queue in memory when the collector is down
         and flush on reconnect, so a restarting log shipper never touches the
@@ -2318,7 +2318,7 @@ templateSnippets:
         This renders after the `defaults` section that references the ring, which
         HAProxy accepts — forward references to a ring are resolved post-parse
         (verified on 3.0 and 3.4).
-      -#}
+      #}
       {{- render "util-access-log-targets" -}}
       {%- for _, tAny := range shared.Get("accessLogTargets").([]any) %}
         {%- var t = tAny.(map[string]any) %}
@@ -2337,22 +2337,22 @@ templateSnippets:
 
   global-top-050-peers:
     template: |
-      {#- Always-on local peers section. Stick-tables opt in by appending -#}
-      {#- `peers localinstance` to their definition (e.g. the haproxytech -#}
-      {#- rate-limit table); HAProxy then replicates their contents from the -#}
-      {#- old worker to the new worker on every reload, so per-source counters -#}
-      {#- survive config churn instead of resetting to zero. The single peer -#}
-      {#- `local` matches `localpeer local` (global-settings-220-localpeer), so -#}
-      {#- HAProxy LISTENS on the socket and resyncs locally; it never connects -#}
-      {#- to other replicas, so tables stay per-pod. The listener is a UNIX -#}
-      {#- socket (not a TCP port) so it can never collide with a frontend or -#}
-      {#- dynamic Gateway listener bind and take the whole proxy down. -#}
+      {# Always-on local peers section. Stick-tables opt in by appending #}
+      {# `peers localinstance` to their definition (e.g. the haproxytech #}
+      {# rate-limit table); HAProxy then replicates their contents from the #}
+      {# old worker to the new worker on every reload, so per-source counters #}
+      {# survive config churn instead of resetting to zero. The single peer #}
+      {# `local` matches `localpeer local` (global-settings-220-localpeer), so #}
+      {# HAProxy LISTENS on the socket and resyncs locally; it never connects #}
+      {# to other replicas, so tables stay per-pod. The listener is a UNIX #}
+      {# socket (not a TCP port) so it can never collide with a frontend or #}
+      {# dynamic Gateway listener bind and take the whole proxy down. #}
       peers localinstance
           peer local unix@{{ pathResolver.GetBaseDir() }}/peers.sock
 
   status-extra-100-prometheus-exporter:
     template: |
-      {#- With the vector sidecar enabled, vector is the only thing that should
+      {# With the vector sidecar enabled, vector is the only thing that should
           reach this exporter: it scrapes 127.0.0.1 from inside the pod and
           re-exports everything on its own port, so /metrics has no reason to be
           answerable from the pod IP.
@@ -2370,9 +2370,9 @@ templateSnippets:
           turns it off, and that is the form a validationTest must use.
           `vector: null` no longer works: per-test extraContext deep-merges into
           the global one, so a null leaf does not clear the operator's subtree
-          the way a wholesale replacement used to. -#}
-      {#- Parenthesised: the pipe binds looser than `!=`, so the unparenthesised
-          form pipes extraContext into the comparison and fails to compile. -#}
+          the way a wholesale replacement used to. #}
+      {# Parenthesised: the pipe binds looser than `!=`, so the unparenthesised
+          form pipes extraContext into the comparison and fails to compile. #}
       {%- var vecCfg = extraContext | dig("vector") -%}
       {%- var vectorOn = vecCfg != nil && (vecCfg | dig("enabled") | fallback(true)) == true -%}
       {%- if vectorOn %}
@@ -2383,7 +2383,7 @@ templateSnippets:
 
   global-top:
     template: |
-      {#- Renders global-top-* snippets (e.g., userlist sections from haproxytech.yaml) -#}
+      {# Renders global-top-* snippets (e.g., userlist sections from haproxytech.yaml) #}
       {{- render_glob "global-top-*" -}}
 
   # A second HTTP bind requiring a PROXY header, for HAProxy behind an L4 load

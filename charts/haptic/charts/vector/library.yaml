@@ -43,8 +43,8 @@ files:
       {%- var hubPort = vec | dig("spoaHubMetricsPort") | fallback(0) -%}
       {%- var dataDir = vec | dig_string("/var/lib/vector", "dataDir") -%}
       {%- var excludes = vec | dig("excludeMetrics") | fallback([]any{}) | toSlice() -%}
-      {# Source-side twin of `excludes`: never parsed, so it cuts the scrape
-          burst, not just retention. See values.yaml vector.excludeMetrics. #}
+      {#- Source-side twin of `excludes`: never parsed, so it cuts the scrape
+          burst, not just retention. See values.yaml vector.excludeMetrics. -#}
       {%- var excludeFams = vec | dig("excludeMetricFamilies") | fallback([]any{}) | toSlice() -%}
       {# Endpoint lives under extraContext.tracing, not vector: it describes the
           deployment's tracing setup. Empty = no span pipeline. #}
@@ -52,9 +52,9 @@ files:
           collides with Scriggo's. Built as a string so the braces reach the config
           instead of being evaluated here. #}
       {%- var metricValueTag = "{{haptic_metric_value}}" -%}
-      {# Log-derived metric registry. Keyed map, not a list: an operator adding an
+      {#- Log-derived metric registry. Keyed map, not a list: an operator adding an
           entry must not replace the ones the chart ships (charts/CLAUDE.md). Only
-          enabled entries are rendered, so a disabled one costs no per-record work. #}
+          enabled entries are rendered, so a disabled one costs no per-record work. -#}
       {%- var logMetricsAll = vec | dig("logMetrics") | fallback(map[string]any{}) %}
       {%- var logMetrics = map[string]any{} %}
       {%- for _, k := range keys(logMetricsAll.(map[string]any)) %}
@@ -63,8 +63,8 @@ files:
         {%- if !ok %}{{ fail("extraContext.vector.logMetrics." + k + " must set `enabled`: an entry without it would sit inert and quietly emit nothing.") }}{%- end %}
         {%- if tostring(en) == "true" %}{%- logMetrics[k] = entry %}{%- end %}
       {%- end %}
-      {# Sink wiring only; vector-request-metrics-transform owns these names.
-         test-vector-request-metrics-sink-wiring pins the two together. #}
+      {#- Sink wiring only; vector-request-metrics-transform owns these names.
+         test-vector-request-metrics-sink-wiring pins the two together. -#}
       {%- var rm = vec | dig("requestMetrics") | fallback(map[string]any{}) -%}
       {%- var rmOn = (rm | dig("enabled")) == true -%}
       {%- var rmMetrics = rm | dig("metrics") | fallback(map[string]any{}) -%}
@@ -82,8 +82,8 @@ files:
       {%- if rmSizeOn %}{% rmSizeInputs = append(rmSizeInputs, "request_metrics_sizes") %}{% end -%}
       {%- if rmGuarded && len(rmCoreInputs) > 0 %}{% rmCoreInputs = []string{"request_metrics_guard"} %}{% end -%}
       {%- if rmGuarded && len(rmSizeInputs) > 0 %}{% rmSizeInputs = []string{"request_metrics_size_guard"} %}{% end -%}
-      {# %.9f then trim, never tostring(): a float64 1e8 formats as "1e+08",
-         which YAML 1.1 reads as a STRING and vector rejects. #}
+      {#- %.9f then trim, never tostring(): a float64 1e8 formats as "1e+08",
+         which YAML 1.1 reads as a STRING and vector rejects. -#}
       {%- var fmtBucket = func(v any) string {
             var fv, _ = tofloat(v)
             var s = sprintf("%.9f", fv)
@@ -103,10 +103,10 @@ files:
               if f <= 0.0 {
                 fail("extraContext.vector.requestMetrics." + field + " entries must be greater than zero, got '" + tostring(b) + "'.")
               }
-              {# Checked on the RENDERED value, not the input: fmtBucket has 9
-                 decimals, so anything under 5e-10 formats as "0" and two such
-                 inputs collapse onto one boundary. Comparing the inputs would
-                 pass both and emit le="0" plus a duplicate. #}
+              // Checked on the RENDERED value, not the input: fmtBucket has 9
+              // decimals, so anything under 5e-10 formats as "0" and two such
+              // inputs collapse onto one boundary. Comparing the inputs would
+              // pass both and emit le="0" plus a duplicate.
               var shown = fmtBucket(b)
               var rf, _ = tofloat(shown)
               if rf <= 0.0 {
@@ -122,11 +122,11 @@ files:
           } -%}
       {%- var otlpEndpoint = extraContext | dig_string("", "tracing", "otlp", "endpoint") -%}
       {%- var otlpService = extraContext | dig_string("haptic", "tracing", "otlp", "serviceName") -%}
-      {# Resource attributes describe the EMITTER, so they identify this HAPTIC:
+      {#- Resource attributes describe the EMITTER, so they identify this HAPTIC:
           several per cluster (internal vs external, or one per tenant) would
           otherwise all report service.name=haptic. Chart-derived, except the
           cluster name — Kubernetes exposes none to a pod. Each is omitted when
-          empty rather than sent blank. #}
+          empty rather than sent blank. -#}
       {%- var resAttrs = []string{} -%}
       {%- var addRes = func(k string, v string) { if v != "" { resAttrs = append(resAttrs, "{\"key\":\"" + k + "\",\"value\":{\"stringValue\":\"" + v + "\"}}") } } -%}
       {%- addRes("service.name", otlpService) -%}
@@ -136,8 +136,8 @@ files:
       {%- addRes("k8s.deployment.name", tostring(extraContext | dig_string("", "tracing", "otlp", "deploymentName"))) -%}
       {%- addRes("k8s.cluster.name", tostring(extraContext | dig_string("", "tracing", "otlp", "clusterName"))) -%}
       {%- var resJSON = join(resAttrs, ",") -%}
-      {# Scriggo's `if` treats any non-empty string as truthy, so a CR with the
-          string "false" would ENABLE this. No isbool(); fallback() is nil-only. #}
+      {#- Scriggo's `if` treats any non-empty string as truthy, so a CR with the
+          string "false" would ENABLE this. No isbool(); fallback() is nil-only. -#}
       {%- var omitEmptyRaw = vec | dig("omitEmptyLogFields") -%}
       {%- var omitEmpty = true -%}
       {%- if omitEmptyRaw != nil -%}
@@ -156,9 +156,9 @@ files:
         {%- end -%}
         {%- noMaint = noMaintBool -%}
       {%- end -%}
-      {# Each pattern is embedded in a VRL r'...' literal, so a quote or newline
+      {#- Each pattern is embedded in a VRL r'...' literal, so a quote or newline
           would break vector's config and crash-loop the sidecar. Reject those here
-          as well as in Helm: a hand-written CR bypasses Helm entirely. #}
+          as well as in Helm: a hand-written CR bypasses Helm entirely. -#}
       {%- for _, pat := range excludes -%}
         {%- var ps = tostring(pat) -%}
         {%- if ps == "" -%}
@@ -167,14 +167,14 @@ files:
         {%- if regex_search(ps, "['\"\n\r\\\\]") -%}
           {%- fail("extraContext.vector.excludeMetrics pattern '" + ps + "' contains a quote, backslash or newline. Patterns are embedded in a VRL r'...' literal, so those characters would break vector's config and crash-loop the sidecar.") -%}
         {%- end -%}
-        {# Compile check. Note the argument order: regex_search(subject, pattern),
+        {#- Compile check. Note the argument order: regex_search(subject, pattern),
             so the operator's string goes SECOND to be compiled as the pattern —
             passing it first (as above, for the charset test) compiles nothing.
-            regex_search calls env.Fatal on an uncompilable pattern. #}
+            regex_search calls env.Fatal on an uncompilable pattern. -#}
         {%- var _ = regex_search("", ps) -%}
       {%- end -%}
-      {# Re-validated here because a hand-written CR bypasses Helm: HAProxy drops
-          an unknown name silently and one '%' blanks the whole scrape. #}
+      {#- Re-validated here because a hand-written CR bypasses Helm: HAProxy drops
+          an unknown name silently and one '%' blanks the whole scrape. -#}
       {%- var scrapeParams = []string{} -%}
       {%- if noMaint -%}
         {%- scrapeParams = append(scrapeParams, "no-maint") -%}
@@ -194,9 +194,9 @@ files:
       {%- if len(scrapeParams) > 0 -%}
         {%- haproxyScrapeQuery = "?" + join(scrapeParams, "&") -%}
       {%- end -%}
-      {# Mirror of haptic.vector.validateValues in _vector.tpl. Duplicated on
+      {#- Mirror of haptic.vector.validateValues in _vector.tpl. Duplicated on
           purpose: the HAProxyTemplateConfig CR is a first-class API that bypasses
-          Helm, so a Helm-only guard protects nothing for a hand-written CR. #}
+          Helm, so a Helm-only guard protects nothing for a hand-written CR. -#}
       {%- if !hasPrefix(socketPath, "/") -%}
         {%- fail("extraContext.vector.socketPath must be an absolute path, got '" + socketPath + "'. HAProxy's `log <path>` form requires one.") -%}
       {%- end -%}
@@ -325,9 +325,9 @@ files:
         {%- var metricName = m | dig_string("", "metric") %}
         {%- var tagName = m | dig_string("value", "tag") %}
         {%- var vals = m | dig("values") | fallback([]any{}) | toSlice() %}
-        {# Field and metric names are embedded in a VRL regex and a metric name;
+        {#- Field and metric names are embedded in a VRL regex and a metric name;
             an unvalidated one would break vector's config load and crash-loop the
-            sidecar, exactly as excludeMetrics guards against. #}
+            sidecar, exactly as excludeMetrics guards against. -#}
         {%- if !regex_search(field, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".field must be an access-log field name (letters, digits, underscore), got '" + field + "'.") }}{%- end %}
         {%- if !regex_search(metricName, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".metric must be a Prometheus metric name, got '" + metricName + "'.") }}{%- end %}
         {%- if !regex_search(tagName, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".tag must be a Prometheus label name, got '" + tagName + "'.") }}{%- end %}
@@ -338,9 +338,9 @@ files:
           {%- var esc = []any{} %}
           {%- for _, val := range vals %}
             {%- if !regex_search(tostring(val), "^[A-Za-z0-9_.:-]+$") %}{{ fail("extraContext.vector.logMetrics." + key + ".values entry '" + tostring(val) + "' may only contain letters, digits, and _.:- — it is embedded in a VRL regex.") }}{%- end %}
-            {# Escape before embedding: '.' passes the charset check but is a
+            {#- Escape before embedding: '.' passes the charset check but is a
                 regex wildcard, so a declared value of "1.5" would also match
-                "125" — widening the very set `values` exists to bound. #}
+                "125" — widening the very set `values` exists to bound. -#}
             {%- esc = append(esc, sanitize_regex(tostring(val))) %}
           {%- end %}
           {%- pattern = esc | toStringSlice() | join("|") %}
@@ -484,9 +484,9 @@ files:
         {%- end %}
       {%- end %}
           address: 0.0.0.0:{{ toint(metricsPort) }}
+      {#- Per-SINK in vector, no per-metric override — which is why the size
+          histograms get their own exporter below. -#}
       {%- if rmCoreOn || rmConnOn || rmRespOn %}
-          {# Per-SINK in vector, no per-metric override — which is why the size
-             histograms get their own exporter below. #}
           buckets: {{ bucketList("durationBuckets") }}
       {%- end %}
       {%- if len(rmSizeInputs) > 0 %}
@@ -511,11 +511,11 @@ templateSnippets:
 
   vector-request-metrics-transform:
     template: |-
-      {#- Grouped by VALIDITY GATE, not by metric: log_to_metric emits every metric
+      {# Grouped by VALIDITY GATE, not by metric: log_to_metric emits every metric
           it lists from one event, and a HAProxy timer reads -1 when its phase never
           happened — recording that as 0 claims the backend answered instantly on a
           request that never reached one. Grouped by SINK too, because
-          prometheus_exporter takes one `buckets` list per sink. -#}
+          prometheus_exporter takes one `buckets` list per sink. #}
       {%- var rm = extraContext | dig("vector", "requestMetrics") | fallback(map[string]any{}) -%}
       {%- if (rm | dig("enabled")) != true %}{% return %}{% end -%}
       {%- var mm = rm | dig("metrics") | fallback(map[string]any{}) -%}
@@ -555,14 +555,14 @@ templateSnippets:
       {%- var sizeOn = mOn("request_size") || mOn("response_size") -%}
       {%- var connOn = mOn("connect_duration_seconds") -%}
       {%- var respOn = mOn("header_duration_seconds") || mOn("response_duration_seconds") -%}
-      {#- parse_json ONCE, unlike the logMetrics regex extractors: those read one
-      field each, while this reads eleven, and eleven regexes cost more than a parse. -#}
+      {# parse_json ONCE, unlike the logMetrics regex extractors: those read one
+      field each, while this reads eleven, and eleven regexes cost more than a parse. #}
         # Per-request metrics, projected from fields the access log already carries.
         request_metrics_base:
           type: remap
           inputs: [haproxy_log]
-      {#- This branch only: the stdout sink still gets every line, including HAProxy's
-      process messages and the TCP-mode records dropped below. -#}
+      {# This branch only: the stdout sink still gets every line, including HAProxy's
+      process messages and the TCP-mode records dropped below. #}
           drop_on_abort: true
           reroute_dropped: false
           source: |
@@ -610,7 +610,7 @@ templateSnippets:
             .rm_upstream = to_float(up) / 1000.0
             .rm_connect = to_float(to_int(o.connect_time_ms) ?? -1) / 1000.0
             .rm_header = to_float(to_int(o.response_time_ms) ?? -1) / 1000.0
-      {#- (log_to_metric type, remap field); the group decides gate and exporter. -#}
+      {# (log_to_metric type, remap field); the group decides gate and exporter. #}
       {%- var defs = map[string][]string{
             "requests":                  []string{"counter",   "rm_one"},
             "request_duration_seconds":  []string{"histogram", "rm_req_dur"},
@@ -703,15 +703,15 @@ templateSnippets:
       {%- if respOn %}{% coreGuarded = append(coreGuarded, "request_metrics_response") %}{% end -%}
       {%- if len(coreGuarded) > 0 %}
 
-      {#- drop_tag collapses the offending label onto one series and keeps the totals
+      {# drop_tag collapses the offending label onto one series and keeps the totals
       correct; drop_event would discard the requests, so a cardinality problem would
-      read as an outage. State is in memory and resets on restart. -#}
+      read as an outage. State is in memory and resets on restart. #}
         # Backstop for a label that goes unbounded anyway.
         request_metrics_guard:
           type: tag_cardinality_limit
           inputs: [{{ join(coreGuarded, ", ") }}]
-      {#- exact_fingerprint: 8 bytes per distinct value instead of the string.
-      per_metric: a runaway `path` on one family must not spend the others' budget. -#}
+      {# exact_fingerprint: 8 bytes per distinct value instead of the string.
+      per_metric: a runaway `path` on one family must not spend the others' budget. #}
           mode: exact_fingerprint
           tracking_scope: per_metric
           value_limit: {{ toint(limit) }}
@@ -731,11 +731,11 @@ templateSnippets:
 
   vector-span-transform:
     template: |-
-      {#- The access-log -> OTLP span transform, in its own snippet so
+      {# The access-log -> OTLP span transform, in its own snippet so
           _helm_load.unset can drop ~10 KB from the config object when no OTLP
           endpoint is set: a deployment that exports no spans should not carry
           the transform that builds them. vector.yaml keeps the
-          `otlpEndpoint != ""` gate, which is the real one. -#}
+          `otlpEndpoint != ""` gate, which is the real one. #}
         # Access-log records -> OTLP spans. Coverage is whatever HAProxy logs,
         # which includes every response it generates itself. HAProxy already
         # minted the ids and decided sampling: this stage only reshapes.

@@ -62,8 +62,8 @@ templateSnippets:
 
   global-settings-410-ssl-ciphers:
     template: |
-      {#- Per-listener Gateway TLS options (gateway/92-listener-tls-options) still
-          override these per bind. -#}
+      {# Per-listener Gateway TLS options (gateway/92-listener-tls-options) still
+          override these per bind. #}
       {%- var ciphers = tostring(extraContext | dig("tls", "ciphers") | fallback("")) -%}
       {%- var ciphersuites = tostring(extraContext | dig("tls", "ciphersuites") | fallback("")) -%}
       {%- var minVer = tostring(extraContext | dig("tls", "minVersion") | fallback("")) -%}
@@ -91,9 +91,9 @@ templateSnippets:
 
   util-crtlist-line:
     template: |
-      {#- Never add `ca-ignore-err all` / `crt-ignore-err all` here: they are
+      {# Never add `ca-ignore-err all` / `crt-ignore-err all` here: they are
           bind-scope and HAProxy rejects them inside a crt-list line (the
-          per-Gateway bind emits them instead). Empty sniSuffix = catchall. -#}
+          per-Gateway bind emits them instead). Empty sniSuffix = catchall. #}
       {%- macro CrtListLine(certFilename string, mtlsCfg any, sniSuffix string) string %}
         {%- var opts = "ocsp-update on" %}
         {%- if mtlsCfg != nil %}
@@ -113,10 +113,10 @@ templateSnippets:
 
   log-fields-200-tls:
     template: |-
-      {#- Gated per INSTALL, not per frontend: one format string is shared by every
+      {# Gated per INSTALL, not per frontend: one format string is shared by every
           HTTP frontend, so a per-frontend gate would break the single JSON schema
           (ssl_fc_* render "" on plain HTTP). Cipher omitted — the global
-          ssl-default-bind-ciphers policy makes it near-constant fleet-wide. -#}
+          ssl-default-bind-ciphers policy makes it near-constant fleet-wide. #}
       {%- var gfRaw = shared.Get("globalFeatures") -%}
       {%- if gfRaw != nil && tostring(gfRaw.(map[string]any) | dig("needHTTPSFrontend")) == "true" %}
       %(tls_version)[ssl_fc_protocol]
@@ -125,9 +125,9 @@ templateSnippets:
 
   log-fields-205-tls-resumption:
     template: |-
-      {#- Typed :bool is safe only because ssl_fc_is_resumed always resolves (false on
+      {# Typed :bool is safe only because ssl_fc_is_resumed always resolves (false on
           a fresh handshake and on plain HTTP); an unresolved fetch would render ""
-          into a boolean slot. No metric exposes the resumption rate. -#}
+          into a boolean slot. No metric exposes the resumption rate. #}
       {%- if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) %}
       %(tls_resumed:bool)[ssl_fc_is_resumed]
       {%- end %}
@@ -149,7 +149,7 @@ templateSnippets:
           "needHTTPSFrontend":           false,
         }
       }) -%}
-      {# globalFeatures may have been created by another library without these keys. #}
+      {#- globalFeatures may have been created by another library without these keys. -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- if gf["sslPassthroughBackends"] == nil -%}
         {%- gf["sslPassthroughBackends"] = []any{} -%}
@@ -183,8 +183,8 @@ templateSnippets:
 
   features-085-ssl-hsts-global:
     template: |
-      {#- Global default only: frontend-filters-080-hsts emits the per-host rule after
-          this one and set-header replaces, so a per-Ingress annotation still wins. -#}
+      {# Global default only: frontend-filters-080-hsts emits the per-host rule after
+          this one and set-header replaces, so a per-Ingress annotation still wins. #}
       {%- var enabled bool = extraContext | dig("tls", "hsts", "enabled") | fallback(false) -%}
       {%- if enabled -%}
         {%- var maxAge = extraContext | dig("tls", "hsts", "maxAge") | fallback("31536000") | tostring() -%}
@@ -238,11 +238,11 @@ templateSnippets:
 
   features-140-ssl-passthrough-binds:
     template: |
-      {#- Lives here, not in gateway/: an annotation-driven passthrough with no Gateway
+      {# Lives here, not in gateway/: an annotation-driven passthrough with no Gateway
           API left bindHTTPSDefault false and silently skipped the ssl-tcp frontend.
           Passthrough deliberately does NOT set needHTTPSTermination — a port with only
           TLS listeners must RST unclaimed SNIs, not serve the 404 the ssl-loopback
-          fall-through would give. -#}
+          fall-through would give. #}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%%
         if len(gf["sslPassthroughBackends"].([]any)) > 0 {
@@ -319,15 +319,15 @@ templateSnippets:
         {%- crtlistLines = []any{CrtListLine(defaultCertFilename, defaultCfg, "")} -%}
       {%- end -%}
 
-      {# SNIs under one cert may need different per-line ssl-options (per-host
+      {#- SNIs under one cert may need different per-line ssl-options (per-host
          auth-tls-secret), so group by (ca_path, verify_mode): HAProxy accepts the
-         same cert on several crt-list lines with different options. #}
+         same cert on several crt-list lines with different options. -#}
       {%- for _, tlsCert := range tlsCerts -%}
         {%- var tc any = tlsCert -%}
         {%- var certFilename = tc | dig("sanitized_filename") | fallback(tostring(tc | dig("secret_namespace")) + "_" + tostring(tc | dig("secret_name")) + ".pem") -%}
         {%- var snis []any = coalesce(tc | dig("sni_patterns"), []any{}).([]any) -%}
 
-        {# Empty group key = no client-cert verify. #}
+        {#- Empty group key = no client-cert verify. -#}
         {%- var snisByConfig = map[string][]any{} -%}
         {%- var configForKey = map[string]any{} -%}
         {%- for _, sni := range snis -%}
@@ -344,8 +344,8 @@ templateSnippets:
           {%- snisByConfig[key] = append(snisByConfig[key], sni) -%}
         {%- end -%}
 
-        {# Sort the group keys: map iteration order is unstable across renders, and a
-           reordered crt-list reloads HAProxy even when the inputs are identical. #}
+        {#- Sort the group keys: map iteration order is unstable across renders, and a
+           reordered crt-list reloads HAProxy even when the inputs are identical. -#}
         {%- var keyList = []any{} -%}
         {%- for k := range snisByConfig -%}
           {%- keyList = append(keyList, k) -%}
@@ -363,14 +363,14 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-      {# Trailing newline required by HAProxy's parser. #}
+      {#- Trailing newline required by HAProxy's parser. -#}
       {%- var crtlistContent = (crtlistLines | toStringSlice() | join("\n")) + "\n" -%}
       {%- var _, crtListErr = fileRegistry.Register("crt-list", "certificate-list.txt", crtlistContent) -%}
       {%- if crtListErr != nil -%}{{ fail("failed to register crt-list: " + tostring(crtListErr)) }}{%- end -%}
 
   features-160-ssl-redirect-map:
     template: |
-      {#- Map value 1 is a presence marker for `-m found`. -#}
+      {# Map value 1 is a presence marker for `-m found`. #}
 
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var redirectHosts []any = coalesce(gf["sslRedirectHosts"], []any{}) -%}
@@ -460,7 +460,7 @@ templateSnippets:
           # Extract SNI for routing decisions (wait up to 5s for client hello)
           tcp-request inspect-delay 5s
 
-          {#- SNI claim contract: reject when a TLS-Passthrough listener's hostname
+          {# SNI claim contract: reject when a TLS-Passthrough listener's hostname
               pattern matches but no TLSRoute under THAT Gateway claims the SNI; an SNI
               matching no listener pattern falls through, since an HTTPS-terminating
               listener may legitimately want it. The ACLs and rejects are per-Gateway
@@ -468,7 +468,7 @@ templateSnippets:
               Gateway's wider pattern must not rescue an SNI this one doesn't claim.
               The rejects MUST precede `tcp-request content accept` — accept ends the
               tcp-request content phase, so a later reject never fires. Ingress-level
-              entries carry no Gateway identity and keep their fall-through. -#}
+              entries carry no Gateway identity and keep their fall-through. #}
           {%%
             var byGateway = map[string]any{}
             var gwOrder = []any{}

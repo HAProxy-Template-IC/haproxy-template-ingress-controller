@@ -9,7 +9,7 @@ templateSnippets:
 
   frontend-filters-600-haproxy-ingress-forwardfor:
     template: |
-      {#-
+      {#
         HAProxy-Ingress forwardfor Annotation
 
         Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#forwardfor
@@ -19,7 +19,7 @@ templateSnippets:
 
         Generated HAProxy Config:
           option forwardfor [header <name>] [if-none]
-      -#}
+      #}
       {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -37,7 +37,7 @@ templateSnippets:
               {%- else if forwardfor == "update" %}
       http-request set-header X-Forwarded-For %[src] if {{ xffCond }}
               {%- else %}
-                {#- "add" is the default behavior #}
+                {# "add" is the default behavior #}
       http-request add-header X-Forwarded-For %[src] if {{ xffCond }}
               {%- end %}
           {%- end %}
@@ -45,7 +45,7 @@ templateSnippets:
 
   frontend-filters-610-haproxy-ingress-access-control:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Access Control Annotations
 
         Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#allowlist-source-range
@@ -60,7 +60,7 @@ templateSnippets:
           acl <name> src <cidrs>
           http-request deny if <host-match> !<acl>    (for allowlist)
           http-request deny if <host-match> <acl>     (for denylist)
-      -#}
+      #}
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {#- whitelist-source-range is the deprecated alias of allowlist-source-range;
@@ -96,7 +96,7 @@ templateSnippets:
 
   frontend-filters-660-haproxy-ingress-cors:
     template: |
-      {#-
+      {#
         HAProxy-Ingress CORS Annotations
 
         Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#cors-enable
@@ -114,7 +114,7 @@ templateSnippets:
           http-response add-header Access-Control-Allow-Origin <origin> if <host-match>
           http-response add-header Access-Control-Allow-Methods <methods> if <host-match> METH_OPTIONS
           ... (other CORS headers)
-      -#}
+      #}
       {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {{ EmitAnnotationCORS(ingress,
@@ -126,7 +126,7 @@ templateSnippets:
 
   frontend-filters-670-haproxy-ingress-headers:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Headers Annotation
 
         Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#headers
@@ -138,7 +138,7 @@ templateSnippets:
 
         Generated HAProxy Config:
           http-request set-header <name> <value> if <host-match>
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -169,7 +169,7 @@ templateSnippets:
 
   frontend-filters-680-haproxy-ingress-default-backend-redirect:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Default Backend Redirect
 
         Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#default-backend-redirect
@@ -191,7 +191,7 @@ templateSnippets:
 
         Single-vendor, so the per-code maps are built and referenced here (not via
         base.yaml). Changing the URL/code set is a map-only, reload-free update.
-      -#}
+      #}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var codeMap = map[string]map[string]string{} -%}
       {%- var codeHosts = map[string][]any{} -%}
@@ -238,9 +238,9 @@ templateSnippets:
 
   util-haproxy-ingress-ssl-passthrough:
     template: |
-      {#- Caches SSL passthrough backends from haproxy-ingress.github.io/ssl-passthrough annotations.
+      {# Caches SSL passthrough backends from haproxy-ingress.github.io/ssl-passthrough annotations.
           Build logic lives in ingress-annotations-compat.yaml's BuildAnnotationSSLPassthrough macro;
-          this snippet only owns the per-library cache key and naming-convention parameters. -#}
+          this snippet only owns the per-library cache key and naming-convention parameters. #}
       {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
       {%%
         var _, _ = shared.ComputeIfAbsent("hi_sslPassthrough", func() any {
@@ -255,7 +255,7 @@ templateSnippets:
 
   frontend-filters-690-haproxy-ingress-mtls-error:
     template: |
-      {#-
+      {#
         HAProxy-Ingress mTLS Error Page and Certificate Passthrough
 
         Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-tls-error-page
@@ -275,7 +275,7 @@ templateSnippets:
         mtls-error.map — map-only, reload-free). This snippet keeps only the
         haproxy-ingress cert-passthrough set-headers (X-SSL-Client-{CN,DN,Cert}),
         which compose with the nginx-ingress equivalents at 790.
-      -#}
+      #}
       {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {#- Strip unconditionally, and never host-scoped. The set below fires only
           when a client certificate is present and only for this route, so
@@ -310,7 +310,7 @@ templateSnippets:
       {%- end -%}
   log-fields-630-haproxy-ingress-mtls:
     template: |-
-      {#-
+      {#
         Client-certificate identity and verification result for the JSON access
         log, gated on this library's mTLS annotations. Extension point:
         log-fields-* — see base.yaml's "Access log" block.
@@ -320,7 +320,7 @@ templateSnippets:
         full DN, issuer, serial and DER certificate are deliberately not logged.
         Identical to the haptic-annotations and nginx-ingress contributions; base
         deduplicates.
-      -#}
+      #}
       {%- var enabled = false %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-secret"] != "" || ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-cert-header"] == "true" %}

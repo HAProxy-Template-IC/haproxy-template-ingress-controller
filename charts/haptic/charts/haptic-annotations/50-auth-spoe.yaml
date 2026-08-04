@@ -29,7 +29,7 @@ templateSnippets:
   # ============================================================================
   global-top-820-haptic-auth:
     template: |
-      {#-
+      {#
         HAPTIC Basic Auth Userlist Generation
 
         Documentation: docs/site/docs/libraries/haptic-annotations.md#basic-auth
@@ -56,7 +56,7 @@ templateSnippets:
         Generated HAProxy Config:
           userlist haptic_auth_<secretNs>_<secretName>
             user <username> password <hash>
-      -#}
+      #}
       {%- var hashRegex = extraContext | dig_string("^\\$(2[aby]|apr1|1|5|6)\\$", "hapticPasswordHashRegex") %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -133,7 +133,7 @@ templateSnippets:
         user {{ user }} {{ pwKeyword }} {{ rest }}
                   {%- end %}
                 {%- else %}
-                  {#- auth-map: each Secret data key is a username, its value the hash. -#}
+                  {# auth-map: each Secret data key is a username, its value the hash. #}
       # haptic/auth ({{ key }})
       userlist {{ userlistName }}
                   {%- for _, username := range keys(secret.Data) %}
@@ -249,7 +249,7 @@ templateSnippets:
       # haptic/auth-challenge ({{ key }})
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
             {%- else if authSecretObj == nil %}
-      {#- Reject the Ingress at ADMISSION so a typo'd or absent Secret is caught
+      {# Reject the Ingress at ADMISSION so a typo'd or absent Secret is caught
           when the resource is written, rather than becoming a 503 nobody sees
           until traffic arrives. Under reconcile this warns and falls through to
           the deny below, so an already-admitted Ingress whose Secret is deleted
@@ -261,21 +261,21 @@ templateSnippets:
           Rejecting refused correct manifests applied in the correct order — the
           e2e suite creates the Secret first and was still denied. That blocks a
           deployment with no security incident behind it, which is the harm the
-          runtime 503 below already avoids without the false positive. -#}
+          runtime 503 below already avoids without the false positive. #}
       {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/auth-type: basic' with 'auth-secret: " + secretNs + "/" + secretName + "', but that Secret does not exist. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
-      {#- The Secret could not be resolved, so there is no userlist to check
+      {# The Secret could not be resolved, so there is no userlist to check
           against. Emitting nothing would leave the backend with NO authentication
           rule at all and serve every request — a deleted, renamed or mistyped
           Secret silently turning the gate off. Fail closed instead, matching what
           the JWT, api-key, HMAC and consumer-group paths already do for the same
-          event. -#}
+          event. #}
       # WARNING haproxy-haptic.org/auth-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until it is present.
       http-request set-var(txn.denied_by) str(basic_auth_unavailable)
       http-request deny deny_status 503
             {%- end %}
           {%- else %}
-            {#- auth-type basic without auth-secret: neither this snippet nor the
-                userlist one emitted anything, so the route served unauthenticated. -#}
+            {# auth-type basic without auth-secret: neither this snippet nor the
+                userlist one emitted anything, so the route served unauthenticated. #}
             {{- WebhookRejectOrWarn(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/auth-type: basic' but no 'haproxy-haptic.org/auth-secret'. Basic auth cannot be enforced without the credentials Secret, so this route fails closed with 503. Set auth-secret, or remove auth-type.") -}}
       # WARNING haproxy-haptic.org/auth-type: basic set without auth-secret on {{ key }}; failing closed (503) until it is set.
       http-request set-var(txn.denied_by) str(basic_auth_unavailable)
@@ -289,7 +289,7 @@ templateSnippets:
   # ============================================================================
   util-haptic-satisfy:
     template: |
-      {#-
+      {#
         satisfy=any predicate. True (returns "any") only when
         haproxy-haptic.org/satisfy == "any" AND an allowlist
         (haproxy-haptic.org/allowlist-source-range) AND basic auth with a
@@ -298,7 +298,7 @@ templateSnippets:
         access-control fragment) and this library's backend auth challenge both
         import this macro and suppress themselves when it returns "any", leaving
         the combined gate below as the single OR check.
-      -#}
+      #}
       {%- macro SatisfyAnyMode(ingress *resources.ingresses.T) string -%}
         {%%
           if ingress.Metadata.Annotations["haproxy-haptic.org/satisfy"] != "any" {
@@ -340,7 +340,7 @@ templateSnippets:
 
   backend-directives-825-haptic-satisfy-any:
     template: |
-      {#-
+      {#
         HAPTIC satisfy=any combined IP-or-auth gate.
 
         Emits, in the backend:
@@ -352,7 +352,7 @@ templateSnippets:
         satisfy=any. The standalone allowlist deny (access-control fragment) and
         the unconditional auth challenge (backend-directives-820) suppress
         themselves for this Ingress via SatisfyAnyMode().
-      -#}
+      #}
       {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
       {%- if ingress != nil %}
@@ -502,13 +502,13 @@ templateSnippets:
 
   features-140-haptic-auth-tls-error:
     template: |
-      {#-
+      {#
         HAPTIC auth-tls-error-page — registers host→error-page URL into the
         shared gf["mtlsErrorHosts"]. base.yaml features-185-mtls-error-map builds
         mtls-error.map and frontend-filters-075-mtls-error emits the
         ssl_c_verify-gated redirect (map-only, reload-free).
         Annotation: haproxy-haptic.org/auth-tls-error-page
-      -#}
+      #}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var errorPage = ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-error-page"] %}
@@ -529,7 +529,7 @@ templateSnippets:
   # ============================================================================
   frontend-filters-820-haptic-auth-tls-cert-header:
     template: |
-      {#-
+      {#
         HAPTIC auth-tls-cert-header — forward client-certificate details to the
         backend as request headers on hosts that presented a client cert.
 
@@ -539,7 +539,7 @@ templateSnippets:
           http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } <host-match>
           http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } <host-match>
           http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } <host-match>
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {#- The strip is deliberately NOT host-scoped, and runs whenever any route
           enables the annotation. Host-scoping it left two ways for a client to
@@ -736,10 +736,10 @@ templateSnippets:
       {%- for _, pair := range pairs -%}
         {%- var pName = pair.(map[string]any)["name"].(string) -%}
         {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {#- Strip any client-supplied copy of the header before setting the auth
+      {# Strip any client-supplied copy of the header before setting the auth
           value, so a spoofed X-Auth-* can't survive to the backend when the auth
           reply omits it (the set-header below is skipped when its var isn't
-          found). Matches the vendor libraries' always-overwrite semantics. -#}
+          found). Matches the vendor libraries' always-overwrite semantics. #}
       {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
       {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
       {%- end -%}
@@ -894,10 +894,10 @@ templateSnippets:
       {%- for _, pair := range pairs -%}
         {%- var pName = pair.(map[string]any)["name"].(string) -%}
         {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {#- Strip any client-supplied copy of the header before setting the auth
+      {# Strip any client-supplied copy of the header before setting the auth
           value, so a spoofed X-Auth-* can't survive to the backend when the auth
           reply omits it (the set-header below is skipped when its var isn't
-          found). Matches the vendor libraries' always-overwrite semantics. -#}
+          found). Matches the vendor libraries' always-overwrite semantics. #}
       {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
       {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
       {%- end -%}

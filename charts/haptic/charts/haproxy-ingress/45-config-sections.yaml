@@ -19,7 +19,7 @@
 templateSnippets:
   frontend-extra-650-haproxy-ingress-config-frontend:
     template: |
-      {#-
+      {#
         config-frontend → raw directives in the http frontend.
 
         Runs at the frontend-extra-* extension point (BEFORE routing logic),
@@ -28,7 +28,7 @@ templateSnippets:
         frontends (base.yaml renders frontend-extra-* in each).
 
         Extension Point: frontend-extra-* (priority 650 - compatibility layer)
-      -#}
+      #}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var snippet = ingress.Metadata.Annotations["haproxy-ingress.github.io/config-frontend"] %}
@@ -44,11 +44,11 @@ templateSnippets:
 
   global-settings-650-haproxy-ingress-config-global:
     template: |
-      {#-
+      {#
         config-global → raw directives in the global section.
 
         Extension Point: global-settings-* (priority 650 - compatibility layer)
-      -#}
+      #}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var snippet = ingress.Metadata.Annotations["haproxy-ingress.github.io/config-global"] %}
@@ -64,11 +64,11 @@ templateSnippets:
 
   defaults-settings-650-haproxy-ingress-config-defaults:
     template: |
-      {#-
+      {#
         config-defaults → raw directives in the defaults section.
 
         Extension Point: defaults-settings-* (priority 650 - compatibility layer)
-      -#}
+      #}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var snippet = ingress.Metadata.Annotations["haproxy-ingress.github.io/config-defaults"] %}

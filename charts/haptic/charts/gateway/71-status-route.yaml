@@ -2,7 +2,7 @@ templateSnippets:
   util-sharded-route-status-patches:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#-
+      {#
         Sharded Route Status Patches — per-Kind typed wrappers.
 
         Each wrapper inlines the sharding logic and calls its Kind-
@@ -11,7 +11,7 @@ templateSnippets:
         to pass through `| toSlice()` + (apiVersion, kind) parameters,
         but typegen now gives us first-class typed slices per Kind, so
         the polymorphic helper isn't carrying any real weight.
-      -#}
+      #}
       {%- import "util-generate-httproute-status-patches" for GenerateHTTPRouteStatusPatches -%}
       {%- import "util-generate-grpcroute-status-patches" for GenerateGRPCRouteStatusPatches -%}
       {%- import "util-macros" for CalculateShardCount -%}
@@ -41,7 +41,7 @@ templateSnippets:
   util-generate-httproute-status-patches:
     requires: [gateways, httproutes, referencegrants]
     template: |
-      {#-
+      {#
         Generate HTTPRoute Status Patches
 
         Typed sibling of the original polymorphic GenerateRouteStatusPatches.
@@ -59,7 +59,7 @@ templateSnippets:
                        RefNotPermitted, BackendNotFound}
 
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex).
-      -#}
+      #}
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
@@ -343,7 +343,7 @@ templateSnippets:
   util-generate-grpcroute-status-patches:
     requires: [gateways, grpcroutes, referencegrants]
     template: |
-      {#-
+      {#
         Generate GRPCRoute Status Patches
 
         Typed sibling of GenerateHTTPRouteStatusPatches; the body is
@@ -352,7 +352,7 @@ templateSnippets:
         the typed `*resources.grpcroutes.T` parameter is the whole point
         of the split — sharing the body would require widening it back
         to `any`.
-      -#}
+      #}
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
@@ -607,7 +607,7 @@ templateSnippets:
   util-generate-tlsroute-status-patches:
     requires: [gateways, referencegrants, tlsroutes]
     template: |
-      {#-
+      {#
         Generate TLSRoute Status Patches
 
         TLSRoute-specific status patches. The shape parallels HTTPRoute /
@@ -640,7 +640,7 @@ templateSnippets:
                        RefNotPermitted, BackendNotFound}
 
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex).
-      -#}
+      #}
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
@@ -975,12 +975,12 @@ templateSnippets:
   util-sharded-tlsroute-status-patches:
     requires: [gateways, referencegrants, tlsroutes]
     template: |
-      {#-
+      {#
         Sharded TLSRoute Status Patches
 
         Wraps GenerateTLSRouteStatusPatches with automatic parallel
         sharding (mirrors util-sharded-route-status-patches).
-      -#}
+      #}
       {%- import "util-generate-tlsroute-status-patches" for GenerateTLSRouteStatusPatches -%}
       {%- import "util-macros" for CalculateShardCount -%}
       {% macro ShardedTLSRouteStatusPatches(routes []*resources.tlsroutes.T) %}
@@ -997,7 +997,7 @@ templateSnippets:
   util-generate-tcproute-status-patches:
     requires: [gateways, referencegrants, tcproutes]
     template: |
-      {#-
+      {#
         Generate TCPRoute Status Patches
 
         L4 raw-TCP routing. Mirrors the TLSRoute generator but simpler:
@@ -1014,7 +1014,7 @@ templateSnippets:
         Status is emitted on the DEPLOYED variant only (same rationale as
         TLSRoute) so a conformance dial sees a routable backend before
         Accepted=True appears. TCPRoute is v1 (v1alpha2 retired).
-      -#}
+      #}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
       {%- import "util-resource-helpers" for GatewayKey, ListenerProtocolOr -%}

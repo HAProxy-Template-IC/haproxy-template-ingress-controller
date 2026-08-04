@@ -32,7 +32,7 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var value = ingress.Metadata.Annotations["haproxy.org/forwarded-for"] %}
           {%- if value != "" && value != "true" && value != "false" %}
-            {#- fail(), not WebhookRejectOrWarn: skipping drops `option forwardfor` and lets a spoofed X-Forwarded-For reach the backend. -#}
+            {# fail(), not WebhookRejectOrWarn: skipping drops `option forwardfor` and lets a spoofed X-Forwarded-For reach the backend. #}
             {{- fail("Invalid value '" + value + "' for annotation 'haproxy.org/forwarded-for' on Ingress '" + key + "'. Valid values: 'true', 'false'") -}}
           {%- end %}
           {%- if value == "true" %}{%- forwardforEnabled = true %}{%- end %}
@@ -63,8 +63,8 @@ templateSnippets:
 
   frontend-filters-300-haproxytech-cors:
     template: |
-      {#- Mirrors upstream haproxytech/kubernetes-ingress pkg/annotations/ingress/resSetCORS.go.
-          http-after-response, not http-response: the headers must also reach the synthetic preflight 204. -#}
+      {# Mirrors upstream haproxytech/kubernetes-ingress pkg/annotations/ingress/resSetCORS.go.
+          http-after-response, not http-response: the headers must also reach the synthetic preflight 204. #}
       {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -121,8 +121,8 @@ templateSnippets:
 
   features-100-haproxytech-ssl-redirect:
     template: |
-      {#- gf["sslRedirectHosts"] is initialised by ssl.yaml's features-050-ssl-initialization
-          and consumed by features-160-ssl-redirect-map. -#}
+      {# gf["sslRedirectHosts"] is initialised by ssl.yaml's features-050-ssl-initialization
+          and consumed by features-160-ssl-redirect-map. #}
 
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- var sslRedirectDefault = extraContext | dig_string("", "ssl_redirect_default") -%}
@@ -148,9 +148,9 @@ templateSnippets:
 
   frontend-filters-055-haproxytech-ssl-redirect-port:
     template: |
-      {#- hdr(host),field(1,:) strips any port already in the Host header. The port comes from
+      {# hdr(host),field(1,:) strips any port already in the Host header. The port comes from
           ssl-redirect-port-<code>.map, so changing it is a reload-free map update.
-          features-100 keeps these hosts out of ssl.yaml's scheme-redirect map (no double redirect). -#}
+          features-100 keeps these hosts out of ssl.yaml's scheme-redirect map (no double redirect). #}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var sslRedirectDefault = extraContext | dig_string("", "ssl_redirect_default") -%}
       {%- var portByCode = map[string]map[string]string{} -%}
@@ -194,8 +194,8 @@ templateSnippets:
 
   features-130-haproxytech-request-redirect:
     template: |
-      {#- base.yaml's frontend-filters-060-redirect-location emits the rule from redirect-loc-<code>.map,
-          so a redirect change is a reload-free map update. No first_seen gate — features-170 dedups hosts. -#}
+      {# base.yaml's frontend-filters-060-redirect-location emits the rule from redirect-loc-<code>.map,
+          so a redirect change is a reload-free map update. No first_seen gate — features-170 dedups hosts. #}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -232,10 +232,10 @@ templateSnippets:
           {%- var captureLen = ingress.Metadata.Annotations["haproxy.org/request-capture-len"] %}
           {%- if captureLen == "" %}{%- captureLen = "128" %}{%- end %}
           {%- if srcIpHeader != "" %}
-            {#- Scoped by matched route. set-src rewrites the address every
+            {# Scoped by matched route. set-src rewrites the address every
                 src-based ACL then evaluates, so a wildcard or host-less rule
                 that skipped this left the CIDR allow/deny lists judging the
-                proxy's address instead of the client's. -#}
+                proxy's address instead of the client's. #}
       # haproxytech/frontend-filters-haproxytech-logging (src-ip-header for {{ key }})
       http-request set-src hdr({{ srcIpHeader }}) if {{ ResourceMatchCondition([]string{key}) }}
           {%- end %}
@@ -453,7 +453,7 @@ templateSnippets:
             {%- end %}
           {%- end %}
       # haproxytech/backend-directives-haproxytech-rate-limiting
-      {#- `peers localinstance` (base.yaml global-top-050-peers) hands the per-source counter to the new worker on reload, so a reload doesn't reset every client's budget. -#}
+      {# `peers localinstance` (base.yaml global-top-050-peers) hands the per-source counter to the new worker on reload, so a reload doesn't reset every client's budget. #}
       stick-table type ip size {{ size }} expire {{ period }} store http_req_rate({{ period }}) peers localinstance
       http-request track-sc0 src
       http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ rateReq }} }{{ guard }}
@@ -463,9 +463,9 @@ templateSnippets:
 
   map-reqhdr-host-250-haproxytech:
     template: |
-      {#- Emits `<backend> <host>` for base.yaml's frontend-filters-260-request-set-host — a reload-free
+      {# Emits `<backend> <host>` for base.yaml's frontend-filters-260-request-set-host — a reload-free
           alternative to a per-backend set-header Host. The "map-reqhdr-host" first_seen namespace is shared
-          with nginx's upstream-vhost emitter; the lower numeric prefix wins when both hit one backend. -#}
+          with nginx's upstream-vhost emitter; the lower numeric prefix wins when both hit one backend. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -593,8 +593,8 @@ templateSnippets:
       http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ userlistName }}) }
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
             {%- else %}
-              {#- Without a resolvable Secret there is no userlist, and emitting
-                  nothing served every request unauthenticated. Fail closed. -#}
+              {# Without a resolvable Secret there is no userlist, and emitting
+                  nothing served every request unauthenticated. Fail closed. #}
               {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy.org/auth-secret', but that Secret could not be resolved. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
       # WARNING haproxy.org/auth-secret: Secret not resolvable for {{ key }}; failing closed (503) until it is present.
       http-request set-var(txn.denied_by) str(basic_auth_unavailable)
@@ -726,8 +726,8 @@ templateSnippets:
 
   log-fields-530-haproxytech-captured-headers:
     template: |-
-      {#- %hr is the positional capture list — the only consumer of haproxy.org/request-capture.
-          haptic-annotations emits the identical item for the native vocabulary; base deduplicates. -#}
+      {# %hr is the positional capture list — the only consumer of haproxy.org/request-capture.
+          haptic-annotations emits the identical item for the native vocabulary; base deduplicates. #}
       {%- var enabled = false %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- if ingress.Metadata.Annotations["haproxy.org/request-capture"] != "" %}

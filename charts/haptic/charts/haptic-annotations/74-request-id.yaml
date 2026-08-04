@@ -16,7 +16,7 @@ templateSnippets:
   # ==========================================================================
   frontend-filters-880-haptic-request-id:
     template: |
-      {#-
+      {#
         HAPTIC request-id — forward a correlation ID upstream.
 
         Annotations:
@@ -46,7 +46,7 @@ templateSnippets:
         defaults-settings-150-access-log-request-id). With accept-inbound the
         upstream therefore sees the client's id while the log line carries
         HAPTIC's — join them on the backend side if you enable it.
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}

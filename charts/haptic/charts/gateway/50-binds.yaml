@@ -66,14 +66,14 @@ templateSnippets:
   http-bind-extra-050-gateway-multi-port-bind:
     requires: [gateways, referencegrants]
     template: |
-      {#- Non-default HTTP ports declared by Gateway listeners or admitted
+      {# Non-default HTTP ports declared by Gateway listeners or admitted
           ListenerSets land on the http_frontend via this snippet. We seed
           `seen` with httpPort (the chart-static HTTP bind, default 80) and
           httpsPort (a Gateway HTTP listener on the chart-static HTTPS port
           would collide with the sibling frontend's bind, so skip — the
           spec surfaces the conflict as Accepted=False, we just keep the
           data plane parseable). See util-gateway-extra-port-binds for the
-          walk. -#}
+          walk. #}
       {%- import "util-gateway-extra-port-binds" for ExtraPortBinds %}
       {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
       {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
@@ -247,13 +247,13 @@ templateSnippets:
           tcp-request content reject
               {%- end %}
             {%- else %}
-          {#- reject-before-accept: `tcp-request content` rules evaluate in order and the
+          {# reject-before-accept: `tcp-request content` rules evaluate in order and the
               first matching accept ends the phase, so a reject placed after an unconditional
               accept can never fire. The allowed_sni alternation + reject closes the conformance
               subtests TLSRouteHostnameIntersection ("should not reach backend") and
               TLSRouteInvalidBackendRefNonexistent / ...UnknownKind — routes with unresolvable
               refs are dropped at the Pass-2 ResolvedRefs gate, so their SNI never enters the
-              allowlist and lands here. -#}
+              allowlist and lands here. #}
           # SNI dispatch to the route's TCP backend; wildcard SNIs (*.example.com) match a
           # single subdomain via `-m end .example.com`. Reject any SNI not in the allowlist.
               {%- if portMode == "Terminate" %}

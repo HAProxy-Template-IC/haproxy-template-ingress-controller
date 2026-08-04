@@ -20,7 +20,7 @@ templateSnippets:
   # ==========================================================================
   features-862-haptic-api-key:
     template: |
-      {#- HAPTIC API-key map generation: builds a reload-free apikey to consumer map per Secret. -#}
+      {# HAPTIC API-key map generation: builds a reload-free apikey to consumer map per Secret. #}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -137,7 +137,7 @@ templateSnippets:
 
   backend-directives-806-haptic-api-key:
     template: |
-      {#-
+      {#
         HAPTIC API-key check
 
         Annotations:
@@ -155,7 +155,7 @@ templateSnippets:
         The consumer var is set-once (`unless -m found`) so JWT and API-key auth
         compose — the first producer (JWT at 805) wins. This is the shared
         identity the per-consumer quota / consumer-group features read.
-      -#}
+      #}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -201,10 +201,10 @@ templateSnippets:
           {%- var consumerHdr = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-consumer-header"] %}
           {%- if consumerHdr != "" %}
             {%- var ch = ValidateConfigValue(consumerHdr, "haproxy-haptic.org/api-key-consumer-header", key, false) %}
-      {#- Strip first: the set-header below is conditional on an identity having
+      {# Strip first: the set-header below is conditional on an identity having
           been established, so on any path that reaches here without one — a
           `satisfy: any` route admitted by IP, for example — the caller's own
-          value would otherwise be forwarded to the application as the consumer. -#}
+          value would otherwise be forwarded to the application as the consumer. #}
       http-request del-header {{ ch }}
       http-request set-header {{ ch }} %[var(txn.haptic_consumer)] if { var(txn.haptic_consumer) -m found }
           {%- end %}
