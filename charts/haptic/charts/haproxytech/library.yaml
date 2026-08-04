@@ -65,7 +65,7 @@ templateSnippets:
     template: |
       {#- Mirrors upstream haproxytech/kubernetes-ingress pkg/annotations/ingress/resSetCORS.go.
           http-after-response, not http-response: the headers must also reach the synthetic preflight 204. -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -222,7 +222,7 @@ templateSnippets:
 
   frontend-filters-500-haproxytech-logging:
     template: |
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -232,14 +232,12 @@ templateSnippets:
           {%- var captureLen = ingress.Metadata.Annotations["haproxy.org/request-capture-len"] %}
           {%- if captureLen == "" %}{%- captureLen = "128" %}{%- end %}
           {%- if srcIpHeader != "" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
+            {#- Scoped by matched route. set-src rewrites the address every
+                src-based ACL then evaluates, so a wildcard or host-less rule
+                that skipped this left the CIDR allow/deny lists judging the
+                proxy's address instead of the client's. -#}
       # haproxytech/frontend-filters-haproxytech-logging (src-ip-header for {{ key }})
-      http-request set-src hdr({{ srcIpHeader }}) if {{ HostMatchCondition(hosts) }}
-            {%- end %}
+      http-request set-src hdr({{ srcIpHeader }}) if {{ ResourceMatchCondition([]string{key}) }}
           {%- end %}
           {%- if reqCapture != "" %}
       # haproxytech/frontend-filters-haproxytech-logging (request-capture for {{ key }})

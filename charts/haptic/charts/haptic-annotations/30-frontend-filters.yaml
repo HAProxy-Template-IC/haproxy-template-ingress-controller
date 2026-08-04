@@ -29,7 +29,7 @@ templateSnippets:
           ifmissing → http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found }
           ignore    → (no rule)
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -39,20 +39,18 @@ templateSnippets:
             {{- fail("Invalid value '" + forwardfor + "' for annotation 'haproxy-haptic.org/forwardfor' on Ingress '" + key + "'. Valid values: add, update, ifmissing, ignore") -}}
           {%- end %}
           {%- if forwardfor != "" && forwardfor != "ignore" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
+            {#- Scoped by matched route: the previous exact host gate emitted
+                nothing for a wildcard or host-less rule, so a client-supplied
+                X-Forwarded-For reached the backend unmodified. -#}
+            {%- var xffCond = ResourceMatchCondition([]string{key}) %}
       # haptic/forwardfor ({{ key }})
               {%- if forwardfor == "ifmissing" %}
-      http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found } {{ HostMatchCondition(hosts) }}
+      http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found } {{ xffCond }}
               {%- else if forwardfor == "update" %}
-      http-request set-header X-Forwarded-For %[src] if {{ HostMatchCondition(hosts) }}
+      http-request set-header X-Forwarded-For %[src] if {{ xffCond }}
               {%- else %}
-      http-request add-header X-Forwarded-For %[src] if {{ HostMatchCondition(hosts) }}
+      http-request add-header X-Forwarded-For %[src] if {{ xffCond }}
               {%- end %}
-            {%- end %}
           {%- end %}
       {%- end -%}
 
@@ -102,7 +100,7 @@ templateSnippets:
         Guards: the header name (single token, no spaces) and value (control
         chars rejected) both pass ValidateConfigValue before interpolation.
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -141,7 +139,7 @@ templateSnippets:
         Generated HAProxy Config (host-scoped):
           http-response set-header <name> '<value>' if <host-match>
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -215,7 +213,7 @@ templateSnippets:
         Generated HAProxy Config (host-scoped):
           http-request set-src hdr(<header-name>) if <host-match>
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -223,14 +221,12 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var srcIpHeader = ingress.Metadata.Annotations["haproxy-haptic.org/src-ip-header"] %}
           {%- if srcIpHeader != "" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
+            {#- Scoped by matched route. set-src rewrites the address every
+                src-based ACL then evaluates, so a wildcard or host-less rule
+                that skipped this left the CIDR allow/deny lists judging the
+                proxy's address instead of the client's. -#}
       # haptic/src-ip-header ({{ key }})
-      http-request set-src hdr({{ ValidateConfigValue(srcIpHeader, "haproxy-haptic.org/src-ip-header", key, false) }}) if {{ HostMatchCondition(hosts) }}
-            {%- end %}
+      http-request set-src hdr({{ ValidateConfigValue(srcIpHeader, "haproxy-haptic.org/src-ip-header", key, false) }}) if {{ ResourceMatchCondition([]string{key}) }}
           {%- end %}
       {%- end -%}
 
@@ -292,7 +288,7 @@ templateSnippets:
           http-response replace-header Set-Cookie (.*)Domain=<from>(.*) \1Domain=<to>\2 if <host-match>
           http-response replace-header Set-Cookie (.*)Path=<from>(.*)   \1Path=<to>\2   if <host-match>
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -353,7 +349,7 @@ templateSnippets:
           http-response replace-header Location <from-regex> <to> if <host-match>
           http-response replace-header Refresh  <from-regex> <to> if <host-match>
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
