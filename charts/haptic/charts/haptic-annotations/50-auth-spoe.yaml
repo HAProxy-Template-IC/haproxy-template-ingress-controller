@@ -253,8 +253,16 @@ templateSnippets:
           when the resource is written, rather than becoming a 503 nobody sees
           until traffic arrives. Under reconcile this warns and falls through to
           the deny below, so an already-admitted Ingress whose Secret is deleted
-          later degrades closed instead of aborting the whole render. -#}
-      {{- WebhookRejectOrWarn(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/auth-type: basic' with 'auth-secret: " + secretNs + "/" + secretName + "', but that Secret does not exist. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
+          later degrades closed instead of aborting the whole render.
+
+          A WARNING, never an admission rejection: the webhook renders against
+          the watched-resource store, which lags the API server, so "Secret
+          missing" and "Secret not observed yet" are indistinguishable here.
+          Rejecting refused correct manifests applied in the correct order — the
+          e2e suite creates the Secret first and was still denied. That blocks a
+          deployment with no security incident behind it, which is the harm the
+          runtime 503 below already avoids without the false positive. -#}
+      {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/auth-type: basic' with 'auth-secret: " + secretNs + "/" + secretName + "', but that Secret does not exist. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
       {#- The Secret could not be resolved, so there is no userlist to check
           against. Emitting nothing would leave the backend with NO authentication
           rule at all and serve every request — a deleted, renamed or mistyped
@@ -443,9 +451,13 @@ templateSnippets:
               mTLS was simply gone.
 
               Both causes (no Secret, Secret without ca.crt) are the same exposure
-              and are handled together: rejected at admission, and denied at runtime
-              by frontend-filters-830 so an already-admitted route whose Secret is
-              deleted or emptied later fails closed instead of serving unverified. -#}
+              and are handled together: a Warning event, and a runtime deny from
+              frontend-filters-830 so the route fails closed instead of serving
+              unverified. Deliberately NOT an admission rejection — the webhook
+              renders against the watched-resource store, which lags the API
+              server, so a Secret created moments earlier is indistinguishable
+              from one that is absent. The runtime deny recovers on its own once
+              the store catches up. -#}
           {%- var failReason = "" %}
           {%- var failCause = "" %}
           {%- if secret == nil %}
@@ -456,7 +468,7 @@ templateSnippets:
             {%- failCause = "that Secret has no data.ca.crt" %}
           {%- end %}
           {%- if failReason != "" %}
-            {{- WebhookRejectOrWarn(ingress, failReason, "Ingress " + ns + "/" + name + " sets 'haproxy-haptic.org/auth-tls-secret: " + secretNs + "/" + secretName + "', but " + failCause + ". Client-certificate verification cannot be configured without a CA bundle, so this route fails closed with 503. Fix the Secret, or remove the mTLS annotations.") -}}
+            {{- recordEvent(ingress, failReason, "Ingress " + ns + "/" + name + " sets 'haproxy-haptic.org/auth-tls-secret: " + secretNs + "/" + secretName + "', but " + failCause + ". Client-certificate verification cannot be configured without a CA bundle, so this route fails closed with 503. Fix the Secret, or remove the mTLS annotations.") -}}
             {%- var blocked, _ = shared.ComputeIfAbsent("hapticMtlsBlockedHosts", func() any { return map[string]any{} }) %}
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}{%- blocked.(map[string]any)[rule.Host] = true %}{%- end %}

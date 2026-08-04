@@ -965,6 +965,55 @@ templateSnippets:
       {%- endfor %}
 ```
 
+### Runtime dependency failure: which controls may fail open (RULE)
+
+Two different questions get confused. This section is about the **second**:
+
+1. **Render time** — an annotation is wrong or a Secret is missing. Covered by
+   the section below (`fail()` vs `WebhookRejectOrWarn`), and the answer there is
+   fail-closed for security controls.
+2. **Request time** — the control's own dependency cannot answer. The SPOA hub
+   is reloading, a plugin timed out, the rate-limit store is unreachable. That
+   is what this rule governs, and the answer is **not** the same.
+
+**A control that cannot answer must fail OPEN unless the failure is a critical
+security error.**
+
+**Critical means: the malfunction is itself an immediate security incident, or it
+threatens business continuity.** Ask what the next hour looks like if the control
+is simply absent.
+
+| Control | If it silently stops working | Posture |
+|---|---|---|
+| Authentication, authorization, mTLS identity | Unauthenticated callers reach customer data. That is a disclosure incident from the first request, and no later fix undoes it. | **DENY** |
+| WAF, rate limiting, request-schema validation | Higher system load, and a risk window a second layer may still cover. Fixed promptly, customers likely never notice. | **ALLOW**, and record it |
+
+**Weigh the harm the control prevents against the harm the denial causes.** For a
+rate limiter the honest comparison is *elevated load* versus *every legitimate
+caller refused*. Failing closed there manufactures a customer-facing outage where
+none existed — we cause the incident we were trying to avoid. For authentication
+there is no comparison to make: the leak is unbounded and irreversible, so
+refusing traffic is strictly the smaller harm.
+
+**Absent is not the same as bypassed.** An attacker who can take the hub down to
+evade the WAF has already achieved more than the evasion. Designing the
+degraded path around them costs every honest caller and buys little.
+
+**Failing open is not failing silently.** Every allowed-because-unavailable
+request sets a `txn.<control>_unavailable` variable, which reaches the access log
+and a counter. A control that is silently not protecting anything is the worst
+outcome of all, and the metric is what stops it being silent. If you add a
+fail-open path without a signal, you have not applied this rule.
+
+**Offer the strict posture, do not impose it.** Operators enforcing a contractual
+cap may genuinely prefer denial. `rateLimit.shared.failClosed` is the shape:
+default open, opt-in strict, both pinned by tests.
+
+Provenance: the shared rate limiter denied on a missing SPOA verdict, so a single
+HAProxy reload returned 429 to a caller who was nowhere near their budget. It was
+documented as deliberate — "fails closed with 429 to avoid a rate-limit bypass" —
+which is how it survived review.
+
 ### Validating watched-resource input: `fail()` vs `WebhookRejectOrWarn`
 
 When a snippet validates a value that came off a **watched resource** (an Ingress
@@ -1016,7 +1065,11 @@ feature:
       client/backend mTLS or TLS-verify, rate limiting, request-body
       validation, `X-Forwarded-For` handling. Silently skipping a security
       control is fail-**open**; hard-fail instead so the misconfiguration is
-      loud. (Root `CLAUDE.md` → "No useless fail-open".) When the library CAN
+      loud. (Root `CLAUDE.md` → "No useless fail-open".) This is the
+      **render-time** rule — a misconfiguration an operator can fix. It does not
+      govern what happens when a control's dependency is unreachable at request
+      time; see "Runtime dependency failure" above, where WAF and rate limiting
+      fail OPEN. When the library CAN
       deny the offending route itself (the WAF `rejectRoute` pattern above),
       prefer that — it is equally fail-closed without the global blast
       radius.

@@ -15,6 +15,7 @@ templateSnippets:
   util-spoa-rate-limit-dispatch:
     template: |
       {% macro DispatchSharedRateLimit(keySpec string) string %}
+      {%- var failClosed = tostring(extraContext | dig("rateLimit", "shared", "failClosed") | fallback(false)) == "true" %}
       {#- Build <ns>/<name>|<dimension>. Consumer mode uses the identity set by
           native API-key/JWT backend rules and falls back to source IP when the
           route has no authenticated identity. -#}
@@ -24,17 +25,27 @@ templateSnippets:
       {%- end %}
       http-request set-var(txn.rl_key) var(txn.resource_id),concat(|,txn.rl_dim) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }
       http-request send-spoe-group spoa-hub check-ratelimit-group if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }
-      {#- Missing verdicts can happen if the hub/plugin is unavailable or times
-          out. An explicitly limited route fails closed so overload cannot
-          bypass the budget. The plugin's fail_open setting still controls
-          malformed-rule handling inside the plugin. -#}
-      {#- txn.denied_by attributes the 429 in the access log. Three different
-          things produce a 429 here — the shared limiter, the fail-closed path
-          when no verdict arrived, and a stick-table limiter elsewhere — and
-          telling them apart matters: one means a client hit its budget, another
-          means the hub is down and legitimate traffic is being shed. -#}
+      {#- No verdict means the hub or plugin could not answer — a reload, a
+          restart, a timeout. The request is ALLOWED: a rate limit protects the
+          origin from abuse, and turning an internal blip into 429s sheds
+          legitimate traffic for a reason the client cannot act on. Denying only
+          on an actual over-budget verdict keeps the limiter's job and drops the
+          self-inflicted outage.
+
+          rateLimit.shared.failClosed flips this for operators enforcing a
+          contractual cap, where letting a caller past the budget is worse than
+          refusing them. Off by default.
+
+          Either way the event is recorded: txn.rate_limit_degraded reaches the access
+          log and haptic_degraded_total{control}, so a limiter that is silently not
+          limiting is visible. Deliberately NOT denied_by, and deliberately its
+          own variable: a shared one is overwritten when several controls degrade
+          in the same request, which is exactly when the signal matters most. -#}
+      http-request set-var(txn.rate_limit_degraded) str(1) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }
+      {%- if failClosed %}
       http-request set-var(txn.denied_by) str(rate_limit_shared_unavailable) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }
       http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }
+      {%- end %}
       http-request set-var(txn.denied_by) str(rate_limit_shared) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.allowed) -m bool }
       http-request deny deny_status 429 hdr Retry-After %[var(txn.hub.rate_limit.retry_after)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.allowed) -m bool }
       {#- http-after-response also covers HAProxy's internally generated 429. -#}
@@ -337,15 +348,32 @@ templateSnippets:
       http-request set-var(txn.coraza_body_complete) bool(true) if { var(txn.coraza_body_mode) -m str buffered } { var(txn.coraza_detect_only) -m bool } { req.hdr(Content-Length) -m found }
       http-request set-var(txn.coraza_body_complete) bool(true) if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool }
       http-request send-spoe-group spoa-hub check-request-group if { var(txn.coraza_active) -m bool }
-      {#- Hub admission and plugin engine failures fail closed in both enforce
-          and detect modes. Detect-only coercion happens inside Coraza only for
-          completed rule decisions, never for infrastructure errors. -#}
+      {#- Hub admission and plugin engine failures ALLOW the request and record
+          it. A WAF reduces risk; it does not establish identity, so a blip in
+          our own sidecar must not 503 callers who did nothing wrong — see
+          "Runtime dependency failure" in charts/CLAUDE.md. Detect-only coercion
+          happens inside Coraza only for completed rule decisions, never for
+          infrastructure errors.
+
+          waf.failClosed restores the 503 for operators who would rather refuse
+          traffic than let it past uninspected. Off by default.
+
+          Either way txn.waf_degraded is set, so an uninspecting WAF shows up in
+          the access log and in haptic_degraded_total{control} rather than
+          looking healthy. Its own variable, not a shared one: see the rate
+          limiter above. -#}
+      {%- var wafFailClosed = tostring(extraContext | dig("waf", "failClosed") | fallback(false)) == "true" %}
+      http-request set-var(txn.waf_degraded) str(1) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m found }
+      http-request set-var(txn.waf_degraded) str(1) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m str ok }
+      http-request set-var(txn.waf_degraded) str(1) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.action) -m found }
+      {%- if wafFailClosed %}
       http-request set-var(txn.denied_by) str(waf_unavailable) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m found }
       http-request return status 503 if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m found }
       http-request set-var(txn.denied_by) str(waf_unavailable) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m str ok }
       http-request return status 503 if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m str ok }
       http-request set-var(txn.denied_by) str(waf_unavailable) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.action) -m found }
       http-request return status 503 if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.action) -m found }
+      {%- end %}
       http-request set-var(txn.denied_by) str(waf_status_400) if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.status) -m int 400 }
       http-request return status 400 if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.status) -m int 400 }
       http-request set-var(txn.denied_by) str(waf_status_413) if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.status) -m int 413 }
