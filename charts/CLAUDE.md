@@ -976,18 +976,28 @@ Two different questions get confused. This section is about the **second**:
    is reloading, a plugin timed out, the rate-limit store is unreachable. That
    is what this rule governs, and the answer is **not** the same.
 
-**A control that cannot answer must fail OPEN unless it is authentication.**
+**A control that cannot answer must fail OPEN unless the failure is a critical
+security error.**
 
-| Control | On dependency failure | Why |
+**Critical means: the malfunction is itself an immediate security incident, or it
+threatens business continuity.** Ask what the next hour looks like if the control
+is simply absent.
+
+| Control | If it silently stops working | Posture |
 |---|---|---|
-| Authentication, authorization, mTLS identity | **DENY** | Serving a request whose caller was never identified is the breach itself. There is no degraded mode. |
-| WAF, rate limiting, request-schema validation | **ALLOW**, and record it | These reduce risk; they do not establish identity. Denying on an internal blip converts our own reload into an outage for callers who did nothing wrong and cannot act on the response. |
+| Authentication, authorization, mTLS identity | Unauthenticated callers reach customer data. That is a disclosure incident from the first request, and no later fix undoes it. | **DENY** |
+| WAF, rate limiting, request-schema validation | Higher system load, and a risk window a second layer may still cover. Fixed promptly, customers likely never notice. | **ALLOW**, and record it |
 
-**The asymmetry is the point.** A missed WAF inspection is a risk window that a
-second layer may still catch. A missed authentication check is an authenticated
-session that never happened. Rate limiting protects the origin from abuse — an
-attacker who can take the hub down has already achieved more than the bypass,
-while every legitimate caller pays for the blip.
+**Weigh the harm the control prevents against the harm the denial causes.** For a
+rate limiter the honest comparison is *elevated load* versus *every legitimate
+caller refused*. Failing closed there manufactures a customer-facing outage where
+none existed — we cause the incident we were trying to avoid. For authentication
+there is no comparison to make: the leak is unbounded and irreversible, so
+refusing traffic is strictly the smaller harm.
+
+**Absent is not the same as bypassed.** An attacker who can take the hub down to
+evade the WAF has already achieved more than the evasion. Designing the
+degraded path around them costs every honest caller and buys little.
 
 **Failing open is not failing silently.** Every allowed-because-unavailable
 request sets a `txn.<control>_unavailable` variable, which reaches the access log

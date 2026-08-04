@@ -851,6 +851,12 @@ validationTests:
                   paths:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
+      # Admission must NOT reject. The webhook renders against the
+      # watched-resource store, which lags the API server, so a Secret created
+      # moments earlier is indistinguishable from one that is missing — this
+      # denied correct manifests applied in the correct order. The runtime 503
+      # below is the protection, and it self-heals when the store catches up.
+      - type: haproxy_valid
       - type: contains
-        target: rendering_error
-        pattern: "fails closed with 503"
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 503"

@@ -718,7 +718,7 @@ templateSnippets:
           {%- else %}
             {#- No resolvable Secret means no userlist, and emitting nothing left
                 the backend serving every request unauthenticated. -#}
-            {{- WebhookRejectOrWarn(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-ingress.github.io/auth-secret', but that Secret could not be resolved. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
+            {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-ingress.github.io/auth-secret', but that Secret could not be resolved. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
       # WARNING haproxy-ingress/auth-secret: Secret not resolvable for {{ key }}; failing closed (503) until it is present.
       http-request set-var(txn.denied_by) str(basic_auth_unavailable)
       http-request deny deny_status 503
