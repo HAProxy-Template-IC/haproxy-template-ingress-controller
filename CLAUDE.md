@@ -86,15 +86,22 @@ was wrong, and that is what got fixed.
 **The default is no comment.** A comment is a liability: it rots and it is re-read on
 every visit.
 
-Comment length is **not** a size lever: `haptic.stripSnippetComments` and
-`haptic.filterTests` (`templates/_libraries.tpl`) already strip Scriggo comments and
-validationTest `description` fields before anything is rendered, so 120 KB of source
-comments cost the rendered objects 665 bytes. Write short comments because long ones
-are a reading tax and rot faster — not to save bytes. What fills an object is template
-*code* and validationTest *fixtures and assertions*, and both size ceilings are gated
-in `make lint-chart` (`cr-size-check` per object, `chart-size-check` for the Helm
-release Secret) — so if size is genuinely the concern, read the gate's output rather
-than shortening a comment.
+**Size is not the argument, in either direction.** Keep comments short because a long
+one is a reading tax and rots faster — never to make a byte gate pass, and never
+because a gate has room. A comment that earns its place is worth its bytes; one that
+does not is dead weight at any size, and deleting it is the fix whether or not
+anything is measuring. If size is genuinely the concern, read the gate's output
+(`cr-size-check` per object, `chart-size-check` for the Helm release Secret, both in
+`make lint-chart`) and act on what it actually names. Prose is never the lever that
+rescues an overrun: an object close enough to a ceiling that comments decide it is
+one structural change behind schedule, and shortening comments to buy room only
+hides that a release earlier.
+
+Do not reason about comment cost from whatever the chart currently strips before
+rendering. That has changed more than once, it differs by section, and a rule that
+depends on it is wrong the day it changes. `haptic.filterTests` drops validationTest
+`description` fields; nothing else about the pipeline should enter a decision about
+what to write.
 
 **Delete the comment, fix the code.** Each of these has a refactor, not a comment:
 
