@@ -756,3 +756,40 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: 'log-format "[^"]*%\(mtls_cn\)[^"]*%\(mtls_cn\)'
+
+  test-nginx-ingress-pass-certificate-cannot-be-forged:
+    description: >-
+      auth-tls-pass-certificate-to-upstream sets ssl-client-cert and
+      ssl-client-subject-dn under a host match, so a wildcard or host-less rule
+      left the caller's own values reaching the backend. The strip is
+      unconditional; the set is scoped to the matched route.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: nx-passcert
+            annotations:
+              nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: "*.nx-cert.example.com"
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request del-header ssl-client-cert\n'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request del-header ssl-client-subject-dn\n'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'del-header ssl-client-[a-z-]+ if'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-header ssl-client-cert %\[ssl_c_der,base64\] if \{ var\(txn\.resource_id\) -m str default/nx-passcert \}'

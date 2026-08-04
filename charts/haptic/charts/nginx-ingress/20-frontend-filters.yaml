@@ -171,22 +171,31 @@ templateSnippets:
     template: |
       {#- auth-tls-error-page lives in features-150 (map-driven, reload-free); only
           cert passthrough belongs here. -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
+      {#- Strip unconditionally, and never host-scoped: a wildcard or host-less
+          rule made the old exact host gate miss entirely, leaving the caller's
+          own header to reach an application this annotation tells to trust it.
+          A missed set is fail-closed; a missed strip is forgery. -#}
+      {%- var anyPassCert = false %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true" %}
+          {%- anyPassCert = true %}{%- break %}
+        {%- end %}
+      {%- end %}
+      {%- if anyPassCert %}
+      # nginx-ingress/auth-tls-pass-certificate-to-upstream — drop client-supplied copies
+      http-request del-header ssl-client-cert
+      http-request del-header ssl-client-subject-dn
+      {%- end %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
           {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-            {%- var cond = HostMatchCondition(hosts) %}
+            {%- var cond = ResourceMatchCondition([]string{key}) %}
       # nginx-ingress/auth-tls-pass-certificate-to-upstream ({{ key }})
       http-request set-header ssl-client-cert %[ssl_c_der,base64] if {{ cond }}
       http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if {{ cond }}
-            {%- end %}
           {%- end %}
       {%- end -%}
 

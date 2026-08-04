@@ -226,31 +226,32 @@ templateSnippets:
   # resulting ACL names.
   util-emit-annotation-access-control:
     template: |
-      {%- import "util-ingress-helpers" for HostMatchCondition %}
+      {%- import "util-ingress-helpers" for ResourceMatchCondition %}
       {%- import "util-validate-cidr-list" for ValidateCidrList %}
+      {#- Scoped by matched route, not by Host header. A wildcard rule host never
+          equals a concrete request host and a host-less rule has nothing to
+          match, so the previous exact host gate dropped the deny entirely and
+          served the route to every source address. -#}
       {%- macro EmitAnnotationAccessControl(ingress *resources.ingresses.T, allowAnnotation string, denyAnnotation string, aclPrefix string, allowCommentFmt string, denyCommentFmt string) %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var hosts = []string{} %}
-        {%- for _, rule := range ingress.Spec.Rules %}
-          {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-        {%- end %}
+        {%- var cond = ResourceMatchCondition([]string{key}) %}
         {%- var allowlist = ingress.Metadata.Annotations[allowAnnotation] %}
         {%- var denylist = ingress.Metadata.Annotations[denyAnnotation] %}
-        {%- if allowlist != "" && len(hosts) > 0 %}
+        {%- if allowlist != "" %}
           {%- var aclName = aclPrefix + "_allowlist_" + ns + "_" + name %}
       # {{ replace(allowCommentFmt, "{KEY}", key) }}
       acl {{ aclName }} src {{ ValidateCidrList(allowlist, allowAnnotation, key) }}
 
-      http-request deny if {{ HostMatchCondition(hosts) }} !{{ aclName }}
+      http-request deny if {{ cond }} !{{ aclName }}
         {%- end %}
-        {%- if denylist != "" && len(hosts) > 0 %}
+        {%- if denylist != "" %}
           {%- var aclName = aclPrefix + "_denylist_" + ns + "_" + name %}
       # {{ replace(denyCommentFmt, "{KEY}", key) }}
       acl {{ aclName }} src {{ ValidateCidrList(denylist, denyAnnotation, key) }}
 
-      http-request deny if {{ HostMatchCondition(hosts) }} {{ aclName }}
+      http-request deny if {{ cond }} {{ aclName }}
         {%- end %}
       {%- end macro %}
 

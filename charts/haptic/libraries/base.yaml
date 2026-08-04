@@ -114,6 +114,35 @@ templateSnippets:
         %%}
       {% end %}
 
+      {#- Scopes a rule to the resources that declared it, by the route actually
+          matched rather than by the Host header. Prefer this over
+          HostMatchCondition for anything ENFORCING (a deny, an auth gate, an
+          identity-header strip): a Kubernetes wildcard rule host never equals a
+          concrete request host, so an exact host match silently does not fire,
+          and a rule with no host at all cannot be expressed as a host match in
+          the first place. Both cases leave the enforcement absent while the
+          route keeps serving.
+
+          Takes `<namespace>/<name>` ids. txn.resource_id is set by the routing
+          logic, which runs before frontend-filters-*, and is unset when nothing
+          matched — so a request that reached no route matches no rule, which is
+          what you want. -#}
+      {% macro ResourceMatchCondition(resourceIds []string) string %}
+        {%%
+          if len(resourceIds) <= 30 {
+            show "{ var(txn.resource_id) -m str " + join(resourceIds, " ") + " }"
+          } else {
+            var content = join(resourceIds, "\n") + "\n"
+            var filename = "resource-match-" + md5(content) + ".lst"
+            var path, err = fileRegistry.Register("file", filename, content)
+            if err != nil {
+              fail("Failed to register resource match file '" + filename + "': " + err.Error())
+            }
+            show "{ var(txn.resource_id) -m str -f " + path + " }"
+          }
+        %%}
+      {% end %}
+
   # ============================================================================
   # Access log (structured JSON)
   #

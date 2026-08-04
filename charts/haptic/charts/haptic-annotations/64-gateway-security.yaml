@@ -133,7 +133,7 @@ templateSnippets:
         Generated HAProxy Config (host-scoped):
           http-request deny deny_status 405 if <host-match> !{ method <M1> <M2> ... }
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -150,14 +150,11 @@ templateSnippets:
                 {%- methods = append(methods, m) %}
               {%- end %}
             {%- end %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(methods) > 0 && len(hosts) > 0 %}
+            {%- if len(methods) > 0 %}
+            {%- var cond = ResourceMatchCondition([]string{key}) %}
       # haptic/allowed-methods ({{ key }})
-      http-request set-var(txn.denied_by) str(method_not_allowed) if {{ HostMatchCondition(hosts) }} !{ method {{ methods | toStringSlice() | join(" ") }} }
-      http-request deny deny_status 405 if {{ HostMatchCondition(hosts) }} !{ method {{ methods | toStringSlice() | join(" ") }} }
+      http-request set-var(txn.denied_by) str(method_not_allowed) if {{ cond }} !{ method {{ methods | toStringSlice() | join(" ") }} }
+      http-request deny deny_status 405 if {{ cond }} !{ method {{ methods | toStringSlice() | join(" ") }} }
             {%- end %}
           {%- end %}
       {%- end -%}
@@ -183,7 +180,7 @@ templateSnippets:
         Generated HAProxy Config (host-scoped):
           http-request return status 415 if <host-match> { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg <t1> <t2> ... }
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -200,14 +197,11 @@ templateSnippets:
                 {%- types = append(types, ct) %}
               {%- end %}
             {%- end %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(types) > 0 && len(hosts) > 0 %}
+            {%- if len(types) > 0 %}
+            {%- var cond = ResourceMatchCondition([]string{key}) %}
       # haptic/require-content-type ({{ key }})
-      http-request set-var(txn.denied_by) str(content_type) if {{ HostMatchCondition(hosts) }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ types | toStringSlice() | join(" ") }} }
-      http-request return status 415 if {{ HostMatchCondition(hosts) }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ types | toStringSlice() | join(" ") }} }
+      http-request set-var(txn.denied_by) str(content_type) if {{ cond }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ types | toStringSlice() | join(" ") }} }
+      http-request return status 415 if {{ cond }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ types | toStringSlice() | join(" ") }} }
             {%- end %}
           {%- end %}
       {%- end -%}
@@ -227,7 +221,7 @@ templateSnippets:
         Generated HAProxy Config (host-scoped):
           http-request deny deny_status 400 if <host-match> !{ req.hdr(<H>) -m found }
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -245,13 +239,9 @@ templateSnippets:
                 {%- hdrs = append(hdrs, hn) %}
               {%- end %}
             {%- end %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hdrs) > 0 && len(hosts) > 0 %}
+            {%- if len(hdrs) > 0 %}
       # haptic/require-headers ({{ key }})
-              {%- var cond = HostMatchCondition(hosts) %}
+              {%- var cond = ResourceMatchCondition([]string{key}) %}
               {%- for _, hn := range hdrs %}
       http-request set-var(txn.denied_by) str(required_header) if {{ cond }} !{ req.hdr({{ tostring(hn) }}) -m found }
       http-request deny deny_status 400 if {{ cond }} !{ req.hdr({{ tostring(hn) }}) -m found }

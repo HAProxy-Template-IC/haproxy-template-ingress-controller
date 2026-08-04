@@ -20,28 +20,26 @@ templateSnippets:
         Generated HAProxy Config:
           option forwardfor [header <name>] [if-none]
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
           {%- var forwardfor = ingress.Metadata.Annotations["haproxy-ingress.github.io/forwardfor"] %}
           {%- if forwardfor != "" && forwardfor != "ignore" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
+            {#- Scoped by matched route: the previous exact host gate emitted
+                nothing for a wildcard or host-less rule, so a client-supplied
+                X-Forwarded-For reached the backend unmodified. -#}
+            {%- var xffCond = ResourceMatchCondition([]string{key}) %}
       # haproxy-ingress/forwardfor ({{ key }})
               {%- if forwardfor == "ifmissing" %}
-      http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found } {{ HostMatchCondition(hosts) }}
+      http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found } {{ xffCond }}
               {%- else if forwardfor == "update" %}
-      http-request set-header X-Forwarded-For %[src] if {{ HostMatchCondition(hosts) }}
+      http-request set-header X-Forwarded-For %[src] if {{ xffCond }}
               {%- else %}
                 {#- "add" is the default behavior #}
-      http-request add-header X-Forwarded-For %[src] if {{ HostMatchCondition(hosts) }}
+      http-request add-header X-Forwarded-For %[src] if {{ xffCond }}
               {%- end %}
-            {%- end %}
           {%- end %}
       {%- end -%}
 
@@ -278,23 +276,36 @@ templateSnippets:
         haproxy-ingress cert-passthrough set-headers (X-SSL-Client-{CN,DN,Cert}),
         which compose with the nginx-ingress equivalents at 790.
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
+      {#- Strip unconditionally, and never host-scoped. The set below fires only
+          when a client certificate is present and only for this route, so
+          without this a request with no certificate — plain HTTP, or HTTPS where
+          the client presented none — carried the caller's own header straight
+          through to the application that this annotation tells to trust it. A
+          wildcard or host-less rule made the old exact host gate miss entirely.
+          A missed set is fail-closed; a missed strip is forgery. -#}
+      {%- var anyCertHeader = false %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-cert-header"] == "true" %}
+          {%- anyCertHeader = true %}{%- break %}
+        {%- end %}
+      {%- end %}
+      {%- if anyCertHeader %}
+      # haproxy-ingress/auth-tls-cert-header — drop client-supplied identity headers
+      http-request del-header X-SSL-Client-CN
+      http-request del-header X-SSL-Client-DN
+      http-request del-header X-SSL-Client-Cert
+      {%- end %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
           {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-cert-header"] == "true" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-            {%- var cond = HostMatchCondition(hosts) %}
+            {%- var cond = ResourceMatchCondition([]string{key}) %}
       # haproxy-ingress/auth-tls-cert-header ({{ key }})
       http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } {{ cond }}
       http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } {{ cond }}
       http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } {{ cond }}
-            {%- end %}
           {%- end %}
       {%- end -%}
   log-fields-630-haproxy-ingress-mtls:
