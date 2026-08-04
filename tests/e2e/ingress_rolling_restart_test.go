@@ -51,7 +51,7 @@ import (
 //     single fast-fail 503 that ADR-0013 accepts as a bounded residual.
 //
 // The bug this guards against:
-//   - charts/haptic/libraries/base.yaml builds the HAProxy backend by
+//   - charts/haptic/charts/base/library.yaml builds the HAProxy backend by
 //     iterating slice.Endpoints[].Addresses with no conditions check.
 //     During a rolling restart the EndpointSlice for the Service
 //     transiently contains the new pod with conditions.ready=false (its

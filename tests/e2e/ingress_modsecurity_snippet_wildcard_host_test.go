@@ -37,7 +37,7 @@ import (
 // `*.example.com<path>` — no match, no dispatch, no enforcement.
 //
 // All `<host><path>`-keyed map populations now go through
-// `MapKeyForHost` (charts/haptic/libraries/ingress.yaml's
+// `MapKeyForHost` (charts/haptic/charts/ingress/library.yaml's
 // util-ingress-host-key snippet) so wildcard hosts produce the same
 // suffix-form key as host.map. This test pins that contract by
 // exercising it end-to-end through the per-app WAF path.

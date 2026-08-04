@@ -100,7 +100,7 @@ cfg="$(k exec "$hp" -c haproxy -- cat /etc/haproxy/haproxy.cfg 2>/dev/null || tr
 [ -n "$cfg" ] || fail "could not read haproxy.cfg"
 
 # `default-path origin` is emitted only by the base library's rendered global
-# section (charts/haptic/libraries/base.yaml), so its presence distinguishes a
+# section (charts/haptic/charts/base/library.yaml), so its presence distinguishes a
 # HAPTIC render from the image's bootstrap config.
 grep -q "default-path origin" <<<"$cfg" \
   || { printf '%s\n' "$cfg" | head -40; fail "haproxy.cfg is not a HAPTIC render (no 'default-path origin') — the stub is being served"; }

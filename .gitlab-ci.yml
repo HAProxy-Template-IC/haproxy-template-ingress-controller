@@ -895,9 +895,9 @@ build-playground-wasm:
         # them touched any of the files above. Listed individually
         # rather than `charts/**` so unrelated chart docs / values
         # changes don't pay the ~10-minute test-e2e cost.
-        - charts/haptic/libraries/base.yaml
-        - charts/haptic/libraries/ssl.yaml
-        - charts/haptic/libraries/ingress.yaml
+        - charts/haptic/charts/base/library.yaml
+        - charts/haptic/charts/ssl/library.yaml
+        - charts/haptic/charts/ingress/library.yaml
         - charts/haptic/charts/gateway/**/*
         - charts/haptic/charts/haproxytech/**/*
         - charts/haptic/charts/haproxy-ingress/**/*
@@ -906,7 +906,7 @@ build-playground-wasm:
         # with its own e2e shard — omitting it left those shards not
         # running for the very changes they cover (#106's fix, !1522).
         - charts/haptic/charts/haptic-annotations/**/*
-        - charts/haptic/libraries/spoa-hub/**/*
+        - charts/haptic/charts/spoa-hub/**/*
         - charts/haptic/values.yaml
         - charts/haptic/templates/_helpers.tpl
         - charts/haptic/templates/haproxytemplateconfig.yaml
@@ -933,9 +933,9 @@ build-playground-wasm:
 .rules-spoa-chart:
   rules:
     - changes:
-        - charts/haptic/libraries/base.yaml
-        - charts/haptic/libraries/ssl.yaml
-        - charts/haptic/libraries/ingress.yaml
+        - charts/haptic/charts/base/library.yaml
+        - charts/haptic/charts/ssl/library.yaml
+        - charts/haptic/charts/ingress/library.yaml
         # `gateway` is a split-library directory (per ADR-0008); the
         # legacy `gateway.yaml` file no longer exists. The glob covers
         # every fragment and any future tests/ subdir, so chart-only
@@ -949,7 +949,7 @@ build-playground-wasm:
         # with its own e2e shard — omitting it left those shards not
         # running for the very changes they cover (#106's fix, !1522).
         - charts/haptic/charts/haptic-annotations/**/*
-        - charts/haptic/libraries/spoa-hub/**/*
+        - charts/haptic/charts/spoa-hub/**/*
         - charts/haptic/values.yaml
         - charts/haptic/templates/_helpers.tpl
         - charts/haptic/templates/haproxytemplateconfig.yaml
@@ -1872,7 +1872,7 @@ test-vector-spans:
     - if: $SCHEDULE_KIND == "nightly"
     - changes:
         - charts/haptic/charts/vector/library.yaml
-        - charts/haptic/libraries/base.yaml
+        - charts/haptic/charts/base/library.yaml
         - scripts/test-vector-spans.sh
         - .gitlab-ci.yml
   script:
@@ -1915,7 +1915,7 @@ test-chart-upgrade:
         - charts/haptic/crds/**/*
         - charts/haptic/values.yaml
         - charts/haptic/Chart.yaml
-        - charts/haptic/libraries/**/*
+        - charts/haptic/charts/**/*
         - cmd/controller/applycrds.go
         - pkg/webhook/**/*
         - pkg/controller/webhook/**/*
@@ -1957,7 +1957,7 @@ test-install-without-gateway-api:
         - charts/haptic/crds/**/*
         - charts/haptic/values.yaml
         - charts/haptic/Chart.yaml
-        - charts/haptic/libraries/**/*
+        - charts/haptic/charts/**/*
         - cmd/controller/applycrds.go
         - pkg/webhook/**/*
         - pkg/controller/webhook/**/*

@@ -29,7 +29,7 @@ except Exception as e:
     echo "$err" | sed 's/^/    /'
     fail=1
   fi
-done < <(find charts/haptic/libraries charts/haptic/charts -name '*.yaml' -type f | sort)
+done < <(find charts/haptic/charts -name '*.yaml' -type f | sort)
 
 if [ "$fail" -ne 0 ]; then
   echo ""

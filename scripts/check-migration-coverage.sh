@@ -33,7 +33,7 @@ export LC_ALL=C
 cd "$(dirname "$0")/.."
 
 CHARTS=charts/haptic/charts
-COMPAT_LIB=charts/haptic/libraries/ingress-annotations-compat.yaml
+COMPAT_LIB=charts/haptic/charts/ingress-annotations-compat/library.yaml
 FAILED=0
 
 # The CORS suffixes read dynamically by util-emit-annotation-cors as

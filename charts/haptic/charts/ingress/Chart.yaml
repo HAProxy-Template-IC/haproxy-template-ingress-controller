@@ -1,0 +1,4 @@
+apiVersion: v2
+name: ingress
+description: Kubernetes Ingress support library. Carries only library YAML; the parent chart merges it into the HAProxyTemplateConfig.
+version: 0.1.0

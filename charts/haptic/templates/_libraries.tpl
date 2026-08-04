@@ -49,7 +49,8 @@ than being replaced, and is library-declared only.
 {{- end }}
 
 {{/*
-Library merging — the chart-time loader for charts/haptic/libraries/*.yaml.
+Library merging — the chart-time loader for the library subcharts under
+charts/haptic/charts/.
 
 Each library file declares its loading rules in a top-level `_helm_load:` block
 (enable predicate, optional injects, optional unsets). The loader iterates a
@@ -206,39 +207,41 @@ Returns: empty (mutates obj by side effect)
 {{/*
 Deep merge template libraries.
 
-Each entry in `$libraryFiles` is either:
-  - A flat-file path like "libraries/base.yaml" (the original convention).
-  - A directory path ending in "/" like "libraries/gateway/" — a "split
-    library" whose contents are spread across multiple fragment files.
-    `_index.yaml` carries the load rules (`_helm_load`); fragments at the
-    same level (and one level deep) merge into the library accumulator
-    in lexicographic order before any inject / unset / strip / merge
-    happens. Fragments must NOT carry their own `_helm_load` — the
-    convention is `_index.yaml`-owns-load-rules, fragments-own-content.
-    See ADR-0008.
+Every entry in `$libraryFiles` is a "subchart:<name>" today. A subchart holding
+a single library.yaml is read directly; one holding an `_index.yaml` is a "split
+library" whose contents are spread across fragment files: `_index.yaml` carries
+the load rules (`_helm_load`), and fragments at the same level (and one level
+deep) merge into the library accumulator in lexicographic order before any
+inject / unset / strip / merge happens. Fragments must NOT carry their own
+`_helm_load` — the convention is `_index.yaml`-owns-load-rules,
+fragments-own-content. See ADR-0008.
+
+The loader also still accepts a flat path ("libraries/x.yaml") and a split
+directory ("libraries/x/") in the parent chart. No library uses either since the
+subchart move; they are kept so a library can be added without a subchart, at
+the cost of its source being stored in the release Secret.
 */}}
 {{- define "haptic.mergeLibraries" -}}
 {{- $merged := dict }}
 {{- $migrationCoverage := list }}
 {{- $context := . }}
-{{- /* Each entry is a core path under the parent's libraries/ (base, ssl,
-       ingress — always present) or "subchart:<name>" — a conditional subchart
-       whose library YAML the parent reads via .Subcharts.<name>.Files. A
-       disabled subchart is pruned from the release Secret, so .Subcharts.<name>
-       is absent and the entry is skipped. A subchart with a single library.yaml
-       is read directly; one with an _index.yaml is a split-library (fragments
-       merged in lexicographic order, same as the old split-dir convention). */ -}}
+{{- /* Each entry is "subchart:<name>" — a subchart whose library YAML the
+       parent reads via .Subcharts.<name>.Files. A subchart disabled by its
+       `condition:` is pruned from the release Secret, so .Subcharts.<name> is
+       absent and the entry is skipped. A subchart with a single library.yaml is
+       read directly; one with an _index.yaml is a split-library (fragments
+       merged in lexicographic order). The order below IS the merge order. */ -}}
 {{- $libraryFiles := list
-    "libraries/base.yaml"
-    "libraries/ssl.yaml"
-    "libraries/ingress.yaml"
+    "subchart:base"
+    "subchart:ssl"
+    "subchart:ingress"
     "subchart:gateway"
-    "libraries/ingress-annotations-compat.yaml"
+    "subchart:ingress-annotations-compat"
     "subchart:haptic-annotations"
     "subchart:haproxytech"
     "subchart:haproxy-ingress"
     "subchart:nginx-ingress"
-    "libraries/spoa-hub/"
+    "subchart:spoa-hub"
     "subchart:vector"
 }}
 {{- /* vector is last on purpose: it contributes only its own `files:` entry (the

@@ -175,7 +175,7 @@ HAPTIC applies one cipher and protocol policy to every HTTPS bind, through the t
 To pin or change the policy, set the sub-keys under `extraContext.tls`:
 
 <!-- The cipher/ciphersuite defaults below mirror the chart default in
-     charts/haptic/libraries/ssl.yaml (extraContext.tls). Keep them in sync. -->
+     charts/haptic/charts/ssl/library.yaml (extraContext.tls). Keep them in sync. -->
 
 ```yaml
 controller:
