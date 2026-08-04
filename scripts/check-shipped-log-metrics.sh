@@ -11,8 +11,8 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART="$REPO/charts/haptic"
 
-emitted="$(grep -rhoE 'set-var\(txn\.denied_by\) str\([a-z_]+\)' "$CHART" \
-  | grep -oE 'str\([a-z_]+\)' | sed 's/str(//; s/)//' | sort -u)"
+emitted="$(grep -rhoE 'set-var\(txn\.denied_by\) str\([a-z0-9_]+\)' "$CHART" \
+  | grep -oE 'str\([a-z0-9_]+\)' | sed 's/str(//; s/)//' | sort -u)"
 
 declared="$(python3 -c '
 import sys, yaml
