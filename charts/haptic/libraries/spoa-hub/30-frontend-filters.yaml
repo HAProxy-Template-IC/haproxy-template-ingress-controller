@@ -137,6 +137,9 @@ templateSnippets:
       -#}
       {%- var messages = toStringSlice(extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{})) %}
       {%- if messages contains "check-ratelimit" %}
+      {#- Why a verdict was missing, from the SPOE engine itself (option
+          set-on-error). Empty on a healthy request; omitEmptyLogFields drops it. -#}
+      %(spoe_error)[var(txn.hub.error)]
       %(rate_limit_allowed)[var(txn.hub.rate_limit.allowed)]
       %(rate_limit_remaining)[var(txn.hub.rate_limit.remaining)]
       {%- end %}

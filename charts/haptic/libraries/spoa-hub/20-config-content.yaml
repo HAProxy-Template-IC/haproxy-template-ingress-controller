@@ -267,6 +267,15 @@ templateSnippets:
             {%- end %}
       {%- end %}
           option var-prefix       hub
+          {#- Without this a missing verdict carries no cause: the config cannot
+              tell an engine error (connect refused, timeout, agent gone) from a
+              plugin that simply returned nothing, and both look identical at the
+              `!{ var(txn.hub.<x>.allowed) -m found }` check every control uses.
+              set-on-error sets txn.hub.error, which the access log carries, so
+              the next missing verdict says WHY instead of only that it happened.
+              Named after the variable, not the failure: it is the agent's own
+              error flag. -#}
+          option set-on-error     error
           option pipelining
           option async
           timeout hello      {{ extraContext | dig("spoaHub", "haproxy", "timeoutHello") | fallback("2s") }}
