@@ -52,7 +52,7 @@ import (
 // Sizing arithmetic (why the defaults yield a 10k+ line haproxy.cfg): every
 // Ingress backend renders as its own `backend <ns>_<name>_svc_<svc>_<port>`
 // stanza (the chart's first_seen dedup keys on the INGRESS name, not the
-// Service — see charts/haptic/libraries/ingress.yaml util-generate-backends-
+// Service — see charts/haptic/charts/ingress/library.yaml util-generate-backends-
 // ingress), containing a comment line, the backend + guid lines, a
 // default-server line, and 10 server-slot lines (base.yaml's util-backend-
 // servers default `slots = 10`): >= 14 lines per Ingress. 20 namespaces x 40
@@ -507,7 +507,7 @@ func TestScale(t *testing.T) {
 }
 
 // ingressBackendMarker is the chart-emitted backend-name prefix for an
-// Ingress (see BackendNameIngress in charts/haptic/libraries/ingress.yaml:
+// Ingress (see BackendNameIngress in charts/haptic/charts/ingress/library.yaml:
 // `<ns>_<ingressName>_svc_<service>_<portId>`). Matching on the prefix keeps
 // the marker independent of port-name resolution details.
 func ingressBackendMarker(namespace, ingressName string) string {

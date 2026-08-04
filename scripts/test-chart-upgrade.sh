@@ -373,8 +373,8 @@ cp -r "$CHART" "$WORK/broken-chart"
 # helm-unittest fixture that is never rendered — and libraries an operator can
 # disable. Corrupting one of those makes the upgrade legitimately succeed and
 # this suite report a gate failure that did not happen.
-BROKEN_LIB="$WORK/broken-chart/libraries/base.yaml"
-[ -f "$BROKEN_LIB" ] || fail "libraries/base.yaml not found — this suite corrupts it deliberately"
+BROKEN_LIB="$WORK/broken-chart/charts/base/library.yaml"
+[ -f "$BROKEN_LIB" ] || fail "charts/base/library.yaml not found — this suite corrupts it deliberately"
 
 # A template that cannot compile. The gate must catch this; if the upgrade
 # succeeds, HAPTIC shipped an unrenderable config to a live fleet.

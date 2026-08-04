@@ -1,0 +1,4 @@
+apiVersion: v2
+name: spoa-hub
+description: SPOA hub sidecar wiring library. Carries only library YAML; the parent chart merges it into the HAProxyTemplateConfig.
+version: 0.1.0

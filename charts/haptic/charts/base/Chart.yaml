@@ -1,0 +1,4 @@
+apiVersion: v2
+name: base
+description: Core library — the HAProxy config template, global/defaults sections, and the shared snippet extension points. Carries only library YAML; the parent chart merges it into the HAProxyTemplateConfig.
+version: 0.1.0
