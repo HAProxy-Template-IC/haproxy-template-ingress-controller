@@ -87,6 +87,7 @@ templateSnippets:
   # ==========================================================================
   backend-directives-805-haptic-jwt:
     template: |
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#-
         HAPTIC JWT auth.
 
@@ -117,6 +118,20 @@ templateSnippets:
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var key = ns + "/" + ingress.Metadata.Name %}
         {%- var jwtSecret = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-secret"] %}
+        {#- Without the key every other jwt-* annotation is inert, so the route
+            was served with no token verification at all. -#}
+        {%- if jwtSecret == "" %}
+          {%- var jwtIntent = "" %}
+          {%- for _, a := range []string{"jwt-issuer", "jwt-audience", "jwt-required-claims", "jwt-forward-claims", "jwt-algorithm"} %}
+            {%- if jwtIntent == "" && ingress.Metadata.Annotations["haproxy-haptic.org/" + a] != "" %}{%- jwtIntent = a %}{%- end %}
+          {%- end %}
+          {%- if jwtIntent != "" %}
+            {{- WebhookRejectOrWarn(ingress, "JWTSecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/" + jwtIntent + "' but no 'haproxy-haptic.org/jwt-secret'. Tokens cannot be verified without the key, so this route fails closed with 503. Set jwt-secret, or remove the other jwt-* annotations.") -}}
+      # WARNING haproxy-haptic.org/{{ jwtIntent }} set without jwt-secret on {{ key }}; failing closed (503) until it is set.
+      http-request set-var(txn.denied_by) str(jwt_unavailable)
+      http-request deny deny_status 503
+          {%- end %}
+        {%- end %}
         {%- if jwtSecret != "" %}
           {%- var secretNs = ns %}
           {%- var secretName = jwtSecret %}

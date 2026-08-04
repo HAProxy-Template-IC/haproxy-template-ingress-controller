@@ -173,6 +173,7 @@ templateSnippets:
 
   backend-directives-760-nginx-ingress-auth:
     template: |
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#-
         Nginx Ingress Basic Auth Backend Directive
 
@@ -237,7 +238,14 @@ templateSnippets:
                 IP-or-auth gate emitted by backend-directives-765, so suppress
                 the unconditional challenge here (an allow-listed IP must pass
                 without authenticating). -#}
-            {%- if nginxAuthSecret != nil && SatisfyAnyMode(ingress) == "" %}
+            {%- if nginxAuthSecret == nil %}
+              {#- Before the satisfy fold: the combined gate in -765 has no userlist
+                  either, so deferring to it would still serve unauthenticated. -#}
+              {{- WebhookRejectOrWarn(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'nginx.ingress.kubernetes.io/auth-secret', but that Secret could not be resolved. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
+      # WARNING nginx.ingress.kubernetes.io/auth-secret: Secret not resolvable for {{ key }}; failing closed (503) until it is present.
+      http-request set-var(txn.denied_by) str(basic_auth_unavailable)
+      http-request deny deny_status 503
+            {%- else if SatisfyAnyMode(ingress) == "" %}
       # nginx-ingress/backend-directives-auth ({{ key }})
       http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ userlistName }}) }
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }

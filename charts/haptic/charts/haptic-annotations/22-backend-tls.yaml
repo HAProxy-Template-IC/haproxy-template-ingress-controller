@@ -180,7 +180,9 @@ templateSnippets:
           {%- var effVerify = "none" %}
           {%- if caAdded %}
             {%- effVerify = "required" %}
-          {%- else if wantVerify %}
+          {#- Naming a CA is the request to verify (see above), so an unusable one
+              must not fall through to `verify none`. -#}
+          {%- else if wantVerify || caSec != "" %}
             {%- if caSec == "" %}
               {{- fail("haproxy-haptic.org/backend-verify: on on Ingress '" + key + "' requires haproxy-haptic.org/backend-ca-secret pointing at a Secret containing ca.crt; otherwise set backend-verify: off.") -}}
             {%- else if !caFound %}

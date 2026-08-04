@@ -398,6 +398,7 @@ templateSnippets:
 
   backend-directives-808-haptic-consumer-groups:
     template: |
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#-
         HAPTIC consumer-groups — authorize the request's consumer against an
         allowed group set.
@@ -443,6 +444,14 @@ templateSnippets:
             {%- end %}
           {%- end %}
           {%- var mapName = "haptic-consumer-groups-" + secretNs + "-" + secretName + ".map" %}
+          {#- A non-empty value whose tokens all strip to nothing (", ") passes the
+              pair guard above but yields no groups, skipping the 403 entirely. -#}
+          {%- if len(groups) == 0 %}
+            {{- WebhookRejectOrWarn(ingress, "AllowedConsumerGroupsEmpty", "Ingress " + key + " sets 'haproxy-haptic.org/allowed-consumer-groups' to a value with no group names in it. Consumer-group authorization cannot be enforced against an empty set, so this route fails closed with 503. List at least one group, or remove the annotation.") -}}
+      # WARNING haproxy-haptic.org/allowed-consumer-groups on {{ key }} lists no groups; failing closed (503).
+      http-request set-var(txn.denied_by) str(consumer_groups_unavailable)
+      http-request deny deny_status 503
+          {%- end %}
           {%- if len(groups) > 0 %}
             {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_cg_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
             {%- var secret, _ = secretAny.(*resources.secrets.T) %}

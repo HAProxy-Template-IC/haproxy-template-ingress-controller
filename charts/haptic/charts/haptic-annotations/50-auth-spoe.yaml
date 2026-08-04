@@ -265,6 +265,13 @@ templateSnippets:
       http-request set-var(txn.denied_by) str(basic_auth_unavailable)
       http-request deny deny_status 503
             {%- end %}
+          {%- else %}
+            {#- auth-type basic without auth-secret: neither this snippet nor the
+                userlist one emitted anything, so the route served unauthenticated. -#}
+            {{- WebhookRejectOrWarn(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/auth-type: basic' but no 'haproxy-haptic.org/auth-secret'. Basic auth cannot be enforced without the credentials Secret, so this route fails closed with 503. Set auth-secret, or remove auth-type.") -}}
+      # WARNING haproxy-haptic.org/auth-type: basic set without auth-secret on {{ key }}; failing closed (503) until it is set.
+      http-request set-var(txn.denied_by) str(basic_auth_unavailable)
+      http-request deny deny_status 503
           {%- end %}
         {%- end %}
       {%- end -%}

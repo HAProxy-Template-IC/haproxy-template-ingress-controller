@@ -275,7 +275,7 @@ migrationCoverage:
       # --- Basic authentication ---
       haproxy-ingress.github.io/auth-secret:
         status: supported
-        note: An `auth`-key htpasswd Secret (haproxy-ingress's own format, one "user:hash" line each; a "user::plain" line uses insecure-password) is parsed into the userlist, so a migrated Secret authenticates; a base64(hash)-per-username Secret also works. A missing Secret currently disables auth for the route until it appears (fail-open), where upstream serves 503.
+        note: An `auth`-key htpasswd Secret (haproxy-ingress's own format, one "user:hash" line each; a "user::plain" line uses insecure-password) is parsed into the userlist, so a migrated Secret authenticates; a base64(hash)-per-username Secret also works. A missing Secret makes the route serve 503 until it appears, matching upstream, and writing such an Ingress is rejected by the admission webhook.
         doc: annotation-support
       haproxy-ingress.github.io/auth-realm:
         status: supported

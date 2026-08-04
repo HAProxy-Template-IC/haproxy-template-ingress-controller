@@ -467,6 +467,9 @@ wait_controller_ready 180 || fail "controller unhealthy after the rejected upgra
 info "phase 4: breaking the live deployment the way a shipped bug does"
 DEPLOY="$(controller_deploy)"
 [ -n "$DEPLOY" ] || fail "cannot find the controller deployment"
+ORIG_REPLICAS="$(k get "deploy/$DEPLOY" -o jsonpath='{.spec.replicas}' 2>/dev/null)"
+[ -n "$ORIG_REPLICAS" ] && [ "$ORIG_REPLICAS" != "0" ] \
+  || fail "controller deployment reports $ORIG_REPLICAS replicas before the break; nothing to scale down"
 k scale "deploy/$DEPLOY" --replicas=0 >/dev/null || fail "could not scale the controller down"
 
 # Every pod gone is the precondition, not a nicety: one surviving pod still
@@ -478,15 +481,39 @@ if ! k wait --for=delete pod -l app.kubernetes.io/component=controller --timeout
   fail "controller pods did not terminate after scaling to 0; cannot stage the broken state"
 fi
 
+# replicaCount=0 keeps the fleet down THROUGH the upgrade. Without it helm
+# restores the replicas as part of this same upgrade, and the new pods race the
+# CR write: a pod that starts first loads the OLD, good config and goes Ready,
+# and the broken CR then arrives as a LIVE change — which the scatter-gather
+# gate rejects while the controller keeps serving the old config, never
+# crash-looping. Only the STARTUP load gate crash-loops, so the pods must not
+# exist until the broken CR is in place. Observed as a phase-4 failure that
+# reproduced in CI and not locally, purely on timing.
 if ! helm upgrade "$RELEASE" "$WORK/broken-chart" \
       --kube-context "$CTX" --namespace "$NS" \
       --set controller.image.repository=haptic \
       --set controller.image.tag=test \
+      --set controller.replicaCount=0 \
       --set "haproxyVersion=$HAPROXY_VERSION" \
       --timeout 10m > "$WORK/break.log" 2>&1; then
   echo "--- helm output ---"; cat "$WORK/break.log"
   fail "could not stage the broken state: with the controller down the config webhook must fail open"
 fi
+
+# The staging is only real if the broken template actually reached the live CR.
+# If it did not, the check below would pass for the wrong reason — a healthy
+# controller loading a perfectly good config — and report a recovery that was
+# never tested.
+# Not `| grep -q`: under pipefail it SIGPIPEs kubectl on the first match and the
+# pipeline reports failure despite finding the marker. `-o json` because -o yaml
+# folds long scalars across lines and splits it.
+LIVE_CFG="$(k get haproxytemplateconfig -o json 2>/dev/null || true)"
+case "$LIVE_CFG" in
+  *'{%- var x = %}'*) : ;;
+  *) fail "the broken template never reached the live HAProxyTemplateConfig; phase 4 would prove nothing" ;;
+esac
+
+k scale "deploy/$DEPLOY" --replicas="$ORIG_REPLICAS" >/dev/null || fail "could not scale the controller back up"
 
 # Negative control for this phase. If the fleet is healthy here, the recovery
 # below proves nothing — it would just be a second successful upgrade.
