@@ -131,6 +131,16 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.rate_limit_degraded\) str\(1\) if .*!\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
+      # Suppressing the unavailable-429 is only half of fail-open. An unset
+      # verdict also satisfies `!{ ... -m bool }`, so without `-m found` the
+      # decision deny below 429s exactly the requests this posture lets through.
+      # The WAF shipped that bug because its test asserted only the first half.
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 429 hdr Retry-After %\[var\(txn\.hub\.rate_limit\.retry_after\)\] if .* \{ var\(txn\.hub\.rate_limit\.allowed\) -m found \} !\{ var\(txn\.hub\.rate_limit\.allowed\) -m bool \}'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'deny deny_status 429 hdr Retry-After %\[var\(txn\.hub\.rate_limit\.retry_after\)\] if \{ var\(txn\.rl_limit\) -m found \} \{ var\(txn\.rl_keyspec\) -m str [a-z]+ \} !\{ var\(txn\.hub\.rate_limit\.allowed\) -m bool \}'
       # The variable is worthless if it never reaches a log line: this is the
       # only signal that a control silently stopped protecting anything.
       - type: contains
@@ -142,9 +152,15 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.denied_by\) str\(external_auth\) if \{ var\(txn\.auth_url\) -m found \}'
+      # Same gate, same reason: a schema verdict that never arrived must not
+      # read as "invalid". Pinned on the full condition, not a prefix — the
+      # prefix form passes whether or not the `-m found` guard is there.
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.denied_by\) str\(schema_invalid\) if '
+        pattern: 'http-request set-var\(txn\.denied_by\) str\(schema_invalid\) if \{ var\(txn\.req_schema_id\) -m found \} \{ method POST PUT PATCH \} \{ var\(txn\.hub\.api_gateway\.allowed\) -m found \} !\{ var\(txn\.hub\.api_gateway\.allowed\) -m bool \}'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'str\(schema_invalid\) if \{ var\(txn\.req_schema_id\) -m found \} \{ method POST PUT PATCH \} !\{ var\(txn\.hub\.api_gateway\.allowed\) -m bool \}'
 
   test-spoa-hub-access-log-fields-absent-without-messages:
     description: >-
