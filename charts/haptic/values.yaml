@@ -923,9 +923,15 @@ controller:
               # request-schema-max-body-size. Oversized requests are rejected
               # before JSON parsing or schema-validation CPU is spent.
               defaultMaxBytes: 8192
-            # Default behavior when a schema id is absent inside the plugin.
-            # Missing referenced Kubernetes objects still fail at render time.
-            defaultFailOpen: false
+            # Default when the plugin returns no verdict — an unknown schema id,
+            # a hub reload, a timeout. True allows the request: schema validation
+            # reduces risk, it does not establish identity, so a blip in our own
+            # sidecar must not refuse callers who did nothing wrong. See the
+            # runtime-failure rule in charts/CLAUDE.md. The event is still
+            # recorded, and missing referenced Kubernetes objects still fail at
+            # render time. Set false where a malformed body reaching the backend
+            # is worse than refusing the caller.
+            defaultFailOpen: true
 
         # WAF routing and policy behavior. This remains engine-neutral; Coraza
         # implementation/runtime settings belong under spoaHub.plugins.coraza.
@@ -2442,7 +2448,7 @@ vector:
       enabled: true
       field: denied_by
       kind: enum
-      values: ["api_key", "api_key_unavailable", "basic_auth", "basic_auth_unavailable", "body_too_large", "cache_origin_internal_backend", "consumer_groups", "consumer_groups_unavailable", "content_type", "external_auth", "gw_sni_host_mismatch", "hmac", "hmac_unavailable", "jwt_algorithm", "jwt_audience", "jwt_expired", "jwt_issuer", "jwt_key_unavailable", "jwt_not_yet_valid", "jwt_required_claim", "jwt_signature", "jwt_unavailable", "method_not_allowed", "mtls_unavailable", "rate_limit_connections", "rate_limit_local", "rate_limit_shared", "rate_limit_shared_unavailable", "required_header", "schema_body_incomplete", "schema_body_too_large", "schema_duplicate_content_length", "schema_invalid", "schema_no_content_length", "schema_unavailable", "schema_unsupported_media_type", "waf", "waf_body_chunked", "waf_body_content_type", "waf_body_duplicate_content_length", "waf_body_incomplete", "waf_body_too_large", "waf_policy_unavailable", "waf_unavailable"]
+      values: ["api_key", "api_key_unavailable", "backend_tls_unavailable", "basic_auth", "basic_auth_unavailable", "body_too_large", "cache_origin_internal_backend", "consumer_groups", "consumer_groups_unavailable", "content_type", "external_auth", "gw_sni_host_mismatch", "hmac", "hmac_unavailable", "jwt_algorithm", "jwt_audience", "jwt_expired", "jwt_issuer", "jwt_key_unavailable", "jwt_not_yet_valid", "jwt_required_claim", "jwt_signature", "jwt_unavailable", "method_not_allowed", "mtls_unavailable", "rate_limit_connections", "rate_limit_local", "rate_limit_shared", "rate_limit_shared_unavailable", "required_header", "schema_body_incomplete", "schema_body_too_large", "schema_duplicate_content_length", "schema_invalid", "schema_no_content_length", "schema_unavailable", "schema_unsupported_media_type", "waf", "waf_body_chunked", "waf_body_content_type", "waf_body_duplicate_content_length", "waf_body_incomplete", "waf_body_too_large", "waf_policy_unavailable", "waf_unavailable"]
       metric: denied_total
       tag: reason
 

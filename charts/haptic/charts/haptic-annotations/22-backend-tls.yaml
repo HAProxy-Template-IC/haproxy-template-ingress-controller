@@ -16,6 +16,7 @@ templateSnippets:
   backend-directives-820-haptic-backend-tls:
     template: |
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#-
         HAPTIC-native Backend TLS (haproxy-haptic.org/backend-*)
 
@@ -177,19 +178,32 @@ templateSnippets:
           {%- if verifyRaw != "" && !wantVerify && verifyNorm != "off" && verifyNorm != "false" && verifyNorm != "no" && verifyNorm != "0" %}
             {{- fail("Invalid value '" + verifyRaw + "' for annotation 'haproxy-haptic.org/backend-verify' on Ingress '" + key + "'. Valid values: on, off.") -}}
           {%- end %}
+          {%- var backendTLSBlocked = false %}
           {%- var effVerify = "none" %}
           {%- if caAdded %}
             {%- effVerify = "required" %}
           {#- Naming a CA is the request to verify (see above), so an unusable one
               must not fall through to `verify none`. -#}
+          {#- Verification was asked for and cannot be configured. The route is
+              denied — an unverified upstream leg is exactly what backend-verify
+              exists to prevent — but only THIS route: a bare fail() here aborts
+              the render for the whole fleet, and the Secret lookup races the
+              store the same way the admission gate did. -#}
           {%- else if wantVerify || caSec != "" %}
+            {%- backendTLSBlocked = true %}
             {%- if caSec == "" %}
-              {{- fail("haproxy-haptic.org/backend-verify: on on Ingress '" + key + "' requires haproxy-haptic.org/backend-ca-secret pointing at a Secret containing ca.crt; otherwise set backend-verify: off.") -}}
+              {{- WebhookRejectOrWarn(ingress, "BackendVerifyWithoutCA", "Ingress " + key + " sets 'haproxy-haptic.org/backend-verify: on' but no 'haproxy-haptic.org/backend-ca-secret'. The upstream certificate cannot be verified, so this route fails closed with 503. Name a Secret containing ca.crt, or set backend-verify: off.") -}}
             {%- else if !caFound %}
-              {{- fail("Secret '" + caSec + "' referenced by haproxy-haptic.org/backend-ca-secret on Ingress '" + key + "' was not found, but backend-verify: on requires its ca.crt to verify the upstream certificate.") -}}
+              {{- recordEvent(ingress, "BackendCASecretMissing", "Ingress " + key + " references Secret '" + caSec + "' in 'haproxy-haptic.org/backend-ca-secret', but it could not be resolved. The upstream certificate cannot be verified, so this route fails closed with 503 until the Secret is present.") -}}
             {%- else %}
-              {{- fail("Secret '" + caSec + "' on Ingress '" + key + "' has no ca.crt, but haproxy-haptic.org/backend-verify: on requires a CA to verify the upstream certificate.") -}}
+              {{- recordEvent(ingress, "BackendCASecretMissingCACert", "Ingress " + key + " references Secret '" + caSec + "' in 'haproxy-haptic.org/backend-ca-secret', but it has no ca.crt. The upstream certificate cannot be verified, so this route fails closed with 503.") -}}
             {%- end %}
+          {%- end %}
+
+          {%- if backendTLSBlocked %}
+      # haptic/backend-tls — upstream verification could not be configured
+      http-request set-var(txn.denied_by) str(backend_tls_unavailable)
+      http-request deny deny_status 503
           {%- end %}
 
           {#- Assemble the single, coherent SSL flag string. -#}
