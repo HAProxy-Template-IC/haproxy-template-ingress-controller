@@ -4,7 +4,7 @@
 templateSnippets:
   map-path-regex-600-haproxy-ingress:
     template: |
-      {#-
+      {#
         HAProxy Ingress Regex Path Map Entries
 
         Purpose: Generates path-regex.map entries for Ingress resources with
@@ -22,7 +22,7 @@ templateSnippets:
         backend name (`field(2,:)`) from the value identically.
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/
-      -#}
+      #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
@@ -59,7 +59,7 @@ templateSnippets:
 
   map-path-exact-600-haproxy-ingress:
     template: |
-      {#-
+      {#
         HAProxy Ingress Exact Path Map Entries
 
         Purpose: Generates path-exact.map entries for Ingress resources with
@@ -72,7 +72,7 @@ templateSnippets:
           - Annotation: haproxy-ingress.github.io/path-type: "exact"
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
-      -#}
+      #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
@@ -99,7 +99,7 @@ templateSnippets:
 
   map-path-prefix-600-haproxy-ingress:
     template: |
-      {#-
+      {#
         HAProxy Ingress Prefix Path Map Entries
 
         Purpose: Generates path-prefix.map entries for Ingress resources with
@@ -112,7 +112,7 @@ templateSnippets:
           - Annotation: haproxy-ingress.github.io/path-type: "prefix"
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
-      -#}
+      #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
@@ -144,7 +144,7 @@ templateSnippets:
 
   map-pfxexact-600-haproxy-ingress:
     template: |
-      {#-
+      {#
         HAProxy Ingress Begin Path Map Entries
 
         Purpose: Generates path-prefix-exact.map entries for Ingress resources with
@@ -160,7 +160,7 @@ templateSnippets:
           - Annotation: haproxy-ingress.github.io/path-type: "begin"
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
-      -#}
+      #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}

@@ -55,7 +55,7 @@ templateSnippets:
 
   backends-510-nginx-ingress-default-backend:
     template: |
-      {#-
+      {#
         Nginx Ingress default-backend pools.
 
         Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#default-backend
@@ -63,7 +63,7 @@ templateSnippets:
         Emits one backend pool per Ingress carrying the default-backend
         annotation. The map-path-prefix-510 sibling adds the catch-all path
         entries that route unmatched requests here.
-      -#}
+      #}
       {%- import "util-nginx-ingress-default-backend" for ResolveDefaultBackend -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
@@ -90,7 +90,7 @@ templateSnippets:
 
   map-path-prefix-510-nginx-ingress-default-backend:
     template: |
-      {#-
+      {#
         Nginx Ingress default-backend catch-all path entries.
 
         For each host on an Ingress carrying the default-backend annotation,
@@ -99,7 +99,7 @@ templateSnippets:
         Ingress's own rule paths and falls through to this catch-all only when
         no rule path matched — exactly nginx's "default-backend handles requests
         that match no path" semantics.
-      -#}
+      #}
       {%- import "util-nginx-ingress-default-backend" for ResolveDefaultBackend -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}

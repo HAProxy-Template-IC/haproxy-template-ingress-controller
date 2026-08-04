@@ -85,14 +85,14 @@ templateSnippets:
                 }
                 seenPort[lPort] = true
                 var targetPort = lPort
-                {#- HTTP and HTTPS listeners both bind on a per-Gateway pod
-                    port (phase 1's allocator), so the Service must DNAT
-                    <lb-ip>:<listenerPort> → <pod-ip>:<podPort> for each.
-                    This is what isolates each Gateway's routing by
-                    destination instead of collapsing onto the shared
-                    chart-static :80 / :443 binds — a no-hostname listener
-                    on one Gateway can no longer catch another Gateway's
-                    hosts (GatewayHTTPListenerIsolation). -#}
+                // HTTP and HTTPS listeners both bind on a per-Gateway pod
+                // port (phase 1's allocator), so the Service must DNAT
+                // <lb-ip>:<listenerPort> → <pod-ip>:<podPort> for each.
+                // This is what isolates each Gateway's routing by
+                // destination instead of collapsing onto the shared
+                // chart-static :80 / :443 binds — a no-hostname listener
+                // on one Gateway can no longer catch another Gateway's
+                // hosts (GatewayHTTPListenerIsolation).
                 if lProto == "HTTPS" || lProto == "HTTP" {
                   hasIsolated = true
                   var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort)

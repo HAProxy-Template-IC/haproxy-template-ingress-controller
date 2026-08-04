@@ -35,14 +35,14 @@ templateSnippets:
       {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
       {%- var socketPath = extraContext | dig_string("/run/spoa/hub.sock", "spoaHub", "haproxy", "socketPath") -%}
 
-      {#- Pull the per-app coraza modsec-snippet list out of shared state.
+      {# Pull the per-app coraza modsec-snippet list out of shared state.
           Vendor annotation libraries (nginx-ingress.yaml) populate
           gf["sphCorazaApps"] via render of util-*-coraza-scan; if the
           library is disabled or no Ingress carries a coraza annotation,
           the list is absent / empty and no per-app blocks emit. Plugin-
           enabled validation runs in the populating library — silent
           ignore is impossible because the vendor library fail()s at
-          render time if its annotations are present without the plugin. -#}
+          render time if its annotations are present without the plugin. #}
       {{- render_glob "util-*-coraza-scan" -}}
       {{- render_glob "util-*-api-gateway-schemas" -}}
       {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
@@ -50,12 +50,12 @@ templateSnippets:
       {%- var modsecApps = gf | dig("sphCorazaApps") | fallback([]any{}) | toSlice() -%}
       {%- var apiGatewaySchemas = gf | dig("apiGatewaySchemas") | fallback([]any{}) | toSlice() -%}
 
-      {#- plugin_dir is the bundled image's fixed layout and default_timeout_ms
+      {# plugin_dir is the bundled image's fixed layout and default_timeout_ms
           is a fallback deadline only used when a [[plugins]] entry omits
           timeout_ms — which the Helm chart never does. Neither is part of the
           Helm values surface (spoaHub.hub rejects them, see _spoa-hub.tpl), so
           the dig() knobs only apply to a hand-authored standalone
-          HAProxyTemplateConfig that sets extraContext.spoaHub.hub directly. -#}
+          HAProxyTemplateConfig that sets extraContext.spoaHub.hub directly. #}
       plugin_dir = "{{ hub | dig("pluginDir") | fallback("/etc/haproxy-spoa-hub/plugins") }}"
       default_timeout_ms = {{ hub | dig("defaultTimeoutMs") | fallback(500) }}
       log_level = "{{ hub | dig("logLevel") | fallback("info") }}"
@@ -239,22 +239,22 @@ templateSnippets:
       ]
           {%- end %}
         {%- end %}
-      {# Newline between plugin iterations so the next [[plugins]] table
+      {#- Newline between plugin iterations so the next [[plugins]] table
          header lands on its own line. Without it the rendered TOML
          reads `transaction_ttl_ms = 10000[[plugins]]` and the hub's
          reload bails with a parse error. {% end %} preserves the
-         trailing newline; {%- end -%} would strip it. #}
+         trailing newline; {%- end -%} would strip it. -#}
       {% end %}
 
   spoe-conf-content:
     template: |
-      {#- The SPOE message set is static — one message per enabled plugin,
+      {# The SPOE message set is static — one message per enabled plugin,
           from the values-declared union (extraContext.spoaHub.haproxy.messages).
           The mirror plugin uses a single `mirror` message that fans out to
           every target for the request (arg_targets carries a per-request
           list), so adding or removing a mirror target never changes this
           file — see spoe-message-mirror-body and the frontend mirror
-          snippets that append to txn.gw_mirror_targets. -#}
+          snippets that append to txn.gw_mirror_targets. #}
       {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       [spoa-hub]
@@ -274,7 +274,7 @@ templateSnippets:
           timeout processing {{ extraContext | dig("spoaHub", "haproxy", "timeoutProcessing") | fallback("500ms") }}
           use-backend spoa-hub
       {{ render_glob "spoe-agents-*" }}
-      {#- Per-message SPOE-message bodies. Each known plugin message
+      {# Per-message SPOE-message bodies. Each known plugin message
           gets its canonical body via a literal `render`; everything
           else falls back to a minimal stub so HAProxy accepts the
           group's reference. This dispatch is hard-coded because the
@@ -282,7 +282,7 @@ templateSnippets:
           a new plugin with a real body means adding a branch here.
           The leading blank line before each block is required: the
           HAProxy SPOE config parser uses blank lines as block
-          separators. -#}
+          separators. #}
       {%- for _, msg := range messages %}
 
       {% if msg == "check-auth" -%}

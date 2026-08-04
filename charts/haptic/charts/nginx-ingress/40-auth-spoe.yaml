@@ -147,9 +147,9 @@ templateSnippets:
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
               {{- ValidateAuthHeaderName(name, "nginx.ingress.kubernetes.io/auth-response-headers", ns, ingressName) -}}
-              {#- Dedupe on varName (after dash→underscore) so
+              {# Dedupe on varName (after dash→underscore) so
                   spellings that collapse to the same plugin txn var
-                  produce one set-header directive, not two. -#}
+                  produce one set-header directive, not two. #}
               {%- var varName = replace(toLower(name), "-", "_") -%}
               {%- if !seen[varName] -%}
                 {%- seen[varName] = true -%}
@@ -162,11 +162,11 @@ templateSnippets:
       {%- for _, pair := range pairs -%}
         {%- var pName = pair.(map[string]any)["name"].(string) -%}
         {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {#- Strip any client-supplied copy of this trusted header on auth-protected
+      {# Strip any client-supplied copy of this trusted header on auth-protected
           routes BEFORE re-adding the plugin value, so a forged inbound header
           can't survive to the backend when the auth reply omits it (the
           set-header below is skipped when its var isn't found). Mirrors
-          ingress-nginx's always-overwrite semantics. -#}
+          ingress-nginx's always-overwrite semantics. #}
       {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
       {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
       {%- end -%}
@@ -239,8 +239,8 @@ templateSnippets:
                 the unconditional challenge here (an allow-listed IP must pass
                 without authenticating). -#}
             {%- if nginxAuthSecret == nil %}
-              {#- Before the satisfy fold: the combined gate in -765 has no userlist
-                  either, so deferring to it would still serve unauthenticated. -#}
+              {# Before the satisfy fold: the combined gate in -765 has no userlist
+                  either, so deferring to it would still serve unauthenticated. #}
               {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'nginx.ingress.kubernetes.io/auth-secret', but that Secret could not be resolved. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
       # WARNING nginx.ingress.kubernetes.io/auth-secret: Secret not resolvable for {{ key }}; failing closed (503) until it is present.
       http-request set-var(txn.denied_by) str(basic_auth_unavailable)
@@ -260,7 +260,7 @@ templateSnippets:
 
   global-top-700-nginx-ingress-auth:
     template: |
-      {#-
+      {#
         Nginx Ingress Basic Auth Userlist Generation
 
         Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#authentication
@@ -279,7 +279,7 @@ templateSnippets:
         Generated HAProxy Config:
           userlist ni_auth_<ns>_<name>
             user <username> password '<hash>'
-      -#}
+      #}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -356,7 +356,7 @@ templateSnippets:
                   {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'nginx.ingress.kubernetes.io/auth-secret' on Ingress '" + key + "' has empty 'auth' key.") -}}
                 {%- end %}
                 {%- else %}
-                {#- auth-map: each Secret data key is a username, its value the password hash. -#}
+                {# auth-map: each Secret data key is a username, its value the password hash. #}
       # nginx-ingress/global-top-auth ({{ key }})
       userlist {{ userlistName }}
                   {%- for _, username := range keys(secret.Data) %}

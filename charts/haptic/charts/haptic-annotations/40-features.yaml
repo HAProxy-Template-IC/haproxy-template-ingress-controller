@@ -24,7 +24,7 @@ templateSnippets:
   # ==========================================================================
   features-105-haptic-https-redirect:
     template: |
-      {#-
+      {#
         HAPTIC HTTPS redirect — host registration.
 
         Annotations:
@@ -37,7 +37,7 @@ templateSnippets:
         redirect (frontend-filters-800-haptic-https-redirect-port) and are NOT
         registered here, so no double redirect fires. Unlike the vendor libraries the
         native code is validated fail-loud rather than silently corrected.
-      -#}
+      #}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -70,7 +70,7 @@ templateSnippets:
   # ==========================================================================
   frontend-filters-800-haptic-https-redirect-port:
     template: |
-      {#-
+      {#
         HAPTIC HTTPS redirect to an explicit port.
 
         Annotations:
@@ -80,7 +80,7 @@ templateSnippets:
 
         Rewrites the request to https on the explicit port, preserving the original
         request URI. Adapted from haproxytech/frontend-filters-055.
-      -#}
+      #}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var portByCode = map[string]map[string]string{} -%}
       {%- var codeHosts = map[string][]any{} -%}
@@ -132,7 +132,7 @@ templateSnippets:
   # ==========================================================================
   features-135-haptic-redirects:
     template: |
-      {#-
+      {#
         HAPTIC host redirects — permanent (default 301) and temporary (default 302).
 
         Annotations:
@@ -143,7 +143,7 @@ templateSnippets:
 
         The two axes are independent; an Ingress may set either or both. URLs pass a
         control-char config-injection guard before interpolation.
-      -#}
+      #}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -189,7 +189,7 @@ templateSnippets:
   # ==========================================================================
   frontend-filters-810-haptic-apex-www-redirect:
     template: |
-      {#-
+      {#
         HAPTIC apex/www redirect.
 
         Annotation: haproxy-haptic.org/apex-www-redirect: "true"
@@ -201,7 +201,7 @@ templateSnippets:
         Emitted as a true client redirect (`redirect prefix`) that sets the Location
         header, never the Host header, so routing is not corrupted; the request path
         is preserved and the scheme is preserved by gating on ssl_fc.
-      -#}
+      #}
       {%- var pairByHost = map[string]string{} -%}
       {%- var seen = map[string]bool{} -%}
       {%- var hostKeys = []any{} -%}
@@ -240,13 +240,13 @@ templateSnippets:
   # ==========================================================================
   features-145-haptic-root-redirect:
     template: |
-      {#-
+      {#
         HAPTIC root-redirect — redirect requests for "/" to a sub-path.
 
         Annotation: haproxy-haptic.org/root-redirect: "<path>"
 
         The path passes a control-char config-injection guard before registration.
-      -#}
+      #}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -270,7 +270,7 @@ templateSnippets:
   # ==========================================================================
   frontend-filters-820-haptic-default-backend-redirect:
     template: |
-      {#-
+      {#
         HAPTIC default-backend redirect.
 
         Annotations:
@@ -282,7 +282,7 @@ templateSnippets:
         `!{ var(txn.backend_name) -m found }` fires exactly on unmatched requests,
         scoped to this Ingress's host(s). Adapted from
         haproxy-ingress/frontend-filters-680.
-      -#}
+      #}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var codeMap = map[string]map[string]string{} -%}
       {%- var codeHosts = map[string][]any{} -%}
@@ -329,7 +329,7 @@ templateSnippets:
   # ==========================================================================
   features-155-haptic-hsts:
     template: |
-      {#-
+      {#
         HAPTIC HSTS — Strict-Transport-Security registration.
 
         Annotations:
@@ -337,7 +337,7 @@ templateSnippets:
           - haproxy-haptic.org/hsts-max-age: seconds (default extraContext.hapticHstsMaxAge, 63072000)
           - haproxy-haptic.org/hsts-include-subdomains: "true" adds includeSubDomains
           - haproxy-haptic.org/hsts-preload: "true" adds preload
-      -#}
+      #}
       {%- import "util-register-annotation-hsts" for RegisterAnnotationHSTS -%}
       {%- var defMaxAge = extraContext | dig("hapticHstsMaxAge") | fallback("63072000") | tostring() -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -358,10 +358,10 @@ templateSnippets:
   # ==========================================================================
   util-haptic-ssl-passthrough:
     template: |
-      {#- Caches SSL passthrough backends from haproxy-haptic.org/ssl-passthrough
+      {# Caches SSL passthrough backends from haproxy-haptic.org/ssl-passthrough
           annotations. Build logic lives in ingress-annotations-compat.yaml's
           BuildAnnotationSSLPassthrough macro; this snippet only owns the per-library
-          cache key and naming-convention parameters. -#}
+          cache key and naming-convention parameters. #}
       {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
       {%%
         var _, _ = shared.ComputeIfAbsent("haptic_sslPassthrough", func() any {
@@ -376,7 +376,7 @@ templateSnippets:
 
   features-100-haptic-ssl-passthrough:
     template: |
-      {#-
+      {#
         HAPTIC SSL passthrough registration.
 
         Annotation: haproxy-haptic.org/ssl-passthrough: "true"
@@ -385,7 +385,7 @@ templateSnippets:
         consumes gf["sslPassthroughBackends"] to generate the SNI-routed TCP frontend
         and passthrough backends. Adapted from
         features-100-haproxy-ingress-ssl-passthrough (cache→gf copy).
-      -#}
+      #}
       {{ render "util-haptic-ssl-passthrough" }}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
@@ -401,12 +401,12 @@ templateSnippets:
 
   backends-840-haptic-ssl-passthrough:
     template: |
-      {#-
+      {#
         HAPTIC SSL passthrough backends.
 
         Generates TCP-mode backends for Ingresses carrying
         haproxy-haptic.org/ssl-passthrough: "true".
-      -#}
+      #}
       {%- import "util-render-annotation-ssl-passthrough-backends" for RenderAnnotationSSLPassthroughBackends -%}
       {{ render "util-haptic-ssl-passthrough" }}
       {{ RenderAnnotationSSLPassthroughBackends("haptic_sslPassthrough", "haptic_sslPassthrough_backend", "haptic") }}
@@ -461,7 +461,7 @@ templateSnippets:
 
   backends-850-haptic-default-backend:
     template: |
-      {#-
+      {#
         HAPTIC default-backend pools.
 
         Annotation: haproxy-haptic.org/default-backend: "<service>" or "<ns>/<service>"
@@ -470,7 +470,7 @@ templateSnippets:
         map-path-prefix-850 sibling adds the catch-all path entries that route
         unmatched requests here. Silently skipped when the Service is missing
         (diverges from the redirect-based haproxy-ingress default-backend).
-      -#}
+      #}
       {%- import "util-haptic-default-backend" for ResolveHapticDefaultBackend -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
@@ -497,7 +497,7 @@ templateSnippets:
 
   map-path-prefix-850-haptic-default-backend:
     template: |
-      {#-
+      {#
         HAPTIC default-backend catch-all path entries.
 
         For each host on an Ingress carrying haproxy-haptic.org/default-backend,
@@ -505,7 +505,7 @@ templateSnippets:
         map_beg longest-prefix match in path-prefix.map prefers the Ingress's own
         rule paths and falls through to this catch-all only when no rule path
         matched.
-      -#}
+      #}
       {%- import "util-haptic-default-backend" for ResolveHapticDefaultBackend -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -531,9 +531,9 @@ templateSnippets:
   # ==========================================================================
   global-settings-800-haptic-config-global:
     template: |
-      {#-
+      {#
         haproxy-haptic.org/config-global → raw directives in the global section.
-      -#}
+      #}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/config-global"] %}
@@ -549,9 +549,9 @@ templateSnippets:
 
   defaults-settings-800-haptic-config-defaults:
     template: |
-      {#-
+      {#
         haproxy-haptic.org/config-defaults → raw directives in the defaults section.
-      -#}
+      #}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/config-defaults"] %}
@@ -567,13 +567,13 @@ templateSnippets:
 
   frontend-extra-800-haptic-config-frontend:
     template: |
-      {#-
+      {#
         haproxy-haptic.org/config-frontend → raw directives in the http frontend.
 
         Runs at frontend-extra-* (BEFORE routing logic), so captures, ACLs and early
         http-request rules are in scope for the routing that follows. Emitted into
         every frontend (plain HTTP, h2c, and the SSL https frontend).
-      -#}
+      #}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/config-frontend"] %}

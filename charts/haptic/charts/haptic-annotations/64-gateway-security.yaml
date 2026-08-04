@@ -21,7 +21,7 @@ templateSnippets:
   # ==========================================================================
   frontend-filters-802-haptic-fixed-response:
     template: |
-      {#-
+      {#
         HAPTIC fixed-response — return a fixed response for all requests
         on this Ingress's host(s). Use for maintenance windows or sunset routes.
 
@@ -34,7 +34,7 @@ templateSnippets:
 
         Generated HAProxy Config (host-scoped):
           http-request return status <code> [content-type "<ct>" string "<body>"] if <host-match>
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
@@ -74,7 +74,7 @@ templateSnippets:
   # ==========================================================================
   frontend-filters-804-haptic-mock-response:
     template: |
-      {#-
+      {#
         HAPTIC mock-response — return a canned body for this Ingress's host(s),
         short-circuiting the backend. For stubbing an API during development.
 
@@ -87,7 +87,7 @@ templateSnippets:
 
         Generated HAProxy Config (host-scoped):
           http-request return status <code> content-type "<ct>" string "<body>" if <host-match>
-      -#}
+      #}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
@@ -123,7 +123,7 @@ templateSnippets:
   # ==========================================================================
   frontend-filters-806-haptic-allowed-methods:
     template: |
-      {#-
+      {#
         HAPTIC allowed-methods — restrict the HTTP methods this Ingress accepts.
 
         Annotation:
@@ -132,7 +132,7 @@ templateSnippets:
 
         Generated HAProxy Config (host-scoped):
           http-request deny deny_status 405 if <host-match> !{ method <M1> <M2> ... }
-      -#}
+      #}
       {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -164,7 +164,7 @@ templateSnippets:
   # ==========================================================================
   frontend-filters-808-haptic-require-content-type:
     template: |
-      {#-
+      {#
         HAPTIC require-content-type — enforce an allowed Content-Type on requests
         that carry a body (POST/PUT/PATCH). Prefix-matched so charset suffixes
         (e.g. "application/json; charset=utf-8") still match.
@@ -179,7 +179,7 @@ templateSnippets:
 
         Generated HAProxy Config (host-scoped):
           http-request return status 415 if <host-match> { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg <t1> <t2> ... }
-      -#}
+      #}
       {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -211,7 +211,7 @@ templateSnippets:
   # ==========================================================================
   frontend-filters-809-haptic-require-headers:
     template: |
-      {#-
+      {#
         HAPTIC require-headers — reject requests missing any required header.
 
         Annotation:
@@ -220,7 +220,7 @@ templateSnippets:
 
         Generated HAProxy Config (host-scoped):
           http-request deny deny_status 400 if <host-match> !{ req.hdr(<H>) -m found }
-      -#}
+      #}
       {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -259,7 +259,7 @@ templateSnippets:
   # ==========================================================================
   backend-directives-807-haptic-hmac:
     template: |
-      {#-
+      {#
         HAPTIC HMAC signature verification (webhook-style shared-secret auth).
 
         Annotations:
@@ -280,7 +280,7 @@ templateSnippets:
         prefer JWT); the compare is not constant-time (a network timing side
         channel, generally impractical over the wire but noted for honesty);
         fails CLOSED per route (503) when the Secret is absent at render time.
-      -#}
+      #}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -344,12 +344,12 @@ templateSnippets:
   # ==========================================================================
   features-864-haptic-consumer-groups:
     template: |
-      {#-
+      {#
         HAPTIC consumer-groups — build the consumer→group map (one per Secret).
 
         Secret format (data key `groups`, base64): one `<consumer>:<group>` per
         line. Reload-free (delivered as an HAProxyMapFile).
-      -#}
+      #}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var key = ns + "/" + ingress.Metadata.Name %}

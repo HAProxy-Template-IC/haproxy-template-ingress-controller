@@ -76,27 +76,27 @@ templateSnippets:
       http-request set-var(txn.gw_sni_listener) ssl_fc_sni,lower,map_reg({{ regexPath }},'') if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_sni_listener) -m len 0 }
       http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map({{ exactPath }},'') if { var(txn.gw_host_canonical) -m found }
       http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map_reg({{ regexPath }},'') if { var(txn.gw_host_canonical) -m found } { var(txn.gw_host_listener) -m len 0 }
-      {#- The `^.*$ catchall:` markers keep gw_sni_listener non-empty for a Gateway with a
+      {# The `^.*$ catchall:` markers keep gw_sni_listener non-empty for a Gateway with a
           hostname-less listener; without them the `len 0` gate kills the 421 that conformance
           HTTPRouteHTTPSListenerDetectMisdirectedRequests requires. The gate then only fires for
-          orphan TLS (SNI matches no Gateway), where a 421 would mis-flag the request. -#}
+          orphan TLS (SNI matches no Gateway), where a 421 would mis-flag the request. #}
       # 421: SNI matched one listener but the Host belongs to a different one (misdirected request).
-      {#- A second 421 source (cache-origin frontend) makes `frontend` alone ambiguous in
-          the access log. The condition must stay byte-identical to the return below. -#}
+      {# A second 421 source (cache-origin frontend) makes `frontend` alone ambiguous in
+          the access log. The condition must stay byte-identical to the return below. #}
       http-request set-var(txn.denied_by) str(gw_sni_host_mismatch) if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener) -m len 0 } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
       http-request return status 421 if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener) -m len 0 } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
   log-fields-500-gateway:
     requires: [gateways]
     template: |-
-      {#- txn.gw_rule_id (<ns>_<name>_<ruleIdx>) comes from frontend-matchers-advanced-500-gateway;
-          gated on Gateways existing so an Ingress-only install has no permanently-empty log key. -#}
+      {# txn.gw_rule_id (<ns>_<name>_<ruleIdx>) comes from frontend-matchers-advanced-500-gateway;
+          gated on Gateways existing so an Ingress-only install has no permanently-empty log key. #}
       {%- if len(resources.gateways.List()) > 0 %}
       %(gw_route)[var(txn.gw_rule_id)]
       {%- end %}
 
   frontend-matchers-advanced-010-route-id-setup:
     template: |
-      {#- txn.path_match qualifier format: GW_ROUTE_ID:<route_type>:<routeIds>, e.g. GW_ROUTE_ID:http:ns1_route1_0__ns2_route2_1 #}
+      {# txn.path_match qualifier format: GW_ROUTE_ID:<route_type>:<routeIds>, e.g. GW_ROUTE_ID:http:ns1_route1_0__ns2_route2_1 #}
       # gateway/frontend-matchers-advanced-010-route-id-setup
       http-request set-var(req.gw_route_type) var(txn.path_match),field(2,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
       http-request set-var(req.gw_routeId) var(txn.path_match),field(3,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
@@ -503,9 +503,9 @@ templateSnippets:
           {%- if originRegex != "" %}
             {%- originCond = originCond + " { req.fhdr(Origin) -m reg \"" + originRegex + "\" }" %}
           {%- end %}
-          {#- HAProxy quirk: `http-request return` responses skip the http-response phase,
+          {# HAProxy quirk: `http-request return` responses skip the http-response phase,
               so preflight CORS headers must ride inline as `hdr` arguments; only
-              backend-served responses can use http-response set-header. -#}
+              backend-served responses can use http-response set-header. #}
       http-request set-var(txn.gw_cors_origin) req.fhdr(Origin) if {{ originCond }} {{ ruleCond }}
           {%- if len(headersList) > 0 && headersList[0] == "*" %}
       http-request set-var(txn.gw_cors_acrh) req.fhdr(Access-Control-Request-Headers) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }
@@ -676,9 +676,9 @@ templateSnippets:
          marker above with the directives below and silently drops them. #}
       http-request set-var(txn.gw_request_scheme) str(http) if !{ ssl_fc }
       http-request set-var(txn.gw_request_scheme) str(https) if { ssl_fc }
-      {#- txn.gw_listener_port must stay set unconditionally upstream (15-pod-port-allocator):
+      {# txn.gw_listener_port must stay set unconditionally upstream (15-pod-port-allocator):
           a map converter first appearing at runtime is added by the DataPlane API without its
-          map ever being loaded, so the lookup misses and the pod port leaks into Location. -#}
+          map ever being loaded, so the lookup misses and the pod port leaks into Location. #}
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
         {%- var filters = []any{} %}
         {%%
@@ -752,11 +752,11 @@ templateSnippets:
                   listener port, which one route can have several of — so resolve it per
                   request. One shared var is safe: a request matches at most one redirect. -#}
               {%- if dynamicPort %}
-                {#- Use txn.gw_listener_port, not txn.listener_port or raw dst_port: on the
+                {# Use txn.gw_listener_port, not txn.listener_port or raw dst_port: on the
                     per-Gateway-IP path the latter two are the allocated pod port (e.g. 18000)
-                    and would leak into Location; the map translates back to the listener port. -#}
-                {#- Fallbacks are the dataplane-internal 8080/8443 (chart-wide convention), not
-                    80/443; extraContext.httpPort/httpsPort is always plumbed in production. -#}
+                    and would leak into Location; the map translates back to the listener port. #}
+                {# Fallbacks are the dataplane-internal 8080/8443 (chart-wide convention), not
+                    80/443; extraContext.httpPort/httpsPort is always plumbed in production. #}
                 {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
                 {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
       http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { var(txn.gw_listener_port) -m int {{ httpPort }} } !{ ssl_fc }

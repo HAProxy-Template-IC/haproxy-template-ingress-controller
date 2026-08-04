@@ -2,7 +2,7 @@ templateSnippets:
   util-generate-gatewayclass-status-patches:
     requires: [gatewayclasses]
     template: |
-      {#-
+      {#
         Generate GatewayClass Status Patches
 
         Per Gateway API spec, implementations MUST populate status on every
@@ -35,7 +35,7 @@ templateSnippets:
         cheaper invariant that catches obvious user mistakes.
 
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex).
-      -#}
+      #}
       {%- import "util-condition-transition-time" for TopLevelTransitionTime -%}
       {% macro GenerateGatewayClassStatusPatches(gatewayClasses []*resources.gatewayclasses.T) %}
         {%- for _, gc := range gatewayClasses %}
@@ -86,7 +86,7 @@ templateSnippets:
   status-patches-100-gatewayclass:
     requires: [gatewayclasses]
     template: |
-      {#-
+      {#
         GatewayClass Status Patch Registration
 
         Extension Point: status-patches-* (priority 100 — runs before
@@ -95,7 +95,7 @@ templateSnippets:
 
         Watcher is filtered to spec.controllerName == ours, so every
         GatewayClass in the store is one we MUST set status on.
-      -#}
+      #}
       {%- import "util-generate-gatewayclass-status-patches" for GenerateGatewayClassStatusPatches -%}
       {%- var allGatewayClasses = resources.gatewayclasses.List() -%}
       {%- if len(allGatewayClasses) > 0 -%}

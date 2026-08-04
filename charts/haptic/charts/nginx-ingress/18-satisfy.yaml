@@ -66,7 +66,7 @@ templateSnippets:
 
   backend-directives-765-nginx-ingress-satisfy-any:
     template: |
-      {#-
+      {#
         Nginx Ingress satisfy=any combined IP-or-auth gate.
 
         Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#satisfy
@@ -80,7 +80,7 @@ templateSnippets:
         satisfy=any. The independent whitelist deny (frontend-filters-700) and
         unconditional auth challenge (backend-directives-760) are suppressed for
         this Ingress via SatisfyAnyMode().
-      -#}
+      #}
       {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
       {%- if ingress != nil %}

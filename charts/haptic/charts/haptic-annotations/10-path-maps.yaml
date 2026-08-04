@@ -20,7 +20,7 @@
 templateSnippets:
   map-path-regex-800-haptic-path-type:
     template: |
-      {#-
+      {#
         haproxy-haptic.org/path-type: "regex" → path-regex.map entries.
 
         Annotations:
@@ -33,7 +33,7 @@ templateSnippets:
         routing cascade decodes the qualifier + backend name identically.
 
         Extension Point: map-path-regex-* (priority 800 — HAPTIC-native)
-      -#}
+      #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -51,7 +51,7 @@ templateSnippets:
 
   map-path-exact-800-haptic-path-type:
     template: |
-      {#-
+      {#
         haproxy-haptic.org/path-type: "exact" → path-exact.map entries.
 
         Annotations:
@@ -61,7 +61,7 @@ templateSnippets:
         must match exactly (no prefix semantics).
 
         Extension Point: map-path-exact-* (priority 800 — HAPTIC-native)
-      -#}
+      #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -79,7 +79,7 @@ templateSnippets:
 
   map-path-prefix-800-haptic-path-type:
     template: |
-      {#-
+      {#
         haproxy-haptic.org/path-type: "prefix" → path-prefix.map entries.
 
         Annotations:
@@ -90,7 +90,7 @@ templateSnippets:
         Prefix semantics), not on an arbitrary string prefix.
 
         Extension Point: map-path-prefix-* (priority 800 — HAPTIC-native)
-      -#}
+      #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -113,7 +113,7 @@ templateSnippets:
 
   map-pfxexact-800-haptic-path-type:
     template: |
-      {#-
+      {#
         haproxy-haptic.org/path-type: "begin" → path-prefix-exact.map entries.
 
         Annotations:
@@ -124,7 +124,7 @@ templateSnippets:
         haproxy-ingress semantics).
 
         Extension Point: map-pfxexact-* (priority 800 — HAPTIC-native)
-      -#}
+      #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -142,7 +142,7 @@ templateSnippets:
 
   map-host-800-haptic-host-alias:
     template: |
-      {#-
+      {#
         haproxy-haptic.org/host-alias → host.map entries.
 
         Annotations:
@@ -158,7 +158,7 @@ templateSnippets:
         guard: rejects control characters / spaces) before interpolation.
 
         Extension Point: map-host-* (priority 800 — HAPTIC-native)
-      -#}
+      #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -184,7 +184,7 @@ templateSnippets:
 
   map-hostregex-800-haptic-host-alias-regex:
     template: |
-      {#-
+      {#
         haproxy-haptic.org/host-alias-regex → host-regex.map entries.
 
         Annotations:
@@ -199,7 +199,7 @@ templateSnippets:
         rejects control characters / spaces) before interpolation.
 
         Extension Point: map-hostregex-* (priority 800 — HAPTIC-native)
-      -#}
+      #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}

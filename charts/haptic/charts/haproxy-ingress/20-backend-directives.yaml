@@ -8,7 +8,7 @@ templateSnippets:
   # ============================================================================
   backend-directives-600-haproxy-ingress-timeouts:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Backend Timeouts
 
         Annotations:
@@ -20,7 +20,7 @@ templateSnippets:
           - timeout-keep-alive: HTTP keep-alive timeout
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#timeout
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var tConnect = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-connect"] %}
         {%- var tServer = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-server"] %}
@@ -54,14 +54,14 @@ templateSnippets:
 
   backend-directives-610-haproxy-ingress-load-balance:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Load Balancing Algorithm
 
         Annotation: balance-algorithm
         Values: roundrobin, leastconn, source, uri, hdr, random, rdp-cookie
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#balance-algorithm
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -81,7 +81,7 @@ templateSnippets:
 
   backend-directives-620-haproxy-ingress-maxconn:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Server Connection Limits
 
         Annotations:
@@ -90,7 +90,7 @@ templateSnippets:
           - limit-connections: Max concurrent connections to backend
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#maxconn-server
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -124,7 +124,7 @@ templateSnippets:
 
   backend-directives-630-haproxy-ingress-health-checks:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Health Check Configuration
 
         Annotations:
@@ -135,7 +135,7 @@ templateSnippets:
           - health-check-rise-count: Consecutive successes to mark up
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#health-check
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -180,14 +180,14 @@ templateSnippets:
 
   backend-directives-640-haproxy-ingress-proxy-protocol:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Proxy Protocol
 
         Annotation: proxy-protocol
         Values: v1, v2, v2-ssl, v2-ssl-cn
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#proxy-protocol
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -210,7 +210,7 @@ templateSnippets:
 
   backend-directives-650-haproxy-ingress-ssl-backend:
     template: |
-      {#-
+      {#
         HAProxy-Ingress SSL Backend Configuration
 
         Annotations:
@@ -222,7 +222,7 @@ templateSnippets:
           - backend-protocol: Backend protocol (h1, h2, h1-ssl, h2-ssl)
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#secure-backends
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -328,13 +328,13 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {#- ssl-ciphers-backend / ssl-cipher-suites-backend -#}
-        {#- Per-backend cipher control for SSL to the upstream. ciphers picks
+        {# ssl-ciphers-backend / ssl-cipher-suites-backend #}
+        {# Per-backend cipher control for SSL to the upstream. ciphers picks
             the TLS<=1.2 cipher list; ciphersuites picks the TLS1.3 suite list.
             Both are only valid on an ssl-enabled server line — emitting them
             on a plaintext server is a parse error — so they are gated on
             sslEnabled (secure-backends true / backend-protocol h1-ssl|h2-ssl).
-            Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#ssl-cipher-suites-backend -#}
+            Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#ssl-cipher-suites-backend #}
         {%- var sslCiphers = ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-ciphers-backend"] %}
         {%- var sslCipherSuites = ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-cipher-suites-backend"] %}
         {%- if sslEnabled %}
@@ -349,14 +349,14 @@ templateSnippets:
 
   backend-directives-660-haproxy-ingress-server-options:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Server Options
 
         Annotations:
           - initial-weight: Initial server weight (default 1)
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#initial-weight
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -377,7 +377,7 @@ templateSnippets:
 
   backend-directives-670-haproxy-ingress-session-affinity:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Session Affinity Annotations
 
         Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#affinity
@@ -394,7 +394,7 @@ templateSnippets:
 
         Generated HAProxy Config:
           cookie <name> <strategy> [indirect] [nocache] [dynamic] [domain <domain>] [attr "SameSite=<value>"]
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -459,7 +459,7 @@ templateSnippets:
 
   map-body-size-680-haproxy-ingress:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Proxy Body Size Limit (Strategy 1: relocated to a map)
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#proxy-body-size
@@ -473,7 +473,7 @@ templateSnippets:
         (http-request deny 413) keyed on the resolved backend, so the cap is no
         longer an http-request deny inside the backend section — adding or changing
         it is a map-only, reload-free update.
-      -#}
+      #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var bodySize = ingress.Metadata.Annotations["haproxy-ingress.github.io/proxy-body-size"] -%}
@@ -561,10 +561,10 @@ templateSnippets:
           {%- else %}
       # haproxy-ingress/rate-limiting ({{ key }})
           {%- end %}
-      {#- `peers localinstance` (base.yaml global-top-050-peers) carries the -#}
-      {#- per-source counter from the old worker to the new one on reload, so a -#}
-      {#- client's accumulated rate survives config churn instead of resetting to -#}
-      {#- zero (matches haproxytech/nginx-ingress). Local-only: stays per-pod. -#}
+      {# `peers localinstance` (base.yaml global-top-050-peers) carries the #}
+      {# per-source counter from the old worker to the new one on reload, so a #}
+      {# client's accumulated rate survives config churn instead of resetting to #}
+      {# zero (matches haproxytech/nginx-ingress). Local-only: stays per-pod. #}
       stick-table type ip size 100k expire {{ window }} store http_req_rate({{ window }}) peers localinstance
       http-request track-sc0 src
       http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ rate }} }{{ guard }}
@@ -574,7 +574,7 @@ templateSnippets:
 
   backend-directives-690-haproxy-ingress-rewrite-target:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Rewrite Target
 
         Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#rewrite-target
@@ -588,7 +588,7 @@ templateSnippets:
 
         Generated HAProxy Config:
           http-request replace-path (.*) <translated-value>
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -619,9 +619,9 @@ templateSnippets:
 
   map-path-rewrite-690-haproxy-ingress:
     template: |
-      {#- haproxy-ingress rewrite-target LITERAL replacement (no \N capture) →
+      {# haproxy-ingress rewrite-target LITERAL replacement (no \N capture) →
           path-rewrite.map, consumed by base.yaml frontend-filters-400-path-rewrite.
-          Capture rewrites stay as replace-path in backend-directives-690. -#}
+          Capture rewrites stay as replace-path in backend-directives-690. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -654,7 +654,7 @@ templateSnippets:
 
   backend-directives-695-haproxy-ingress-agent-check:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Agent Check
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#agent-check
@@ -673,7 +673,7 @@ templateSnippets:
         `agent-check`, `agent-port`, `agent-addr`, `agent-inter`, `agent-send`
         server parameters, appended to the backend's default-server line. All
         are runtime-safe options.
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -702,14 +702,14 @@ templateSnippets:
 
   backend-directives-900-haproxy-ingress-config-backend:
     template: |
-      {#-
+      {#
         HAProxy-Ingress Backend Config Snippet
 
         Annotation: config-backend
         Allows injecting raw HAProxy directives into the backend.
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#config-backend
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var snippet = ingress.Metadata.Annotations["haproxy-ingress.github.io/config-backend"] %}
         {%- if snippet != "" %}

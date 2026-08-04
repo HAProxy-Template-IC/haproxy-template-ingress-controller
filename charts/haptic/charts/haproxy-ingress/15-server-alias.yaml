@@ -16,7 +16,7 @@
 templateSnippets:
   map-host-650-haproxy-ingress-alias:
     template: |
-      {#-
+      {#
         server-alias → host.map entries.
 
         For each Ingress carrying haproxy-ingress.github.io/server-alias, emit
@@ -29,7 +29,7 @@ templateSnippets:
         alias is an Ingress-level alternative name for the resource's host).
 
         Extension Point: map-host-* (priority 650 - compatibility layer)
-      -#}
+      #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -57,7 +57,7 @@ templateSnippets:
 
   map-hostregex-650-haproxy-ingress-alias:
     template: |
-      {#-
+      {#
         server-alias-regex → host-regex.map entries.
 
         The annotation value is a regular expression matching extra hostnames.
@@ -69,7 +69,7 @@ templateSnippets:
         mapped to the primary host's normalised key.
 
         Extension Point: map-hostregex-* (priority 650 - compatibility layer)
-      -#}
+      #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}

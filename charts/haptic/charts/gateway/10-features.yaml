@@ -33,7 +33,7 @@ templateSnippets:
   features-100-gateway-ssl-passthrough:
     requires: [gateways, httproutes, tlsroutes]
     template: |
-      {#- Register SSL passthrough backends with global feature registry. -#}
+      {# Register SSL passthrough backends with global feature registry. #}
       {{ render "util-gateway-ssl-passthrough" }}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
@@ -137,10 +137,10 @@ templateSnippets:
   features-100-gateway-tls:
     requires: [gateways, referencegrants]
     template: |
-      {#- Register TLS certificates from Gateway listeners with TLS mode "Terminate" #}
-      {#- Dynamically generates certificate files using fileRegistry.Register() #}
+      {# Register TLS certificates from Gateway listeners with TLS mode "Terminate" #}
+      {# Dynamically generates certificate files using fileRegistry.Register() #}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {#- Gateway API TLS configuration structure:
+      {# Gateway API TLS configuration structure:
           Gateway.spec.listeners[]:
             - name: https
               protocol: HTTPS  # or GRPC
@@ -153,7 +153,7 @@ templateSnippets:
                     name: example-tls
                     namespace: default  # optional, defaults to Gateway namespace
       #}
-      {#- Two-pass cert registration. Pass 1 — walking every
+      {# Two-pass cert registration. Pass 1 — walking every
           (gateway, listener, certRef) triple to aggregate per-secret
           (sni_patterns, listener_ports, is_gateway_default) — lives in
           util-aggregate-gateway-cert-metadata. We render that snippet
@@ -165,7 +165,7 @@ templateSnippets:
           ReferenceGrant in the Secret's namespace whose `from` matches
           the Gateway and `to` matches the Secret. Without a matching
           grant the cert is skipped (status patch reflects this with
-          ResolvedRefs=False/RefNotPermitted, set elsewhere). -#}
+          ResolvedRefs=False/RefNotPermitted, set elsewhere). #}
       {{ render "util-aggregate-gateway-cert-metadata" }}
       {%- var certAggregates = shared.Get("gatewayCertAggregates").(map[string]map[string]any) %}
 
@@ -362,9 +362,9 @@ templateSnippets:
             }
             var bundle = join(parts, "\n")
             var fname = "frontend-mtls-" + gwNs + "-" + gwName + suffix + ".crt"
-            {#- "ca-file": a general file (same disk path) flagged so a
-                content-only client-CA bundle rotation applies via the runtime
-                API (add ssl ca-file) with no reload on v3.2+. -#}
+            // "ca-file": a general file (same disk path) flagged so a
+            // content-only client-CA bundle rotation applies via the runtime
+            // API (add ssl ca-file) with no reload on v3.2+.
             var p, fErr = fileRegistry.Register("ca-file", fname, bundle)
             if fErr != nil {
               return "", ""
@@ -619,7 +619,7 @@ templateSnippets:
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
       {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
-      {#- Pre-compute lookup tables consumed by the per-listener checks
+      {# Pre-compute lookup tables consumed by the per-listener checks
           below.
 
           certBySecret  — set of `<ns>/<name>` keys for every cert that
@@ -634,7 +634,7 @@ templateSnippets:
                           features-110-gateway-frontend-mtls. Listed
                           listeners MUST NOT bind, per
                           GatewayFrontendInvalidDefaultClient
-                          CertificateValidation. -#}
+                          CertificateValidation. #}
       {{ render "util-tls-cert-by-secret" -}}
       {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
       {#- comma-ok: features-110-gateway-frontend-mtls may be stripped on
@@ -827,7 +827,7 @@ templateSnippets:
           }
         }
       %%}
-      {#- HTTPS-Passthrough bind decisions moved to ssl.yaml's
+      {# HTTPS-Passthrough bind decisions moved to ssl.yaml's
           `features-140-ssl-passthrough-binds`: `sslPassthroughBackends`
           is cross-library shared state owned by ssl.yaml (any of
           gateway, haproxy-ingress, nginx-ingress can populate it),
@@ -835,4 +835,4 @@ templateSnippets:
           (frontends-500-ssl-tcp) rather than in this Level-2 library.
           Without that move, an ingress-only chart with annotation-driven
           ssl-passthrough never saw `bindHTTPSDefault` lit, and the
-          TCP frontend silently failed to bind. -#}
+          TCP frontend silently failed to bind. #}

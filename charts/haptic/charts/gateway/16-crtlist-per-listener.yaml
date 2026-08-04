@@ -28,19 +28,16 @@ templateSnippets:
   util-gateway-listener-crtlist-name:
     template: >-
       {%- macro CrtlistName(gwNs string, gwName string, listenerName string) string %}
-        {#- Single dot for the extension only — interior dots get
-            sanitized to underscores by the chart's storage-name
-            sanitizer (filters.go:sanitizeStorageName). Keeping the
-            base dot-free means `crt-list:<filename>` lookups in
-            chart tests use the same string the registry stores
-            under. -#}
+        {#- Single dot for the extension only: sanitizeStorageName (filters.go)
+            turns interior dots into underscores, and a `crt-list:<name>` lookup
+            must match what the registry stored. -#}
         {{- "gw-" + gwNs + "-" + gwName + "-" + listenerName + "-crtlist.txt" -}}
       {%- end %}
 
   features-160-gateway-crtlist-per-listener:
     requires: [gateways]
     template: |
-      {#- Per-(Gateway, HTTPS listener) crt-list file emission.
+      {# Per-(Gateway, HTTPS listener) crt-list file emission.
           Reads back the shared cert registry (`gf.tlsCertificates`)
           to look up the cert's sanitized filename without
           re-resolving Secrets, then composes a single crt-list line
@@ -78,7 +75,7 @@ templateSnippets:
               drops the bind when missing.
             * Listeners with no resolved cert (the cert registration
               failed in `features-100-gateway-tls`).
-      -#}
+      #}
       {%- import "util-gateway-listener-crtlist-name" for CrtlistName %}
       {%- import "util-crtlist-line" for CrtListLine %}
       {%- import "util-resource-helpers" for
@@ -87,7 +84,7 @@ templateSnippets:
           ResolveCertRefKey %}
       {{ render "util-tls-cert-by-secret" -}}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {#- Per-listener mTLS state populated by
+      {# Per-listener mTLS state populated by
           features-110-gateway-frontend-mtls. Key:
           `<gwNs>/<gwName>/<listenerName>`. We use this — not the
           hostname-keyed `clientCertVerifyHosts` — because two
@@ -95,10 +92,10 @@ templateSnippets:
           catchall) would otherwise share the same map entry, so
           the second Gateway's mTLS config would silently apply to
           the first. Per-listener keying scopes resolution
-          unambiguously. -#}
-      {#- comma-ok: the producer (features-110-gateway-frontend-mtls) may be
+          unambiguously. #}
+      {# comma-ok: the producer (features-110-gateway-frontend-mtls) may be
           stripped on clusters without its required kinds; nil map reads are
-          safe and mean "no mTLS config resolved". -#}
+          safe and mean "no mTLS config resolved". #}
       {%- var perListenerMTLS, _ = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
       {%- var mtlsBlocked, _ = gf["mtlsBlockedListeners"].(map[string]any) %}
       {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}

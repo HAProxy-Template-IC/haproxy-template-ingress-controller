@@ -11,7 +11,7 @@ templateSnippets:
 
   backend-directives-802-haptic-compression-filter:
     template: |
-      {#-
+      {#
         Explicit compression filter declaration.
 
         HAProxy makes an explicit `filter` line mandatory for compression as soon as
@@ -29,14 +29,14 @@ templateSnippets:
         Must be `filter compression`, not `comp-req`/`comp-res`: client-native's
         config-parser only accepts `compression`, so the alternatives would fail
         HAPTIC's own parse before HAProxy ever saw them.
-      -#}
+      #}
       {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/compress-enable"] == "true" %}
       {{ "\n" }}filter compression
       {%- end -%}
 
   backend-directives-872-haptic-compression:
     template: |
-      {#-
+      {#
         HAPTIC response compression.
 
         Annotations:
@@ -57,7 +57,7 @@ templateSnippets:
         the backend cannot compress, which is the opposite of what this does.
         HAProxy skips a response that is already encoded, so leaving offload off
         is what makes "compress only uncompressed responses" true.
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
         {%- if ingress.Metadata.Annotations["haproxy-haptic.org/compress-enable"] == "true" %}

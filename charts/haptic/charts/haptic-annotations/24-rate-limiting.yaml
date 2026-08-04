@@ -130,10 +130,10 @@ templateSnippets:
           {%- else %}
       # haptic/rate-limiting ({{ key }})
           {%- end %}
-      {#- `peers localinstance` (base.yaml global-top-050-peers) carries the -#}
-      {#- per-source counter from the old worker to the new one on reload, so a -#}
-      {#- client's accumulated rate survives config churn instead of resetting to -#}
-      {#- zero and handing every client a fresh budget. Local-only: stays per-pod. -#}
+      {# `peers localinstance` (base.yaml global-top-050-peers) carries the #}
+      {# per-source counter from the old worker to the new one on reload, so a #}
+      {# client's accumulated rate survives config churn instead of resetting to #}
+      {# zero and handing every client a fresh budget. Local-only: stays per-pod. #}
       stick-table type ip size {{ size }} expire {{ window }} store {{ store }}{% if store == "http_req_rate" %}({{ window }}){% end %} peers localinstance
       http-request track-sc0 src
       http-request set-var(txn.denied_by) str(rate_limit_local) if { {{ checkFetch }}(0) gt {{ thresholdOut }} }{{ guard }}
@@ -143,7 +143,7 @@ templateSnippets:
 
   backend-directives-815-haptic-bandwidth-limit:
     template: |
-      {#-
+      {#
         HAPTIC-native bandwidth limiting (HAProxy bwlim filters, >= 2.7).
 
         Documentation: docs/site/docs/libraries/haptic-annotations.md#rate-and-bandwidth-limiting
@@ -176,7 +176,7 @@ templateSnippets:
         No `peers localinstance`: a 1s byte-rate window is stale before the new worker
         forwards its first byte, unlike the request-rate table where a reset would hand
         every client a fresh budget.
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}

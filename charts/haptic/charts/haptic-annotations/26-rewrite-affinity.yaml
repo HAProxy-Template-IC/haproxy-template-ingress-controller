@@ -16,7 +16,7 @@ templateSnippets:
 
   backend-directives-820-haptic-path-rewrite:
     template: |
-      {#-
+      {#
         HAPTIC Path Rewrite (haproxytech form)
 
         Documentation: docs/site/docs/libraries/haptic-annotations.md#path-rewrite
@@ -30,7 +30,7 @@ templateSnippets:
         Generated HAProxy Config:
           http-request replace-path <from> <to>      (two-token form)
           http-request replace-path (.*) <value>     (bare form)
-      -#}
+      #}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -58,7 +58,7 @@ templateSnippets:
 
   map-body-size-830-haptic:
     template: |
-      {#-
+      {#
         HAPTIC Request Body Size Limit (Strategy 1: relocated to a map)
 
         Documentation: docs/site/docs/libraries/haptic-annotations.md#max-request-body-size
@@ -72,7 +72,7 @@ templateSnippets:
         (http-request deny 413) keyed on the resolved backend, so adding or
         changing the cap is a map-only, reload-free update. Shares the
         "map-body-size" first_seen namespace with the vendor emitters.
-      -#}
+      #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var bodySize = ingress.Metadata.Annotations["haproxy-haptic.org/max-request-body-size"] -%}
@@ -110,7 +110,7 @@ templateSnippets:
 
   map-request-buffering-830-haptic:
     template: |
-      {#-
+      {#
         HAPTIC Request Buffering Override
 
         Documentation: docs/site/docs/libraries/haptic-annotations.md#request-buffering
@@ -128,7 +128,7 @@ templateSnippets:
         endangers a gRPC or chunked streaming route. Use "off" for a route whose
         clients declare a Content-Length but still expect a response before the
         body ends (resumable uploads, some long-poll command channels).
-      -#}
+      #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -155,7 +155,7 @@ templateSnippets:
 
   backend-directives-840-haptic-retry-on:
     template: |
-      {#-
+      {#
         HAPTIC retry-on — when to retry against the next server.
 
         Documentation: docs/site/docs/libraries/haptic-annotations.md#retry-on
@@ -179,7 +179,7 @@ templateSnippets:
         Generated HAProxy Config:
           retry-on <conditions>
           retries <n>
-      -#}
+      #}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -242,12 +242,12 @@ templateSnippets:
 
   map-reqhdr-host-850-haptic:
     template: |
-      {#- HAPTIC set-host → reqhdr-host.map (Strategy 1): emits
+      {# HAPTIC set-host → reqhdr-host.map (Strategy 1): emits
           `<backend_name> <host>` consumed by base.yaml's resource-agnostic
           frontend-filters-260-request-set-host rule, instead of a per-backend
           `http-request set-header Host`. Best-of-breed union of haproxytech
           set-host and nginx upstream-vhost. Shares the "map-reqhdr-host"
-          first_seen namespace with the vendor emitters. -#}
+          first_seen namespace with the vendor emitters. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -267,8 +267,8 @@ templateSnippets:
 
   map-reqhdr-xfwd-prefix-850-haptic:
     template: |
-      {#- HAPTIC x-forwarded-prefix → reqhdr-xfwd-prefix.map, applied reload-free
-          by base.yaml frontend-filters-261-request-set-xfwd-prefix. -#}
+      {# HAPTIC x-forwarded-prefix → reqhdr-xfwd-prefix.map, applied reload-free
+          by base.yaml frontend-filters-261-request-set-xfwd-prefix. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -288,8 +288,8 @@ templateSnippets:
 
   map-reqhdr-connection-850-haptic:
     template: |
-      {#- HAPTIC backend-connection-header → reqhdr-connection.map, applied
-          reload-free by base.yaml frontend-filters-262-request-set-connection. -#}
+      {# HAPTIC backend-connection-header → reqhdr-connection.map, applied
+          reload-free by base.yaml frontend-filters-262-request-set-connection. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -313,7 +313,7 @@ templateSnippets:
 
   backend-directives-860-haptic-session-affinity:
     template: |
-      {#-
+      {#
         HAPTIC Session Affinity (Cookie Persistence)
 
         Documentation: docs/site/docs/libraries/haptic-annotations.md#affinity
@@ -340,7 +340,7 @@ templateSnippets:
             [<keywords>] [domain <domain>] [attr Path=<path>] [attr Secure] \
             [attr SameSite=<v>] [attr Max-Age=<n>]
           dynamic-cookie-key <sha256(ns/name)>        (only when dynamic)
-      -#}
+      #}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}

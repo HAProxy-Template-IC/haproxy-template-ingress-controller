@@ -2,7 +2,7 @@ templateSnippets:
   util-generate-httproute-host-map-gateway:
     requires: [gateways, httproutes, referencegrants]
     template: |
-      {#-
+      {#
         Generate host map entries for HTTPRoute (typed sibling).
 
         Per Gateway API spec the effective hostname set for a route is
@@ -21,7 +21,7 @@ templateSnippets:
         routeInfo entries that drive advanced matchers; this snippet
         mirrors the logic so host.map and the route-analysis view stay
         consistent.
-      -#}
+      #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
@@ -212,7 +212,7 @@ templateSnippets:
   util-generate-grpcroute-host-map-gateway:
     requires: [gateways, grpcroutes, referencegrants]
     template: |
-      {#-
+      {#
         Generate host map entries for GRPCRoute (typed sibling).
 
         Body identical to GenerateHTTPRouteHostMap apart from the
@@ -220,7 +220,7 @@ templateSnippets:
         header comment. Kept as a separate macro so the typed
         parameter stays at the call boundary — the whole point of the
         per-Kind split.
-      -#}
+      #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
@@ -406,8 +406,8 @@ templateSnippets:
   util-sharded-host-map-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#- Per-Kind typed sharded host-map wrappers. Each calls its
-          Kind-specific Generate macro directly with the typed slice. -#}
+      {# Per-Kind typed sharded host-map wrappers. Each calls its
+          Kind-specific Generate macro directly with the typed slice. #}
       {%- import "util-generate-httproute-host-map-gateway" for GenerateHTTPRouteHostMap -%}
       {%- import "util-generate-grpcroute-host-map-gateway" for GenerateGRPCRouteHostMap -%}
       {%- import "util-macros" for CalculateShardCount -%}
@@ -437,7 +437,7 @@ templateSnippets:
   map-host-500-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#- Generate host map entries for Gateway API routes #}
+      {# Generate host map entries for Gateway API routes #}
       {%- import "util-sharded-host-map-gateway" for ShardedHTTPRouteHostMap, ShardedGRPCRouteHostMap %}
       # gateway/map-host-gateway
       {{- ShardedHTTPRouteHostMap(resources.httproutes.List()) -}}
@@ -447,7 +447,7 @@ templateSnippets:
     requires: [gateways]
     template: |
       {%- import "util-resource-helpers" for ListenerHostname -%}
-      {#-
+      {#
         Wildcard listener hostnames as regex entries.
 
         For each Gateway listener whose hostname starts with `*.`,
@@ -471,7 +471,7 @@ templateSnippets:
         This excludes `bar.com` itself (which would have been matched
         already by the exact host.map entry for any sibling exact
         listener — and per spec must not match `*.bar.com`).
-      -#}
+      #}
       # gateway/map-hostregex-gateway
       {%%
         var seen = map[string]bool{}
