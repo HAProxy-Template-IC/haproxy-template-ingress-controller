@@ -190,6 +190,18 @@ lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kube
 	@echo ""
 	@echo "All chart linting passed!"
 
+# The worst-case library profile, shared by BOTH size gates. Defined once
+# because they drifted: chart-size-check enabled two of these four while its
+# comment claimed "every bundled library enabled", so CI never measured the
+# real worst case. nginxIngress/haproxytech/haproxyIngress are default-disabled;
+# spoaHub already merges by default via its OR-helper, and the flag guards
+# against a future change to that.
+WORST_CASE_LIBS := \
+	--set controller.templateLibraries.nginxIngress.enabled=true \
+	--set controller.templateLibraries.haproxytech.enabled=true \
+	--set controller.templateLibraries.haproxyIngress.enabled=true \
+	--set controller.templateLibraries.spoaHub.enabled=true
+
 chart-size-check: ## Estimate the Helm release-Secret size; fail if it nears the 1 MiB Secret limit
 	@# Renders the WORST-CASE profile (every bundled library enabled, Gateway
 	@# CRDs present) and estimates the base64(gzip(json(release))) payload Helm
@@ -198,12 +210,9 @@ chart-size-check: ## Estimate the Helm release-Secret size; fail if it nears the
 	@# this gate catches a regression in `make`/CI BEFORE an install fails. The
 	@# estimator reconstructs Helm's release object offline (subchart source is
 	@# NOT stored), accurate to ~2% against real installs — see the script header.
-	@# nginxIngress + spoaHub are the two default-disabled libraries; enabling
-	@# both makes the worst case explicit (spoaHub already merges by default via
-	@# its OR-helper, so the flag is belt-and-suspenders against a future change).
-	@python3 scripts/check-chart-release-size.py charts/haptic \
-		--set controller.templateLibraries.nginxIngress.enabled=true \
-		--set controller.templateLibraries.spoaHub.enabled=true
+	@# Renders $(WORST_CASE_LIBS) — the same profile as cr-size-check, so the two
+	@# gates cannot disagree about what "worst case" means.
+	@python3 scripts/check-chart-release-size.py charts/haptic $(WORST_CASE_LIBS)
 
 vector-config-check: build ## Assert the chart renders a vector.yaml that vector can load
 	@# Regex assertions and the span harness both look at fragments; neither
@@ -231,11 +240,7 @@ cr-size-check: ## Check each rendered HAProxyTemplateConfig against etcd's ~1.5 
 	@# unexplained e2e failure. Renders every bundled library at once — the
 	@# profile that used to be impossible to install — so the check covers the
 	@# largest object any operator can produce.
-	@python3 scripts/check-cr-size.py charts/haptic \
-		--set controller.templateLibraries.nginxIngress.enabled=true \
-		--set controller.templateLibraries.haproxytech.enabled=true \
-		--set controller.templateLibraries.haproxyIngress.enabled=true \
-		--set controller.templateLibraries.spoaHub.enabled=true
+	@python3 scripts/check-cr-size.py charts/haptic $(WORST_CASE_LIBS)
 
 ## Security & vulnerability scanning
 
