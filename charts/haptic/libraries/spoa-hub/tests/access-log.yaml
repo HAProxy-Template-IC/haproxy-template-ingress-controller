@@ -130,12 +130,12 @@ validationTests:
           No verdict must not produce a 429 under the default posture.
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.degraded_by\) str\(rate_limit\) if .*!\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
+        pattern: 'http-request set-var\(txn\.rate_limit_degraded\) str\(1\) if .*!\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
       # The variable is worthless if it never reaches a log line: this is the
       # only signal that a control silently stopped protecting anything.
       - type: contains
         target: haproxy.cfg
-        pattern: '%\(degraded_by\)\[var\(txn\.degraded_by\)\]'
+        pattern: '%\(rate_limit_degraded\)\[var\(txn\.rate_limit_degraded\)\]'
         description: >-
           Allowed, but never silently: this feeds the access log and the counter,
           so a limiter that is not limiting is visible.
@@ -263,7 +263,7 @@ validationTests:
         pattern: 'http-request return status 503 if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.__status\) -m found \}'
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.degraded_by\) str\(waf\) if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.__status\) -m found \}'
+        pattern: 'http-request set-var\(txn\.waf_degraded\) str\(1\) if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.__status\) -m found \}'
 
   test-spoa-hub-waf-fail-closed-opt-in:
     description: >-
@@ -320,4 +320,4 @@ validationTests:
       # Recorded in both postures, so an uninspecting WAF is never silent.
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.degraded_by\) str\(waf\)'
+        pattern: 'http-request set-var\(txn\.waf_degraded\) str\(1\)'

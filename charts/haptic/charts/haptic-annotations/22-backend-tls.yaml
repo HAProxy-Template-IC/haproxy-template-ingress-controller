@@ -32,8 +32,10 @@ templateSnippets:
           - haproxy-haptic.org/backend-verify: "on|off" (optional, default off)
               Truthy (on/true/yes/1, case-insensitive) requires the upstream
               certificate to be verified — which needs backend-ca-secret. Asking
-              to verify without a CA FAILS THE RENDER (fail-closed, never a
-              silent downgrade to `verify none`).
+              to verify without a usable CA denies the route with 503 at runtime
+              (fail-closed, never a silent downgrade to `verify none`), and
+              recovers when the Secret appears. Naming no CA at all is a static
+              mistake and is rejected at admission.
           - haproxy-haptic.org/backend-ca-secret: "<name>" | "<ns>/<name>"
               Secret whose ca.crt verifies the upstream cert. Supplying it
               implies `verify required` even without backend-verify.
@@ -170,9 +172,11 @@ templateSnippets:
 
           {#- Verify mode. Truthy backend-verify requests verification; a CA
               being present implies it. Requesting verification without a usable
-              CA FAILS THE RENDER (fail-closed) rather than silently downgrading
-              to `verify none`, which would leave the operator believing the
-              upstream cert is checked when it is not. -#}
+              CA denies THIS route with 503 rather than silently downgrading to
+              `verify none`, which would leave the operator believing the
+              upstream cert is checked when it is not. Route-scoped, not a render
+              abort: a bare fail() here stopped config generation for the whole
+              fleet over one Ingress. -#}
           {%- var verifyNorm = toLower(trimSpace(verifyRaw)) %}
           {%- var wantVerify = verifyNorm == "on" || verifyNorm == "true" || verifyNorm == "yes" || verifyNorm == "1" %}
           {%- if verifyRaw != "" && !wantVerify && verifyNorm != "off" && verifyNorm != "false" && verifyNorm != "no" && verifyNorm != "0" %}

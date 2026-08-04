@@ -36,10 +36,12 @@ templateSnippets:
           contractual cap, where letting a caller past the budget is worse than
           refusing them. Off by default.
 
-          Either way the event is recorded: txn.degraded_by names this control in the
-          access log and in haptic_degraded_total, so a limiter that is silently
-          not limiting is visible. It is NOT denied_by: nothing was denied. -#}
-      http-request set-var(txn.degraded_by) str(rate_limit) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }
+          Either way the event is recorded: txn.rate_limit_degraded reaches the access
+          log and haptic_degraded_total{control}, so a limiter that is silently not
+          limiting is visible. Deliberately NOT denied_by, and deliberately its
+          own variable: a shared one is overwritten when several controls degrade
+          in the same request, which is exactly when the signal matters most. -#}
+      http-request set-var(txn.rate_limit_degraded) str(1) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }
       {%- if failClosed %}
       http-request set-var(txn.denied_by) str(rate_limit_shared_unavailable) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }
       http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }
@@ -356,13 +358,14 @@ templateSnippets:
           waf.failClosed restores the 503 for operators who would rather refuse
           traffic than let it past uninspected. Off by default.
 
-          Either way txn.degraded_by is set, so an uninspecting WAF shows up in
-          the access log and in haptic_degraded_total rather than looking
-          healthy. It is NOT denied_by: nothing was denied. -#}
+          Either way txn.waf_degraded is set, so an uninspecting WAF shows up in
+          the access log and in haptic_degraded_total{control} rather than
+          looking healthy. Its own variable, not a shared one: see the rate
+          limiter above. -#}
       {%- var wafFailClosed = tostring(extraContext | dig("waf", "failClosed") | fallback(false)) == "true" %}
-      http-request set-var(txn.degraded_by) str(waf) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m found }
-      http-request set-var(txn.degraded_by) str(waf) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m str ok }
-      http-request set-var(txn.degraded_by) str(waf) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.action) -m found }
+      http-request set-var(txn.waf_degraded) str(1) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m found }
+      http-request set-var(txn.waf_degraded) str(1) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m str ok }
+      http-request set-var(txn.waf_degraded) str(1) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.action) -m found }
       {%- if wafFailClosed %}
       http-request set-var(txn.denied_by) str(waf_unavailable) if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m found }
       http-request return status 503 if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m found }

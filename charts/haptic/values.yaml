@@ -2445,13 +2445,16 @@ vector:
     # unset and haptic_denied_total does not see these: without their own
     # counters a control that has silently stopped protecting anything looks
     # exactly like one with nothing to report.
-    degradedBy:
+    rateLimitDegraded:
       enabled: true
-      field: degraded_by
-      kind: enum
-      values: ["rate_limit", "waf"]
-      metric: degraded_total
-      tag: control
+      field: rate_limit_degraded
+      kind: numeric
+      metric: degraded_rate_limit_total
+    wafDegraded:
+      enabled: true
+      field: waf_degraded
+      kind: numeric
+      metric: degraded_waf_total
     # Which control rejected a request. The `*_unavailable` reasons are the ones
     # to alert on: they mean a control could not reach its dependency and shed
     # legitimate traffic rather than a client hitting a limit it was given.

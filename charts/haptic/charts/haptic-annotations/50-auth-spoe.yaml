@@ -451,9 +451,13 @@ templateSnippets:
               mTLS was simply gone.
 
               Both causes (no Secret, Secret without ca.crt) are the same exposure
-              and are handled together: rejected at admission, and denied at runtime
-              by frontend-filters-830 so an already-admitted route whose Secret is
-              deleted or emptied later fails closed instead of serving unverified. -#}
+              and are handled together: a Warning event, and a runtime deny from
+              frontend-filters-830 so the route fails closed instead of serving
+              unverified. Deliberately NOT an admission rejection — the webhook
+              renders against the watched-resource store, which lags the API
+              server, so a Secret created moments earlier is indistinguishable
+              from one that is absent. The runtime deny recovers on its own once
+              the store catches up. -#}
           {%- var failReason = "" %}
           {%- var failCause = "" %}
           {%- if secret == nil %}
