@@ -215,7 +215,7 @@ migrationCoverage:
         doc: annotation-support
       nginx.ingress.kubernetes.io/auth-secret:
         status: different
-        note: Two divergences to note. (1) A missing Secret disables auth for the route until the Secret appears (fail-open); ingress-nginx serves 503 instead. (2) Hashes are verified by HAProxy's crypt(3), which supports $2y$/$6$/$5$/$1$ but **not** Apache apr1 ($apr1$) or {SHA} — an htpasswd Secret using those verifies under ingress-nginx but rejects every login here; regenerate with a crypt(3) algorithm.
+        note: One divergence to note. Hashes are verified by HAProxy's crypt(3), which supports $2y$/$6$/$5$/$1$ but **not** Apache apr1 ($apr1$) or {SHA} — an htpasswd Secret using those verifies under ingress-nginx but rejects every login here; regenerate with a crypt(3) algorithm.
         doc: annotation-support
       nginx.ingress.kubernetes.io/auth-secret-type:
         status: supported

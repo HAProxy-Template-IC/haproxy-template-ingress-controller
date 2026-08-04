@@ -745,3 +745,62 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: 'del-header X-SSL-Client-[A-Za-z]+ if'
+
+  test-haptic-basic-auth-without-secret-annotation-fails-closed:
+    description: >-
+      auth-type basic with no auth-secret served every request unauthenticated - no userlist, no challenge, no warning, nothing at admission.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ba-noannot
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: ba-noannot.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.denied_by\\) str\\(basic_auth_unavailable\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 503"
+      # The render must still succeed: a Secret deleted after admission must not
+      # abort reconcile for the whole fleet.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend default_ba-noannot_svc_echo_80"
+
+  test-haptic-basic-auth-without-secret-annotation-fails-closed-at-admission:
+    description: >-
+      auth-type basic with no auth-secret served every request unauthenticated - no userlist, no challenge, no warning, nothing at admission. Rejected when the resource is written.
+    extraContext:
+      renderMode: admission
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ba-noannot
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: ba-noannot.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "fails closed with 503"

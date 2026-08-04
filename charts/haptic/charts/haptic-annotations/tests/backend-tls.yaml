@@ -236,3 +236,65 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "backend-verify: on on Ingress 'default/fc-ingress' requires"
+
+  test-haptic-backend-ca-secret-missing-fails-closed:
+    description: >-
+      Naming a backend-ca-secret is the request to verify the upstream
+      certificate. An absent Secret fell through to `ssl verify none` behind a
+      render comment, so the connection was unverified while the operator
+      believed it was checked.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: btls-noca
+            annotations:
+              haproxy-haptic.org/backend-protocol: "https"
+              haproxy-haptic.org/backend-ca-secret: "does-not-exist"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: btls-noca.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "was not found, but backend-verify"
+
+  test-haptic-backend-ca-secret-present-still-verifies:
+    description: >-
+      Control for the guard above: a resolvable CA Secret must still render
+      `ssl verify required` with its ca-file, not be caught by the new branch.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: btls-ca }
+          type: Opaque
+          data:
+            ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: btls-ca-ok
+            annotations:
+              haproxy-haptic.org/backend-protocol: "https"
+              haproxy-haptic.org/backend-ca-secret: "btls-ca"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: btls-ca-ok.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ssl verify required ca-file"

@@ -555,6 +555,7 @@ templateSnippets:
 
   backend-directives-500-haproxytech-ingress-auth:
     template: |
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -591,6 +592,13 @@ templateSnippets:
       # haproxytech/backend-directives-haproxytech-ingress-auth
       http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ userlistName }}) }
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
+            {%- else %}
+              {#- Without a resolvable Secret there is no userlist, and emitting
+                  nothing served every request unauthenticated. Fail closed. -#}
+              {{- WebhookRejectOrWarn(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy.org/auth-secret', but that Secret could not be resolved. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
+      # WARNING haproxy.org/auth-secret: Secret not resolvable for {{ key }}; failing closed (503) until it is present.
+      http-request set-var(txn.denied_by) str(basic_auth_unavailable)
+      http-request deny deny_status 503
             {%- end %}
           {%- end -%}
         {%- end -%}
@@ -2022,7 +2030,7 @@ migrationCoverage:
         doc: annotation-support
       haproxy.org/auth-secret:
         status: different
-        note: Secret format is one key per username with a base64(hash) value — different from ingress-nginx's htpasswd; a missing Secret disables auth for the route until it appears.
+        note: Secret format is one key per username with a base64(hash) value — different from ingress-nginx's htpasswd. A missing Secret makes the route serve 503 until it appears, and writing such an Ingress is rejected by the admission webhook.
         doc: annotation-support
       haproxy.org/auth-realm:
         status: different
