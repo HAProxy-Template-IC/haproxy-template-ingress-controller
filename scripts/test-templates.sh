@@ -761,7 +761,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set controller.config.templatingSettings.extraContext.waf.policies.inline.baseline.enforcement=deny
     run_helm_failure_guard \
         "Shared rate-limit Helm guard: reject ambiguous legacy store ownership" \
-        'rateLimit.shared contains unknown field "store". Valid fields: enabled, managedStore, externalStore.' \
+        'rateLimit.shared contains unknown field "store". Valid fields: enabled, failClosed, managedStore, externalStore.' \
         --set rateLimit.shared.store.enabled=false
     run_helm_failure_guard \
         "Shared rate-limit Helm guard: reject Redis CLI spelling in public values" \

@@ -72,6 +72,8 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	./scripts/gen-migration-docs.sh --check
 	@echo "Checking chart values docs coverage..."
 	./scripts/check-values-docs.sh
+	@echo "Checking denied_by metric values match the chart..."
+	./scripts/check-shipped-log-metrics.sh
 	@echo "Checking every pin of the same image agrees..."
 	./scripts/check-image-pins.sh
 	@echo "Checking every webhook-routed kind has a Go handler..."

@@ -137,8 +137,8 @@
   {{- $wafSettings = $configuredExtraContext.waf }}
 {{- end }}
 {{- range $field := keys $wafSettings }}
-  {{- if not (has $field (list "dispatch" "ingressPermissions" "customRules" "policies" "crs")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.waf contains unknown field %q. Valid fields: dispatch, ingressPermissions, customRules, policies, crs." $field) }}
+  {{- if not (has $field (list "dispatch" "ingressPermissions" "customRules" "policies" "crs" "failClosed")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf contains unknown field %q. Valid fields: dispatch, ingressPermissions, customRules, policies, crs, failClosed." $field) }}
   {{- end }}
 {{- end }}
 {{- /* CRS source. A typo in a field name here would silently leave the

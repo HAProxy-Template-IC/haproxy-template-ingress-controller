@@ -507,7 +507,7 @@ enabled months later.
 {{- end -}}
 {{- $shared := $rateLimit.shared | default dict -}}
 {{- if not (kindIs "map" $shared) -}}{{- fail "rateLimit.shared must be a map." -}}{{- end -}}
-{{- range $field := keys $shared -}}{{- if not (has $field (list "enabled" "managedStore" "externalStore")) -}}{{- fail (printf "rateLimit.shared contains unknown field %q. Valid fields: enabled, managedStore, externalStore." $field) -}}{{- end -}}{{- end -}}
+{{- range $field := keys $shared -}}{{- if not (has $field (list "enabled" "failClosed" "managedStore" "externalStore")) -}}{{- fail (printf "rateLimit.shared contains unknown field %q. Valid fields: enabled, failClosed, managedStore, externalStore." $field) -}}{{- end -}}{{- end -}}
 {{- if not (kindIs "bool" $shared.enabled) -}}{{- fail "rateLimit.shared.enabled must be a boolean." -}}{{- end -}}
 
 {{- $external := $shared.externalStore | default dict -}}

@@ -1665,6 +1665,17 @@ cache:
 # whole HAProxy fleet.
 rateLimit:
   shared:
+    # What happens when the SPOA hub or rate-limit plugin cannot answer — a
+    # reload, a restart, a timeout. Default false: the request is ALLOWED. A rate
+    # limit protects the origin from abuse, and turning an internal blip into
+    # 429s sheds legitimate traffic for a reason the client cannot act on.
+    # Either way the event is counted (haptic_denied_total, and the
+    # rate_limit_unavailable access-log field), so a limiter that is silently not
+    # limiting stays visible.
+    #
+    # Set true only where letting a caller past the budget is worse than refusing
+    # them — a contractual cap rather than DoS protection.
+    failClosed: false
     # Enables the native shared rate-limit annotations and auto-enables the
     # spoaHub.plugins.rate-limit plugin. Off by default; annotations fail the
     # render loudly while this is false so a missing opt-in cannot become an
@@ -2385,6 +2396,55 @@ vector:
   #
   # Verified honoured on HAProxy 3.0 (the supported floor) and 3.4.
   excludeMaintServerMetrics: true
+
+  # Metrics derived from the access log. Several in-path components expose no
+  # scrape endpoint of their own — Varnish has none at all — but the access log
+  # already carries their verdict per request.
+  #
+  # Each entry names a log `field` and how to project it: `enum` becomes a
+  # counter tagged with the value (accepted `values` listed, so an unexpected one
+  # cannot invent an unbounded label), `numeric` a counter incremented BY the
+  # value. `requires` is a dotted values path that must be truthy, so an entry
+  # whose emitter is off costs nothing per record.
+  logMetrics:
+    cacheStatus:
+      enabled: true
+      requires: cache.varnish.enabled
+      field: cache
+      kind: enum
+      values: ["HIT", "MISS", "STALE"]
+      metric: cache_status_total
+      tag: status
+    # How old served objects are. A healthy-looking hit rate with ages near zero
+    # is churn — objects evicted or expiring before reuse — which the hit rate
+    # alone cannot distinguish from a genuinely warm cache.
+    cacheAge:
+      enabled: true
+      requires: cache.varnish.enabled
+      field: cache_age
+      kind: numeric
+      metric: cache_age_seconds_total
+    # Why responses were NOT stored, otherwise invisible: a route that silently
+    # never caches looks identical to one that is always missing.
+    cacheReason:
+      enabled: true
+      requires: cache.varnish.enabled
+      field: cache_uncacheable_reason
+      kind: enum
+      values: ["content_type_excluded", "too_large", "set_cookie", "status_not_cacheable"]
+      metric: cache_uncacheable_total
+      tag: reason
+    # Which control rejected a request. The `*_unavailable` reasons are the ones
+    # to alert on: they mean a control could not reach its dependency and shed
+    # legitimate traffic rather than a client hitting a limit it was given.
+    # scripts/check-shipped-log-metrics.sh keeps this list in step with the chart.
+    deniedBy:
+      enabled: true
+      field: denied_by
+      kind: enum
+      values: ["api_key", "api_key_unavailable", "basic_auth", "basic_auth_unavailable", "body_too_large", "cache_origin_internal_backend", "consumer_groups", "consumer_groups_unavailable", "content_type", "external_auth", "gw_sni_host_mismatch", "hmac", "hmac_unavailable", "jwt_algorithm", "jwt_audience", "jwt_expired", "jwt_issuer", "jwt_key_unavailable", "jwt_not_yet_valid", "jwt_required_claim", "jwt_signature", "jwt_unavailable", "method_not_allowed", "mtls_unavailable", "rate_limit_connections", "rate_limit_local", "rate_limit_shared", "rate_limit_shared_unavailable", "required_header", "schema_body_incomplete", "schema_body_too_large", "schema_duplicate_content_length", "schema_invalid", "schema_no_content_length", "schema_unavailable", "schema_unsupported_media_type", "waf", "waf_body_chunked", "waf_body_content_type", "waf_body_duplicate_content_length", "waf_body_incomplete", "waf_body_too_large", "waf_policy_unavailable", "waf_unavailable"]
+      metric: denied_total
+      tag: reason
 
   # Metric families to DROP before re-exporting. Each entry is a regex matched
   # against the metric name (not the labels). Set to [] to re-export everything.
