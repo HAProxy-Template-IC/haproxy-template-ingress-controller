@@ -52,8 +52,13 @@ templateSnippets:
           stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
           http-request track-sc0 src
           http-request deny deny_status 429 if { sc_http_req_rate(0) gt 10 } !{ src 10.0.0.0/8 }
+
+        A cache-enabled route is skipped: on the client leg it is switched to
+        varnish_cache before this backend, and on the origin leg src is the
+        Varnish pod, not the client. frontend-filters-863 enforces it on the
+        client leg instead, with its own table proxy (backends-810).
       -#}
-      {%- if ingress != nil %}
+      {%- if ingress != nil && !(tostring(extraContext | dig("cache", "varnish", "enabled") | fallback("false")) == "true" && ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true") %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
@@ -176,8 +181,15 @@ templateSnippets:
         No `peers localinstance`: a 1s byte-rate window is stale before the new worker
         forwards its first byte, unlike the request-rate table where a reset would hand
         every client a fresh budget.
+
+        A cache-enabled route is skipped: the client leg never enters this
+        backend (cache hits would stream unthrottled), and on the origin leg a
+        src-keyed budget would pool all misses under the Varnish pod's IP.
+        frontend-filters-864 enforces it on the client leg instead, with its
+        own table proxy (backends-815) — which is also why a shared scope may
+        coexist with a per-source cap there, unlike below.
       #}
-      {%- if ingress != nil %}
+      {%- if ingress != nil && !(tostring(extraContext | dig("cache", "varnish", "enabled") | fallback("false")) == "true" && ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true") %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
@@ -225,3 +237,200 @@ templateSnippets:
           {%- end %}
         {%- end %}
       {%- end -%}
+
+  # ==========================================================================
+  # Client-leg limit data for cache-enabled routes (#134).
+  #
+  # frontend-filters-865 switches a cache-enabled route to `backend
+  # varnish_cache`, so backend-directives-810/815 skip such routes (see their
+  # headers) and the four snippets below re-emit the same limits in the client
+  # frontends. This util resolves and validates the annotations once per
+  # render and stores the result under the shared key "hapticCacheLocalLimits":
+  #   rl: <ns>/<name> -> {table, store, checkFetch, threshold, window, size,
+  #                       status, guard, ignored}
+  #   bw: <ns>/<name> -> {ns, name, down, up, tableKey, tableType}
+  # Consumed by frontend-filters-863/864 (rules) and backends-810/815 (table
+  # proxies) — globs that cannot share template variables. Validation and
+  # failure messages mirror backend-directives-810/815. The one-stick-table
+  # refusal of 815 deliberately does not apply here: each limiter gets its own
+  # table proxy, so a shared bandwidth scope and a per-source cap can coexist
+  # on a cache-enabled route.
+  # ==========================================================================
+  util-haptic-cache-local-limits:
+    template: |
+      {%- import "util-validate-cidr-list" for ValidateCidrList -%}
+      {%- var rlCfgs = map[string]any{} -%}
+      {%- var bwCfgs = map[string]any{} -%}
+      {%- if tostring(extraContext | dig("cache", "varnish", "enabled") | fallback("false")) == "true" -%}
+        {%- for _, ingress := range resources.ingresses.List() -%}
+          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" -%}
+            {%- var ns = ingress.Metadata.Namespace -%}
+            {%- var name = ingress.Metadata.Name -%}
+            {%- var key = ns + "/" + name -%}
+            {%- var rps = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-rps"] -%}
+            {%- var rpm = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-rpm"] -%}
+            {%- var conns = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-connections"] -%}
+            {%- var threshold = "" -%}
+            {%- var store = "" -%}
+            {%- var checkFetch = "" -%}
+            {%- var defaultWindow = "" -%}
+            {%- if rps != "" -%}
+              {%- threshold = rps -%}
+              {%- store = "http_req_rate" -%}
+              {%- checkFetch = "sc_http_req_rate" -%}
+              {%- defaultWindow = "1s" -%}
+            {%- else if rpm != "" -%}
+              {%- threshold = rpm -%}
+              {%- store = "http_req_rate" -%}
+              {%- checkFetch = "sc_http_req_rate" -%}
+              {%- defaultWindow = "60s" -%}
+            {%- else if conns != "" -%}
+              {%- threshold = conns -%}
+              {%- store = "conn_cur" -%}
+              {%- checkFetch = "sc_conn_cur" -%}
+              {%- defaultWindow = "30s" -%}
+            {%- end -%}
+            {%- if threshold != "" -%}
+              {%- var n = toint(threshold) -%}
+              {%- if n <= 0 -%}
+                {{- fail("Invalid rate-limit threshold '" + threshold + "' on Ingress '" + key + "'. Must be a positive integer.") -}}
+              {%- end -%}
+              {%- var window = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-period"] -%}
+              {%- if window == "" -%}
+                {%- window = defaultWindow -%}
+              {%- else if !regex_search(window, "^[0-9]+(us|ms|s|m|h|d)?$") -%}
+                {{- fail("Invalid value '" + window + "' for annotation 'haproxy-haptic.org/rate-limit-period' on Ingress '" + key + "'. Expected a HAProxy time value like '1s', '60s', '10m'.") -}}
+              {%- end -%}
+              {%- var size = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-size"] -%}
+              {%- if size == "" -%}
+                {%- size = "100k" -%}
+              {%- else if !regex_search(size, "^[0-9]+[kKmMgG]?$") -%}
+                {{- fail("Invalid value '" + size + "' for annotation 'haproxy-haptic.org/rate-limit-size' on Ingress '" + key + "'. Expected a size like '100k', '1m'.") -}}
+              {%- end -%}
+              {%- var status = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-status-code"] -%}
+              {%- if status == "" -%}
+                {%- status = "429" -%}
+              {%- else if !regex_search(status, "^[1-5][0-9][0-9]$") -%}
+                {{- fail("Invalid value '" + status + "' for annotation 'haproxy-haptic.org/rate-limit-status-code' on Ingress '" + key + "'. Expected a 3-digit HTTP status code.") -}}
+              {%- end -%}
+              {%- var whitelist = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-allowlist"] -%}
+              {%- var guard = "" -%}
+              {%- if whitelist != "" -%}
+                {%- var validated = ValidateCidrList(whitelist, "haproxy-haptic.org/rate-limit-allowlist", key) -%}
+                {%- if validated != "" -%}
+                  {%- guard = " !{ src " + validated + " }" -%}
+                {%- end -%}
+              {%- end -%}
+              {%- var ignored = []string{} -%}
+              {%- if rps != "" && rpm != "" -%}{%- ignored = append(ignored, "rate-limit-rpm") -%}{%- end -%}
+              {%- if (rps != "" || rpm != "") && conns != "" -%}{%- ignored = append(ignored, "rate-limit-connections") -%}{%- end -%}
+              {%- rlCfgs[key] = map[string]any{"table": "haptic_rl_tbl_" + ns + "_" + name, "store": store, "checkFetch": checkFetch, "threshold": tostring(n), "window": window, "size": size, "status": status, "guard": guard, "ignored": join(ignored, ", ")} -%}
+            {%- end -%}
+            {%- var down = ingress.Metadata.Annotations["haproxy-haptic.org/download-bandwidth-limit"] -%}
+            {%- var up = ingress.Metadata.Annotations["haproxy-haptic.org/upload-bandwidth-limit"] -%}
+            {%- if down != "" || up != "" -%}
+              {%- var scope = ingress.Metadata.Annotations["haproxy-haptic.org/bandwidth-limit-scope"] -%}
+              {%- var tableKey = "" -%}
+              {%- var tableType = "" -%}
+              {%- if scope == "client" -%}
+                {%- tableKey = "src" -%}
+                {%- tableType = "ip" -%}
+              {%- else if scope == "service" -%}
+                {%- tableKey = "be_id" -%}
+                {%- tableType = "integer" -%}
+              {%- else if scope != "" && scope != "stream" -%}
+                {{- fail("Invalid value '" + scope + "' for annotation 'haproxy-haptic.org/bandwidth-limit-scope' on Ingress '" + key + "'. Valid: stream, client, service.") -}}
+              {%- end -%}
+              {%- if down != "" && !regex_search(down, "^[0-9]+[kKmMgG]?$") -%}
+                {{- fail("Invalid value '" + down + "' for annotation 'haproxy-haptic.org/download-bandwidth-limit' on Ingress '" + key + "'. Expected a byte size like '100k', '1m'.") -}}
+              {%- end -%}
+              {%- if up != "" && !regex_search(up, "^[0-9]+[kKmMgG]?$") -%}
+                {{- fail("Invalid value '" + up + "' for annotation 'haproxy-haptic.org/upload-bandwidth-limit' on Ingress '" + key + "'. Expected a byte size like '100k', '1m'.") -}}
+              {%- end -%}
+              {%- bwCfgs[key] = map[string]any{"ns": ns, "name": name, "down": down, "up": up, "tableKey": tableKey, "tableType": tableType} -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+      {%- var _, _ = shared.ComputeIfAbsent("hapticCacheLocalLimits", func() any { return map[string]any{"rl": rlCfgs, "bw": bwCfgs} }) -%}
+
+  frontend-filters-863-haptic-rate-limit-cache-routes:
+    template: |
+      {#- Client-leg twin of backend-directives-810 for cache-enabled routes:
+          tracks into the route's table proxy (backends-810) because a frontend
+          holds at most one stick-table of its own. Emitted before the cache
+          switch at 865, so hits and misses consume the same budget. -#}
+      {{- render "util-haptic-cache-local-limits" -}}
+      {%- var limits = shared.Get("hapticCacheLocalLimits").(map[string]any) %}
+      {%- var rl = limits["rl"].(map[string]any) %}
+      {%- for _, key := range keys(rl) %}
+        {%- var cfg = rl[key].(map[string]any) %}
+      {{ "\n" }}# haptic/rate-limiting on the client leg — cache-enabled route ({{ key }}){% if tostring(cfg["ignored"]) != "" %} - {{ cfg["ignored"] }} ignored (HAProxy stores one counter per stick-table per data type){% end %}
+      http-request track-sc0 src table {{ cfg["table"] }} if { var(txn.resource_id) -m str {{ key }} }
+      http-request set-var(txn.denied_by) str(rate_limit_local) if { var(txn.resource_id) -m str {{ key }} } { {{ cfg["checkFetch"] }}(0) gt {{ cfg["threshold"] }} }{{ cfg["guard"] }}
+      http-request deny deny_status {{ cfg["status"] }} if { var(txn.resource_id) -m str {{ key }} } { {{ cfg["checkFetch"] }}(0) gt {{ cfg["threshold"] }} }{{ cfg["guard"] }}
+      {%- end %}
+
+  frontend-filters-864-haptic-bandwidth-limit-cache-routes:
+    template: |
+      {#- Client-leg twin of backend-directives-815 for cache-enabled routes.
+          Declared on the client frontend so responses served straight from
+          varnish_cache are throttled too; shared scopes reference the route's
+          table proxy (backends-815). Operand order `limit … key … table …`
+          matches client-native's BandwidthLimit.Result(). -#}
+      {{- render "util-haptic-cache-local-limits" -}}
+      {%- var limits = shared.Get("hapticCacheLocalLimits").(map[string]any) %}
+      {%- var bw = limits["bw"].(map[string]any) %}
+      {%- for _, key := range keys(bw) %}
+        {%- var cfg = bw[key].(map[string]any) %}
+        {%- var fnameBase = tostring(cfg["ns"]) + "_" + tostring(cfg["name"]) %}
+      {{ "\n" }}# haptic/bandwidth-limit on the client leg — cache-enabled route ({{ key }})
+        {%- for _, direction := range []string{"download", "upload"} %}
+          {%- var rate = tostring(cfg["down"]) %}
+          {%- var suffix = "out" %}
+          {%- if direction == "upload" %}
+            {%- rate = tostring(cfg["up"]) %}
+            {%- suffix = "in" %}
+          {%- end %}
+          {%- if rate != "" %}
+            {%- var fname = "haptic_bwlim_" + suffix + "_" + fnameBase %}
+            {%- var spec = "default-limit " + rate + " default-period 1s" %}
+            {%- if tostring(cfg["tableKey"]) != "" %}
+              {%- spec = "limit " + rate + " key " + tostring(cfg["tableKey"]) + " table haptic_bwlim_tbl_" + fnameBase %}
+            {%- end %}
+      filter bwlim-{{ suffix }} {{ fname }} {{ spec }}
+      http-request set-bandwidth-limit {{ fname }} if { var(txn.resource_id) -m str {{ key }} }
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  backends-810-haptic-cache-rate-limit-tables:
+    template: |
+      {#- Table proxies for the client-leg per-pod limiter
+          (frontend-filters-863). Same table shape as backend-directives-810,
+          including `peers localinstance` reload survival. -#}
+      {{- render "util-haptic-cache-local-limits" -}}
+      {%- var limits = shared.Get("hapticCacheLocalLimits").(map[string]any) %}
+      {%- var rl = limits["rl"].(map[string]any) %}
+      {%- for _, key := range keys(rl) %}
+        {%- var cfg = rl[key].(map[string]any) %}
+      {{ "\n" }}# haptic/rate-limiting client-leg table ({{ key }})
+      backend {{ cfg["table"] }}
+          stick-table type ip size {{ cfg["size"] }} expire {{ cfg["window"] }} store {{ cfg["store"] }}{% if tostring(cfg["store"]) == "http_req_rate" %}({{ cfg["window"] }}){% end %} peers localinstance
+      {%- end %}
+
+  backends-815-haptic-cache-bandwidth-tables:
+    template: |
+      {#- Table proxies for the client-leg shared-scope bandwidth limits
+          (frontend-filters-864). No peers: see backend-directives-815. -#}
+      {{- render "util-haptic-cache-local-limits" -}}
+      {%- var limits = shared.Get("hapticCacheLocalLimits").(map[string]any) %}
+      {%- var bw = limits["bw"].(map[string]any) %}
+      {%- for _, key := range keys(bw) %}
+        {%- var cfg = bw[key].(map[string]any) %}
+        {%- if tostring(cfg["tableKey"]) != "" %}
+      {{ "\n" }}# haptic/bandwidth-limit client-leg table ({{ key }})
+      backend haptic_bwlim_tbl_{{ cfg["ns"] }}_{{ cfg["name"] }}
+          stick-table type {{ cfg["tableType"] }} size 100k expire 60s store bytes_in_rate(1s),bytes_out_rate(1s)
+        {%- end %}
+      {%- end %}

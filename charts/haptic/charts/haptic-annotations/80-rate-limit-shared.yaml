@@ -21,7 +21,8 @@
 #
 # This fragment produces the rate-limit.map that the spoa-hub library parses at
 # frontend priority 020. Source-IP rules dispatch at priority 025 before Coraza;
-# consumer rules dispatch in the selected backend after native authentication.
+# consumer rules dispatch in the selected backend after native authentication —
+# except on cache-enabled routes, which dispatch on the client leg (band 863).
 # Map value is
 # "<limit> <period_seconds> <burst> <mode> <keyspec>" keyed by <ns>/<name>;
 # the dispatch splits it positionally with field() and ships it as the
@@ -105,16 +106,61 @@ templateSnippets:
       {%- if ingress != nil -%}
         {%- var requests = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] -%}
         {%- var keySpec = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-key"] -%}
-        {%- if requests != "" && keySpec == "consumer" -%}
+        {#- A cache-enabled route never enters this backend on the client leg and
+            the origin leg carries no txn.rl_* vars, so this copy would be inert
+            there — frontend-filters-863 dispatches on the client leg instead. -#}
+        {%- var cacheClientLeg = tostring(extraContext | dig("cache", "varnish", "enabled") | fallback("false")) == "true" && ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" -%}
+        {%- if requests != "" && keySpec == "consumer" && !cacheClientLeg -%}
           {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) -%}
           {%- var messages = toStringSlice(messagesAny) -%}
           {%- if messages contains "check-ratelimit" %}
       # haptic/shared-rate-limit consumer ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
       filter spoe engine spoa-hub config {{ pathResolver.GetPath("spoe.conf", "file") }}
-      {{ DispatchSharedRateLimit("consumer") }}
+      {{ DispatchSharedRateLimit("consumer", "") }}
           {%- end -%}
         {%- end -%}
       {%- end -%}
+
+  # ==========================================================================
+  # Consumer-keyed shared rate limit on the CLIENT leg, for cache-enabled
+  # routes. frontend-filters-865 switches such a route to `backend
+  # varnish_cache` before the application backend carrying the consumer
+  # dispatch above is entered, and the cache-miss origin leg is a fresh
+  # transaction without txn.rl_*, so without this the limit is silently inert
+  # (#134). Same client-leg shape as frontend-filters-860/861/862.
+  #
+  # Band 863: after 860 (api-key), the only client-leg producer of
+  # txn.haptic_consumer, and before the cache switch at 865. JWT resolves the
+  # consumer in the backend, which a cached route never enters, so a
+  # consumer-keyed limit on a cached route requires api-key-secret — the same
+  # refusal 862 uses for consumer groups.
+  # ==========================================================================
+  frontend-filters-863-haptic-shared-rate-limit-consumer-cache-routes:
+    template: |
+      {%- import "util-spoa-rate-limit-dispatch" for DispatchSharedRateLimit %}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- var cacheOn = tostring(extraContext | dig("cache", "varnish", "enabled") | fallback("false")) == "true" %}
+      {%- var messages = toStringSlice(extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{})) %}
+      {%- if cacheOn && messages contains "check-ratelimit" %}
+        {%- var dispatch = false %}
+        {%- for _, ingress := range resources.ingresses.List() %}
+          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" && ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] != "" && ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-key"] == "consumer" %}
+            {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+            {%- if ingress.Metadata.Annotations["haproxy-haptic.org/api-key-secret"] == "" %}
+              {{- WebhookRejectOrWarn(ingress, "ConsumerRateLimitCacheNeedsApiKey", "Ingress " + key + " combines 'haproxy-haptic.org/cache-enable' with 'haproxy-haptic.org/rate-limit-key: consumer' but no 'haproxy-haptic.org/api-key-secret'. A cached route never enters the backend that resolves the consumer identity, so the limit cannot be enforced and this route fails closed with 503. Add api-key-secret, set rate-limit-key to ip, or remove cache-enable.") -}}
+      http-request set-var(txn.denied_by) str(rate_limit_consumer_unavailable) if { var(txn.resource_id) -m str {{ key }} }
+      http-request deny deny_status 503 if { var(txn.resource_id) -m str {{ key }} }
+            {%- else %}
+              {%- dispatch = true %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- if dispatch %}
+          {%- var enMap, _ = pathResolver.GetPath("haptic-cache-enable.map", "map") %}
+      # haptic/shared-rate-limit consumer on the client leg — cache-enabled routes
+      {{ DispatchSharedRateLimit("consumer", "{ var(txn.resource_id),map(" + enMap + ") -m found }") }}
+        {%- end %}
+      {%- end %}
 
 k8sResources:
   rate-limit-store:
