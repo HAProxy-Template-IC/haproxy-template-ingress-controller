@@ -3,18 +3,18 @@
 # ACCEPTED, and that a rejected upgrade leaves the live configuration exactly as
 # it was.
 #
-# Scope, deliberately narrow: the risk this covers is the OLD controller's
-# admission webhook judging the NEW chart's content, plus helm/helmfile
-# completing. That is what broke twice — per-library fragments denied
-# standalone, and `helm diff` failing on a CRD its own pre-upgrade hook had not
-# installed yet.
+# Scope, deliberately narrow: the risks this covers are (1) the pre-rollout
+# preflight hook aborting a broken release BEFORE any manifest object is
+# applied (ADR-0016 — the successor of the per-object config webhook, which
+# could not judge a multi-object config change), (2) the apply-crds hook
+# stripping the legacy config-webhook entries during the same upgrade that
+# removes their server, and (3) helm/helmfile completing — including `helm
+# diff` on a CRD its own pre-upgrade hook has not installed yet, which broke
+# once before.
 #
-# It does NOT wait for the fleet to converge. The webhook serves as soon as the
-# controller pod is Ready, which needs neither a rendered config nor a healthy
-# data plane — observed directly: the baseline controller sat 2/2 and denied an
-# upgrade while HAProxy was still on its bootstrap stub. Demanding convergence
-# only drags in every runtime dependency (a default-ssl-cert Secret, Gateway API
-# CRDs, …), and each prop makes the cluster less like the one an operator has.
+# It does NOT wait for the fleet to converge. Demanding convergence only drags
+# in every runtime dependency (a default-ssl-cert Secret, Gateway API CRDs, …),
+# and each prop makes the cluster less like the one an operator has.
 # Convergence is what tests/e2e is for.
 #
 # This suite owns its own kind cluster. It cannot share the e2e cluster: it
@@ -306,66 +306,41 @@ restarts=$(k get pods -l app.kubernetes.io/component=controller \
 
 info "upgrade OK: release deployed, controller ready, config validated, no restarts"
 
+# The baseline's ValidatingWebhookConfiguration carried per-object
+# haproxytemplateconfig entries; the apply-crds hook must have deleted them
+# during THIS upgrade — the old controller is gone, so a surviving entry is a
+# fail-open hole (failurePolicy: Ignore) at best and a hard 443-refused at
+# worst. Watched-resource entries (Ingress etc.) must survive.
+LEGACY_ENTRIES="$(kubectl --context "$CTX" get validatingwebhookconfigurations -o json 2>/dev/null \
+  | python3 -c 'import json,sys
+n=0
+for vwc in json.load(sys.stdin).get("items", []):
+    for wh in vwc.get("webhooks", []):
+        if wh.get("name", "").startswith("haproxytemplateconfig."):
+            n += 1
+print(n)')"
+[ "$LEGACY_ENTRIES" = "0" ] \
+  || fail "$LEGACY_ENTRIES legacy config-webhook entries survived the upgrade; apply-crds must strip them"
+info "legacy config-webhook entries stripped by the upgrade, as required"
+
 # ------------------------------- phase 3: a rejected upgrade must change nothing
 
-# Pod readiness does NOT mean the admission webhook is listening: /healthz is
-# answered by the bootstrap health checker from early startup, while the webhook
-# server starts at the last startup stage. Asserting a denial before then reads
-# as "the gate did not hold" when the gate simply was not up yet, and
-# failurePolicy:Ignore admits in that window — observed exactly once here.
-#
-# So synchronise on the gate ENFORCING, not on the pod being Ready. The probe is
-# a server-side dry-run patch of the live object, which is schema-valid by
-# construction: only the webhook can reject it, so a rejection cannot be
-# confused with CRD schema validation. It doubles as a positive control — if
-# this never denies, the negative case below would have been vacuous.
-# One denial is NOT enough. The API server load-balances across every ready
-# webhook endpoint, and a controller pod is Ready well before its admission
-# server starts (that is the last startup stage). So a single probe can be
-# answered by a pod that enforces while a sibling still refuses the connection —
-# and failurePolicy:Ignore admits whatever lands on the sibling. Measured: the
-# probe was denied at 12:48:05 and the broken upgrade was admitted at 12:48:13.
-#
-# So require every endpoint to be ready AND a run of consecutive denials, which
-# samples across them.
-webhook_endpoints_all_ready() {
-  k get endpointslices -o json 2>/dev/null | python3 -c '
-import json, sys
-ready = notready = 0
-for es in json.load(sys.stdin).get("items", []):
-    if not any(p.get("name") == "webhook" or p.get("port") == 9443 for p in es.get("ports", [])):
-        continue
-    for ep in es.get("endpoints", []):
-        if ep.get("conditions", {}).get("ready"):
-            ready += 1
-        else:
-            notready += 1
-print("ok" if ready and not notready else "wait")'
-}
+# The gate under test is the pre-rollout preflight hook (ADR-0016). Hooks run
+# deterministically BEFORE helm applies the first manifest object, so unlike
+# the removed webhook there is no enforcement window to synchronise on — but
+# the gate must demonstrably be wired into the release, or the negative case
+# below proves nothing.
+helm --kube-context "$CTX" -n "$NS" get hooks "$RELEASE" | grep -q "pre-rollout" \
+  || fail "the release carries no pre-rollout validation hook; the negative case below would prove nothing"
 
-wait_webhook_enforcing() {
-  local cfg deadline=$((SECONDS + ${1:-180})) streak=0
-  cfg=$(k get haproxytemplateconfig -o name 2>/dev/null | head -1)
-  [ -n "$cfg" ] || return 1
-  while [ $SECONDS -lt $deadline ]; do
-    if [ "$(webhook_endpoints_all_ready)" = "ok" ] \
-       && ! k patch "$cfg" --type=merge --dry-run=server \
-            -p '{"spec":{"haproxyConfig":{"template":"{%- var x = %}"}}}' >/dev/null 2>&1; then
-      streak=$((streak + 1))
-      [ "$streak" -ge 8 ] && return 0
-    else
-      streak=0
-    fi
-    sleep 2
-  done
-  return 1
-}
-
-info "waiting for the admission webhook to actually enforce"
-wait_webhook_enforcing 180 \
-  || fail "the config webhook never denied a known-bad template; the negative case below would prove nothing"
-
-info "negative case: an upgrade carrying a broken template must be rejected"
+# The broken artifact is the chart AND the image: they ship together, the
+# hook's HAPTIC_EXPECT_CHART_VERSION guard pins them to one version, and the
+# hook validates the IMAGE-embedded chart — so "HAPTIC released a rendering
+# bug" means both carry it. A chart-dir-only corruption models a hand-modified
+# chart instead; that path has no pre-apply gate by design (the hook cannot
+# see files it does not ship) and is contained by the live-change gate and
+# recovered by phase 4.
+info "negative case: a release that cannot compile its own templates must abort before any object is applied"
 cp -r "$CHART" "$WORK/broken-chart"
 
 # base.yaml, named explicitly. A `find ... | head -1` here is filesystem-ordered
@@ -394,15 +369,23 @@ if not m:
 p.write_text(s[:m.end()] + m.group(1) + "  {%- var x = %}\n" + s[m.end():])
 PY
 
+info "building the matching broken image (a real release bug ships in chart AND image)"
+docker build -t "haptic:test-broken-haproxy${HAPROXY_VERSION}" \
+    -f - "$(dirname "$BROKEN_LIB")" > "$WORK/broken-image.log" 2>&1 <<'EOF' \
+  || { cat "$WORK/broken-image.log"; fail "could not build the broken image"; }
+FROM haptic:test
+COPY library.yaml /usr/share/haptic/chart/charts/base/library.yaml
+EOF
+kind load docker-image "haptic:test-broken-haproxy${HAPROXY_VERSION}" --name "$CLUSTER" >/dev/null
+
 PRE_FP="$(config_fingerprint)"
 if helm upgrade "$RELEASE" "$WORK/broken-chart" \
       --kube-context "$CTX" --namespace "$NS" \
       --set controller.image.repository=haptic \
-      --set controller.image.tag=test \
+      --set controller.image.tag=test-broken \
       --set "haproxyVersion=$HAPROXY_VERSION" \
-      --timeout 10m > "$WORK/broken.log" 2>&1; then
-  echo "--- helm output (the upgrade that should have been denied) ---"; cat "$WORK/broken.log"
-  echo "--- webhook endpoints ---"; k get endpointslices -o wide
+      --timeout 5m > "$WORK/broken.log" 2>&1; then
+  echo "--- helm output (the upgrade that should have been aborted) ---"; cat "$WORK/broken.log"
   # Did the config actually change? If the fingerprint is unmoved, helm reported
   # success without mutating the config and the gate DID hold — the assertion is
   # then wrong, not the product.
@@ -410,59 +393,57 @@ if helm upgrade "$RELEASE" "$WORK/broken-chart" \
   echo "--- is the corruption actually in the live config? ---"
   k get haproxytemplateconfig -o json 2>/dev/null \
     | grep -c 'var x = ' || echo "  0 (the broken template never landed)"
-  # What the webhook said. Nothing at all means it was never consulted; an error
-  # means failurePolicy:Ignore admitted it.
-  #
-  # `configvalidator` is in the pattern deliberately: three paths admit BEFORE
-  # the template is ever compiled — companion-test resolution, sibling merge and
-  # effective-config resolution all admit-with-warning on error — and every one
-  # of them logs under component=configvalidator, not =webhook. Grepping only
-  # for the webhook would print nothing on exactly the failures worth seeing.
-  echo "--- controller admission decisions (last 20) ---"
-  for cp in $(k get pods -l app.kubernetes.io/component=controller -o name 2>/dev/null); do
-    k logs "$cp" -c controller --tail=800 2>/dev/null \
-      | grep -iE "component=(webhook|configvalidator)|admission|admitting|could not resolve|version-skewed" \
-      | tail -20 | sed "s|^|  ${cp#pod/}: |"
-  done
-
-  # WHY the webhook was down, not just that it was. Each teardown/rebind pair
-  # is a ~16 s window in which the listener is unbound while the pod stays
-  # Ready and in the webhook EndpointSlice, so failurePolicy:Ignore admits
-  # silently. The trigger lines are filtered out of the grep above, which is
-  # why the churn has stayed unattributed — print them next to the lifecycle
-  # events so the cause and the hole appear in one timeline. The versions are
-  # the composite resourceVersions the bootstrap guard compares (see
-  # finalizeConfigLoad), so a reinit loop shows up here as a version that
-  # keeps advancing with nothing having changed the spec.
-  echo "--- controller reinitialization triggers + webhook lifecycle ---"
-  for cp in $(k get pods -l app.kubernetes.io/component=controller -o name 2>/dev/null); do
-    k logs "$cp" -c controller --tail=2000 2>/dev/null \
-      | grep -iE "Configuration change detected|Signaling controller reinitialization|Reinitialization triggered|Secret rotation detected|Configuration processed successfully|Config validation succeeded|Webhook server started|Webhook component shutting down" \
-      | tail -40 | sed "s|^|  ${cp#pod/}: |"
-  done
-  fail "an upgrade carrying an uncompilable template was ACCEPTED — the gate did not hold"
+  echo "--- preflight hook state ---"
+  k get jobs -o wide 2>/dev/null
+  k get pods -l app.kubernetes.io/component=pre-rollout-validation -o wide 2>/dev/null
+  fail "an upgrade carrying an uncompilable template was ACCEPTED — the pre-rollout gate did not hold"
 fi
-info "rejected, as required"
+
+# The abort must come from the PREFLIGHT hook, before the manifest. A later
+# failure (rollout stall on the load gate) also fails helm, but only after the
+# broken config reached etcd. hook-delete-policy keeps a FAILED hook job
+# around, so a failed pre-rollout job is the discriminator.
+PREFLIGHT_JOB="$(k get jobs -o name 2>/dev/null | grep -- "-pre-rollout" | head -1 || true)"
+[ -n "$PREFLIGHT_JOB" ] \
+  || { cat "$WORK/broken.log"; fail "no failed pre-rollout job left behind — the abort did not come from the preflight gate"; }
+FAILED_COUNT="$(k get "$PREFLIGHT_JOB" -o jsonpath='{.status.failed}' 2>/dev/null)"
+[ "${FAILED_COUNT:-0}" -ge 1 ] \
+  || fail "the pre-rollout job did not fail; the upgrade aborted for some other reason"
+echo "--- preflight verdict (what an operator sees) ---"
+k logs "$PREFLIGHT_JOB" --tail=15 2>/dev/null | sed 's/^/  /' || true
+info "aborted by the pre-rollout hook, as required"
 
 POST_FP="$(config_fingerprint)"
 [ "$PRE_FP" = "$POST_FP" ] \
   || fail "a rejected upgrade mutated the live config (${PRE_FP:0:12} -> ${POST_FP:0:12}); it must be a no-op"
 
+# The hook aborts before the first manifest object, so the broken template
+# must never have reached etcd and the running fleet must be untouched.
+LIVE_CFG="$(k get haproxytemplateconfig -o json 2>/dev/null || true)"
+case "$LIVE_CFG" in
+  *'{%- var x = %}'*) fail "the broken template reached the live config; the gate held only after the damage" ;;
+esac
+restarts=$(k get pods -l app.kubernetes.io/component=controller \
+  -o jsonpath='{range .items[*]}{.status.containerStatuses[*].restartCount}{"\n"}{end}' | tr -s ' \n' '+' | sed 's/+$//')
+[ "$(( ${restarts:-0} ))" -eq 0 ] \
+  || fail "controller restarted during a hook-aborted upgrade; the abort was not pre-apply"
+
 wait_controller_ready 180 || fail "controller unhealthy after the rejected upgrade"
 
 # ------------------------------ phase 4: recovery from a broken live deployment
 
-# Phase 3 covers the case where the gate holds. This covers the case where it
-# didn't — HAPTIC shipped a bug, and a config no controller can load is already
-# in etcd. Every fleet that hits such a bug arrives here, so `helm upgrade` must
-# get out of it with no manual step; otherwise each bug we ship is an outage an
-# operator cannot end.
+# Phase 3 covers the case where the gate holds. This covers the case where a
+# config no controller can load is already in etcd — a hand-edited CR, or a
+# chart-image skew that slipped a bad template past the embedded-chart
+# preflight (the hook cannot see files it does not ship). Every fleet that
+# hits such a state arrives here, so `helm upgrade` must get out of it with no
+# manual step; otherwise each such bug is an outage an operator cannot end.
 #
-# Getting into that state uses the product's own fail-open path rather than a
-# synthetic hack: the config webhook is served BY the controller, so with the
-# controller down it is unreachable, failurePolicy:Ignore admits the broken
-# config, and the pods that come back cannot load it. That is exactly the
-# sequence a shipped rendering bug produces.
+# Staging uses the skew path directly: the corrupted chart DIRECTORY with the
+# pristine image passes the preflight hook, so the broken config lands in
+# etcd. That is exactly the write the retired admission webhook used to catch
+# only while a controller happened to be up — CR content has no admission
+# gate anymore by design (ADR-0016).
 
 info "phase 4: breaking the live deployment the way a shipped bug does"
 DEPLOY="$(controller_deploy)"
@@ -472,10 +453,11 @@ ORIG_REPLICAS="$(k get "deploy/$DEPLOY" -o jsonpath='{.spec.replicas}' 2>/dev/nu
   || fail "controller deployment reports $ORIG_REPLICAS replicas before the break; nothing to scale down"
 k scale "deploy/$DEPLOY" --replicas=0 >/dev/null || fail "could not scale the controller down"
 
-# Every pod gone is the precondition, not a nicety: one surviving pod still
-# serves the webhook, which would DENY the broken chart instead of failing open.
-# The staging upgrade would then fail for a reason that looks nothing like the
-# real one, so this must be loud rather than best-effort.
+# Every pod gone is the precondition, not a nicety: a surviving pod takes the
+# broken CR as a LIVE change, which the scatter-gather gate rejects while the
+# pod stays healthy — the negative control below would then report a fleet
+# that "recovered" without ever being broken, so this must be loud rather
+# than best-effort.
 if ! k wait --for=delete pod -l app.kubernetes.io/component=controller --timeout=120s >/dev/null 2>&1; then
   k get pods -l app.kubernetes.io/component=controller
   fail "controller pods did not terminate after scaling to 0; cannot stage the broken state"
@@ -497,7 +479,7 @@ if ! helm upgrade "$RELEASE" "$WORK/broken-chart" \
       --set "haproxyVersion=$HAPROXY_VERSION" \
       --timeout 10m > "$WORK/break.log" 2>&1; then
   echo "--- helm output ---"; cat "$WORK/break.log"
-  fail "could not stage the broken state: with the controller down the config webhook must fail open"
+  fail "could not stage the broken state: the preflight hook validates the embedded chart, not the chart directory, so this upgrade must be admitted"
 fi
 
 # The staging is only real if the broken template actually reached the live CR.

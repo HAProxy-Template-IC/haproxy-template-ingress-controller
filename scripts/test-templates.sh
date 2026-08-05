@@ -228,7 +228,7 @@ if ! helm template "$CHART_DIR" \
     --set-string "controller.config.templatingSettings.extraContext.governance.rules[0].path=metadata.annotations['haproxy-haptic.org/waf-policy']" \
     --set 'controller.config.templatingSettings.extraContext.governance.rules[0].required=true' \
     --set 'controller.config.templatingSettings.extraContext.governance.rules[0].enforcement=audit' \
-    | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' \
+    | yq 'select(.kind == "HAProxyTemplateConfig")' \
     > "$TEMP_CONFIG"; then
     echo -e "${RED}Error: Failed to render Helm chart${NC}" >&2
     exit 1
@@ -312,7 +312,7 @@ if ! single_test_requested "$@"; then
         --set controller.templateLibraries.gateway.experimentalChannel=true \
         --set controller.templateLibraries.hapticAnnotations.enabled=true \
         --set cache.varnish.enabled=true \
-        2>/dev/null | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' > "$COVERAGE_CONFIG"
+        2>/dev/null | yq 'select(.kind == "HAProxyTemplateConfig")' > "$COVERAGE_CONFIG"
     # Two fixtures, because no single one renders every frontend: the TCPRoute test
     # produces the library-owned gateway-tcp-port-* (and, with the cache tier on,
     # haptic_cache_origin), while the access-log fixture's TLS Ingress produces
@@ -403,7 +403,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set rateLimit.shared.enabled=true \
         --set rateLimit.shared.managedStore.enabled=true \
         --set spoaHub.plugins.coraza.enabled=true \
-        | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' \
+        | yq 'select(.kind == "HAProxyTemplateConfig")' \
         > "$RATE_LIMIT_CONFIG"; then
         echo -e "${RED}Error: Failed to render shared rate-limit Helm profile${NC}" >&2
         exit 1
@@ -441,7 +441,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set controller.templateLibraries.haproxyIngress.enabled=true \
         --set controller.templateLibraries.nginxIngress.enabled=true \
         --set controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true \
-        | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' \
+        | yq 'select(.kind == "HAProxyTemplateConfig")' \
         > "$REQUEST_VALIDATION_CONFIG"; then
         echo -e "${RED}Error: Failed to render request-validation Helm profile${NC}" >&2
         exit 1
@@ -661,7 +661,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     helm template "$CHART_DIR" --namespace default $HAPROXY_VERSION_ARG \
         --set controller.templateLibraries.nginxIngress.enabled=true \
         --set controller.templateLibraries.hapticAnnotations.enabled=true \
-        2>/dev/null | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' > "$WAFDATA_CONFIG"
+        2>/dev/null | yq 'select(.kind == "HAProxyTemplateConfig")' > "$WAFDATA_CONFIG"
     if ! "$CONTROLLER_BIN" validate --file "$WAFDATA_CONFIG" "${SCHEMA_DIR_ARGS[@]}" \
             --test test-spoa-hub-access-log-fields --dump-rendered > "$WAFDATA_DUMP" 2>&1; then
         echo -e "${RED}Error: WAF-data render failed:${NC}" >&2
@@ -872,7 +872,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --namespace default \
         $HAPROXY_VERSION_ARG \
         --set controller.config.templatingSettings.extraContext.proxyProtocol.enabled=true \
-        | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' \
+        | yq 'select(.kind == "HAProxyTemplateConfig")' \
         > "$PROXY_PROTOCOL_CONFIG"; then
         echo -e "${RED}Error: Failed to render PROXY-protocol Helm profile${NC}" >&2
         exit 1
@@ -901,7 +901,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set controller.templateLibraries.gateway.enabled=true \
         --set controller.config.templatingSettings.extraContext.tracing.enabled=true \
         --set controller.config.templatingSettings.extraContext.tracing.otlp.endpoint=http://tempo:4318/v1/traces \
-        | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' \
+        | yq 'select(.kind == "HAProxyTemplateConfig")' \
         > "$TRACING_CONFIG"; then
         echo -e "${RED}Error: Failed to render tracing Helm profile${NC}" >&2
         exit 1
@@ -934,7 +934,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         $HAPROXY_VERSION_ARG \
         --set controller.config.templatingSettings.extraContext.tracing.enabled=true \
         --set controller.config.templatingSettings.extraContext.tracing.otlp.endpoint=http://tempo:4318/v1/traces \
-        | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' \
+        | yq 'select(.kind == "HAProxyTemplateConfig")' \
         > "$NS_CONFIG"; then
         echo -e "${RED}Error: Failed to render the non-default-namespace profile${NC}" >&2
         exit 1
@@ -945,6 +945,42 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         FULL_RC=1
     fi
     rm -f "$NS_CONFIG"
+fi
+
+# WAF configMapRefs opt-in profile. A configured catalog source makes EVERY
+# render need that ConfigMap in its fixture store; the chart covers this by
+# synthesising a _global catalog fixture per referenced identity into the
+# operator object (templates/haproxytemplateconfig.yaml). This profile runs
+# the whole set with a ref configured — it is what fails when the synthesis
+# is lost (observed: 594/690 tests failing in the e2e preflight hook while
+# the default render stayed green).
+if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
+    WAF_REFS_CONFIG=$(mktemp /tmp/haptic-waf-refs-config-XXXXXX.yaml)
+    trap 'rm -f "$TEMP_CONFIG" "$RATE_LIMIT_CONFIG" "$PROXY_PROTOCOL_CONFIG" "$TRACING_CONFIG" "$NS_CONFIG" "$WAF_REFS_CONFIG"' EXIT
+    echo -e "${YELLOW}Rendering WAF configMapRefs profile...${NC}" >&2
+    if ! helm template "$CHART_DIR" \
+        --namespace default \
+        $HAPROXY_VERSION_ARG \
+        --set-string controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.namespace=security \
+        --set-string controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.name=haptic-waf-policies \
+        --set-string controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.key=policies.yaml \
+        | yq 'select(.kind == "HAProxyTemplateConfig")' \
+        > "$WAF_REFS_CONFIG"; then
+        echo -e "${RED}Error: Failed to render the WAF configMapRefs profile${NC}" >&2
+        exit 1
+    fi
+    # The synthesised fixture must be present, or the pass below succeeds for
+    # the wrong reason the day the values path stops reaching the injection.
+    if ! grep -q "haptic-validation-fixture" "$WAF_REFS_CONFIG"; then
+        echo -e "${RED}WAF configMapRefs profile: the synthesised _global catalog fixture is absent — every test would render against a missing ConfigMap${NC}" >&2
+        FULL_RC=1
+    fi
+    echo -e "${YELLOW}WAF configMapRefs profile: full validation pass...${NC}" >&2
+    if ! "$CONTROLLER_BIN" validate --file "$WAF_REFS_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@"; then
+        echo -e "${RED}WAF configMapRefs profile: tests that pass without a catalog source must also pass with one — the load gate crash-loops the controller otherwise${NC}" >&2
+        FULL_RC=1
+    fi
+    rm -f "$WAF_REFS_CONFIG"
 fi
 
 # ---------------------------------------------------------------------------
@@ -972,7 +1008,7 @@ if [[ $FULL_RC -eq 0 && ${#SCHEMA_DIR_ARGS[@]} -gt 0 ]] && ! single_test_request
         --set controller.templateLibraries.haproxytech.enabled=true \
         --set controller.templateLibraries.haproxyIngress.enabled=true \
         --set controller.templateLibraries.nginxIngress.enabled=true \
-        | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' > "$STD_CONFIG"
+        | yq 'select(.kind == "HAProxyTemplateConfig")' > "$STD_CONFIG"
     for BUNDLE in "$PROJECT_ROOT"/tests/schemas-ga-*; do
         [[ -d "$BUNDLE" ]] || continue
         REL=$(basename "$BUNDLE")

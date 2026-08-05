@@ -49,8 +49,8 @@ The chart uses a library-based architecture where multiple YAML files become one
 effective configuration. **The chart no longer merges them.** It renders one
 `HAProxyTemplateConfig` per enabled library plus one for the operator's own
 config, and the controller merges the set at startup in `CRD_NAME` order (see
-ADR-0014). Read `templates/_libraries.tpl` `define "haptic.libraryFiles"` for the
-canonical order:
+ADR-0014). Read the `$libraryFiles` list inside `haptic.prepareLibraries`
+(`templates/_libraries.tpl`) for the canonical order:
 
 ```
 Merge Order (lowest to highest priority):
@@ -88,7 +88,6 @@ The loader iterates a fixed ordered list of library files. The order is a system
     # apply _helm_load.unset items
     # apply haptic.filterTests universally (no-op for libs without _helm_skip_test)
     # strip every underscore-prefixed top-level key
-    # strip Scriggo comments from templateSnippets
     {{- $prepared = append $prepared (dict "name" <slug> "config" $library) }}
   {{- end }}
 {{- end }}

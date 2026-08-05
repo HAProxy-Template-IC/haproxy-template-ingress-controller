@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -24,7 +25,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
@@ -142,7 +142,7 @@ func runIteration(
 	// The type bootstrapper is also reused by the step-2.5 startup validationTests
 	// gate below, so it's hoisted to a local rather than constructed inline.
 	typeBootstrapper := newIterationTypeBootstrapper(k8sClient, logger)
-	setup := setupComponents(ctx, infra.IntrospectionRegistry, typeBootstrapper, crdNames, newValidationTestResolver(ctx, k8sClient, logger), logger)
+	setup := setupComponents(ctx, infra.IntrospectionRegistry, typeBootstrapper, crdNames, logger)
 	defer setup.Cancel()
 
 	// 0.25. Create EventBuffer early (subscribes in constructor)
@@ -195,7 +195,7 @@ func runIteration(
 	// On failure this records WHY on the CRD status (so an operator sees the
 	// rejection via `kubectl get/describe` rather than only in this crash-looping
 	// pod's logs) and then returns the error — the gate stays fail-closed.
-	if err := validateInitialConfigValidationTests(ctx, cfg, crd, k8sClient, typeBootstrapper, logger); err != nil {
+	if err := validateInitialConfigValidationTests(ctx, cfg, bundle, k8sClient, typeBootstrapper, logger); err != nil {
 		return fmt.Errorf("initial HAProxyTemplateConfig %v failed validationTests on load: %w", crdNames, err)
 	}
 
@@ -243,7 +243,7 @@ func runIteration(
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
 	logger.Info("Stage 5: Creating reconciliation components")
-	wiring, err := setupReconciliation(setup, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, currentAuxFiles, storeProvider, logger)
+	wiring, err := setupReconciliation(setup, cfg, crd, bundle.Sources, creds, k8sClient, resourceWatcher, currentConfigStore, currentAuxFiles, storeProvider, logger)
 	if err != nil {
 		return err
 	}
@@ -270,20 +270,9 @@ func runIteration(
 	// passes. A nil Manager is the no-validators-configured case.
 	// The webhook server runs whenever the chart mounted a TLS cert directory
 	// (the maybeSetupWebhook caller gates on `webhookCertDir != ""`).
-	// Construction is NOT gated on whether any watched resource enables
-	// validation: the HAProxyTemplateConfig admission webhook is independent of
-	// watched resources, and the chart may have provisioned a cert +
-	// ValidatingWebhookConfiguration solely for HAProxyTemplateConfig admission.
-	// The DryRunValidator is nil when no watched-resource rules exist; the
-	// ConfigValidator is always present so HAProxyTemplateConfig admissions land
-	// on a real handler instead of the pure server's fail-open path.
-	// crd.GetLabels()[webhook.AppVersionLabel] is the running config's chart
-	// app-version label: it lets the config webhook detect a rolling-upgrade skew
-	// (prospective config from a different chart version than the one this pod
-	// runs) and defer template compile/render failures to the target controller's
-	// load gate rather than hard-denying. Inlined to keep runIteration ≤50 statements.
-	dryrunValidator, configValidator, err := createDryRunValidator(cfg, setup.Bus, storeProvider, wiring, pluggableMgr, k8sClient, crdNames, crd.GetLabels()[webhook.AppVersionLabel], logger)
-	if err != nil {
+	// The DryRunValidator is nil when no watched-resource rules exist.
+	dryrunValidator, err := createDryRunValidator(cfg, setup.Bus, storeProvider, wiring, pluggableMgr, logger)
+	if err != nil && !errors.Is(err, errNoWebhookRules) {
 		return fmt.Errorf("creating webhook validators: %w", err)
 	}
 
@@ -298,7 +287,7 @@ func runIteration(
 	leaderState := setupLeaderElection(setup, cfg, k8sClient, wiring, logger)
 
 	// 8. Setup webhook validation if enabled (start pre-created DryRunValidator)
-	maybeSetupWebhook(ctx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, setup, k8sClient, dryrunValidator, configValidator, logger)
+	maybeSetupWebhook(ctx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, setup, k8sClient, dryrunValidator, logger)
 
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
@@ -401,17 +390,16 @@ func maybeSetupWebhook(
 	setup *componentSetup,
 	k8sClient *client.Client,
 	dryrunValidator *dryrunvalidator.Component,
-	configValidator webhook.ConfigValidatorFunc,
 	logger *slog.Logger,
 ) {
 	if webhookCertDir == "" {
 		logger.Debug("No webhook TLS cert directory configured; skipping webhook setup")
 		return
 	}
-	if dryrunValidator == nil && configValidator == nil {
+	if dryrunValidator == nil {
 		logger.Debug("No webhook validators wired; skipping webhook setup")
 		return
 	}
 	logger.Info("Stage 7: Setting up webhook validation")
-	setupWebhook(procCtx, setup.IterCtx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, k8sClient, dryrunValidator, configValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
+	setupWebhook(procCtx, setup.IterCtx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, k8sClient, dryrunValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
 }

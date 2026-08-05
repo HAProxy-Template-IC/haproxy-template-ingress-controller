@@ -265,7 +265,39 @@
 {{- if and $wafPoliciesConfigured (not $controller.templateLibraries.hapticAnnotations.enabled) }}
   {{- fail "controller.config.templatingSettings.extraContext.waf.policies requires controller.templateLibraries.hapticAnnotations.enabled=true because WAF policies are a HAPTIC Ingress annotation feature." }}
 {{- end }}
+{{- /* One HAProxyTemplateConfig per enabled template library, then the
+       operator's own config LAST. The controller is handed all of them via
+       CRD_NAME and merges them in that order, later wins, with per-source
+       validationTests union (ADR-0016). Splitting keeps every object clear of
+       etcd's ~1.5 MiB ceiling, which the single merged config had reached —
+       and per-library budgets are what let the Scriggo comment stripper go.
+
+       The in-file document order IS the merge order: `validate -f` and the
+       preflight hook consume this stream and merge in document order, so the
+       library objects come first and the operator's last. */ -}}
+{{- $prepared := (include "haptic.prepareLibraries" . | fromYaml).libraries | default list }}
+{{- range $library := $prepared }}
+{{- /* statusPatch is a Helm-only field on a watchedResource — the ClusterRole
+       turns it into a status/patch rule and the CRD has no such property. */ -}}
+{{- range $_, $resource := ($library.config.watchedResources | default dict) }}
+  {{- $_ := unset $resource "statusPatch" }}
+{{- end }}
+{{- $_ := set $library.config "partial" true }}
+---
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: {{ printf "%s-%s" $controller.configName $library.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "haptic.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: template-library
+    haproxy-haptic.org/template-library: {{ $library.name }}
+spec:
+  {{- toYaml $library.config | nindent 2 }}
+{{- end }}
 {{- if $controller.config }}
+---
 apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
@@ -273,8 +305,14 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator-config
 spec:
   {{- $config := $controller.config | deepCopy }}
+  {{- /* Every chart-rendered object is partial: base owns haproxyConfig and
+         this one owns podSelector, so neither is complete alone. The CEL rule
+         on the CRD exempts partial objects; a hand-written standalone CR
+         leaves it unset and gets apply-time completeness checking. */ -}}
+  {{- $_ := set $config "partial" true }}
   {{- /* controller.config seeds the CR spec wholesale, so a values key that is
          NOT part of the CRD has to be dropped here or server-side apply rejects
          the whole object ("field not declared in schema") and `helm upgrade`
@@ -1268,17 +1306,10 @@ spec:
     {{- end }}
     {{- $_ := set $config "validators" $merged }}
   {{- end }}
-  {{- /* Merge template libraries into config */ -}}
-  {{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
-  {{- /* Emitted only on request: nothing in a cluster reads it. See !1492. */ -}}
-  {{- $libraryKeys := include "haptic.libraryShapedKeys" . | fromYamlArray }}
-  {{- if .Values.controller.config.includeMigrationCoverage }}
-    {{- $libraryKeys = concat $libraryKeys (list "migrationCoverage") }}
-  {{- end }}
-  {{- range $key := $libraryKeys }}
-    {{- with index $mergedLibraries $key }}
-      {{- $_ := set $config $key . }}
-    {{- end }}
+  {{- /* Library content stays on the library objects; the controller merges.
+         Emitted only on request: nothing in a cluster reads it (!1492). */ -}}
+  {{- if not .Values.controller.config.includeMigrationCoverage }}
+    {{- $_ := unset $config "migrationCoverage" }}
   {{- end }}
   {{- /* No default-ssl-cert fixture rewrite needed: ssl.yaml's _global test
          pins a synthetic default certificate (extraContext.tls.defaultCertificate
@@ -1298,48 +1329,56 @@ spec:
          extraContext pointing at OTHER identities still exercises the
          not-found failure. The catalog carries the values-declared
          defaultPolicy (or a placeholder) so catalog-membership checks hold. */ -}}
-  {{- /* The WAF catalog fixtures this used to synthesise now live with the
-         tests, in haproxyvalidationtests.yaml — writing them here would be dead,
-         since validationTests leave this object below. */ -}}
-  {{- /* Library-declared extraContext defaults. A template library may set
-         top-level `templatingSettings.extraContext.<key>` to provide a default
-         value its snippets read (e.g. nginx-ingress's nginxHttpRedirectCode).
-         Start from those defaults and mergeOverwrite the operator/chart map on
-         top. Sprig's plain `merge` uses zero-value semantics and therefore
-         replaces explicit false/0/"" values with library defaults — a severe
-         least-surprise and authorization bug (for example
-         ingressPermissions.allowPolicySelection=false became true). */ -}}
-  {{- with ($mergedLibraries.templatingSettings | default dict).extraContext }}
-    {{- $mergedExtraContext := mergeOverwrite (deepCopy .) $extraContext }}
-    {{- $_ := set $config.templatingSettings "extraContext" $mergedExtraContext }}
-    {{- $extraContext = $mergedExtraContext }}
+  {{- /* The injection rides THIS object's validationTests._global: the
+         controller's union accumulates _global fixtures across all sources,
+         so the operator object is the one place a values-derived fixture can
+         live without touching the library objects. */ -}}
+  {{- $wafRefs := dig "waf" "policies" "configMapRefs" (dict) $extraContext }}
+  {{- if gt (len $wafRefs) 0 }}
+    {{- /* Policy names must be unique across the whole catalog
+           (registerPolicy rejects duplicates), so each injected source
+           carries a distinct per-source placeholder, and only the FIRST
+           source additionally carries the values-declared defaultPolicy —
+           unless an inline policy already defines it. */ -}}
+    {{- $defaultPolicy := (dig "waf" "policies" "defaultPolicy" "" $extraContext) | toString }}
+    {{- $inlinePolicies := dig "waf" "policies" "inline" (dict) $extraContext }}
+    {{- $defaultPolicyNeeded := and (ne $defaultPolicy "") (not (hasKey $inlinePolicies $defaultPolicy)) }}
+    {{- $byIdentity := dict }}
+    {{- $sourceIndex := 0 }}
+    {{- range $ref := $wafRefs }}
+      {{- $refNs := ((dig "namespace" "" $ref) | default $.Release.Namespace | toString) }}
+      {{- $refName := ((dig "name" "" $ref) | toString) }}
+      {{- $refKey := ((dig "key" "" $ref) | default "policies.yaml" | toString) }}
+      {{- $id := printf "%s/%s" $refNs $refName }}
+      {{- $catalog := printf "haptic-validation-fixture-%d:\n  description: Chart-injected validationTests catalog fixture\n" $sourceIndex }}
+      {{- if and $defaultPolicyNeeded (eq $sourceIndex 0) }}
+        {{- $catalog = printf "%s%s:\n  description: Chart-injected validationTests catalog fixture\n" $catalog $defaultPolicy }}
+      {{- end }}
+      {{- $entry := index $byIdentity $id | default (dict "apiVersion" "v1" "kind" "ConfigMap" "metadata" (dict "namespace" $refNs "name" $refName) "data" (dict)) }}
+      {{- $_ := set (index $entry "data") $refKey $catalog }}
+      {{- $_ := set $byIdentity $id $entry }}
+      {{- $sourceIndex = add1 $sourceIndex }}
+    {{- end }}
+    {{- $vt := $config.validationTests | default dict }}
+    {{- $vtGlobal := (index $vt "_global") | default dict }}
+    {{- $vtFixtures := (index $vtGlobal "fixtures") | default dict }}
+    {{- $vtCms := (index $vtFixtures "configmaps") | default list }}
+    {{- range $id, $entry := $byIdentity }}
+      {{- $vtCms = append $vtCms $entry }}
+    {{- end }}
+    {{- $_ := set $vtFixtures "configmaps" $vtCms }}
+    {{- $_ := set $vtGlobal "fixtures" $vtFixtures }}
+    {{- $_ := set $vt "_global" $vtGlobal }}
+    {{- $_ := set $config "validationTests" $vt }}
   {{- end }}
-  {{- /* watchedResources: merge with the operator's override instead of replacing it */ -}}
-  {{- with $mergedLibraries.watchedResources }}
-    {{- $_ := set $config "watchedResources" (merge ($config.watchedResources | default dict) .) }}
-  {{- end }}
+  {{- /* Library-declared extraContext defaults stay on the library objects.
+         The controller's merge is map-deep with later-wins, and this object is
+         LAST in CRD_NAME, so an operator/chart key here beats a library
+         default while library keys the operator never set survive — the same
+         precedence the chart-side mergeOverwrite used to produce. */ -}}
   {{- /* Strip Helm-only fields from watchedResources before CRD rendering */ -}}
   {{- range $name, $resource := $config.watchedResources }}
     {{- $_ := unset $resource "statusPatch" }}
-  {{- end }}
-  {{- /* validationTests leave the config for a companion object (see
-         haproxyvalidationtests.yaml): ~36% of the spec, needed only when the
-         configuration is VALIDATED, never when it is rendered. The controller
-         runs the union of both sources, so an inline suite still works. */ -}}
-  {{- $companion := include "haptic.companionTestsEnabled" . }}
-  {{- $tests := $config.validationTests | default dict }}
-  {{- if $companion }}
-  {{- $_ := unset $config "validationTests" }}
-  {{- end }}
-  {{- if and $companion $tests }}
-  {{- /* Scoped to this release: an empty selector matches every tests object in
-         the namespace, so two HAPTIC releases sharing one would each run the
-         other's suite. */ -}}
-  {{- $_ := set $config "validationTestsSelector" (dict "matchLabels" (dict "app.kubernetes.io/instance" $.Release.Name)) }}
-  {{- /* Only when tests were actually rendered — unconditional, this would make
-         an all-libraries-disabled install refuse to load for want of tests the
-         chart never shipped. */ -}}
-  {{- $_ := set $config "requireValidationTests" true }}
   {{- end }}
   {{- toYaml $config | nindent 2 }}
 {{- end }}

@@ -361,22 +361,19 @@ verify_haproxy_configs_warning_free() {
 }
 
 verify_config_admission_warning_free() {
-    # The companion object carrying the suite. Checked explicitly: without it the
-    # only symptom is the config's Validated condition going false later (the
-    # load gate refusing on requireValidationTests), which says nothing about
-    # WHY. A missing companion object should name itself.
-    local tests_objects=()
-    mapfile -t tests_objects < <(
-        kubectl get haproxyvalidationtests -n "$NAMESPACE" \
-            -l "app.kubernetes.io/instance=${RELEASE_NAME}" \
-            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
-    )
-    if [[ ${#tests_objects[@]} -eq 0 ]]; then
-        die "No HAProxyValidationTests object was applied — the config selects one and requireValidationTests is set, so the controller will refuse to load" 10
+    # The suite rides the config shards inline (ADR-0016 — the companion
+    # HAProxyValidationTests kind is retired). An empty suite passes the load
+    # gate vacuously, so its presence is asserted explicitly.
+    local total_tests
+    total_tests=$(kubectl get haproxytemplateconfigs -n "$NAMESPACE" \
+        -l "app.kubernetes.io/instance=${RELEASE_NAME}" -o json 2>/dev/null \
+        | python3 -c 'import json,sys; print(sum(len(i.get("spec",{}).get("validationTests") or {}) for i in json.load(sys.stdin)["items"]))')
+    if [[ "${total_tests:-0}" -eq 0 ]]; then
+        die "No config shard carries validationTests — an empty suite passes the load gate vacuously" 10
     fi
-    info "Found companion tests object: ${tests_objects[0]}"
+    info "Inline validationTests across the config shards: ${total_tests}"
 
-    info "Checking the default HAProxyTemplateConfig through admission (warnings are fatal)..."
+    info "Re-applying every HAProxyTemplateConfig through apply-time admission (CEL + schema; warnings are fatal)..."
 
     local configs=()
     mapfile -t configs < <(
@@ -384,91 +381,72 @@ verify_config_admission_warning_free() {
             -l "app.kubernetes.io/instance=${RELEASE_NAME}" \
             -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
     )
-    if [[ ${#configs[@]} -ne 1 ]]; then
-        die "Expected exactly one default HAProxyTemplateConfig, found ${#configs[@]}" 10
+    if [[ ${#configs[@]} -lt 2 ]]; then
+        die "Expected one HAProxyTemplateConfig per enabled library plus the operator's, found ${#configs[@]}" 10
     fi
 
-    # A server-side dry-run replace routes the config through the webhook.
-    # Re-get inside a retry: the controller writes status
-    # (observedGeneration/Validated) between our get and replace, bumping
-    # resourceVersion, so a stale replace 409s with "object has been modified".
-    # Retry only that optimistic-concurrency conflict — any other error is a
-    # genuine admission failure and must fail immediately.
-    local output rc=0 attempt
-    for attempt in 1 2 3 4 5; do
+    # A server-side dry-run replace routes each object through apply-time
+    # validation (the CRD schema and its CEL completeness rule — the
+    # per-object config webhook is retired). Re-get inside a retry: the
+    # controller writes status between our get and replace, bumping
+    # resourceVersion, so a stale replace 409s with "object has been
+    # modified". Retry only that optimistic-concurrency conflict.
+    local name output rc attempt
+    for name in "${configs[@]}"; do
         rc=0
-        output=$(kubectl get haproxytemplateconfig "${configs[0]}" -n "$NAMESPACE" -o json \
-            | kubectl replace --dry-run=server -f - 2>&1) || rc=$?
-        if [[ $rc -ne 0 ]] && grep -q 'please apply your changes to the latest version' <<< "$output"; then
-            sleep 1
-            continue
+        for attempt in 1 2 3 4 5; do
+            rc=0
+            output=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" -o json \
+                | kubectl replace --dry-run=server -f - 2>&1) || rc=$?
+            if [[ $rc -ne 0 ]] && grep -q 'please apply your changes to the latest version' <<< "$output"; then
+                sleep 1
+                continue
+            fi
+            break
+        done
+        if [[ $rc -ne 0 ]]; then
+            error "HAProxyTemplateConfig $name server-side dry-run failed (exit $rc):"
+            printf '%s\n' "$output" >&2
+            die "Default HAProxyTemplateConfig failed apply-time validation" 10
         fi
-        break
+        if grep -q '^Warning:' <<< "$output"; then
+            error "HAProxyTemplateConfig $name admission emitted warnings:"
+            grep '^Warning:' <<< "$output" >&2
+            die "Default HAProxyTemplateConfig was not accepted cleanly at apply time" 10
+        fi
     done
-    if [[ $rc -ne 0 ]]; then
-        error "HAProxyTemplateConfig server-side dry-run failed (exit $rc):"
-        printf '%s\n' "$output" >&2
-        die "Default HAProxyTemplateConfig failed admission" 10
-    fi
-    # One warning is the DESIGNED degradation, not a defect: Kubernetes caps a
-    # webhook's timeoutSeconds at 30 and the controller reserves one second to
-    # return a structured response, so the admission budget has a hard 29s
-    # ceiling no value can raise. The bundled suite's own run time has outgrown
-    # what fits inside it alongside schema bootstrap and the strict prospective
-    # render, and it only grows as libraries add tests. The webhook therefore
-    # admits with this warning and defers to the controller's load gate, which
-    # is the authoritative, fail-closed check — and which this function asserts
-    # separately below. Treating it as fatal would assert an invariant the
-    # design deliberately falsifies. Every OTHER warning stays fatal.
-    local unexpected
-    unexpected=$(grep '^Warning:' <<< "$output" \
-        | grep -v 'validationTests did not finish before the HAProxyTemplateConfig admission deadline' || true)
-    if [[ -n "$unexpected" ]]; then
-        error "HAProxyTemplateConfig admission emitted unexpected warnings:"
-        printf '%s\n' "$unexpected" >&2
-        die "Default HAProxyTemplateConfig was not fully validated at admission" 10
-    fi
+    ok "All ${#configs[@]} HAProxyTemplateConfig objects pass apply-time validation without warnings"
 
-    ok "Default HAProxyTemplateConfig passes admission without unexpected warnings"
-
-    # The authoritative gate. The controller runs the same suite on load and
-    # crash-loops rather than serve a config whose own tests fail, so
-    # Validated=True for the CURRENT generation is what proves the shipped
-    # default is actually servable. This is what regressed when the run budget
-    # clamped at its floor: admission warned (tolerated above) AND the load
-    # gate rejected the config, and only the warning was visible here.
-    # Patience comes from the script's single documented knob, not a second
-    # invented one: the load gate's own budget scales with suite size (25s floor
-    # + ~100ms per test, plus bootstrap and engine compile), so any fixed poll
-    # window here would silently go stale as libraries add tests — the exact
-    # drift that produced the budget bug this assertion exists to catch.
-    local name="${configs[0]}" gen observed status reason
-    gen=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
-    if ! kubectl wait --for=condition=Validated "haproxytemplateconfig/$name" \
-        -n "$NAMESPACE" --timeout="${TIMEOUT}s" >/dev/null 2>&1; then
-        status=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" \
-            -o jsonpath='{.status.conditions[?(@.type=="Validated")].status}' 2>/dev/null || true)
+    # The authoritative gate. The controller merges the set, runs the suite on
+    # load, and crash-loops rather than serve a config whose own tests fail.
+    # The verdict is a property of the merged set and is stamped on EVERY
+    # source at its own generation (ADR-0016), so each object is checked.
+    local gen observed status reason
+    for name in "${configs[@]}"; do
+        gen=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+        if ! kubectl wait --for=condition=Validated "haproxytemplateconfig/$name" \
+            -n "$NAMESPACE" --timeout="${TIMEOUT}s" >/dev/null 2>&1; then
+            status=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" \
+                -o jsonpath='{.status.conditions[?(@.type=="Validated")].status}' 2>/dev/null || true)
+            reason=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" \
+                -o jsonpath='{.status.conditions[?(@.type=="Validated")].message}' 2>/dev/null || true)
+            error "Load gate did not accept $name within ${TIMEOUT}s:"
+            error "  Validated=${status:-<none>}"
+            error "  message: ${reason:-<none>}"
+            die "Default HAProxyTemplateConfig set was rejected by the controller's load gate" 10
+        fi
+        # Validated=True alone could be a leftover from an earlier generation,
+        # so pin it to the spec the API server is serving right now.
         observed=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" \
-            -o jsonpath='{.status.observedGeneration}' 2>/dev/null || true)
-        reason=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" \
-            -o jsonpath='{.status.conditions[?(@.type=="Validated")].message}' 2>/dev/null || true)
-        error "HAProxyTemplateConfig load gate did not accept the default config within ${TIMEOUT}s:"
-        error "  generation=$gen observedGeneration=${observed:-<none>} Validated=${status:-<none>}"
-        error "  message: ${reason:-<none>}"
-        die "Default HAProxyTemplateConfig was rejected by the controller's load gate" 10
-    fi
+            -o jsonpath='{.status.conditions[?(@.type=="Validated")].observedGeneration}' 2>/dev/null || true)
+        if [[ "$observed" != "$gen" ]]; then
+            error "HAProxyTemplateConfig $name Validated=True is stale:"
+            error "  generation=$gen observedGeneration=${observed:-<none>}"
+            die "HAProxyTemplateConfig status lags the current generation" 10
+        fi
+    done
 
-    # Validated=True alone could be a leftover from an earlier generation, so
-    # pin it to the spec the API server is serving right now.
-    observed=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" \
-        -o jsonpath='{.status.observedGeneration}' 2>/dev/null || true)
-    if [[ "$observed" != "$gen" ]]; then
-        error "HAProxyTemplateConfig Validated=True is stale:"
-        error "  generation=$gen observedGeneration=${observed:-<none>}"
-        die "Default HAProxyTemplateConfig status lags the current generation" 10
-    fi
-
-    ok "Default HAProxyTemplateConfig accepted by the load gate (Validated=True, generation $gen)"
+    ok "All ${#configs[@]} config sources accepted by the load gate (Validated=True at current generation)"
 }
 
 verify_bootstrap_workers_retired() {

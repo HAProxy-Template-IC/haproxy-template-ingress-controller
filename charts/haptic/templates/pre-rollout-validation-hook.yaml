@@ -1,0 +1,191 @@
+{{- /*
+Pre-rollout validation hook: runs `haptic-controller preflight` against the
+release's OWN values before any manifest is applied.
+
+With config admission gone (ADR-0016 — a per-object webhook cannot judge the
+multi-object change the chart ships), this Job is the only gate that sees the
+COMPLETE future config set before the upgrade touches anything. A failing
+suite fails the release with nothing applied: Helm marks it failed and the
+previous release keeps serving; under Argo CD the hook maps to PreSync and a
+failure stops the sync the same way. The fail-closed load gate remains the
+authority on every path that skips hooks (--no-hooks, kubectl, rollback).
+
+Input is the values (kilobytes, via the hook Secret below) rendered against
+the chart EMBEDDED in the controller image — not the release record, which
+does not exist under Argo, and not a carried copy of the rendered set, which
+measured 102.7% of the release-Secret hard cap. That is only sound with the
+version guard: HAPTIC_EXPECT_CHART_VERSION makes the Job hard-fail if the
+image's embedded chart is not the chart being installed, so a drifted image
+tag fails loudly instead of validating the wrong chart.
+
+Weights: apply-crds runs at 0 (CRDs and the legacy-webhook removal must
+precede validation); the values Secret and RBAC land at 3; the Job at 5.
+*/}}
+{{- if .Values.preRolloutValidation.enabled }}
+{{- $job := .Values.preRolloutValidation }}
+{{- $name := printf "%s-pre-rollout" (include "haptic.clusterScopedFullname" .) | trunc 63 | trimSuffix "-" }}
+{{- $controller := .Values.controller }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}-values
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+  annotations:
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "3"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+type: Opaque
+stringData:
+  {{- /* The coalesced values (user overlaid on defaults). Re-overlaying them
+         on the embedded chart's defaults is idempotent, with one documented
+         edge: a null-override that deletes a chart default does not survive
+         the round trip (Helm coalescing drops nulls), so the default
+         resurrects in the hook's render. A Secret because operator values may
+         carry credentials — the same exposure class as Helm's own release
+         Secret in the same namespace. */}}
+  values.yaml: |
+    {{- .Values | toYaml | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+  annotations:
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "3"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+  annotations:
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "3"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+  # Schemas come from the live cluster so typed-resource access matches what
+  # the controller will run against — a run without schemas would pass on a
+  # weaker check than the load gate, and preflight refuses that.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list"]
+  # Capabilities and core-resource schemas come from API discovery/OpenAPI.
+  # system:discovery grants these to all authenticated principals on standard
+  # clusters; stated explicitly so a locked-down cluster fails with a readable
+  # RBAC error instead of a misleading "schema not found".
+  - nonResourceURLs: ["/openapi", "/openapi/*", "/api", "/api/*", "/apis", "/apis/*"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+  annotations:
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "3"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+    {{- with $job.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with $job.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ $job.backoffLimit }}
+  activeDeadlineSeconds: {{ $job.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "haptic.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: pre-rollout-validation
+    spec:
+      serviceAccountName: {{ $name }}
+      restartPolicy: Never
+      {{- include "haptic.podSpec" $controller.podSpec | nindent 6 }}
+      {{- with $controller.podSpec.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: preflight
+          {{- with $controller.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: {{ include "haptic.controller.image" . | quote }}
+          imagePullPolicy: {{ $controller.image.pullPolicy }}
+          command: ["/usr/local/bin/haptic-controller"]
+          args:
+            - preflight
+            - --values=/haptic/values/values.yaml
+            - --namespace={{ .Release.Namespace }}
+            - --release={{ .Release.Name }}
+          env:
+            # The version guard: fail loudly if the image's embedded chart is
+            # not the chart being installed. Disable the whole hook if a
+            # deliberately different image is in use.
+            - name: HAPTIC_EXPECT_CHART_VERSION
+              value: {{ .Chart.Version | quote }}
+          volumeMounts:
+            - name: values
+              mountPath: /haptic/values
+              readOnly: true
+            # The test runner writes rendered configs for `haproxy -c`; the
+            # container filesystem is read-only.
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml $job.resources | nindent 12 }}
+      volumes:
+        - name: values
+          secret:
+            secretName: {{ $name }}-values
+        - name: tmp
+          emptyDir: {}
+{{- end }}

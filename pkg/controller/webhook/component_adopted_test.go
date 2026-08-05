@@ -21,8 +21,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	admissionv1 "k8s.io/api/admission/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
@@ -154,15 +156,32 @@ func newAdoptingComponent(t *testing.T, server *pkgwebhook.Server, marker string
 			Port:   0,
 			Path:   "/validate",
 			Server: server,
-			ConfigValidator: func(
-				_ context.Context, _, _, _ string, _ any, _ string,
-			) (bool, string, []string) {
-				return false, "denied by " + marker, nil
-			},
+			Rules: []WebhookRule{{
+				APIGroup:   "networking.k8s.io",
+				APIVersion: "v1",
+				Resource:   "ingresses",
+			}},
+			DryRunValidator: staticDenyValidator{reason: "denied by " + marker},
 		},
-		nil,
+		ingressRESTMapper(),
 		nil,
 	)
+}
+
+// staticDenyValidator answers every admission with a fixed denial, so a
+// response identifies which iteration's table served it.
+type staticDenyValidator struct{ reason string }
+
+func (v staticDenyValidator) ValidateDirect(context.Context, string, string, string, any, string) (allowed bool, reason string, warnings []string) {
+	return false, v.reason, nil
+}
+
+// ingressRESTMapper resolves ingresses -> Ingress without a cluster.
+func ingressRESTMapper() meta.RESTMapper {
+	gv := schema.GroupVersion{Group: "networking.k8s.io", Version: "v1"}
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{gv})
+	mapper.Add(gv.WithKind("Ingress"), meta.RESTScopeNamespace)
+	return mapper
 }
 
 // generateLoopbackCert returns a self-signed certificate valid for 127.0.0.1
@@ -223,17 +242,17 @@ func admissionPoster(t *testing.T, addr string, pool *x509.CertPool) func() (all
 			Request: &admissionv1.AdmissionRequest{
 				UID:       "test-uid",
 				Operation: admissionv1.Update,
-				Namespace: "haptic",
-				Name:      "haptic-config",
+				Namespace: "default",
+				Name:      "echo",
 				Kind: metav1.GroupVersionKind{
-					Group:   "haproxy-haptic.org",
-					Version: "v1alpha1",
-					Kind:    "HAProxyTemplateConfig",
+					Group:   "networking.k8s.io",
+					Version: "v1",
+					Kind:    "Ingress",
 				},
 				Object: runtime.RawExtension{
-					Raw: []byte(`{"apiVersion":"haproxy-haptic.org/v1alpha1",` +
-						`"kind":"HAProxyTemplateConfig",` +
-						`"metadata":{"name":"haptic-config","namespace":"haptic"},` +
+					Raw: []byte(`{"apiVersion":"networking.k8s.io/v1",` +
+						`"kind":"Ingress",` +
+						`"metadata":{"name":"echo","namespace":"default"},` +
 						`"spec":{}}`),
 				},
 			},

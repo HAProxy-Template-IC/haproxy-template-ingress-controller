@@ -28,6 +28,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"helm.sh/helm/v4/pkg/chart/common"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 )
@@ -40,13 +42,12 @@ func TestCollectConfigDocuments(t *testing.T) {
 		wantErr   string
 	}{
 		{
-			name: "keeps only the config kinds",
+			name: "keeps only HAProxyTemplateConfig documents",
 			manifests: map[string]string{
-				"haptic/templates/deployment.yaml":             "kind: Deployment\nmetadata:\n  name: c\n",
-				"haptic/templates/haproxytemplateconfig.yaml":  "kind: HAProxyTemplateConfig\nmetadata:\n  name: cfg\n",
-				"haptic/templates/haproxyvalidationtests.yaml": "kind: HAProxyValidationTests\nmetadata:\n  name: t\n",
+				"haptic/templates/deployment.yaml":            "kind: Deployment\nmetadata:\n  name: c\n",
+				"haptic/templates/haproxytemplateconfig.yaml": "kind: HAProxyTemplateConfig\nmetadata:\n  name: cfg\n",
 			},
-			want: []string{"name: cfg", "name: t"},
+			want: []string{"name: cfg"},
 		},
 		{
 			name: "splits multi-document files",
@@ -294,7 +295,7 @@ func writeProbeChart(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "Chart.yaml"),
-		[]byte("apiVersion: v2\nname: probe\nversion: 0.1.0\n"), 0o600))
+		[]byte("apiVersion: v2\nname: probe\nversion: "+probeChartVersion+"\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "values.yaml"),
 		[]byte("a: from-defaults\nb: from-defaults\n"), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "templates"), 0o755))
@@ -318,6 +319,15 @@ func writeValues(t *testing.T, dir, name, body string) string {
 	return path
 }
 
+const probeChartVersion = "0.1.0"
+
+// offlineCaps mirrors the offline default: Gateway API assumed present.
+func offlineCaps() *common.Capabilities {
+	caps := common.DefaultCapabilities.Copy()
+	caps.APIVersions = append(caps.APIVersions, gatewayAPIVersion)
+	return caps
+}
+
 func TestRenderChartManifests(t *testing.T) {
 	chart := writeProbeChart(t)
 	vdir := t.TempDir()
@@ -329,7 +339,7 @@ func TestRenderChartManifests(t *testing.T) {
 		base := writeValues(t, vdir, "base.yaml", "a: from-base\nb: from-base\n")
 		over := writeValues(t, vdir, "over.yaml", "a: from-over\n")
 
-		manifests, err := renderChartManifests(chart, []string{base, over})
+		manifests, err := renderChartManifests(chart, []string{base, over}, "", offlineCaps())
 		require.NoError(t, err)
 		docs, err := collectConfigDocuments(manifests)
 		require.NoError(t, err)
@@ -344,7 +354,7 @@ func TestRenderChartManifests(t *testing.T) {
 	t.Run("gateway API capability is always declared", func(t *testing.T) {
 		vals := writeValues(t, vdir, "plain.yaml", "a: x\n")
 
-		manifests, err := renderChartManifests(chart, []string{vals})
+		manifests, err := renderChartManifests(chart, []string{vals}, "", offlineCaps())
 		require.NoError(t, err)
 		docs, err := collectConfigDocuments(manifests)
 		require.NoError(t, err)
@@ -357,15 +367,42 @@ func TestRenderChartManifests(t *testing.T) {
 	t.Run("a chart fail() is reported as a values rejection", func(t *testing.T) {
 		vals := writeValues(t, vdir, "bad.yaml", "a: boom\n")
 
-		_, err := renderChartManifests(chart, []string{vals})
+		_, err := renderChartManifests(chart, []string{vals}, "", offlineCaps())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "the chart rejects these values")
 		assert.Contains(t, err.Error(), "the values are not acceptable")
 	})
 
 	t.Run("an unreadable values file names itself", func(t *testing.T) {
-		_, err := renderChartManifests(chart, []string{filepath.Join(vdir, "absent.yaml")})
+		_, err := renderChartManifests(chart, []string{filepath.Join(vdir, "absent.yaml")}, "", offlineCaps())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "absent.yaml")
+	})
+}
+
+// The version guard is what makes the embedded-chart default sound in the
+// pre-upgrade hook: a drifted image would otherwise validate the WRONG chart
+// and pass on the wrong input.
+func TestRenderChartManifests_ChartVersionGuard(t *testing.T) {
+	chart := writeProbeChart(t)
+	vdir := t.TempDir()
+	vals := writeValues(t, vdir, "plain.yaml", "a: x\n")
+
+	t.Run("matching version renders", func(t *testing.T) {
+		_, err := renderChartManifests(chart, []string{vals}, probeChartVersion, offlineCaps())
+		require.NoError(t, err)
+	})
+
+	t.Run("mismatched version hard-fails, never warns through", func(t *testing.T) {
+		_, err := renderChartManifests(chart, []string{vals}, "9.9.9", offlineCaps())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "chart version mismatch")
+		assert.Contains(t, err.Error(), probeChartVersion)
+		assert.Contains(t, err.Error(), "9.9.9")
+	})
+
+	t.Run("empty expectation skips the guard", func(t *testing.T) {
+		_, err := renderChartManifests(chart, []string{vals}, "", offlineCaps())
+		require.NoError(t, err)
 	})
 }

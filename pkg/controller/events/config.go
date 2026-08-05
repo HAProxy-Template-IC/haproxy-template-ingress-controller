@@ -24,6 +24,17 @@ import (
 //
 // This event does not mean the config is valid - only that it could be parsed.
 // Validation occurs in a subsequent step.
+// ConfigSourceRef identifies one HAProxyTemplateConfig of the merged set, at
+// the generation the merge observed. Status is stamped on EVERY source: the
+// verdict is a property of the merged set, and observedGeneration is only
+// meaningful against the same object's metadata.generation — a designated
+// primary could not even represent "your shard edit was observed" (ADR-0016).
+type ConfigSourceRef struct {
+	Namespace  string
+	Name       string
+	Generation int64
+}
+
 type ConfigParsedEvent struct {
 	// Config contains the parsed configuration.
 	// Type: any to avoid circular dependencies.
@@ -40,6 +51,9 @@ type ConfigParsedEvent struct {
 
 	// SecretVersion is the resourceVersion of the credentials Secret.
 	SecretVersion string
+
+	// Sources names every config of the merged set, in merge order.
+	Sources []ConfigSourceRef
 
 	timestamped
 }
@@ -138,6 +152,10 @@ type ConfigValidatedEvent struct {
 
 	Version       string
 	SecretVersion string
+
+	// Sources names every config of the merged set, in merge order.
+	Sources []ConfigSourceRef
+
 	timestamped
 }
 
@@ -168,6 +186,9 @@ type ConfigInvalidEvent struct {
 
 	// ValidationErrors maps validator names to their error messages.
 	ValidationErrors map[string][]string
+
+	// Sources names every config of the merged set, in merge order.
+	Sources []ConfigSourceRef
 
 	timestamped
 }

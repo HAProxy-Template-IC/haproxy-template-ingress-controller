@@ -1,65 +1,22 @@
 {{/*
-haptic.companionTestsEnabled — whether validationTests go to the companion
-HAProxyValidationTests object or stay inline on the config.
-
-Both templates MUST agree: if only one side flips, the tests are either dropped
-from both objects (a suite that silently runs nothing) or emitted twice.
-
-Inline is the fallback, never "no tests". The gate exists because `helm diff
---dry-run=server` runs BEFORE helm's pre-upgrade hooks, so on the upgrade that
-first introduces the kind the apply-crds hook has not run yet and the diff
-cannot resolve it — "no matches for kind HAProxyValidationTests". Rendering
-inline that one time keeps the upgrade working; the hook installs the CRD during
-it, and the next apply moves the tests out.
-
-IsInstall is part of the condition because on a FRESH install .Capabilities does
-NOT see a CRD the chart itself ships in crds/ (measured: false on install, true
-on the next apply) — but Helm applies crds/ before the manifests, so emitting
-the companion is safe there. Without this an all-vendors fresh install would
-render every test inline and exceed etcd's per-object limit.
-*/}}
-{{- define "haptic.companionTestsEnabled" -}}
-{{- if or .Release.IsInstall (.Capabilities.APIVersions.Has "haproxy-haptic.org/v1alpha1/HAProxyValidationTests") -}}
-true
-{{- end -}}
-{{- end }}
-
-{{/*
-haptic.libraryShapedKeys — the config keys a template library and an operator may
-BOTH contribute.
-
-One list, two consumers: the operator's values are forwarded through it, and the
-merged libraries are set onto the config through it. They were separate lists and
-drifted — `k8sResources` was missing from the operator side, so
-`controller.config.k8sResources.*` was silently discarded whenever any enabled
-library supplied that key. base.yaml could create Services and Events through
-k8sResources and an operator's own library could not.
-
-migrationCoverage is deliberately absent: it concatenates across sources rather
-than being replaced, and is library-declared only.
-*/}}
-{{- define "haptic.libraryShapedKeys" -}}
-- templateSnippets
-- maps
-- files
-- sslCertificates
-- k8sResources
-- haproxyConfig
-- validationTests
-{{- end }}
-
-{{/*
-Library merging — the chart-time loader for the library subcharts under
+Library loading — the chart-time loader for the library subcharts under
 charts/haptic/charts/.
 
-Each library file declares its loading rules in a top-level `_helm_load:` block
+Each library declares its loading rules in a top-level `_helm_load:` block
 (enable predicate, optional injects, optional unsets). The loader iterates a
-fixed ordered list of library files (the merge order is a system property and
-lives here, not in the library files). For each library it: parses YAML,
-evaluates `enable`, applies injects (each gated by optional `when`), applies
-unsets, strips `_helm_load`, applies `haptic.filterTests` universally (no-op for
-libraries with no `_helm_skip_test`), and `mustMergeOverwrite`s into the
-accumulator. User-provided `controller.config.*` overrides are merged last.
+fixed ordered list (the merge order is a system property and lives here, not in
+the library files). For each library it: parses YAML, evaluates `enable`,
+applies injects (each gated by optional `when`), applies unsets, strips
+`_helm_load` and every other underscore-prefixed top-level key, and applies
+`haptic.filterTests` universally (no-op for libraries with no
+`_helm_skip_test`).
+
+**The chart no longer merges libraries.** Each becomes its own
+HAProxyTemplateConfig (spec.partial: true, tests inline); the controller merges
+the set in CRD_NAME order, later wins, with per-source validationTests union
+and duplicate-name errors (ADR-0016). The duplicate check below is the same
+guard one stage earlier — a collision fails `helm template` instead of the
+controller's load.
 
 Schema for `_helm_load:` is documented in charts/CLAUDE.md. See ADR-0002
 (docs/adr/0002-decentralized-helm-library-loader.md) for the design rationale.
@@ -205,14 +162,16 @@ Returns: empty (mutates obj by side effect)
 {{- end }}
 
 {{/*
-Deep merge template libraries.
+Load every enabled template library and return it prepared but NOT merged, as
+`libraries: [{name, config}, ...]` in merge order. Each `config` is a spec
+fragment ready to be rendered as its own HAProxyTemplateConfig.
 
 Every entry in `$libraryFiles` is a "subchart:<name>" today. A subchart holding
 a single library.yaml is read directly; one holding an `_index.yaml` is a "split
 library" whose contents are spread across fragment files: `_index.yaml` carries
 the load rules (`_helm_load`), and fragments at the same level (and one level
 deep) merge into the library accumulator in lexicographic order before any
-inject / unset / strip / merge happens. Fragments must NOT carry their own
+inject / unset / strip happens. Fragments must NOT carry their own
 `_helm_load` — the convention is `_index.yaml`-owns-load-rules,
 fragments-own-content. See ADR-0008.
 
@@ -221,9 +180,9 @@ directory ("libraries/x/") in the parent chart. No library uses either since the
 subchart move; they are kept so a library can be added without a subchart, at
 the cost of its source being stored in the release Secret.
 */}}
-{{- define "haptic.mergeLibraries" -}}
-{{- $merged := dict }}
-{{- $migrationCoverage := list }}
+{{- define "haptic.prepareLibraries" -}}
+{{- $prepared := list }}
+{{- $declared := dict }}
 {{- $context := . }}
 {{- /* Each entry is "subchart:<name>" — a subchart whose library YAML the
        parent reads via .Subcharts.<name>.Files. A subchart disabled by its
@@ -319,7 +278,7 @@ the cost of its source being stored in the release Secret.
     {{- $library = $context.Files.Get $file | fromYaml }}
   {{- end }}
   {{- $loadHints := $library._helm_load | default dict }}
-  {{- if eq (tpl ($loadHints.enable | default "true") $context | trim) "true" }}
+  {{- if and (not $skip) $library (eq (tpl ($loadHints.enable | default "true") $context | trim) "true") }}
     {{- range $inject := $loadHints.inject | default list }}
       {{- if eq (tpl ($inject.when | default "true") $context | trim) "true" }}
         {{- if hasKey $inject "from" }}
@@ -342,131 +301,77 @@ the cost of its source being stored in the release Secret.
     {{- end }}
     {{- $_ := unset $library "_helm_load" }}
     {{- $library = include "haptic.filterTests" (list $library $context) | fromYaml }}
-    {{- /* migrationCoverage is a LIST of per-source declarations, one entry
-           per contributing library. mustMergeOverwrite would REPLACE the
-           accumulated list with the current library's, so pull it out and
-           concat instead — every enabled library's declaration survives;
-           a disabled library (enable=false or pruned subchart) contributes
-           nothing. */ -}}
-    {{- with $library.migrationCoverage }}
-      {{- $migrationCoverage = concat $migrationCoverage . }}
+    {{- /* Underscore-prefixed top-level keys are chart-time-only scratch
+           (ssl.yaml's _test_tls_* YAML anchors); they are not CRD fields and
+           server-side apply would reject the object carrying them. */ -}}
+    {{- range $key := keys $library }}
+      {{- if hasPrefix "_" $key }}
+        {{- $_ := unset $library $key }}
+      {{- end }}
+    {{- end }}
+    {{- /* migrationCoverage is 89 KB of pure metadata nothing in a cluster
+           reads; emitted only on request (!1492). The controller concatenates
+           it across sources, so each library keeps its own entry. */ -}}
+    {{- if not $context.Values.controller.config.includeMigrationCoverage }}
       {{- $_ := unset $library "migrationCoverage" }}
     {{- end }}
-    {{- /* mustMergeOverwrite is silently last-wins, so two libraries declaring
-           the same snippet or test name would resolve to whichever loads later
-           and the losing definition would simply never run. Across separate
-           objects the controller reports that as an error; the chart-side merge
-           has to raise it itself. */ -}}
+    {{- /* A name two LIBRARIES both declare is an error here — one render
+           instead of one failed load. The controller enforces the same rule
+           across objects (the operator's config, last in CRD_NAME, is the one
+           documented override point; these are not it). _global is the shared
+           baseline several libraries each contribute part of. */ -}}
     {{- range $key := list "templateSnippets" "validationTests" "maps" "files" "sslCertificates" "k8sResources" }}
       {{- range $name, $_ := (index $library $key | default dict) }}
-        {{- /* _global is the documented exception: it is a shared baseline
-               several libraries each contribute part of, so "already declared"
-               is its normal state. pkg/controller/conversion/union.go makes the
-               same exemption. */ -}}
-        {{- if and (ne $name "_global") (hasKey (index $merged $key | default dict) $name) }}
-          {{- fail (printf "template library %s redefines %s.%s, which another library already declared: one definition would silently replace the other and never run" $file $key $name) }}
+        {{- if and (ne $name "_global") (hasKey (index $declared $key | default dict) $name) }}
+          {{- fail (printf "template library %s redefines %s.%s, which %s already declared: one definition would silently replace the other and never run" $file $key $name (index (index $declared $key) $name)) }}
         {{- end }}
+        {{- if not (hasKey $declared $key) }}{{- $_ := set $declared $key dict }}{{- end }}
+        {{- $_ := set (index $declared $key) $name (toString $file) }}
       {{- end }}
     {{- end }}
-    {{- $merged = mustMergeOverwrite $merged $library }}
-  {{- end }}
-{{- end }}
-
-{{- /* Merge user-provided config from values.yaml (highest priority).
-       Only the keys with library-overlapping shape are forwarded; other
-       controller.config.* fields (routing, dataplane, …) are consumed
-       directly by other templates. */ -}}
-{{- $userConfig := dict }}
-{{- range $key := include "haptic.libraryShapedKeys" . | fromYamlArray }}
-  {{- with index $context.Values.controller.config $key }}
-    {{- $_ := set $userConfig $key . }}
-  {{- end }}
-{{- end }}
-{{- $merged = mustMergeOverwrite $merged $userConfig }}
-
-{{- /* Operator-declared migrationCoverage (controller.config.migrationCoverage)
-       is APPENDED after the library entries — an operator shipping a custom
-       annotation library can declare its coverage without erasing the bundled
-       libraries' declarations. */ -}}
-{{- with $context.Values.controller.config.migrationCoverage }}
-  {{- $migrationCoverage = concat $migrationCoverage . }}
-{{- end }}
-{{- if $migrationCoverage }}
-  {{- $_ := set $merged "migrationCoverage" $migrationCoverage }}
-{{- end }}
-
-{{- /* Strip Scriggo-template comments from templateSnippets in the merged
-       output. Comments document each snippet for chart authors but
-       contribute nothing to the rendered HAProxy config — Scriggo strips
-       them at template-render time. Their unstripped source still ships
-       in the deployed HAProxyTemplateConfig CR, where it's pure overhead.
-       The chart's growth has pushed the rendered CR past the 1 MiB
-       Kubernetes Secret hard-cap that Helm's release storage hits, so
-       the rendered CR has to shrink. Library source files are
-       unchanged — chart authors still see verbose inline documentation.
-
-       Three patterns, in order:
-
-         1. Leading {#- ... -#} block at the very start of the template
-            (top-of-snippet doc header). Anchored on \A.
-
-         2. Stand-alone {# ... #} block on its own line (mid-template
-            documentation). Required to be on its own line so we don't
-            remove inline `{#- something -#}` whitespace-control markers
-            that share a line with rendered content.
-
-         3. Stand-alone Go-style `// ...` line comments inside Scriggo
-            template directives. These appear inside {%- ... -%} or
-            {%% ... %%} blocks where Scriggo accepts Go syntax. Same
-            stand-alone-line constraint to avoid touching // chars that
-            might appear in rendered text (URLs, config values).
-
-       All three patterns require their match to occupy a whole line
-       (preceded by \n + whitespace, followed by \n) so removing the
-       line collapses the source without changing the surrounding
-       formatting. */ -}}
-{{- $leadingDocComment := "(?s)\\A\\s*\\{#.*?#\\}\\s*\\n?" }}
-{{- $standaloneBlockComment := "(?ms)^[ \\t]*\\{#.*?#\\}[ \\t]*\\n" }}
-{{- $standaloneGoComment := "(?m)^[ \\t]*//[^\\n]*\\n" }}
-{{- range $name, $snippet := ($merged.templateSnippets | default dict) }}
-  {{- $tpl := $snippet.template | default "" }}
-  {{- $tpl = regexReplaceAll $leadingDocComment $tpl "" }}
-  {{- $tpl = regexReplaceAll $standaloneBlockComment $tpl "" }}
-  {{- $tpl = regexReplaceAll $standaloneGoComment $tpl "" }}
-  {{- $_ := set $snippet "template" $tpl }}
-{{- end }}
-
-{{- /* The same strip for the OTHER template-bearing sections. They were left
-       out originally and their comments ship in the CR verbatim — measured at
-       2,273 B in `files` (13.3% of it) and 1,417 B in `k8sResources`.
-
-       Two patterns only, and NOT $standaloneGoComment:
-
-       - A whitespace-STRIPPING comment (`{#- … -#}`) removes the newline on
-         each side, so deleting its line leaves the preceding newline behind and
-         un-fuses output Scriggo had fused. Harmless in an HAProxy config, and
-         structural in a YAML `files` template such as the vector config. The
-         pattern below therefore matches only the NON-stripping `{# … #}` form,
-         where deleting the whole line is output-neutral.
-       - `//` is a Go comment only inside a `{%- … -%}` block; in a rendered
-         file it can be content. A line-based regex cannot tell the difference,
-         and these sections render arbitrary file formats. */ -}}
-{{- $safeBlockComment := "(?ms)^[ \\t]*\\{#[^-].*?[^-]#\\}[ \\t]*\\n" }}
-{{- range $section := list "files" "maps" "k8sResources" "sslCertificates" }}
-  {{- range $name, $entry := ($merged | dig $section dict) }}
-    {{- if kindIs "map" $entry }}
-      {{- $tpl := $entry.template | default "" }}
-      {{- if $tpl }}
-        {{- $tpl = regexReplaceAll $leadingDocComment $tpl "" }}
-        {{- $tpl = regexReplaceAll $safeBlockComment $tpl "" }}
-        {{- $_ := set $entry "template" $tpl }}
-      {{- end }}
+    {{- $slug := $file }}
+    {{- if hasPrefix "subchart:" $file }}
+      {{- $slug = trimPrefix "subchart:" $file }}
+    {{- else }}
+      {{- $slug = $file | trimSuffix "/" | base | trimSuffix ".yaml" }}
     {{- end }}
+    {{- $prepared = append $prepared (dict "name" $slug "config" $library) }}
   {{- end }}
 {{- end }}
+{{- dict "libraries" $prepared | toYaml }}
+{{- end }}
 
-{{- /* Return merged config as YAML */ -}}
-{{- $merged | toYaml }}
+{{/*
+haptic.libraryConfigNames — the ordered CRD_NAME list: one object per enabled
+library plus the operator's own config LAST (highest merge precedence, and the
+one source the controller lets override earlier entries). Derived from the
+same haptic.prepareLibraries evaluation that emits the objects, so the two
+cannot disagree about which libraries are enabled.
+*/}}
+{{- define "haptic.libraryConfigNames" -}}
+{{- $configName := .Values.controller.configName }}
+{{- range $library := (include "haptic.prepareLibraries" . | fromYaml).libraries | default list }}
+- {{ printf "%s-%s" $configName $library.name }}
+{{- end }}
+{{- if .Values.controller.config }}
+- {{ $configName }}
+{{- end }}
+{{- end }}
+
+{{/*
+haptic.watchedResourcesUnion — the union of every enabled library's
+watchedResources plus the operator's, operator winning. For the templates that
+must reason about the whole watch set: the ClusterRole and the
+ValidatingWebhookConfiguration. Retains the Helm-only `statusPatch` field,
+which the object emitter strips.
+*/}}
+{{- define "haptic.watchedResourcesUnion" -}}
+{{- $union := dict }}
+{{- range $library := (include "haptic.prepareLibraries" . | fromYaml).libraries | default list }}
+  {{- $union = merge $union ($library.config.watchedResources | default dict) }}
+{{- end }}
+{{- $union = merge (deepCopy (.Values.controller.config.watchedResources | default dict)) $union }}
+{{- $union | toYaml }}
 {{- end }}
 
 {{/*

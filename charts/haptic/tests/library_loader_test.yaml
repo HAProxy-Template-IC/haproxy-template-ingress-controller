@@ -1,22 +1,101 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
 #
-# Tests for the decentralized library loader (haptic.mergeLibraries).
-# See ADR-0002 (docs/adr/0002-decentralized-helm-library-loader.md).
+# Tests for the decentralized library loader (haptic.prepareLibraries).
+# See ADR-0002 (loader) and ADR-0016 (one object per library, merged by the
+# controller in CRD_NAME order).
+#
+# The object SET and ORDER pinned here must agree with the CRD_NAME literal in
+# deployment_test.yaml — both derive from haptic.prepareLibraries, and these
+# two tests are what keeps that true.
 suite: library loader
 templates:
   - haproxytemplateconfig.yaml
-documentSelector:
-  path: kind
-  value: HAProxyTemplateConfig
 tests:
-  - it: should strip _helm_load metadata from rendered HAProxyTemplateConfig spec
+  - it: emits one object per enabled library plus the operator's, in merge order
+    asserts:
+      - hasDocuments:
+          count: 9
+      - equal:
+          path: metadata.name
+          value: haptic-config-base
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: haptic-config-ssl
+        documentIndex: 1
+      - equal:
+          path: metadata.name
+          value: haptic-config-ingress
+        documentIndex: 2
+      - equal:
+          path: metadata.name
+          value: haptic-config-gateway
+        documentIndex: 3
+      - equal:
+          path: metadata.name
+          value: haptic-config-ingress-annotations-compat
+        documentIndex: 4
+      - equal:
+          path: metadata.name
+          value: haptic-config-haptic-annotations
+        documentIndex: 5
+      - equal:
+          path: metadata.name
+          value: haptic-config-spoa-hub
+        documentIndex: 6
+      - equal:
+          path: metadata.name
+          value: haptic-config-vector
+        documentIndex: 7
+      - equal:
+          path: metadata.name
+          value: haptic-config
+        documentIndex: 8
+
+  - it: marks every chart-rendered object partial
+    # Every one: base owns haproxyConfig, the operator object owns podSelector,
+    # so none is complete alone. The CRD's CEL completeness rule exempts
+    # partial objects and guards hand-written standalone configs.
+    asserts:
+      - equal:
+          path: spec.partial
+          value: true
+        documentIndex: 0
+      - equal:
+          path: spec.partial
+          value: true
+        documentIndex: 3
+      - equal:
+          path: spec.partial
+          value: true
+        documentIndex: 8
+
+  - it: drops a disabled library's object entirely
+    set:
+      controller.templateLibraries.nginxIngress.enabled: false
+      controller.templateLibraries.ingressAnnotationsCompat.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 8
+
+  - it: should strip _helm_load metadata and underscore scratch keys from every spec
     asserts:
       - notExists:
           path: spec._helm_load
+        documentIndex: 0
       - notExists:
-          path: _helm_load
+          path: spec._helm_load
+        documentIndex: 1
+      # ssl.yaml carries _test_tls_* YAML-anchor scratch values; SSA would
+      # reject an object carrying a field its CRD does not declare.
+      - notExists:
+          path: spec._test_tls_cert
+        documentIndex: 1
 
   - it: should inject ingressClassName into ingresses.fieldSelector via _helm_load
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-ingress
     set:
       ingressClass.name: my-class
     asserts:
@@ -25,6 +104,9 @@ tests:
           value: spec.ingressClassName=my-class
 
   - it: should inject gatewayClassName into gateways.fieldSelector via _helm_load
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-gateway
     capabilities:
       apiVersions:
         - gateway.networking.k8s.io/v1/GatewayClass
@@ -36,12 +118,18 @@ tests:
           value: spec.gatewayClassName=my-gw-class
 
   - it: should inject controller-services labelSelector via _helm_load
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-base
     asserts:
       - matchRegex:
           path: spec.watchedResources.controller_services.labelSelector
           pattern: app\.kubernetes\.io/name=.*,app\.kubernetes\.io/component=loadbalancer
 
   - it: should swap frontend-routing-logic to regex-last variant when configured
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-base
     set:
       controller.config.templatingSettings.extraContext.routing.regexMatchOrder: last
     asserts:
@@ -50,11 +138,11 @@ tests:
           pattern: "Path matching: Exact > Prefix-exact > Prefix > Regex"
       - notExists:
           path: spec.templateSnippets["frontend-routing-logic-regex-last"]
-      - equal:
-          path: spec.templatingSettings.extraContext.routing.regexMatchOrder
-          value: last
 
   - it: should inject the Dataplane API connection port from the HAProxy port owner
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       haproxy.ports.dataplane: 6666
     asserts:
@@ -62,15 +150,23 @@ tests:
           path: spec.dataplane.port
           value: 6666
 
-  - it: should use controller configName for the HAProxyTemplateConfig object
+  - it: should derive every object name from controller.configName
     set:
       controller.configName: edge-config
     asserts:
       - equal:
           path: metadata.name
+          value: edge-config-base
+        documentIndex: 0
+      - equal:
+          path: metadata.name
           value: edge-config
+        documentIndex: 8
 
   - it: should carry template-owned status patch policy in structured extraContext
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       controller.config.templatingSettings.extraContext.statusPatches.enabled: false
     asserts:
@@ -81,12 +177,18 @@ tests:
           path: spec.templatingSettings.extraContext.statusPatchesDisabled
 
   - it: should disable routing diagnostics by default
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     asserts:
       - equal:
           path: spec.templatingSettings.extraContext.diagnostics.routingHeaders.enabled
           value: false
 
   - it: should enable routing diagnostics only through the explicit nested value
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       controller.config.templatingSettings.extraContext.diagnostics.routingHeaders.enabled: true
     asserts:
@@ -95,6 +197,9 @@ tests:
           value: true
 
   - it: should always strip frontend-routing-logic-regex-last variant from output
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-base
     asserts:
       - notExists:
           path: spec.templateSnippets["frontend-routing-logic-regex-last"]
@@ -106,6 +211,9 @@ tests:
   # pkg/core/config.ResolveEffective; degraded profiles are pinned by the
   # schema-bundle validate runs).
   - it: should load the gateway library regardless of cluster capabilities
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-gateway
     asserts:
       - exists:
           path: spec.watchedResources.gateways
@@ -119,6 +227,9 @@ tests:
             - gateway.networking.k8s.io/v1beta1
 
   - it: should declare TCPRoute as an optional multi-version watch with requires-annotated features
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-gateway
     asserts:
       - equal:
           path: spec.watchedResources.tcproutes.optional
@@ -133,6 +244,9 @@ tests:
           content: tcproutes
 
   - it: should exclude the incompatible BackendTLSPolicy v1alpha2 from the candidate list
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-gateway
     asserts:
       - equal:
           path: spec.watchedResources.backendtlspolicies.apiVersions
@@ -141,22 +255,24 @@ tests:
             - gateway.networking.k8s.io/v1alpha3
 
   - it: should load ingress-annotations-compat scaffold by default
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-ingress-annotations-compat
     asserts:
       - exists:
           path: spec.templateSnippets["util-build-annotation-ssl-passthrough"]
       - exists:
           path: spec.templateSnippets["util-emit-annotation-access-control"]
 
-  - it: should skip ingress-annotations-compat scaffold when disabled
-    set:
-      controller.templateLibraries.ingressAnnotationsCompat.enabled: false
-    asserts:
-      - notExists:
-          path: spec.templateSnippets["util-build-annotation-ssl-passthrough"]
-
-  # Library-declared extraContext defaults (haproxytemplateconfig.yaml merges a
-  # library's top-level templatingSettings.extraContext at lowest precedence).
-  - it: should merge a library-declared extraContext default into the rendered config
+  # Library-declared extraContext defaults ride the LIBRARY object; the
+  # operator's override rides the operator object, which is LAST in CRD_NAME.
+  # The controller's later-wins map merge is what gives the operator
+  # precedence — pinned Go-side by the MergeSpecs tests; the chart's job is
+  # placement, pinned here.
+  - it: a library-declared extraContext default rides the library's own object
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-nginx-ingress
     set:
       controller.templateLibraries.nginxIngress.enabled: true
     asserts:
@@ -164,14 +280,10 @@ tests:
           path: spec.templatingSettings.extraContext.nginxHttpRedirectCode
           value: "308"
 
-  - it: should not leak a library extraContext default when the library is disabled
-    set:
-      controller.templateLibraries.nginxIngress.enabled: false
-    asserts:
-      - notExists:
-          path: spec.templatingSettings.extraContext.nginxHttpRedirectCode
-
-  - it: operator extraContext override wins over a library-declared default
+  - it: an operator override rides the operator object, last in merge order
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       controller.templateLibraries.nginxIngress.enabled: true
       controller.config.templatingSettings.extraContext.nginxHttpRedirectCode: "301"
@@ -180,54 +292,28 @@ tests:
           path: spec.templatingSettings.extraContext.nginxHttpRedirectCode
           value: "301"
 
-  # migrationCoverage: each enabled vendor annotation library contributes one
-  # source declaration (merged like templateSnippets); disabled libraries
-  # contribute nothing. Drift between the declared coverage and the annotations
-  # the templates actually read is pinned by scripts/check-migration-coverage.sh.
-  - it: should not emit migrationCoverage when no vendor annotation library is enabled
+  # migrationCoverage: each enabled vendor annotation library carries its own
+  # declaration on its own object; the controller concatenates across sources.
+  # Drift between declared coverage and the annotations the templates read is
+  # pinned by scripts/check-migration-coverage.sh.
+  - it: should omit migrationCoverage from every rendered object by default
     set:
-      # Covers the loader's merge; the chart omits it by default (!1492).
-      controller.config.includeMigrationCoverage: true
-      controller.templateLibraries.hapticAnnotations.enabled: false
-      controller.templateLibraries.nginxIngress.enabled: false
-      controller.templateLibraries.haproxyIngress.enabled: false
-      controller.templateLibraries.haproxytech.enabled: false
+      controller.templateLibraries.nginxIngress.enabled: true
     asserts:
       - notExists:
           path: spec.migrationCoverage
-
-  - it: should omit migrationCoverage from the rendered config by default
-    # Pinned separately from the opt-in tests below: without this, reverting the
-    # default would leave every one of them green.
-    set:
-      controller.templateLibraries.nginxIngress.enabled: true
-      controller.templateLibraries.haproxyIngress.enabled: true
-      controller.templateLibraries.haproxytech.enabled: true
-    asserts:
+        documentIndex: 0
       - notExists:
           path: spec.migrationCoverage
+        documentIndex: 8
 
-  - it: should contribute one migrationCoverage source per enabled library
+  - it: should declare the ingress-nginx source shape on the nginx-ingress object
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-nginx-ingress
     set:
-      # Covers the loader's merge; the chart omits it by default (!1492).
       controller.config.includeMigrationCoverage: true
-      controller.templateLibraries.hapticAnnotations.enabled: true
       controller.templateLibraries.nginxIngress.enabled: true
-      controller.templateLibraries.haproxyIngress.enabled: true
-      controller.templateLibraries.haproxytech.enabled: true
-    asserts:
-      - lengthEqual:
-          path: spec.migrationCoverage
-          count: 4
-
-  - it: should declare the ingress-nginx source shape when only nginx-ingress is enabled
-    set:
-      # Covers the loader's merge; the chart omits it by default (!1492).
-      controller.config.includeMigrationCoverage: true
-      controller.templateLibraries.hapticAnnotations.enabled: false
-      controller.templateLibraries.nginxIngress.enabled: true
-      controller.templateLibraries.haproxyIngress.enabled: false
-      controller.templateLibraries.haproxytech.enabled: false
     asserts:
       - lengthEqual:
           path: spec.migrationCoverage
@@ -250,14 +336,13 @@ tests:
           path: spec.migrationCoverage[0].annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"].status
           value: different
 
-  - it: should declare the haproxy-ingress source shape when only haproxy-ingress is enabled
+  - it: should declare the haproxy-ingress source shape on its own object
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-haproxy-ingress
     set:
-      # Covers the loader's merge; the chart omits it by default (!1492).
       controller.config.includeMigrationCoverage: true
-      controller.templateLibraries.hapticAnnotations.enabled: false
-      controller.templateLibraries.nginxIngress.enabled: false
       controller.templateLibraries.haproxyIngress.enabled: true
-      controller.templateLibraries.haproxytech.enabled: false
     asserts:
       - lengthEqual:
           path: spec.migrationCoverage
@@ -269,13 +354,12 @@ tests:
           path: spec.migrationCoverage[0].annotations["haproxy-ingress.github.io/auth-tls-strict"].status
           value: dropped
 
-  - it: should declare the haproxytech source shape when only haproxytech is enabled
+  - it: should declare the haproxytech source shape on its own object
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-haproxytech
     set:
-      # Covers the loader's merge; the chart omits it by default (!1492).
       controller.config.includeMigrationCoverage: true
-      controller.templateLibraries.hapticAnnotations.enabled: false
-      controller.templateLibraries.nginxIngress.enabled: false
-      controller.templateLibraries.haproxyIngress.enabled: false
       controller.templateLibraries.haproxytech.enabled: true
     asserts:
       - lengthEqual:
@@ -294,14 +378,13 @@ tests:
           path: spec.migrationCoverage[0].annotations["haproxy.org/whitelist"].status
           value: different
 
-  - it: should declare the haptic-annotations source shape when only haptic-annotations is enabled
+  - it: should declare the haptic-annotations source shape on its own object
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-haptic-annotations
     set:
-      # Covers the loader's merge; the chart omits it by default (!1492).
       controller.config.includeMigrationCoverage: true
       controller.templateLibraries.hapticAnnotations.enabled: true
-      controller.templateLibraries.nginxIngress.enabled: false
-      controller.templateLibraries.haproxyIngress.enabled: false
-      controller.templateLibraries.haproxytech.enabled: false
     asserts:
       - lengthEqual:
           path: spec.migrationCoverage

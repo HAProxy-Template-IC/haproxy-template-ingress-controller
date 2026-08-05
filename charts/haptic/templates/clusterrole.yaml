@@ -1,7 +1,7 @@
 {{- if .Values.controller.rbac.create }}
-{{- /* Merge watched resources from libraries */ -}}
-{{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
-{{- $allWatchedResources := merge ($mergedLibraries.watchedResources | default dict) (.Values.controller.config.watchedResources | default dict) }}
+{{- /* The union of every enabled library's watched resources plus the
+       operator's — RBAC must cover the whole watch set. */ -}}
+{{- $allWatchedResources := include "haptic.watchedResourcesUnion" . | fromYaml }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -70,14 +70,6 @@ rules:
   # HAProxyTemplateConfig status updates
   - apiGroups: ["haproxy-haptic.org"]
     resources: ["haproxytemplateconfigs/status"]
-    verbs: ["update", "patch"]
-  # HAProxyValidationTests: the suite the load gate runs. A 403 here is a hard
-  # load failure rather than an empty suite, which would pass unconditionally.
-  - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxyvalidationtests"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxyvalidationtests/status"]
     verbs: ["update", "patch"]
   # Auxiliary file CRDs for config publishing
   - apiGroups: ["haproxy-haptic.org"]

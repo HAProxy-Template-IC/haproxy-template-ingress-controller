@@ -7,6 +7,9 @@ templates:
 tests:
   - it: should project the top-level default certificate into HAProxy template context
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       defaultSSLCertificate.secretName: edge-default-tls
       defaultSSLCertificate.namespace: security
@@ -20,6 +23,9 @@ tests:
 
   - it: should project the ECDSA companion default certificate into the template context
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       defaultSSLCertificate.secretName: edge-default-tls
       defaultSSLCertificate.ecdsaSecretName: edge-default-ecdsa-tls
@@ -30,6 +36,9 @@ tests:
 
   - it: should default the ECDSA companion to empty when unset
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       defaultSSLCertificate.secretName: edge-default-tls
     asserts:

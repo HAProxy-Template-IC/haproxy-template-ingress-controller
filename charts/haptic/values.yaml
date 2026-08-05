@@ -84,6 +84,34 @@ crds:
     annotations: {}
     labels: {}
 
+# Pre-rollout validation: a pre-install/pre-upgrade hook Job that renders the
+# chart embedded in the controller image with THIS release's values and runs
+# the controller's own load gate over the result — structural validation, the
+# full validationTests suite including `haproxy -c`. A failing configuration
+# fails the release before any object is applied; the previous release keeps
+# serving. Works identically under Argo CD (PreSync). The fail-closed load
+# gate still guards every path that skips hooks (--no-hooks, kubectl,
+# rollback).
+#
+# The Job hard-fails if the controller image's embedded chart version differs
+# from the chart being installed — validating the wrong chart would pass on
+# the wrong input. Disable the hook when deliberately running a drifted image.
+preRolloutValidation:
+  enabled: true
+  backoffLimit: 1
+  # Schema fetch + engine compile + ~700 haproxy -c checks; generous for cold
+  # CI nodes (the in-cluster load gate budget is 120s under a 300s probe).
+  activeDeadlineSeconds: 600
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      # Measured 215 MiB for the load gate in-cluster; headroom for the render.
+      memory: 512Mi
+  annotations: {}
+  labels: {}
+
 # Controller configuration
 controller:
   # Controller workload. Component-owned settings live in this tree so generic
@@ -149,9 +177,6 @@ controller:
     # Set for manually managed webhook certificates; empty selects the chart's
     # self-signed mode when cert-manager is disabled.
     caBundle: ""
-    haproxyTemplateConfig:
-      enabled: true
-      timeoutSeconds: 30
   serviceAccount:
     # Specifies whether a service account should be created.
     create: true

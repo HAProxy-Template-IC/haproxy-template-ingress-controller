@@ -44,7 +44,6 @@ var (
 	runSecretName                      string
 	runWebhookCertDir                  string
 	runWebhookResourceAdmissionTimeout time.Duration
-	runWebhookConfigAdmissionTimeout   time.Duration
 	runKubeconfig                      string
 	runDebugPort                       int
 )
@@ -90,8 +89,6 @@ func init() {
 		"Directory holding the webhook TLS cert (tls.crt/tls.key); read per-handshake so a rotated cert is served without restart. Empty disables the webhook (env: WEBHOOK_CERT_DIR)")
 	runCmd.Flags().DurationVar(&runWebhookResourceAdmissionTimeout, "webhook-resource-admission-timeout", 0,
 		"Controller-side deadline for watched-resource admission; must be shorter than the ValidatingWebhookConfiguration timeout (env: WEBHOOK_RESOURCE_ADMISSION_TIMEOUT, default: 9s)")
-	runCmd.Flags().DurationVar(&runWebhookConfigAdmissionTimeout, "webhook-config-admission-timeout", 0,
-		"Controller-side deadline for HAProxyTemplateConfig admission; must be shorter than the ValidatingWebhookConfiguration timeout (env: WEBHOOK_CONFIG_ADMISSION_TIMEOUT, default: 29s)")
 	runCmd.Flags().StringVar(&runKubeconfig, "kubeconfig", "",
 		"Path to kubeconfig file (for out-of-cluster development)")
 	runCmd.Flags().IntVar(&runDebugPort, "debug-port", 0,
@@ -151,14 +148,6 @@ func runController(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	runWebhookConfigAdmissionTimeout, err = resolveDurationOption(
-		runWebhookConfigAdmissionTimeout,
-		"WEBHOOK_CONFIG_ADMISSION_TIMEOUT",
-		controllerwebhook.DefaultConfigAdmissionTimeout,
-	)
-	if err != nil {
-		return err
-	}
 
 	// Debug port
 	if runDebugPort == 0 {
@@ -208,7 +197,6 @@ func runController(_ *cobra.Command, _ []string) error {
 		"secret", runSecretName,
 		"webhook_cert_dir", runWebhookCertDir,
 		"webhook_resource_admission_timeout", runWebhookResourceAdmissionTimeout,
-		"webhook_config_admission_timeout", runWebhookConfigAdmissionTimeout,
 		"debug_port", runDebugPort,
 		"log_level", logging.GetLevel(),
 		"gomaxprocs", gomaxprocs,
@@ -244,8 +232,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		runSecretName,
 		runWebhookCertDir,
 		controller.WebhookAdmissionTimeouts{
-			Resource:              runWebhookResourceAdmissionTimeout,
-			HAProxyTemplateConfig: runWebhookConfigAdmissionTimeout,
+			Resource: runWebhookResourceAdmissionTimeout,
 		},
 		runDebugPort,
 	); err != nil {

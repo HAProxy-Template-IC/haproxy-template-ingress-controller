@@ -48,14 +48,6 @@ const (
 	// DefaultWebhookPath is the default URL path for validation requests.
 	DefaultWebhookPath = "/validate"
 
-	// DefaultConfigAdmissionTimeout is the controller-side deadline for
-	// HAProxyTemplateConfig admission. The chart pairs it with a 30-second
-	// Kubernetes webhook timeout, leaving one second for the response to reach
-	// the API server. Config admission is deliberately separate from watched-
-	// resource admission: it compiles the prospective template set, performs a
-	// strict render, and runs the bounded validationTests admission gate.
-	DefaultConfigAdmissionTimeout = 29 * time.Second
-
 	// DefaultResourceAdmissionTimeout bounds watched-resource (for example,
 	// Ingress) dry-run admission. The chart pairs it with a 10-second Kubernetes
 	// webhook timeout. Keeping this path at nine seconds limits per-request work
@@ -88,7 +80,6 @@ type Component struct {
 	metrics         MetricsRecorder
 	restMapper      meta.RESTMapper
 	dryRunValidator DryRunValidator
-	configValidator ConfigValidatorFunc
 
 	// Webhook library components
 	server *webhook.Server
@@ -128,14 +119,6 @@ type DryRunValidator interface {
 	ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string)
 }
 
-// ConfigValidatorFunc validates a HAProxyTemplateConfig admission request.
-// Same signature shape as DryRunValidator.ValidateDirect — kept as a
-// function type rather than an interface so test wiring can pass a plain
-// closure without declaring a satellite type. Nil means "no validator
-// configured" — handler falls back to allow (failurePolicy=Ignore on the
-// chart-side ValidatingWebhookConfiguration covers the remaining gap).
-type ConfigValidatorFunc func(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string)
-
 // Config configures the webhook component.
 type Config struct {
 	// Port is the HTTPS port for the webhook server.
@@ -168,22 +151,10 @@ type Config struct {
 	// If nil, validation is skipped (fail-open).
 	DryRunValidator DryRunValidator
 
-	// ConfigValidator validates HAProxyTemplateConfig admission requests.
-	// If nil, HAProxyTemplateConfig admission is admitted unconditionally
-	// (no handler registered → pure server's fail-open path). The chart
-	// pairs this with failurePolicy=Ignore so missing controller doesn't
-	// break the chicken-and-egg of first install / recovery.
-	ConfigValidator ConfigValidatorFunc
-
 	// ResourceAdmissionTimeout bounds watched-resource dry-run validation.
 	// Default: 9s. Keep it below the corresponding Kubernetes webhook
 	// timeoutSeconds value so the controller can return a structured decision.
 	ResourceAdmissionTimeout time.Duration
-
-	// ConfigAdmissionTimeout bounds HAProxyTemplateConfig validation.
-	// Default: 29s. A timed-out validation is admitted with a warning because
-	// the controller's load gate still enforces the prospective config.
-	ConfigAdmissionTimeout time.Duration
 
 	// Server, when set, is an already-bound webhook server this component
 	// ADOPTS instead of creating and owning one.
@@ -222,9 +193,6 @@ func New(logger *slog.Logger, config *Config, restMapper meta.RESTMapper, metric
 	if config.ResourceAdmissionTimeout <= 0 {
 		config.ResourceAdmissionTimeout = DefaultResourceAdmissionTimeout
 	}
-	if config.ConfigAdmissionTimeout <= 0 {
-		config.ConfigAdmissionTimeout = DefaultConfigAdmissionTimeout
-	}
 
 	return &Component{
 		logger:          logger.With("component", ComponentName),
@@ -232,7 +200,6 @@ func New(logger *slog.Logger, config *Config, restMapper meta.RESTMapper, metric
 		restMapper:      restMapper,
 		metrics:         metrics,
 		dryRunValidator: config.DryRunValidator,
-		configValidator: config.ConfigValidator,
 		listening:       make(chan struct{}),
 	}
 }
@@ -382,7 +349,6 @@ func (c *Component) startAdopted(ctx context.Context) error {
 func (c *Component) serverWriteTimeout() time.Duration {
 	return max(
 		c.config.ResourceAdmissionTimeout,
-		c.config.ConfigAdmissionTimeout,
 		timeouts.HTTPServerTimeout,
 	) + webhookResponseGrace
 }
@@ -438,18 +404,6 @@ func (c *Component) resolveKind(apiGroup, apiVersion, resource string) (string, 
 func (c *Component) registerValidators() {
 	c.logger.Info("Registering validators")
 	validators := make(map[string]webhook.ValidationFunc)
-
-	// HAProxyTemplateConfig admission validator. Registered separately
-	// from the Rules-driven loop because HAProxyTemplateConfig is the
-	// controller's own config, NOT a watched resource — its admission
-	// validation runs a different code path (parse CRD + ephemeral
-	// render+validate pipeline) than the overlay-based DryRunValidator
-	// used for watched resources.
-	if c.configValidator != nil {
-		c.logger.Debug("Registering HAProxyTemplateConfig validator",
-			"gvk", HAProxyTemplateConfigGVK)
-		validators[HAProxyTemplateConfigGVK] = c.createConfigValidator()
-	}
 
 	// For each webhook rule, register a validator
 	for _, rule := range c.config.Rules {
@@ -592,93 +546,6 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 	}
 }
 
-// createConfigValidator returns the ValidationFunc that handles
-// HAProxyTemplateConfig admission. Mirrors createResourceValidator's shape
-// (basic structure check, metric recording, deadline guard) but dispatches
-// to the dedicated configValidator instead of the overlay-based DryRunValidator.
-func (c *Component) createConfigValidator() webhook.ValidationFunc {
-	return func(valCtx *webhook.ValidationContext) (bool, string, []string, error) {
-		start := time.Now()
-
-		c.logger.Debug("Validating HAProxyTemplateConfig admission",
-			"gvk", HAProxyTemplateConfigGVK,
-			"operation", valCtx.Operation,
-			"namespace", valCtx.Namespace,
-			"name", valCtx.Name)
-
-		if err := c.validateBasicStructure(valCtx.Object); err != nil {
-			duration := time.Since(start).Seconds()
-			if c.metrics != nil {
-				c.metrics.RecordWebhookRequest(HAProxyTemplateConfigGVK, "denied", duration)
-				c.metrics.RecordWebhookValidation(HAProxyTemplateConfigGVK, "denied")
-			}
-			return false, err.Error(), nil, nil
-		}
-
-		// Config admission has its own deadline because this path compiles and
-		// strictly renders the complete prospective template set before running
-		// the bounded validationTests gate. The chart keeps this internal timeout
-		// one second below its HAProxyTemplateConfig timeoutSeconds value. Parent
-		// is c.serverCtx so iteration shutdown cancels in-flight validations. See
-		// createResourceValidator for the serverCtx-nil fallback rationale.
-		parent := c.serverCtx
-		if parent == nil {
-			parent = context.Background()
-		}
-		ctx, cancel := context.WithTimeout(parent, c.config.ConfigAdmissionTimeout)
-		defer cancel()
-
-		allowed, reason, warnings := c.configValidator(
-			ctx,
-			HAProxyTemplateConfigGVK,
-			valCtx.Namespace,
-			valCtx.Name,
-			valCtx.Object,
-			valCtx.Operation,
-		)
-		if !allowed && ctx.Err() != nil {
-			// The chart deliberately gives HAProxyTemplateConfig admission an
-			// Ignore failure policy: an overloaded or restarting controller must
-			// never make the config object impossible to repair. Convert an
-			// internal deadline/cancellation into the same explicit fail-open
-			// behaviour, with a warning for the operator. The daemon load gate
-			// remains authoritative and will reject an invalid prospective config.
-			c.logger.Warn("HAProxyTemplateConfig validation did not complete; admitting (load gate still enforces)",
-				"operation", valCtx.Operation,
-				"namespace", valCtx.Namespace,
-				"name", valCtx.Name,
-				"error", ctx.Err())
-			allowed = true
-			reason = ""
-			warnings = append(warnings, fmt.Sprintf(
-				"HAProxyTemplateConfig admission validation did not complete: %v — the controller's load gate will still enforce this config",
-				ctx.Err(),
-			))
-		}
-
-		duration := time.Since(start).Seconds()
-		if c.metrics != nil {
-			resultStr := "allowed"
-			if !allowed {
-				resultStr = "denied"
-			}
-			c.metrics.RecordWebhookRequest(HAProxyTemplateConfigGVK, resultStr, duration)
-			c.metrics.RecordWebhookValidation(HAProxyTemplateConfigGVK, resultStr)
-		}
-
-		c.logger.Log(context.Background(), configAdmissionLogLevel(), "HAProxyTemplateConfig validation completed",
-			"operation", valCtx.Operation,
-			"namespace", valCtx.Namespace,
-			"name", valCtx.Name,
-			"allowed", allowed,
-			"reason", reason,
-			"warnings", len(warnings),
-			"duration_ms", time.Since(start).Milliseconds())
-
-		return allowed, reason, warnings, nil
-	}
-}
-
 // validateBasicStructure performs basic structural validation on a Kubernetes resource.
 //
 // The check is intentionally inlined here rather than living in a separate
@@ -737,20 +604,5 @@ func admissionLogLevel(allowed bool, warnings int) slog.Level {
 	if allowed && warnings == 0 {
 		return slog.LevelDebug
 	}
-	return slog.LevelInfo
-}
-
-// configAdmissionLogLevel is slog.LevelInfo for every HAProxyTemplateConfig
-// admission decision, including a clean allow.
-//
-// Demoting clean allows to DEBUG here made the gate's verdicts indistinguishable
-// from it never being consulted: at the default INFO level, "admitted cleanly"
-// and "the API server could not reach the webhook, so failurePolicy:Ignore
-// admitted it" both appear as no log line at all. That ambiguity is what left
-// the intermittent test-chart-upgrade phase-3 failure unattributable (#110).
-//
-// Costs nothing: this gate fires on the operator's own config objects, not on
-// cluster traffic — a handful of decisions per `helm upgrade`.
-func configAdmissionLogLevel() slog.Level {
 	return slog.LevelInfo
 }

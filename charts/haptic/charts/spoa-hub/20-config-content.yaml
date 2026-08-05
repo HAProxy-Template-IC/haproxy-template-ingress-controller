@@ -242,9 +242,11 @@ templateSnippets:
       {#- Newline between plugin iterations so the next [[plugins]] table
          header lands on its own line. Without it the rendered TOML
          reads `transaction_ttl_ms = 10000[[plugins]]` and the hub's
-         reload bails with a parse error. {% end %} preserves the
-         trailing newline; {%- end -%} would strip it. -#}
-      {% end %}
+         reload bails with a parse error. Emitted explicitly: a bare
+         `{% end %}`'s trailing newline is whitespace the line-cut rules
+         may claim, and has already been claimed once. -#}
+      {{- "\n" }}
+      {%- end %}
 
   spoe-conf-content:
     template: |

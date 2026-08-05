@@ -75,6 +75,19 @@ type Coordinator struct {
 	storeProvider stores.StoreProvider
 	logger        *slog.Logger
 
+	// strictPipeline, when set, serves the FIRST execution of this
+	// Coordinator's lifetime; every later one uses the fast pipeline. A
+	// Coordinator lives exactly one iteration and an iteration restarts on
+	// every config change (and on leader transition), so "first render" is
+	// precisely the render a config or template change produced. That render
+	// gets full semantic validation (`haproxy -c`) against the live stores —
+	// the check config admission used to provide before ADR-0016 removed it —
+	// at ~94 ms once per config change, while endpoint churn stays on the
+	// fast pipeline. Watched-resource changes keep their upstream strict gate
+	// in admission.
+	strictPipeline  PipelineExecutor
+	firstRenderDone bool
+
 	// lastStatusPatches caches the most recent successful render's status patches.
 	// Used by StatusApplier (via events) to apply failure variants (renderFailed,
 	// deployFailed) when a subsequent pipeline execution fails.
@@ -89,6 +102,11 @@ type CoordinatorConfig struct {
 	// Pipeline is the render-validate pipeline to execute.
 	// Must implement PipelineExecutor interface.
 	Pipeline PipelineExecutor
+
+	// StrictPipeline, when non-nil, is used for the first execution of this
+	// Coordinator's lifetime — the render a config change or leader
+	// transition produced. See Coordinator.strictPipeline.
+	StrictPipeline PipelineExecutor
 
 	// StoreProvider provides access to resource stores.
 	StoreProvider stores.StoreProvider
@@ -116,11 +134,12 @@ func NewCoordinator(cfg *CoordinatorConfig) *Coordinator {
 	}
 
 	return &Coordinator{
-		ReadySignal:   component.NewReadySignal(),
-		eventBus:      cfg.EventBus,
-		pipeline:      cfg.Pipeline,
-		storeProvider: cfg.StoreProvider,
-		logger:        logger.With("component", CoordinatorComponentName),
+		ReadySignal:    component.NewReadySignal(),
+		eventBus:       cfg.EventBus,
+		pipeline:       cfg.Pipeline,
+		strictPipeline: cfg.StrictPipeline,
+		storeProvider:  cfg.StoreProvider,
+		logger:         logger.With("component", CoordinatorComponentName),
 	}
 }
 
@@ -238,8 +257,16 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 	// downstream components (e.g. metrics) can correlate it with the trigger.
 	c.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason, events.PropagateCorrelation(event)))
 
-	// Execute the render-validate pipeline
-	result, err := c.pipeline.Execute(ctx, c.storeProvider, rendercontext.RenderModeReconcile)
+	// Execute the render-validate pipeline. The first render of the
+	// iteration takes the strict one — see the strictPipeline field.
+	executor := c.pipeline
+	if c.strictPipeline != nil && !c.firstRenderDone {
+		executor = c.strictPipeline
+		c.logger.Debug("First render of this iteration uses the strict pipeline",
+			"reason", event.Reason)
+	}
+	result, err := executor.Execute(ctx, c.storeProvider, rendercontext.RenderModeReconcile)
+	c.firstRenderDone = true
 	if err != nil {
 		c.handlePipelineFailure(err, event, startTime)
 		return

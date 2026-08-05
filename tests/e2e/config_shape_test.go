@@ -30,108 +30,133 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 )
 
-var (
-	configGVR = schema.GroupVersionResource{
-		Group: "haproxy-haptic.org", Version: "v1alpha1", Resource: "haproxytemplateconfigs",
-	}
-	testsGVR = schema.GroupVersionResource{
-		Group: "haproxy-haptic.org", Version: "v1alpha1", Resource: "haproxyvalidationtests",
-	}
-)
+var configGVR = schema.GroupVersionResource{
+	Group: "haproxy-haptic.org", Version: "v1alpha1", Resource: "haproxytemplateconfigs",
+}
 
-// TestConfigShape pins what the chart installs: exactly one configuration
-// object, with its validation tests in a companion object.
+// TestConfigShape pins what the chart installs: one HAProxyTemplateConfig per
+// enabled template library plus the operator's own config, every one marked
+// spec.partial, tests inline, merged by the controller in CRD_NAME order.
 //
-// The shape is the point, not an implementation detail. Splitting the
-// configuration across objects is what made it impossible to validate as a
-// whole, and what broke `helm upgrade` from a pre-split release — the running
-// old webhook judged each fragment standalone and denied it.
+// This deliberately overturns the single-object shape an earlier version of
+// this test called "the point, not an implementation detail". That shape was
+// the correct answer to the July 2026 revert of !1440, whose two reasons have
+// since been dissolved rather than ignored (ADR-0016):
+//
+//   - "a fragment is not a config, so the CRD must make every field optional"
+//     — that price was already paid: ADR-0014 dropped the Required markers and
+//     they were never restored. spec.partial plus the CRD's CEL rule now gives
+//     apply-time completeness back for standalone objects, enforced by the
+//     apiserver, which a webhook (failurePolicy: Ignore) never guaranteed.
+//   - "validators already running in clusters judge a fragment as a complete
+//     config" — the per-object config webhook is GONE: it structurally cannot
+//     judge a multi-object change (it sees the mid-batch state), and the
+//     apply-crds hook strips its legacy entry from live clusters during the
+//     upgrade. Whole-set validation happens where the whole set is visible:
+//     the pre-rollout preflight hook and the fail-closed load gate.
+//
+// What the split buys is the reason the controller exists as CRDs at all:
+// per-object size budgets (worst library: 44% of etcd's limit, versus 99.4%
+// for the single object that motivated all of this), and composability — an
+// arbitrary number of small configs merged in a declared order.
 func TestConfigShape(t *testing.T) {
-	feature := features.New("chart installs one config plus a companion tests object").
-		Assess("exactly one HAProxyTemplateConfig", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	feature := features.New("chart installs one config object per library, merged by the controller").
+		Assess("several partial objects, operator's config among them", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			items := listHaptic(ctx, t, cfg, configGVR)
-			if len(items) != 1 {
-				names := make([]string, 0, len(items))
-				for _, i := range items {
-					names = append(names, i.GetName())
+			if len(items) < 2 {
+				t.Fatalf("expected one HAProxyTemplateConfig per enabled library plus the operator's, got %d — "+
+					"a single object puts every library back under one etcd size budget", len(items))
+			}
+
+			var haveOperator bool
+			var haproxyConfigOwners []string
+			for _, item := range items {
+				spec, _, _ := unstructured.NestedMap(item.Object, "spec")
+				partial, _, _ := unstructured.NestedBool(item.Object, "spec", "partial")
+				if !partial {
+					t.Fatalf("%s is not marked spec.partial — the CEL completeness rule would "+
+						"reject it at apply time, since no chart object is complete alone", item.GetName())
 				}
-				t.Fatalf("expected exactly one HAProxyTemplateConfig, got %d: %v — "+
-					"a configuration spread across objects cannot be validated as a whole", len(items), names)
-			}
-			return ctx
-		}).
-		Assess("the config is complete on its own", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			config := listHaptic(ctx, t, cfg, configGVR)[0]
-			spec, _, _ := unstructured.NestedMap(config.Object, "spec")
-			for _, field := range []string{"podSelector", "credentialsSecretRef", "haproxyConfig", "watchedResources"} {
-				if _, present := spec[field]; !present {
-					t.Fatalf("spec.%s missing: the single object must be complete, which is what lets "+
-						"admission and the load gate judge it without fetching anything else", field)
+				if _, ok := spec["podSelector"]; ok {
+					haveOperator = true
+				}
+				if _, ok := spec["haproxyConfig"]; ok {
+					haproxyConfigOwners = append(haproxyConfigOwners, item.GetName())
+				}
+				if _, ok := spec["validationTestsSelector"]; ok {
+					t.Fatalf("%s carries validationTestsSelector, which is retired: tests live inline", item.GetName())
 				}
 			}
-			return ctx
-		}).
-		Assess("tests live in a companion object the config selects", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			config := listHaptic(ctx, t, cfg, configGVR)[0]
-			spec, _, _ := unstructured.NestedMap(config.Object, "spec")
-
-			if _, inline := spec["validationTests"]; inline {
-				t.Fatal("the chart should not inline validationTests: they are ~36% of the spec and " +
-					"are what pushed a migration profile past etcd's per-object limit")
+			if !haveOperator {
+				t.Fatal("no object carries podSelector: the operator's own config is missing from the set")
 			}
-			if _, ok := spec["validationTestsSelector"]; !ok {
-				t.Fatal("spec.validationTestsSelector missing — without it the companion object is never found")
-			}
-
-			tests := listHaptic(ctx, t, cfg, testsGVR)
-			if len(tests) != 1 {
-				t.Fatalf("expected one HAProxyValidationTests, got %d", len(tests))
-			}
-			suite, _, _ := unstructured.NestedMap(tests[0].Object, "spec", "validationTests")
-			if len(suite) == 0 {
-				t.Fatal("companion object carries no tests: an empty suite passes unconditionally, " +
-					"so this would look identical to a suite that ran and passed")
+			if len(haproxyConfigOwners) != 1 {
+				t.Fatalf("haproxyConfig must have exactly one owner (base), got %v — the controller "+
+					"rejects a second non-last owner as a silent template replacement", haproxyConfigOwners)
 			}
 			return ctx
 		}).
-		Assess("the controller loaded that suite", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			// requireValidationTests refuses a configuration that ends up with no
-			// tests, so Validated=True here is the controller reporting it found
-			// and ran the companion suite — not merely that the config parsed.
-			config := listHaptic(ctx, t, cfg, configGVR)[0]
-			required, _, _ := unstructured.NestedBool(config.Object, "spec", "requireValidationTests")
-			if !required {
-				t.Fatal("spec.requireValidationTests is not set, so a lost suite would load silently")
+		Assess("tests ride the library objects", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			total := 0
+			for _, item := range listHaptic(ctx, t, cfg, configGVR) {
+				suite, _, _ := unstructured.NestedMap(item.Object, "spec", "validationTests")
+				total += len(suite)
 			}
-
-			// Polled, not asserted once: the condition is written after the load
-			// gate runs, which is asynchronous with the readiness the suite waits
-			// on. A single read races it.
+			if total == 0 {
+				t.Fatal("no object carries validationTests: an empty suite passes unconditionally, " +
+					"so the load gate would be running nothing")
+			}
+			return ctx
+		}).
+		Assess("the controller validated the set and stamped EVERY source", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			// The verdict is a property of the merged set, and observedGeneration
+			// is only meaningful against the same object's metadata.generation —
+			// so every object must carry Validated=True at its own generation.
+			// A designated primary could not represent a shard edit at all.
 			deadline := time.Now().Add(2 * time.Minute)
 			var last string
 			for time.Now().Before(deadline) {
-				current := listHaptic(ctx, t, cfg, configGVR)[0]
-				conditions, _, _ := unstructured.NestedSlice(current.Object, "status", "conditions")
-				for _, c := range conditions {
-					cond, ok := c.(map[string]any)
-					if !ok || cond["type"] != "Validated" {
-						continue
+				items := listHaptic(ctx, t, cfg, configGVR)
+				allStamped := true
+				last = ""
+				for _, item := range items {
+					if reason, ok := validatedAtOwnGeneration(&item); !ok {
+						allStamped = false
+						last = fmt.Sprintf("%s: %s", item.GetName(), reason)
+						break
 					}
-					if cond["status"] == "True" {
-						return ctx
-					}
-					last = fmt.Sprintf("Validated=%v (%v)", cond["status"], cond["reason"])
+				}
+				if allStamped {
+					return ctx
 				}
 				time.Sleep(2 * time.Second)
 			}
-			if last == "" {
-				last = "no Validated condition ever appeared"
-			}
-			t.Fatalf("controller never accepted the config plus its suite: %s", last)
+			t.Fatalf("controller never stamped every source of the merged set: %s", last)
 			return ctx
 		}).Feature()
 
 	testEnv.Test(t, feature)
+}
+
+// validatedAtOwnGeneration reports whether the object carries Validated=True
+// with observedGeneration matching its own metadata.generation.
+func validatedAtOwnGeneration(item *unstructured.Unstructured) (string, bool) {
+	conditions, _, _ := unstructured.NestedSlice(item.Object, "status", "conditions")
+	for _, c := range conditions {
+		cond, ok := c.(map[string]any)
+		if !ok || cond["type"] != "Validated" {
+			continue
+		}
+		if cond["status"] != "True" {
+			return fmt.Sprintf("Validated=%v (%v)", cond["status"], cond["reason"]), false
+		}
+		observed, _ := cond["observedGeneration"].(int64)
+		if observed != item.GetGeneration() {
+			return fmt.Sprintf("Validated=True but observedGeneration=%d, generation=%d", observed, item.GetGeneration()), false
+		}
+		return "", true
+	}
+	return "no Validated condition", false
 }
 
 func listHaptic(ctx context.Context, t *testing.T, cfg *envconf.Config, gvr schema.GroupVersionResource) []unstructured.Unstructured {

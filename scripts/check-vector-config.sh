@@ -29,7 +29,7 @@ helm template "$CHART" --namespace default \
   --set controller.config.templatingSettings.extraContext.tracing.enabled=true \
   --set controller.config.templatingSettings.extraContext.tracing.otlp.endpoint=http://tempo:4318/v1/traces \
   2>/dev/null \
-  | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' \
+  | yq 'select(.kind == "HAProxyTemplateConfig")' \
   > "$WORK/config.yaml" || fail "helm template failed"
 
 "$CONTROLLER_BIN" validate --file "$WORK/config.yaml" --schema-dir "$REPO/tests/schemas" \
@@ -75,6 +75,29 @@ if "otlp_traces" not in doc["sinks"]:
 
 print(f"  rendered vector.yaml is loadable: "
       f"{len(doc['sources'])} sources, {len(doc['transforms'])} transforms, {len(doc['sinks'])} sinks")
+
+# Same class of failure, TOML flavor: the spoa-hub validator parses the
+# rendered TOML at admission time, but nothing offline did — a fused line
+# survived every chart gate and surfaced as a webhook denial in e2e. Parse
+# every rendered .toml section here. tomllib is stdlib since Python 3.11.
+import re, tomllib
+toml_sections = re.findall(r"^#### (\S+\.toml)$", dump, re.M)
+if "spoa-hub-config.toml" not in toml_sections:
+    sys.exit("no rendered spoa-hub-config.toml in the dump — the TOML parse check would run on nothing")
+for name in toml_sections:
+    start = dump.index(f"#### {name}") + len(f"#### {name}")
+    body = []
+    for line in dump[start:].split("\n"):
+        if line.startswith("#### ") or line.startswith("=== "):
+            break
+        if line and set(line) == {"-"}:
+            continue
+        body.append(line)
+    try:
+        tomllib.loads("\n".join(body))
+    except tomllib.TOMLDecodeError as e:
+        sys.exit(f"the rendered {name} is not valid TOML — the spoa-hub would refuse it:\n{e}")
+    print(f"  rendered {name} is valid TOML")
 PY
 
 echo "✓ vector config OK"

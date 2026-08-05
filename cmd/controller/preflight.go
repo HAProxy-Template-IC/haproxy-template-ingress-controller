@@ -55,6 +55,8 @@ const gatewayAPIVersion = "gateway.networking.k8s.io/v1/GatewayClass"
 // performance budget.
 const sidecarCheckTimeout = 10 * time.Minute
 
+var preflightExpectChartVersion string
+
 var preflightCmd = &cobra.Command{
 	Use:   "preflight",
 	Short: "Validate a configuration against your own values before deploying it",
@@ -89,6 +91,11 @@ func init() {
 	preflightCmd.Flags().StringVar(&preflightKubeconfig, "kubeconfig", "",
 		"Kubeconfig for reading the target cluster's API schemas (default: $KUBECONFIG, "+
 			"then in-cluster credentials). Ignored with --schema-dir.")
+	preflightCmd.Flags().StringVar(&preflightExpectChartVersion, "expect-chart-version", os.Getenv("HAPTIC_EXPECT_CHART_VERSION"),
+		"Fail unless the chart being rendered has exactly this version. The pre-upgrade "+
+			"hook sets it to the installing chart's version, so validating a DIFFERENT "+
+			"chart (a drifted image tag) fails loudly instead of passing on the wrong "+
+			"input. Also reads HAPTIC_EXPECT_CHART_VERSION.")
 
 	_ = preflightCmd.MarkFlagRequired("values")
 	rootCmd.AddCommand(preflightCmd)
@@ -115,7 +122,12 @@ func runPreflight(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stderr, "==> rendering %s with %s (release %s, namespace %s)\n",
 		chartDir, strings.Join(preflightValuesFiles, ", "), preflightRelease, preflightNamespace)
 
-	manifests, err := renderChartManifests(chartDir, preflightValuesFiles)
+	caps, err := preflightCapabilities(schemas, logger)
+	if err != nil {
+		return err
+	}
+
+	manifests, err := renderChartManifests(chartDir, preflightValuesFiles, preflightExpectChartVersion, caps)
 	if err != nil {
 		return err
 	}
@@ -161,6 +173,44 @@ func runPreflight(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+// preflightCapabilities builds the render Capabilities. Against a live
+// cluster they come from discovery — the render must prune the same
+// conditional subcharts the real install would, and a hardcoded list
+// validates a SUPERSET of what deploys on clusters missing optional CRDs,
+// which proves nothing about the subset. Offline (--schema-dir) keeps the
+// old assumption-based list, with --api-versions as the escape hatch, and
+// says so.
+func preflightCapabilities(schemas schemaSource, logger *slog.Logger) (*common.Capabilities, error) {
+	caps := common.DefaultCapabilities.Copy()
+	if schemas.live == nil {
+		caps.APIVersions = append(caps.APIVersions, gatewayAPIVersion)
+		caps.APIVersions = append(caps.APIVersions, preflightAPIVersions...)
+		logger.Warn("Offline run: assuming Gateway API is present; pass --api-versions to adjust",
+			"assumed", gatewayAPIVersion)
+		return caps, nil
+	}
+
+	_, resourceLists, err := schemas.live.discovery().ServerGroupsAndResources()
+	if err != nil {
+		// Partial discovery (a broken aggregated API) still names every
+		// healthy group; treat it like helm does and keep what arrived.
+		if resourceLists == nil {
+			return nil, fmt.Errorf("discovering the cluster's API versions: %w", err)
+		}
+		logger.Warn("Partial API discovery; capabilities may be incomplete", "error", err)
+	}
+	versions := make([]string, 0, len(resourceLists)*8)
+	for _, list := range resourceLists {
+		versions = append(versions, list.GroupVersion)
+		for i := range list.APIResources {
+			versions = append(versions, list.GroupVersion+"/"+list.APIResources[i].Kind)
+		}
+	}
+	caps.APIVersions = append(caps.APIVersions, versions...)
+	caps.APIVersions = append(caps.APIVersions, preflightAPIVersions...)
+	return caps, nil
+}
+
 // preflightSchemas picks the schema source: --schema-dir when given, the live
 // cluster otherwise. Never neither — a run with no schemas would report a pass
 // the controller's own load would not.
@@ -192,7 +242,7 @@ func preflightSchemas(logger *slog.Logger) (schemaSource, error) {
 // renderChartManifests renders the chart in-process with the operator's values.
 // Template-only, exactly like `helm template`: no cluster access, so `lookup`
 // returns empty — the same blind spot a GitOps render has.
-func renderChartManifests(chartDir string, valuesFiles []string) (map[string]string, error) {
+func renderChartManifests(chartDir string, valuesFiles []string, expectVersion string, caps *common.Capabilities) (map[string]string, error) {
 	chrt, err := loader.Load(chartDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading chart %s: %w", chartDir, err)
@@ -200,6 +250,18 @@ func renderChartManifests(chartDir string, valuesFiles []string) (map[string]str
 	c, ok := chrt.(*chartv2.Chart)
 	if !ok {
 		return nil, fmt.Errorf("chart %s: unsupported chart apiVersion (got %T)", chartDir, chrt)
+	}
+
+	// The version guard is what makes the embedded-chart default sound in the
+	// pre-upgrade hook: without it, an image tag drifted from the chart being
+	// installed would validate the WRONG chart and pass on the wrong input —
+	// worse than no gate. Never warn-and-continue here.
+	if expectVersion != "" && c.Metadata.Version != expectVersion {
+		return nil, fmt.Errorf(
+			"chart version mismatch: this image embeds chart %s but the release being installed is chart %s.\n"+
+				"The controller image tag has drifted from the chart version (they are released in lockstep).\n"+
+				"Fix the image override, or disable the pre-rollout gate if the drift is deliberate",
+			c.Metadata.Version, expectVersion)
 	}
 
 	overrides := map[string]any{}
@@ -215,10 +277,6 @@ func renderChartManifests(chartDir string, valuesFiles []string) (map[string]str
 		}
 		overrides = chartv2loader.MergeMaps(overrides, vals)
 	}
-
-	caps := common.DefaultCapabilities.Copy()
-	caps.APIVersions = append(caps.APIVersions, gatewayAPIVersion)
-	caps.APIVersions = append(caps.APIVersions, preflightAPIVersions...)
 
 	return renderChart(c, overrides, common.ReleaseOptions{
 		Name:      preflightRelease,
@@ -393,9 +451,10 @@ func varnishImage() string {
 	return "varnish:9.0"
 }
 
-// collectConfigDocuments picks the HAProxyTemplateConfig and
-// HAProxyValidationTests documents out of the rendered manifests and returns
-// them as a single multi-document stream.
+// collectConfigDocuments picks the HAProxyTemplateConfig documents out of the
+// rendered manifests and returns them as a single multi-document stream. All
+// config objects come from one chart template, so the in-file document order —
+// which the split preserves — is the chart's merge order.
 func collectConfigDocuments(manifests map[string]string) (string, error) {
 	names := make([]string, 0, len(manifests))
 	for name := range manifests {
@@ -411,8 +470,7 @@ func collectConfigDocuments(manifests map[string]string) (string, error) {
 			continue
 		}
 		for _, doc := range strings.Split(content, "\n---") {
-			if !strings.Contains(doc, "kind: HAProxyTemplateConfig") &&
-				!strings.Contains(doc, "kind: HAProxyValidationTests") {
+			if !strings.Contains(doc, "kind: HAProxyTemplateConfig") {
 				continue
 			}
 			docs = append(docs, strings.TrimSpace(doc))

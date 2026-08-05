@@ -48,8 +48,23 @@ type HAProxyTemplateConfig struct {
 // library, and a library config legitimately carries nothing but
 // `templateSnippets` and `validationTests`. That is why fields the controller
 // genuinely requires are marked optional here and enforced after the merge by
-// config.ValidateStructure instead of by the apiserver.
+// config.ValidateStructure instead of by the apiserver — except for a
+// standalone (non-partial) object, whose completeness the CEL rule below
+// restores at apply time: it is the one shape with nothing to merge with, so
+// judging it alone is correct, and the apiserver enforcing it cannot be
+// unreachable the way a webhook can.
+//
+// +kubebuilder:validation:XValidation:rule="(has(self.partial) && self.partial) || (has(self.podSelector) && has(self.watchedResources) && size(self.watchedResources) > 0 && has(self.haproxyConfig))",message="a complete HAProxyTemplateConfig needs podSelector, at least one watchedResources entry, and haproxyConfig; a config that is one shard of a merged set declares spec.partial: true"
 type HAProxyTemplateConfigSpec struct {
+	// Partial marks this object as one shard of a merged set rather than a
+	// complete configuration, exempting it from the completeness rule above.
+	// The chart sets it on every object it renders — including the operator's
+	// own, which carries podSelector but not haproxyConfig (the base library
+	// owns that). A hand-written standalone config leaves it unset and gets
+	// apply-time completeness checking in the apiserver.
+	// +optional
+	Partial bool `json:"partial,omitempty"`
+
 	// CredentialsSecretRef references the Secret containing HAProxy Dataplane API credentials.
 	//
 	// The Secret must contain the following keys:
@@ -167,47 +182,18 @@ type HAProxyTemplateConfigSpec struct {
 
 	// ValidationTests contains embedded validation test definitions.
 	//
-	// The map key is the test name, which must be unique.
+	// The map key is the test name, which must be unique across the whole
+	// merged set: the controller unions tests per source and rejects a name
+	// two objects both define, because a silent override would leave one
+	// author believing an assertion runs that does not. The reserved
+	// `_global` entry is the exception — it is a shared baseline several
+	// objects each contribute part of, and its fixtures accumulate.
 	//
-	// These tests are executed:
-	//   - During admission webhook validation (before resource is saved)
-	//   - Via the "controller validate" CLI command (pre-apply validation)
-	//
-	// Tests ensure templates generate valid HAProxy configurations before deployment.
+	// These tests are executed at startup (the load gate), on every live
+	// config change, and via the "controller validate" / "preflight" CLI
+	// commands before deployment.
 	// +optional
 	ValidationTests map[string]ValidationTest `json:"validationTests,omitempty"`
-
-	// ValidationTestsSelector selects HAProxyValidationTests objects in this
-	// namespace whose tests join the ones above. The controller runs the union;
-	// a test name may appear in only one source.
-	//
-	// Tests are kept out of this object because they dominate its size while
-	// being needed only when the configuration is validated, never when it is
-	// rendered. Nothing forces that split: inline tests remain fully supported,
-	// and an operator using neither the chart nor this selector loses nothing.
-	//
-	// A nil selector matches nothing. An empty selector (`{}`) matches every
-	// HAProxyValidationTests in the namespace, which is how two HAPTIC releases
-	// in one namespace would steal each other's tests — the chart sets a
-	// release-scoped selector rather than leaving it empty.
-	// +optional
-	ValidationTestsSelector *metav1.LabelSelector `json:"validationTestsSelector,omitempty"`
-
-	// RequireValidationTests refuses to load a configuration that ends up with
-	// no validation tests at all.
-	//
-	// This exists because an empty suite is an unconditional pass: a selector
-	// typo, a missing RBAC rule or an unsynced cache would otherwise leave the
-	// load gate running zero tests and reporting success, which is
-	// indistinguishable from a configuration that genuinely has none. Set it
-	// whenever tests are expected, and the difference becomes a refusal instead
-	// of silence.
-	//
-	// It is enforced only when the configuration is loaded, never at admission:
-	// during a fresh install the configuration is admitted before the tests
-	// objects exist, so enforcing it there would deadlock on apply ordering.
-	// +optional
-	RequireValidationTests bool `json:"requireValidationTests,omitempty"`
 
 	// MigrationCoverage declares, per migration source (another ingress
 	// controller whose annotations a template library emulates), how each

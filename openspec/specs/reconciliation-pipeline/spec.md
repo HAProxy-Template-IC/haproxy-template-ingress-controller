@@ -102,16 +102,21 @@ When `Pipeline.Execute` fails, the Coordinator SHALL extract the failing phase f
 
 ### Requirement: Dual Validation Pipelines
 
-The controller SHALL build two render-validate pipelines sharing one render service but differing in validation strictness. The fast pipeline SHALL skip semantic validation (`haproxy -c`, saving roughly 94 ms per render) and SHALL drive the leader-side reconcile Coordinator — this is safe because every input reaching the leader has already passed strict validation upstream (admission webhook or HTTP-store promotion), and the Dataplane API runs its own `haproxy -c` server-side before accepting a raw config push. The strict pipeline SHALL run full semantic validation and SHALL drive the watched-resource admission webhook, the HAProxyTemplateConfig admission webhook, and HTTP-store content promotion — the only entry points for operator or third-party input. Both pipelines SHALL skip DNS validation, because hostname resolution is independently flaky and recovers at runtime (HAProxy starts unresolved servers DOWN and brings them up when a later health check resolves).
+The controller SHALL build two render-validate pipelines sharing one render service but differing in validation strictness. The strict pipeline SHALL run full semantic validation (`haproxy -c`) and SHALL drive the watched-resource admission webhook, HTTP-store content promotion, and the FIRST render of each iteration's Coordinator. The fast pipeline SHALL skip semantic validation (saving roughly 94 ms per render) and SHALL drive every later leader-side render — safe because a watched-resource change reaching the leader has already passed strict validation at admission, while a config change restarts the iteration and therefore lands on the strict first render. (Config changes have no admission gate since ADR-0016 — a per-object webhook cannot judge a multi-object change set — and the chart's default `validateConfig: false` renders the Dataplane API's own check as `/bin/true`, so the strict first render is the semantic gate for them, not a redundancy.) Both pipelines SHALL skip DNS validation, because hostname resolution is independently flaky and recovers at runtime (HAProxy starts unresolved servers DOWN and brings them up when a later health check resolves).
 
-#### Scenario: Leader reconcile uses the fast pipeline
+#### Scenario: First render of an iteration uses the strict pipeline
 
-- **WHEN** the Coordinator executes a reconciliation
+- **WHEN** the Coordinator executes its first reconciliation after iteration start — which is what a config change, a controller start, or a leader transition produces
+- **THEN** that render SHALL pass full semantic validation (`haproxy -c`), and the outcome SHALL NOT change which pipeline later renders use.
+
+#### Scenario: Later leader renders use the fast pipeline
+
+- **WHEN** the Coordinator executes any subsequent reconciliation in the same iteration
 - **THEN** semantic validation (`haproxy -c`) SHALL be skipped for that render.
 
 #### Scenario: Admission and promotion use the strict pipeline
 
-- **WHEN** a watched-resource admission request, a HAProxyTemplateConfig admission request, or an HTTP-store content promotion is validated
+- **WHEN** a watched-resource admission request or an HTTP-store content promotion is validated
 - **THEN** the render SHALL pass full semantic validation before being accepted.
 
 #### Scenario: DNS validation skipped everywhere

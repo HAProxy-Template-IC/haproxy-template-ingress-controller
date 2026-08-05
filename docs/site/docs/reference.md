@@ -45,6 +45,19 @@ apply) so additive CRD schema changes reach the cluster on install and upgrade.
 | `crds.upgradeJob.annotations` | map | `{}` | Extra annotations for the Job (merged with chart defaults) |
 | `crds.upgradeJob.labels` | map | `{}` | Extra labels for the Job (merged with chart defaults) |
 
+## Pre-rollout validation
+
+A `pre-install`/`pre-upgrade` hook Job renders the chart embedded in the controller image with this release's values and runs the controller's own load gate over the result — structural validation and the full `validationTests` suite including `haproxy -c` — before any object is applied. A failing configuration fails the release; the previous release keeps serving. Argo CD runs it as a `PreSync` hook. The fail-closed load gate still guards every path that skips hooks (`--no-hooks`, `kubectl`, rollback).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `preRolloutValidation.enabled` | bool | `true` | Run the gate. The Job hard-fails when the controller image's embedded chart version differs from the chart being installed — validating the wrong chart would pass on the wrong input — so disable it when deliberately running a drifted image |
+| `preRolloutValidation.backoffLimit` | int | `1` | Job retry limit |
+| `preRolloutValidation.activeDeadlineSeconds` | int | `600` | Job wall-clock deadline. Generous: schema fetch, engine compile, and ~700 `haproxy -c` checks on a possibly cold node |
+| `preRolloutValidation.resources` | object | cpu `200m` / memory `256Mi`–`512Mi` | Resource requests and limits for the validation Job pod |
+| `preRolloutValidation.annotations` | map | `{}` | Extra annotations for the Job |
+| `preRolloutValidation.labels` | map | `{}` | Extra labels for the Job |
+
 ## Deployment & Image
 
 | Parameter | Type | Default | Description |
@@ -380,8 +393,6 @@ For HAProxy behind a layer-4 load balancer. See [PROXY protocol](haproxy-deploym
 |-----------|------|---------|-------------|
 | `controller.webhook.enabled` | bool | `true` | Enable admission webhook validation |
 | `controller.webhook.timeoutSeconds` | int | `10` | API-server timeout for watched-resource admission. HAPTIC configures the controller deadline one second shorter. Allowed range: `2..30` |
-| `controller.webhook.haproxyTemplateConfig.enabled` | bool | `true` | Also validate `HAProxyTemplateConfig` CRD updates via the webhook (`failurePolicy: Ignore`, not configurable — controller downtime never blocks CRD edits). When active, the leader-side reconcile can skip `haproxy -c` on every render |
-| `controller.webhook.haproxyTemplateConfig.timeoutSeconds` | int | `30` | API-server timeout for the more expensive prospective-config admission path, including its size-scaled `validationTests` run. HAPTIC configures the controller deadline one second shorter and admits with a warning on timeout so recovery remains possible. Allowed range: `2..30` |
 | `controller.webhook.secretName` | string | Auto-generated | Webhook TLS certificate secret name |
 | `controller.webhook.service.port` | int | `443` | Webhook service port |
 | `controller.webhook.certManager.enabled` | bool | `false` | cert-manager integration for the webhook cert. Default `false`: the chart issues a self-signed cert itself. Set `true` for cert-manager-managed issuance and auto-rotation; for manual certs keep `false` and set `controller.webhook.caBundle` |

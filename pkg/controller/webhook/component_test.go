@@ -110,18 +110,15 @@ func TestComponent_New(t *testing.T) {
 		component := New(testutil.NewTestLogger(), &Config{}, nil, nil)
 
 		assert.Equal(t, DefaultResourceAdmissionTimeout, component.config.ResourceAdmissionTimeout)
-		assert.Equal(t, DefaultConfigAdmissionTimeout, component.config.ConfigAdmissionTimeout)
 	})
 
 	t.Run("preserves custom admission timeouts", func(t *testing.T) {
 		component := New(testutil.NewTestLogger(), &Config{
-			ResourceAdmissionTimeout: 3 * time.Second,
-			ConfigAdmissionTimeout:   17 * time.Second,
+			ResourceAdmissionTimeout: 33 * time.Second,
 		}, nil, nil)
 
-		assert.Equal(t, 3*time.Second, component.config.ResourceAdmissionTimeout)
-		assert.Equal(t, 17*time.Second, component.config.ConfigAdmissionTimeout)
-		assert.Equal(t, 19*time.Second, component.serverWriteTimeout())
+		assert.Equal(t, 33*time.Second, component.config.ResourceAdmissionTimeout)
+		assert.Equal(t, 35*time.Second, component.serverWriteTimeout())
 	})
 }
 
@@ -630,33 +627,6 @@ func TestComponent_createResourceValidator_TimeoutRemainsFailClosed(t *testing.T
 	assert.False(t, allowed, "watched-resource admission must remain fail closed on its internal deadline")
 	assert.Contains(t, reason, context.DeadlineExceeded.Error())
 	assert.Empty(t, warnings)
-	assert.NoError(t, err)
-}
-
-func TestComponent_createConfigValidator_TimeoutAdmitsWithWarning(t *testing.T) {
-	component := New(testutil.NewTestLogger(), &Config{
-		ConfigAdmissionTimeout: 20 * time.Millisecond,
-		ConfigValidator: func(ctx context.Context, _, _, _ string, _ any, _ string) (bool, string, []string) {
-			<-ctx.Done()
-			return false, ctx.Err().Error(), nil
-		},
-	}, nil, nil)
-	validator := component.createConfigValidator()
-	obj := &unstructured.Unstructured{}
-	obj.SetName("haptic-config")
-
-	allowed, reason, warnings, err := validator(&webhook.ValidationContext{
-		Operation: "UPDATE",
-		Namespace: "haptic",
-		Name:      "haptic-config",
-		Object:    obj,
-	})
-
-	assert.True(t, allowed, "a config-admission timeout must not block operator recovery")
-	assert.Empty(t, reason)
-	require.Len(t, warnings, 1)
-	assert.Contains(t, warnings[0], context.DeadlineExceeded.Error())
-	assert.Contains(t, warnings[0], "load gate")
 	assert.NoError(t, err)
 }
 

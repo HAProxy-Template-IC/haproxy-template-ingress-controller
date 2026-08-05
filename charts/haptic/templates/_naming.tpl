@@ -198,15 +198,6 @@ by both the ValidatingWebhookConfiguration and controller Deployment.
 {{- $timeout -}}
 {{- end -}}
 
-{{- define "haptic.webhook.configTimeoutSeconds" -}}
-{{- $raw := toString .Values.controller.webhook.haproxyTemplateConfig.timeoutSeconds -}}
-{{- $timeout := int $raw -}}
-{{- if or (not (regexMatch "^[0-9]+$" $raw)) (lt $timeout 2) (gt $timeout 30) -}}
-{{- fail "controller.webhook.haproxyTemplateConfig.timeoutSeconds must be an integer between 2 and 30." -}}
-{{- end -}}
-{{- $timeout -}}
-{{- end -}}
-
 {{/*
 Extract the API group from a Kubernetes apiVersion string and render it as
 a YAML scalar suitable for an `apiGroups:` list item. Core resources

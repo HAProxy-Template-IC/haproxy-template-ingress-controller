@@ -42,11 +42,13 @@ tpl = None
 for d in yaml.safe_load_all((work / "render.yaml").read_text()):
     if d and d.get("kind") == "HAProxyTemplateConfig":
         # The transform lives in its own snippet so Helm can drop it from the
-        # config object when no OTLP endpoint is set; it is no longer inline in
-        # files/vector.yaml.
-        tpl = d["spec"]["templateSnippets"]["vector-span-transform"]["template"]
+        # config object when no OTLP endpoint is set. The chart renders one
+        # object per library (ADR-0016); only the vector shard carries it.
+        snip = (d.get("spec", {}).get("templateSnippets") or {}).get("vector-span-transform")
+        if snip:
+            tpl = snip["template"]
 if tpl is None:
-    sys.exit("no HAProxyTemplateConfig in the render")
+    sys.exit("no HAProxyTemplateConfig carries the vector-span-transform snippet")
 try:
     i = tpl.index("m, merr = string(.message)")
     j = tpl.index(". = spans", i) + len(". = spans")
