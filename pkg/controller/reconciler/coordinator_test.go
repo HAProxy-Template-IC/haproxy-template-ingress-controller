@@ -351,3 +351,91 @@ func (m *flipFlopPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ 
 	}
 	return nil, m.failure
 }
+
+// countingPipeline records how many times it executed.
+type countingPipeline struct {
+	result *pipeline.PipelineResult
+	calls  int
+}
+
+func (m *countingPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode, _ ...rendercontext.Option) (*pipeline.PipelineResult, error) {
+	m.calls++
+	return m.result, nil
+}
+
+// The first render of an iteration is the one a config change produced — it
+// must take the strict pipeline (full `haproxy -c`), and only it: endpoint
+// churn afterwards stays on the fast pipeline. This replaces the semantic
+// check config admission carried before ADR-0016 removed it.
+func TestCoordinator_FirstRenderUsesStrictPipeline(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	result := &pipeline.PipelineResult{
+		HAProxyConfig:  "cfg",
+		AuxiliaryFiles: &dataplane.AuxiliaryFiles{},
+	}
+	fast := &countingPipeline{result: result}
+	strict := &countingPipeline{result: result}
+
+	coordinator := NewCoordinator(&CoordinatorConfig{
+		EventBus:       bus,
+		Pipeline:       fast,
+		StrictPipeline: strict,
+		StoreProvider:  stores.NewRealStoreProvider(nil),
+		Logger:         logger,
+	})
+
+	eventChan := bus.Subscribe("test", 100)
+	bus.Start()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() { _ = coordinator.Start(ctx) }()
+	time.Sleep(testutil.StartupDelay)
+
+	bus.Publish(events.NewReconciliationTriggeredEvent("config_change", true))
+	testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, 1, strict.calls, "first render must be strict")
+	assert.Equal(t, 0, fast.calls)
+
+	bus.Publish(events.NewReconciliationTriggeredEvent("endpoint_change", true))
+	testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, 1, strict.calls, "later renders must not be strict")
+	assert.Equal(t, 1, fast.calls)
+}
+
+// A failing strict first render must not wedge the iteration on strict: the
+// flag flips regardless of outcome, so retries run fast and the live gate's
+// fail-open posture is preserved.
+func TestCoordinator_StrictFirstRenderFlipsEvenOnFailure(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	fast := &countingPipeline{result: &pipeline.PipelineResult{
+		HAProxyConfig:  "cfg",
+		AuxiliaryFiles: &dataplane.AuxiliaryFiles{},
+	}}
+	strict := &mockPipeline{err: assert.AnError}
+
+	coordinator := NewCoordinator(&CoordinatorConfig{
+		EventBus:       bus,
+		Pipeline:       fast,
+		StrictPipeline: strict,
+		StoreProvider:  stores.NewRealStoreProvider(nil),
+		Logger:         logger,
+	})
+
+	eventChan := bus.Subscribe("test", 100)
+	bus.Start()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() { _ = coordinator.Start(ctx) }()
+	time.Sleep(testutil.StartupDelay)
+
+	bus.Publish(events.NewReconciliationTriggeredEvent("config_change", true))
+	testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, eventChan, testutil.EventTimeout)
+
+	bus.Publish(events.NewReconciliationTriggeredEvent("retry", true))
+	testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, 1, fast.calls, "retry after a failed strict render runs fast")
+}

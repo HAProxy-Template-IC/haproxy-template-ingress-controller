@@ -64,7 +64,11 @@ spec:
               library, and a library config legitimately carries nothing but
               `templateSnippets` and `validationTests`. That is why fields the controller
               genuinely requires are marked optional here and enforced after the merge by
-              config.ValidateStructure instead of by the apiserver.
+              config.ValidateStructure instead of by the apiserver — except for a
+              standalone (non-partial) object, whose completeness the CEL rule below
+              restores at apply time: it is the one shape with nothing to merge with, so
+              judging it alone is correct, and the apiserver enforcing it cannot be
+              unreachable the way a webhook can.
             properties:
               controller:
                 description: Controller contains controller-level settings (ports,
@@ -620,6 +624,15 @@ spec:
                 x-kubernetes-list-map-keys:
                 - source
                 x-kubernetes-list-type: map
+              partial:
+                description: |-
+                  Partial marks this object as one shard of a merged set rather than a
+                  complete configuration, exempting it from the completeness rule above.
+                  The chart sets it on every object it renders — including the operator's
+                  own, which carries podSelector but not haproxyConfig (the base library
+                  owns that). A hand-written standalone config leaves it unset and gets
+                  apply-time completeness checking in the apiserver.
+                type: boolean
               podSelector:
                 description: |-
                   PodSelector identifies which HAProxy pods to configure.
@@ -641,22 +654,6 @@ spec:
                 required:
                 - matchLabels
                 type: object
-              requireValidationTests:
-                description: |-
-                  RequireValidationTests refuses to load a configuration that ends up with
-                  no validation tests at all.
-
-                  This exists because an empty suite is an unconditional pass: a selector
-                  typo, a missing RBAC rule or an unsynced cache would otherwise leave the
-                  load gate running zero tests and reporting success, which is
-                  indistinguishable from a configuration that genuinely has none. Set it
-                  whenever tests are expected, and the difference becomes a refusal instead
-                  of silence.
-
-                  It is enforced only when the configuration is loaded, never at admission:
-                  during a fresh install the configuration is admitted before the tests
-                  objects exist, so enforcing it there would deadlock on apply ordering.
-                type: boolean
               sslCertificates:
                 additionalProperties:
                   description: |-
@@ -995,73 +992,17 @@ spec:
                 description: |-
                   ValidationTests contains embedded validation test definitions.
 
-                  The map key is the test name, which must be unique.
+                  The map key is the test name, which must be unique across the whole
+                  merged set: the controller unions tests per source and rejects a name
+                  two objects both define, because a silent override would leave one
+                  author believing an assertion runs that does not. The reserved
+                  `_global` entry is the exception — it is a shared baseline several
+                  objects each contribute part of, and its fixtures accumulate.
 
-                  These tests are executed:
-                    - During admission webhook validation (before resource is saved)
-                    - Via the "controller validate" CLI command (pre-apply validation)
-
-                  Tests ensure templates generate valid HAProxy configurations before deployment.
+                  These tests are executed at startup (the load gate), on every live
+                  config change, and via the "controller validate" / "preflight" CLI
+                  commands before deployment.
                 type: object
-              validationTestsSelector:
-                description: |-
-                  ValidationTestsSelector selects HAProxyValidationTests objects in this
-                  namespace whose tests join the ones above. The controller runs the union;
-                  a test name may appear in only one source.
-
-                  Tests are kept out of this object because they dominate its size while
-                  being needed only when the configuration is validated, never when it is
-                  rendered. Nothing forces that split: inline tests remain fully supported,
-                  and an operator using neither the chart nor this selector loses nothing.
-
-                  A nil selector matches nothing. An empty selector (`{}`) matches every
-                  HAProxyValidationTests in the namespace, which is how two HAPTIC releases
-                  in one namespace would steal each other's tests — the chart sets a
-                  release-scoped selector rather than leaving it empty.
-                properties:
-                  matchExpressions:
-                    description: matchExpressions is a list of label selector requirements.
-                      The requirements are ANDed.
-                    items:
-                      description: |-
-                        A label selector requirement is a selector that contains values, a key, and an operator that
-                        relates the key and values.
-                      properties:
-                        key:
-                          description: key is the label key that the selector applies
-                            to.
-                          type: string
-                        operator:
-                          description: |-
-                            operator represents a key's relationship to a set of values.
-                            Valid operators are In, NotIn, Exists and DoesNotExist.
-                          type: string
-                        values:
-                          description: |-
-                            values is an array of string values. If the operator is In or NotIn,
-                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                            the values array must be empty. This array is replaced during a strategic
-                            merge patch.
-                          items:
-                            type: string
-                          type: array
-                          x-kubernetes-list-type: atomic
-                      required:
-                      - key
-                      - operator
-                      type: object
-                    type: array
-                    x-kubernetes-list-type: atomic
-                  matchLabels:
-                    additionalProperties:
-                      type: string
-                    description: |-
-                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
-                      map is equivalent to an element of matchExpressions, whose key field is "key", the
-                      operator is "In", and the values array contains only "value". The requirements are ANDed.
-                    type: object
-                type: object
-                x-kubernetes-map-type: atomic
               validators:
                 description: |-
                   Validators declares pluggable validator sidecars consulted by the
@@ -1321,6 +1262,13 @@ spec:
                   type: string
                 type: array
             type: object
+            x-kubernetes-validations:
+            - message: 'a complete HAProxyTemplateConfig needs podSelector, at least
+                one watchedResources entry, and haproxyConfig; a config that is one
+                shard of a merged set declares spec.partial: true'
+              rule: (has(self.partial) && self.partial) || (has(self.podSelector)
+                && has(self.watchedResources) && size(self.watchedResources) > 0 &&
+                has(self.haproxyConfig))
           status:
             description: HAProxyTemplateConfigStatus defines the observed state of
               HAProxyTemplateConfig.

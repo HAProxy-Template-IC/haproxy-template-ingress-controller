@@ -368,9 +368,11 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 		if err != nil {
 			h.logger.Error("Effective-config resolution failed for parsed config",
 				"error", err, "version", event.Version)
-			h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, map[string][]string{
+			invalidEvent := events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, map[string][]string{
 				"effective-config": {err.Error()},
-			}))
+			})
+			invalidEvent.Sources = event.Sources
+			h.eventBus.Publish(invalidEvent)
 			return
 		}
 		resolvedEvent := *event
@@ -418,9 +420,11 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 			"error", err,
 			"version", event.Version)
 		// Publish invalid event with TemplateConfig reference for status updates
-		h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, map[string][]string{
+		invalidEvent := events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, map[string][]string{
 			"coordinator": {err.Error()},
-		}))
+		})
+		invalidEvent.Sources = event.Sources
+		h.eventBus.Publish(invalidEvent)
 		return
 	}
 
@@ -457,7 +461,9 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 			"error_count", len(validationErrors),
 			"validation_errors", validationErrors)
 		// Publish invalid event with TemplateConfig reference for status updates
-		h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, validationErrors))
+		invalidEvent := events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, validationErrors)
+		invalidEvent.Sources = event.Sources
+		h.eventBus.Publish(invalidEvent)
 	}
 }
 
@@ -519,6 +525,7 @@ func (h *ConfigChangeHandler) publishValidated(event *events.ConfigParsedEvent) 
 		event.Version,
 		event.SecretVersion,
 	)
+	validatedEvent.Sources = event.Sources
 	h.configReplayer.Cache(validatedEvent)
 	h.eventBus.Publish(validatedEvent)
 }

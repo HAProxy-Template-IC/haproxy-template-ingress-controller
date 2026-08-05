@@ -129,3 +129,73 @@ func crdJSONWithStatus(t *testing.T, name string) string {
 	require.NoError(t, err)
 	return string(b)
 }
+
+// removeConfigHooksIn is the upgrade-safety linchpin for ADR-0016: during the
+// release that retires config admission, the RUNNING old webhook would judge
+// each new per-library shard standalone and deny it as incomplete. The hook
+// entry must go; the watched-resource entry in the same configuration must
+// survive untouched.
+func TestRemoveConfigHooksIn(t *testing.T) {
+	vwc := func(hookNames ...string) *unstructured.Unstructured {
+		hooks := make([]any, 0, len(hookNames))
+		for _, name := range hookNames {
+			hooks = append(hooks, map[string]any{
+				"name": name,
+				"clientConfig": map[string]any{
+					"service": map[string]any{"path": "/validate/config/v1"},
+				},
+			})
+		}
+		return &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "admissionregistration.k8s.io/v1",
+			"kind":       "ValidatingWebhookConfiguration",
+			"metadata":   map[string]any{"name": "haptic-webhook"},
+			"webhooks":   hooks,
+		}}
+	}
+
+	names := func(item *unstructured.Unstructured) []string {
+		hooks, _, _ := unstructured.NestedSlice(item.Object, "webhooks")
+		out := make([]string, 0, len(hooks))
+		for _, h := range hooks {
+			name, _, _ := unstructured.NestedString(h.(map[string]any), "name")
+			out = append(out, name)
+		}
+		return out
+	}
+
+	t.Run("removes the config hook and keeps the watched-resource hook", func(t *testing.T) {
+		item := vwc("haproxytemplateconfig.haptic.haproxy-haptic.org", "resources.haptic.haproxy-haptic.org")
+		changed, err := removeConfigHooksIn(item)
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.Equal(t, []string{"resources.haptic.haproxy-haptic.org"}, names(item))
+	})
+
+	t.Run("no config hook means no change", func(t *testing.T) {
+		item := vwc("resources.haptic.haproxy-haptic.org")
+		changed, err := removeConfigHooksIn(item)
+		require.NoError(t, err)
+		require.False(t, changed)
+		require.Equal(t, []string{"resources.haptic.haproxy-haptic.org"}, names(item))
+	})
+
+	t.Run("no webhooks field means no change", func(t *testing.T) {
+		item := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "admissionregistration.k8s.io/v1",
+			"kind":       "ValidatingWebhookConfiguration",
+			"metadata":   map[string]any{"name": "unrelated"},
+		}}
+		changed, err := removeConfigHooksIn(item)
+		require.NoError(t, err)
+		require.False(t, changed)
+	})
+
+	t.Run("third-party configurations are left alone", func(t *testing.T) {
+		item := vwc("cert-manager.io", "kyverno.io")
+		changed, err := removeConfigHooksIn(item)
+		require.NoError(t, err)
+		require.False(t, changed)
+		require.Equal(t, []string{"cert-manager.io", "kyverno.io"}, names(item))
+	})
+}

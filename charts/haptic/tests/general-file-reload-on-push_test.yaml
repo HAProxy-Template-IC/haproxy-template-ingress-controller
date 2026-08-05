@@ -10,6 +10,9 @@ templates:
 tests:
   - it: should mark the vector config as sidecar-owned
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-vector
     set:
       vector.enabled: true
     asserts:
@@ -19,6 +22,9 @@ tests:
 
   - it: should leave HAProxy-read files reloading
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-vector
     asserts:
       # Absent, not `true`: the CRD default supplies it. An explicit value here
       # would mean base.yaml started opting error pages in or out by hand.
@@ -27,6 +33,9 @@ tests:
 
   - it: should register the spoa-hub TOML with reloadOnPush=false and spoe.conf without it
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-spoa-hub
     set:
       spoaHub.enabled: true
     asserts:

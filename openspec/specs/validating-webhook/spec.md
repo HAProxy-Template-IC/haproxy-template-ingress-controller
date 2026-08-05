@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Admission webhook that validates Kubernetes resources (HAProxyTemplateConfig and watched resources) by performing dry-run rendering and HAProxy syntax validation before admitting changes to the cluster.
+Admission webhook that validates watched Kubernetes resources (Ingress, HTTPRoute, …) by performing dry-run rendering and HAProxy syntax validation before admitting changes to the cluster.
 
-For a HAProxyTemplateConfig the webhook SHALL validate the MERGED result — the prospective object substituted into the controller's configured set — not the object in isolation, which since ADR-0014 is generally incomplete on its own. An object the controller does not merge SHALL be validated standalone, as before. A merge failure SHALL admit with a warning, deferring to the load gate.
+HAProxyTemplateConfig admission does not exist (ADR-0016): Kubernetes admits objects one at a time, so a per-object webhook structurally cannot judge a multi-object config change — it would validate the mid-batch state `A(new)+B(old)` and deny coupled same-version edits. Config validation happens where the complete set is visible instead: the pre-upgrade preflight hook (before any object is applied), the apiserver's CEL completeness rule on standalone (non-`spec.partial`) objects, the strict first render of each iteration, and the fail-closed load gate.
 
 ## Requirements
 
@@ -131,19 +131,14 @@ THEN the webhook reason SHALL be `Service 'api' not found`.
 WHEN the syntax phase fails with a raw HAProxy error
 THEN the webhook reason SHALL contain only the meaningful error description without timestamps or temp file paths.
 
-### Requirement: Webhook Test Execution
+### Requirement: No Test Execution at Admission
 
-When a prospective HAProxyTemplateConfig includes embedded validation tests, the webhook ConfigValidator SHALL execute them (via `configtest.RunValidationTests`) after successful rendering and syntax validation. The DryRunValidator SHALL NOT run validation tests. The run SHALL be bounded by a fixed budget (`min(budget, time left on the admission context)`) so it cannot approach the webhook timeout. Failed tests SHALL deny admission with an error message listing the failed test names and assertion descriptions. A run that cannot start or does not finish within the budget SHALL admit with a warning, deferring authoritative enforcement to the controller's load gate.
+The DryRunValidator SHALL NOT run validation tests: the suite is a property of the whole configuration and runs at the load gate, the live gate, and the pre-upgrade preflight hook, all of which see the complete merged set. (Config admission, which used to run a bounded subset of the suite, no longer exists — ADR-0016.)
 
-#### Scenario: Failed validation test denies admission
+#### Scenario: Watched-resource admission runs no validation tests
 
-WHEN the ConfigValidator runs validation tests for a prospective config and a test fails
-THEN the admission request SHALL be denied with a reason listing the failed tests.
-
-#### Scenario: Incomplete test run admits with warning
-
-WHEN validation test execution cannot finish within the admission budget
-THEN the admission request SHALL be admitted with a warning, leaving the controller's load gate to enforce the tests on load.
+WHEN a watched-resource admission request is validated
+THEN the dry-run render and `haproxy -c` SHALL run, and the configuration's validationTests SHALL NOT.
 
 ### Requirement: Fail-Open Without Validator
 
@@ -179,35 +174,30 @@ THEN the context SHALL be cancelled and the validation SHALL fail.
 
 ### Requirement: Cert-Directory Gate
 
-The webhook server SHALL run if and only if a TLS certificate directory is configured (the WEBHOOK_CERT_DIR environment variable or the corresponding flag is non-empty; the chart mounts the cert Secret and sets the variable when webhook support is enabled). The cert directory — not the presence of watched-resource webhook rules — SHALL be the operative gate: the ValidatingWebhookConfiguration may route HAProxyTemplateConfig admission to the controller even when no watched resource enables admission validation. The server port SHALL be 9443.
+The webhook server SHALL run if and only if a TLS certificate directory is configured (the WEBHOOK_CERT_DIR environment variable or the corresponding flag is non-empty) AND at least one watched resource sets `enableValidationWebhook: true`. The server port SHALL be 9443.
 
 #### Scenario: Empty cert dir disables the webhook
 
 - **WHEN** WEBHOOK_CERT_DIR is empty
 - **THEN** no webhook server SHALL be started, regardless of the configuration's webhook rules.
 
-#### Scenario: Cert dir without watched-resource rules still serves config admission
+#### Scenario: No watched-resource rules disables the webhook
 
 - **WHEN** WEBHOOK_CERT_DIR is set and no watched resource enables admission validation
-- **THEN** the webhook server SHALL start on port 9443 serving HAProxyTemplateConfig admission.
+- **THEN** no webhook validators SHALL be constructed and webhook setup SHALL be skipped.
 
-### Requirement: Config Validator Always Wired
+### Requirement: Legacy Config Webhook Removal at Upgrade
 
-When webhook validators are constructed, the HAProxyTemplateConfig admission ConfigValidator SHALL ALWAYS be built, independent of watched-resource webhook rules — HAProxyTemplateConfig admission must never fall through the server's fail-open path for unregistered validators. The watched-resource DryRunValidator SHALL be built only when at least one watched resource sets `enableValidationWebhook: true`; without such rules its overlay-store and test-runner setup is skipped.
+The `apply-crds` pre-install/pre-upgrade hook SHALL delete every webhook entry whose name begins with `haproxytemplateconfig.` from live ValidatingWebhookConfigurations before any manifest is applied. Manifest apply order is not guaranteed (measured: the config object applied before the webhook configuration), so without this the RUNNING old controller's webhook judges each new per-library config object standalone and denies it as incomplete, failing the upgrade. Only the matching entry SHALL be removed — the watched-resource webhook in the same configuration and third-party configurations SHALL be untouched. The removal SHALL be best-effort: any failure degrades to a retryable denied apply, never an upgrade the operator cannot run.
 
-#### Scenario: Config admission validated with zero watched-resource rules
+#### Scenario: Old config webhook removed before shards apply
 
-- **WHEN** no watched resource has enableValidationWebhook enabled and an HAProxyTemplateConfig admission request arrives
-- **THEN** the ConfigValidator SHALL validate it (render, syntax check, embedded tests) rather than admitting via fail-open.
-
-#### Scenario: DryRunValidator built only on demand
-
-- **WHEN** at least one watched resource sets enableValidationWebhook: true
-- **THEN** the DryRunValidator SHALL be constructed and registered for those resources' GVKs.
+- **WHEN** apply-crds runs during an upgrade from a release whose ValidatingWebhookConfiguration carries a `haproxytemplateconfig.*` entry
+- **THEN** that entry SHALL be deleted from the live configuration before the release's manifests are applied, and the configuration's other entries SHALL be preserved.
 
 ### Requirement: Internal Admission Deadlines Under the Chart Timeout
 
-Both internal admission deadlines SHALL be 9 seconds: the watched-resource dry-run deadline (schema bootstrap plus render plus `haproxy -c`) and the HAProxyTemplateConfig deadline (per-admission schema bootstrap of at most 2 seconds, render plus `haproxy -c`, and the 5-second embedded validation-test budget). Both SHALL stay under the chart's 10-second `timeoutSeconds` so the controller returns a structured admission decision before the API server gives up and applies the failurePolicy to a transport failure.
+The internal watched-resource admission deadline (schema bootstrap plus render plus `haproxy -c`) SHALL be 9 seconds, under the chart's 10-second `timeoutSeconds`, so the controller returns a structured admission decision before the API server gives up and applies the failurePolicy to a transport failure.
 
 #### Scenario: Slow validation produces a structured decision
 
@@ -227,17 +217,3 @@ Iteration startup SHALL block for up to 30 seconds on the webhook component's Li
 
 - **WHEN** the webhook listener fails to bind within 30 seconds
 - **THEN** startup SHALL proceed and the bind failure SHALL be reported through the error group instead of blocking the iteration forever.
-
-### Requirement: Fixed Fail-Open Policy for Config Admission
-
-The chart SHALL set `failurePolicy: Ignore` on the HAProxyTemplateConfig admission webhook and SHALL NOT expose it as a configurable value: a down controller must never block operators from applying HAProxyTemplateConfig updates (the first-install chicken-and-egg, and any recovery scenario where the fix lives in a CRD update). This upstream admission gate — validating the config with line-numbered `haproxy -c` diagnostics at apply time — is what lets the leader-side reconcile pipeline skip `haproxy -c` on every render (~94 ms saved per render). When the webhook is unreachable, the Dataplane API still runs `haproxy -c` server-side before accepting a raw configuration push, so an invalid config produces a delayed but clear failure through the published config status. Watched-resource admission remains per-resource opt-in via `enableValidationWebhook`.
-
-#### Scenario: Controller down does not block config updates
-
-- **WHEN** the controller is unavailable and an operator applies an HAProxyTemplateConfig update
-- **THEN** the API server SHALL admit the update under failurePolicy Ignore.
-
-#### Scenario: Server-side check backstops an unreachable webhook
-
-- **WHEN** the webhook is unreachable and an invalid config reaches the render pipeline
-- **THEN** the Dataplane API's server-side `haproxy -c` SHALL reject the push and the failure SHALL surface through the published config status.

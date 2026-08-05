@@ -53,7 +53,7 @@ func TestConfigLoaderComponent_ProcessCRD(t *testing.T) {
 
 	// Create event bus and loader
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, nil, logger)
+	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, logger)
 
 	// Subscribe to events and start
 	eventChan := bus.Subscribe("test-sub", 10)
@@ -91,7 +91,7 @@ func TestConfigLoaderComponent_UnsupportedResourceType(t *testing.T) {
 
 	// Create event bus and loader
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, []string{"test-deployment"}, nil, logger)
+	loader := NewConfigLoaderComponent(bus, []string{"test-deployment"}, logger)
 
 	// Subscribe to events and start
 	eventChan := bus.Subscribe("test-sub", 10)
@@ -113,7 +113,7 @@ func TestConfigLoaderComponent_UnsupportedResourceType(t *testing.T) {
 
 func TestConfigLoaderComponent_Stop(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, nil, logger)
+	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, logger)
 	bus.Start()
 
 	done := make(chan struct{})
@@ -139,7 +139,7 @@ func TestConfigLoaderComponent_Stop(t *testing.T) {
 
 func TestConfigLoaderComponent_InvalidResourceType(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, nil, logger)
+	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, logger)
 
 	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
@@ -164,7 +164,7 @@ func TestConfigLoaderComponent_InvalidResourceType(t *testing.T) {
 
 func TestConfigLoaderComponent_IgnoresOtherEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, nil, logger)
+	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, logger)
 
 	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
@@ -216,7 +216,7 @@ func snippets(t *testing.T, parsed *events.ConfigParsedEvent) map[string]corecon
 func startLoader(t *testing.T, names []string) (bus *busevents.EventBus, published <-chan busevents.Event) {
 	t.Helper()
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, names, nil, logger)
+	loader := NewConfigLoaderComponent(bus, names, logger)
 
 	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()

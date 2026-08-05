@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	clientsetscheme "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/scheme"
 
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -102,16 +104,12 @@ type StatusUpdater struct {
 	// on shutdown.
 	ctx context.Context
 
-	// Cached config reference for HAProxy validation events
-	// (ValidationFailedEvent doesn't include the HAProxyTemplateConfig reference)
-	mu              sync.RWMutex
-	configNamespace string
-	configName      string
-	// configGeneration is the metadata.generation of the last config seen via a
-	// ConfigValidated/ConfigInvalid event, so a subsequent HAProxy
-	// ValidationFailedEvent (which carries no CRD reference) can still record the
-	// observedGeneration it pertains to.
-	configGeneration int64
+	// Cached config references for HAProxy validation events
+	// (ValidationFailedEvent doesn't include CRD references): every source of
+	// the merged set, at the generation last observed, so the verdict lands on
+	// all of them.
+	mu         sync.RWMutex
+	configRefs []events.ConfigSourceRef
 	// lastEmittedStatus is the validation status of the most recent emitted
 	// Event, so a Normal "Validated" Event fires only on recovery
 	// (Invalid -> Valid), not on every routine successful validation.
@@ -204,22 +202,27 @@ func (u *StatusUpdater) handleConfigValidated(ctx context.Context, event *events
 		return
 	}
 
-	u.cacheConfigRef(htc.Namespace, htc.Name, htc.Generation)
+	refs := sourceRefsOrFallback(event.Sources, htc)
+	u.cacheConfigRefs(refs)
 
-	observedGeneration := htc.Generation
-	u.applyStatus(ctx, htc.Namespace, htc.Name,
-		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
-			now := metav1.NewTime(time.Now())
-			status.ObservedGeneration = observedGeneration
-			status.LastValidated = &now
-			status.ValidationStatus = statusValid
-			status.ValidationMessage = "Configuration validated successfully"
-			status.ValidationErrors = nil // Clear any previous errors
-			setValidatedCondition(status, metav1.ConditionTrue, reasonValidationSucceeded,
-				"Configuration validated successfully", observedGeneration)
-		},
-		"Updated HAProxyTemplateConfig status to Valid",
-		"version", event.Version)
+	// The verdict is a property of the merged set, so every source gets the
+	// same condition; observedGeneration is per object, because it is only
+	// meaningful against that object's own metadata.generation (ADR-0016).
+	for _, ref := range refs {
+		u.applyStatus(ctx, ref.Namespace, ref.Name,
+			func(status *v1alpha1.HAProxyTemplateConfigStatus) {
+				now := metav1.NewTime(time.Now())
+				status.ObservedGeneration = ref.Generation
+				status.LastValidated = &now
+				status.ValidationStatus = statusValid
+				status.ValidationMessage = "Configuration validated successfully"
+				status.ValidationErrors = nil // Clear any previous errors
+				setValidatedCondition(status, metav1.ConditionTrue, reasonValidationSucceeded,
+					"Configuration validated successfully", ref.Generation)
+			},
+			"Updated HAProxyTemplateConfig status to Valid",
+			"version", event.Version)
+	}
 }
 
 // handleConfigInvalid updates CRD status to reflect validation failure.
@@ -232,7 +235,8 @@ func (u *StatusUpdater) handleConfigInvalid(ctx context.Context, event *events.C
 		return
 	}
 
-	u.cacheConfigRef(htc.Namespace, htc.Name, htc.Generation)
+	refs := sourceRefsOrFallback(event.Sources, htc)
+	u.cacheConfigRefs(refs)
 
 	// Flatten validation errors from all validators
 	var allErrors []string
@@ -240,64 +244,76 @@ func (u *StatusUpdater) handleConfigInvalid(ctx context.Context, event *events.C
 		allErrors = append(allErrors, errors...)
 	}
 
-	observedGeneration := htc.Generation
-	u.applyStatus(ctx, htc.Namespace, htc.Name,
-		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
-			now := metav1.NewTime(time.Now())
-			status.ObservedGeneration = observedGeneration
-			status.LastValidated = &now
-			status.ValidationStatus = statusInvalid
-			status.ValidationMessage = fmt.Sprintf("%d validation error(s)", len(allErrors))
-			status.ValidationErrors = allErrors
-			setValidatedCondition(status, metav1.ConditionFalse, reasonConfigInvalid,
-				validationEventMessage(status), observedGeneration)
-		},
-		"Updated HAProxyTemplateConfig status to Invalid",
-		"version", event.Version,
-		"error_count", len(allErrors))
+	for _, ref := range refs {
+		u.applyStatus(ctx, ref.Namespace, ref.Name,
+			func(status *v1alpha1.HAProxyTemplateConfigStatus) {
+				now := metav1.NewTime(time.Now())
+				status.ObservedGeneration = ref.Generation
+				status.LastValidated = &now
+				status.ValidationStatus = statusInvalid
+				status.ValidationMessage = fmt.Sprintf("%d validation error(s)", len(allErrors))
+				status.ValidationErrors = allErrors
+				setValidatedCondition(status, metav1.ConditionFalse, reasonConfigInvalid,
+					validationEventMessage(status), ref.Generation)
+			},
+			"Updated HAProxyTemplateConfig status to Invalid",
+			"version", event.Version,
+			"error_count", len(allErrors))
+	}
 }
 
 // handleHAProxyValidationFailed updates CRD status when HAProxy validation fails.
 // This handles the case where config validation passes (template syntax OK) but
 // the rendered config fails HAProxy's syntax check (haproxy -c).
 func (u *StatusUpdater) handleHAProxyValidationFailed(ctx context.Context, event *events.ValidationFailedEvent) {
-	// Get cached config reference (set during handleConfigValidated/handleConfigInvalid)
+	// Get cached config references (set during handleConfigValidated/handleConfigInvalid)
 	u.mu.RLock()
-	configNamespace := u.configNamespace
-	configName := u.configName
-	observedGeneration := u.configGeneration
+	refs := slices.Clone(u.configRefs)
 	u.mu.RUnlock()
 
-	if configName == "" || configNamespace == "" {
-		u.Logger().Debug("No cached config reference, skipping HAProxy validation status update")
+	if len(refs) == 0 {
+		u.Logger().Debug("No cached config references, skipping HAProxy validation status update")
 		return
 	}
 
-	u.applyStatus(ctx, configNamespace, configName,
-		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
-			now := metav1.NewTime(time.Now())
-			status.ObservedGeneration = observedGeneration
-			status.LastValidated = &now
-			status.ValidationStatus = statusInvalid
-			status.ValidationMessage = "HAProxy configuration validation failed"
-			status.ValidationErrors = event.Errors
-			setValidatedCondition(status, metav1.ConditionFalse, reasonHAProxyValidationFailed,
-				"HAProxy configuration validation failed", observedGeneration)
-		},
-		"Updated HAProxyTemplateConfig status to Invalid (HAProxy validation)",
-		"error_count", len(event.Errors))
+	for _, ref := range refs {
+		u.applyStatus(ctx, ref.Namespace, ref.Name,
+			func(status *v1alpha1.HAProxyTemplateConfigStatus) {
+				now := metav1.NewTime(time.Now())
+				status.ObservedGeneration = ref.Generation
+				status.LastValidated = &now
+				status.ValidationStatus = statusInvalid
+				status.ValidationMessage = "HAProxy configuration validation failed"
+				status.ValidationErrors = event.Errors
+				setValidatedCondition(status, metav1.ConditionFalse, reasonHAProxyValidationFailed,
+					"HAProxy configuration validation failed", ref.Generation)
+			},
+			"Updated HAProxyTemplateConfig status to Invalid (HAProxy validation)",
+			"error_count", len(event.Errors))
+	}
 }
 
-// cacheConfigRef remembers the namespace/name and generation of the
-// HAProxyTemplateConfig so HAProxy validation events (which don't carry a CRD
-// reference) can still find the right resource to update and record the
-// generation they pertain to.
-func (u *StatusUpdater) cacheConfigRef(namespace, name string, generation int64) {
+// cacheConfigRefs remembers every source of the merged set so HAProxy
+// validation events (which carry no CRD references) can still find the
+// resources to update and the generations they pertain to.
+func (u *StatusUpdater) cacheConfigRefs(refs []events.ConfigSourceRef) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.configNamespace = namespace
-	u.configName = name
-	u.configGeneration = generation
+	u.configRefs = slices.Clone(refs)
+}
+
+// sourceRefsOrFallback returns the event's source set, or the merged object's
+// own identity when the event predates source tracking (a cached replay from
+// an older leader, a hand-published test event).
+func sourceRefsOrFallback(refs []events.ConfigSourceRef, htc *v1alpha1.HAProxyTemplateConfig) []events.ConfigSourceRef {
+	if len(refs) > 0 {
+		return refs
+	}
+	return []events.ConfigSourceRef{{
+		Namespace:  htc.Namespace,
+		Name:       htc.Name,
+		Generation: htc.Generation,
+	}}
 }
 
 // setValidatedCondition upserts the standard "Validated" status condition,
@@ -318,6 +334,21 @@ func setValidatedCondition(
 	})
 }
 
+// statusEqualIgnoringTimestamps reports whether two statuses differ in
+// anything but LastValidated and condition transition times — the fields that
+// change on every write by construction and carry no decision.
+func statusEqualIgnoringTimestamps(a, b *v1alpha1.HAProxyTemplateConfigStatus) bool {
+	normalize := func(in *v1alpha1.HAProxyTemplateConfigStatus) *v1alpha1.HAProxyTemplateConfigStatus {
+		out := in.DeepCopy()
+		out.LastValidated = nil
+		for i := range out.Conditions {
+			out.Conditions[i].LastTransitionTime = metav1.Time{}
+		}
+		return out
+	}
+	return apiequality.Semantic.DeepEqual(normalize(a), normalize(b))
+}
+
 // ReportConfigLoadFailure best-effort writes an Invalid status
 // (observedGeneration, Validated=False with reason LoadGateFailed, and the
 // failing tests) onto the HAProxyTemplateConfig when the fatal startup load gate
@@ -331,38 +362,38 @@ func setValidatedCondition(
 func ReportConfigLoadFailure(
 	ctx context.Context,
 	crdClient versioned.Interface,
-	crd *v1alpha1.HAProxyTemplateConfig,
+	ref events.ConfigSourceRef,
 	failures []string,
 	logger *slog.Logger,
 ) {
 	current, err := crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyTemplateConfigs(crd.Namespace).
-		Get(ctx, crd.Name, metav1.GetOptions{})
+		HAProxyTemplateConfigs(ref.Namespace).
+		Get(ctx, ref.Name, metav1.GetOptions{})
 	if err != nil {
 		logger.Warn("Failed to get HAProxyTemplateConfig to report load-gate failure",
-			"namespace", crd.Namespace, "name", crd.Name, "error", err)
+			"namespace", ref.Namespace, "name", ref.Name, "error", err)
 		return
 	}
 
 	now := metav1.NewTime(time.Now())
-	current.Status.ObservedGeneration = crd.Generation
+	current.Status.ObservedGeneration = ref.Generation
 	current.Status.LastValidated = &now
 	current.Status.ValidationStatus = statusInvalid
 	current.Status.ValidationErrors = failures
 	current.Status.ValidationMessage = fmt.Sprintf("Rejected at startup load gate: %d validationTest failure(s)", len(failures))
 	setValidatedCondition(&current.Status, metav1.ConditionFalse, reasonLoadGateFailed,
-		validationEventMessage(&current.Status), crd.Generation)
+		validationEventMessage(&current.Status), ref.Generation)
 
 	if _, err := crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyTemplateConfigs(crd.Namespace).
+		HAProxyTemplateConfigs(ref.Namespace).
 		UpdateStatus(ctx, current, metav1.UpdateOptions{}); err != nil {
 		logger.Warn("Failed to write load-gate failure to HAProxyTemplateConfig status",
-			"namespace", crd.Namespace, "name", crd.Name, "error", err)
+			"namespace", ref.Namespace, "name", ref.Name, "error", err)
 		return
 	}
 
 	logger.Info("Reported startup load-gate failure on HAProxyTemplateConfig status; controller stays fail-closed (crash-loop) until the config is fixed",
-		"namespace", crd.Namespace, "name", crd.Name, "failure_count", len(failures))
+		"namespace", ref.Namespace, "name", ref.Name, "failure_count", len(failures))
 }
 
 // applyStatus fetches the named HAProxyTemplateConfig, applies mutate to its
@@ -387,7 +418,18 @@ func (u *StatusUpdater) applyStatus(
 		return
 	}
 
+	before := current.Status.DeepCopy()
 	mutate(&current.Status)
+
+	// Skip no-op writes. With N sources per merged set, most verdicts change
+	// nothing on N-1 of them — writing anyway would churn resourceVersions
+	// (and, without the watcher's generation filter, echo into revalidation)
+	// for a timestamp refresh nobody reads.
+	if statusEqualIgnoringTimestamps(before, &current.Status) {
+		u.Logger().Debug("Status unchanged; skipping write",
+			"namespace", namespace, "name", name)
+		return
+	}
 
 	if _, err := u.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyTemplateConfigs(current.Namespace).

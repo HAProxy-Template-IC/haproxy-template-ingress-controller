@@ -8,25 +8,20 @@
   The validating webhook fronts the same render pipeline the controller runs
   for an active reconcile, so its scope must match the resources the
   controller actually watches. We therefore source `watchedResources` from
-  the same `haptic.mergeLibraries` helper that `haproxytemplateconfig.yaml`
-  uses to compose the CRD spec. Library files (libraries/ingress.yaml etc.)
+  the same `haptic.watchedResourcesUnion` the ClusterRole uses. Library files
   declare `enableValidationWebhook: true` on each resource that should be
   validated; this template emits one webhook rule per such resource.
   Users wanting to override should add to `controller.config.watchedResources`
-  using the same camelCase shape as the library files (the merge helper
-  uses camelCase throughout).
+  using the same camelCase shape as the library files.
 */ -}}
-{{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
-{{- $watched := merge ($mergedLibraries.watchedResources | default dict) (.Values.controller.config.watchedResources | default dict) }}
+{{- $watched := include "haptic.watchedResourcesUnion" . | fromYaml }}
 {{- $webhookRules := list }}
 {{- range $name, $resource := $watched }}
   {{- if $resource.enableValidationWebhook }}
     {{- $webhookRules = append $webhookRules (dict "name" $name "resource" $resource) }}
   {{- end }}
 {{- end }}
-{{- $htcCfg := default (dict "enabled" true) $webhook.haproxyTemplateConfig }}
 {{- $resourceTimeoutSeconds := include "haptic.webhook.resourceTimeoutSeconds" . | int }}
-{{- $configTimeoutSeconds := include "haptic.webhook.configTimeoutSeconds" . | int }}
 {{- $webhookSvcName := include "haptic.webhook.serviceName" . }}
 {{- /* The config is cluster-scoped, so its name is namespace-qualified to avoid
        collisions across same-release-name multi-namespace installs. The webhook
@@ -34,7 +29,7 @@
        Service is namespaced, and the rule names only need in-config uniqueness. */ -}}
 {{- $webhookConfigName := printf "%s-webhook" (include "haptic.clusterScopedFullname" .) | trunc 63 | trimSuffix "-" }}
 {{- $ns := .Release.Namespace }}
-{{- if or $webhookRules $htcCfg.enabled }}
+{{- if $webhookRules }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
@@ -84,65 +79,15 @@ webhooks:
     timeoutSeconds: {{ $resourceTimeoutSeconds }}
 {{- end }}
 {{- /*
-  HAProxyTemplateConfig admission webhook. Validates the controller's own
-  CRD at apply time — operators see template errors with line-numbered
-  haproxy -c output, AND the config's embedded validationTests are run,
-  before the resource ever lands in etcd. Running validationTests here (the
-  same suite the daemon's load gate runs) is what stops the "time bomb": a
-  config that fails its tests is refused at apply, so it can never sit in
-  etcd waiting to crash-loop the next fresh controller pod. With this
-  upstream gate in place, the leader-side reconcile pipeline can safely
-  skip haproxy -c (saves ~94 ms on every render).
-
-  failurePolicy: Ignore is intentional — the worst case of webhook
-  unavailability is "operator gets a delayed error from the daemon's load
-  gate / dataplane API rejection" rather than "broken config silently runs".
-  This avoids the chicken-and-egg of first install (controller starting
-  while Helm applies the CRD) and any recovery scenario (operator must be
-  able to apply CRD fixes while the controller is degraded — an unreachable
-  webhook fails open).
-
-  timeoutSeconds defaults to 30 (Kubernetes' maximum) because this privileged,
-  low-volume path compiles and strictly renders the complete prospective
-  template set before running a bounded validationTests gate. The controller
-  self-imposes a deadline one second shorter and admits-with-warning if it
-  cannot finish, so a slow suite or a degraded controller never blocks the
-  apply — the load gate still enforces. Watched-resource admission remains on
-  its separate, tighter timeout.
+  There is no HAProxyTemplateConfig admission webhook (ADR-0016): Kubernetes
+  admits objects one at a time, so a per-object webhook cannot judge the
+  multi-object config change the chart now ships — it would validate the
+  mid-batch state and deny coupled edits. Config validation happens where the
+  complete set is visible: the pre-rollout preflight hook (before any object
+  is applied), the apiserver's CEL completeness rule on standalone objects,
+  the strict first render of each iteration, and the fail-closed load gate.
+  The apply-crds hook removes the legacy entry from live configurations
+  during the upgrade that retires it.
 */}}
-{{- if $htcCfg.enabled }}
-  - name: haproxytemplateconfig.validation.{{ $webhookSvcName }}
-    clientConfig:
-      {{- if not $cm.enabled }}
-      caBundle: {{ include "haptic.webhook.caBundle" $ }}
-      {{- end }}
-      service:
-        namespace: {{ $ns }}
-        name: {{ $webhookSvcName }}
-        # Versioned deliberately. A controller too old to understand this
-        # config does not serve this path, so the call 404s and
-        # failurePolicy:Ignore skips it — instead of that controller denying a
-        # configuration the new one validates and runs correctly. Without this,
-        # every upgrade is hostage to the OLD version's ability to compile the
-        # NEW version's templates.
-        path: /validate/config/v1
-    rules:
-      - apiGroups:
-          - haproxy-haptic.org
-        apiVersions:
-          - v1alpha1
-        resources:
-          - haproxytemplateconfigs
-        operations:
-          - CREATE
-          - UPDATE
-        scope: Namespaced
-    failurePolicy: Ignore
-    matchPolicy: Equivalent
-    sideEffects: None
-    admissionReviewVersions:
-      - v1
-    timeoutSeconds: {{ $configTimeoutSeconds }}
-{{- end }}
 {{- end }}
 {{- end }}

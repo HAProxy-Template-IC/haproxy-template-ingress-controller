@@ -528,6 +528,27 @@ validate-helm-libraries:
     CHART_SNAPSHOT_VERSION: "0.0.0-main.g${CI_COMMIT_SHORT_SHA}"
     CHART_SNAPSHOT_APPVERSION: "main-${CI_COMMIT_SHORT_SHA}"
 
+# Stamp the SOURCE chart with the snapshot version the pulled image embeds.
+# The pre-rollout preflight hook hard-fails on chart/image version drift — by
+# design, for operators — and the snapshot image deliberately carries the
+# dev-stamped chart (see .snapshot-build-base). Every job that helm-installs
+# charts/haptic with a snapshot image must apply the same stamp, or the hook
+# kills the install; stamping (rather than disabling the gate) keeps the
+# lockstep guard exercised in CI. Jobs referencing this must also extend
+# .snapshot-version for the variables.
+.stamp-source-chart:
+  script:
+    - |
+      # version ONLY — the guard compares Chart.Version, and appVersion drives
+      # the default image tags (spoa-hub, validators): stamping it points pods
+      # at main-<sha> images the kind cluster cannot pull.
+      sed -i \
+        -e "s|^version:.*|version: ${CHART_SNAPSHOT_VERSION}|" \
+        charts/haptic/Chart.yaml
+      grep -q "^version: ${CHART_SNAPSHOT_VERSION}$" charts/haptic/Chart.yaml \
+        || { echo "source chart version stamp did not apply"; exit 1; }
+      echo "Source chart stamped: ${CHART_SNAPSHOT_VERSION}"
+
 .snapshot-build-base:
   stage: build
   extends:
@@ -1584,6 +1605,7 @@ test-acceptance:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
+    - .snapshot-version
   timeout: 25 minutes
   interruptible: true
   needs:
@@ -1642,6 +1664,7 @@ test-acceptance:
       SPOA_IMAGE="${CI_REGISTRY_IMAGE}/spoa-hub:${SPOA_TAG}"
       docker pull ${SPOA_IMAGE}
       docker tag ${SPOA_IMAGE} registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:main-latest
+    - !reference [.stamp-source-chart, script]
   script:
     - make test-e2e
   after_script:
@@ -1895,6 +1918,7 @@ test-chart-upgrade:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
+    - .snapshot-version
   timeout: 40 minutes
   interruptible: true
   needs:
@@ -1927,6 +1951,7 @@ test-chart-upgrade:
       docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
       docker pull ${TEST_IMAGE}
       docker tag ${TEST_IMAGE} haptic:test
+    - !reference [.stamp-source-chart, script]
   script:
     - make test-chart-upgrade
 
@@ -1939,6 +1964,7 @@ test-install-without-gateway-api:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
+    - .snapshot-version
   timeout: 30 minutes
   interruptible: true
   needs:
@@ -1969,6 +1995,7 @@ test-install-without-gateway-api:
       docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
       docker pull ${TEST_IMAGE}
       docker tag ${TEST_IMAGE} haptic:test
+    - !reference [.stamp-source-chart, script]
   script:
     - make test-install-without-gateway-api
 
@@ -2045,6 +2072,7 @@ test-gateway-conformance:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
+    - .snapshot-version
   # Per-shard timeout. The full suite (~108 upstream tests) took ~30-40
   # minutes on local hardware before sharding; a 4-way split puts each
   # shard at ~25-30 tests, comfortably inside 25 minutes including the
@@ -2111,6 +2139,7 @@ test-gateway-conformance:
       SPOA_IMAGE="${CI_REGISTRY_IMAGE}/spoa-hub:${SPOA_TAG}"
       docker pull ${SPOA_IMAGE}
       docker tag ${SPOA_IMAGE} registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:main-latest
+    - !reference [.stamp-source-chart, script]
   script:
     # Bring up the conformance cluster (kind + MetalLB + helm install).
     # HAPTIC_E2E_PROFILE=conformance:
@@ -2350,6 +2379,7 @@ test-gateway-conformance-smoke:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
+    - .snapshot-version
   timeout: 25 minutes
   interruptible: true
   variables: !reference [test-gateway-conformance, variables]
@@ -2704,6 +2734,7 @@ test-ingress-conformance:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
+    - .snapshot-version
   # Per-shard timeout. The unsharded job was budgeted at 20 min for
   # ~17 min observed; per-shard runtime is dominated by the kind+helm
   # bootstrap (~2 min) plus ~4 min for the sharded suite — same 20 min
@@ -2776,6 +2807,7 @@ test-ingress-conformance:
     # pipeline by build-ingress-conformance-image). The Makefile
     # consumes $INGRESS_CONFORMANCE_IMAGE directly — no need to retag.
     - docker pull ${INGRESS_CONFORMANCE_IMAGE}
+    - !reference [.stamp-source-chart, script]
   script:
     # Bring up the conformance cluster — HAPTIC_E2E_PROFILE=conformance
     # selects the trimmed values file (no HTTP-store demo blocklist URL,
@@ -2932,6 +2964,7 @@ test-ingress-conformance-smoke:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
+    - .snapshot-version
   timeout: 20 minutes
   interruptible: true
   variables: !reference [test-ingress-conformance, variables]
@@ -2972,6 +3005,7 @@ test-helm-defaults:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   extends:
     - .docker-dind
+    - .snapshot-version
   rules:
     # Runs post-merge on the default branch too — see .test-e2e-base for
     # the merge-result / heartbeat rationale.
@@ -3034,6 +3068,7 @@ test-helm-defaults:
     - |
       # Load test image into kind cluster
       kind load docker-image ${TEST_IMAGE} --name ${CLUSTER_NAME}
+    - !reference [.stamp-source-chart, script]
   script:
     - make test-helm-defaults HELM_DEFAULTS_IMAGE="${TEST_IMAGE}"
   after_script:

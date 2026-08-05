@@ -16,9 +16,9 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -27,7 +27,6 @@ import (
 	"k8s.io/client-go/restmapper"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -45,7 +44,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // webhookWriteTimeoutHeadroom pads the HTTPS write deadline past the slowest
@@ -53,13 +51,11 @@ import (
 // response written instead of being cut off mid-body.
 const webhookWriteTimeoutHeadroom = 2 * time.Second
 
-// WebhookAdmissionTimeouts contains the controller-side deadlines for the two
-// admission paths. They are separate because watched resources are an
-// untrusted, high-volume path, while HAProxyTemplateConfig updates are
-// privileged and run a substantially more expensive prospective-config gate.
+// WebhookAdmissionTimeouts contains the controller-side deadline for
+// watched-resource admission. (HAProxyTemplateConfig admission no longer
+// exists — ADR-0016.)
 type WebhookAdmissionTimeouts struct {
-	Resource              time.Duration
-	HAProxyTemplateConfig time.Duration
+	Resource time.Duration
 }
 
 // setupWebhook creates and starts the webhook component if webhook validation is enabled.
@@ -82,7 +78,6 @@ func setupWebhook(
 	webhookPort int,
 	k8sClient *client.Client,
 	dryrunValidator *dryrunvalidator.Component, // Pre-created validator (may be nil)
-	configValidator webhook.ConfigValidatorFunc, // Pre-created HAProxyTemplateConfig validator (may be nil)
 	logger *slog.Logger,
 	metricsRecorder webhook.MetricsRecorder,
 	cancel context.CancelFunc,
@@ -90,14 +85,12 @@ func setupWebhook(
 ) {
 	// Extract webhook rules from config
 	rules := webhook.ExtractWebhookRules(cfg)
-	if len(rules) == 0 && configValidator == nil {
+	if len(rules) == 0 {
 		logger.Debug("No webhook rules extracted (webhook enabled but no matching resources)")
 		return
 	}
 
-	logger.Info("Webhook validation enabled",
-		"rule_count", len(rules),
-		"haproxytemplateconfig_validator", configValidator != nil)
+	logger.Info("Webhook validation enabled", "rule_count", len(rules))
 
 	// Create RESTMapper for resolving resource kinds from GVR
 	// This uses the Kubernetes API discovery to get authoritative mappings
@@ -117,7 +110,7 @@ func setupWebhook(
 		Path:         webhook.DefaultWebhookPath,
 		CertDir:      webhookCertDir,
 		ReadTimeout:  timeouts.HTTPServerTimeout,
-		WriteTimeout: max(admissionTimeouts.Resource, admissionTimeouts.HAProxyTemplateConfig) + webhookWriteTimeoutHeadroom,
+		WriteTimeout: admissionTimeouts.Resource + webhookWriteTimeoutHeadroom,
 	}, logger)
 	if err != nil {
 		// Match what startInErrGroup does for a component that fails to start:
@@ -141,9 +134,7 @@ func setupWebhook(
 			Rules:                    rules,
 			CertDir:                  webhookCertDir,
 			DryRunValidator:          dryrunValidator, // Direct validation, nil = fail-open
-			ConfigValidator:          configValidator, // HAProxyTemplateConfig admission, nil = fail-open
 			ResourceAdmissionTimeout: admissionTimeouts.Resource,
-			ConfigAdmissionTimeout:   admissionTimeouts.HAProxyTemplateConfig,
 			Server:                   sharedServer,
 		},
 		mapper,
@@ -174,6 +165,11 @@ func setupWebhook(
 	}
 }
 
+// errNoWebhookRules reports that no watched resource enables admission
+// validation — the caller continues with a nil DryRunValidator rather than
+// treating it as a failure.
+var errNoWebhookRules = errors.New("no watched-resource webhook rules")
+
 // createDryRunValidator creates a DryRunValidator component for webhook validation.
 //
 // This function is called BEFORE EventBus.Start() because the proposal
@@ -182,34 +178,25 @@ func setupWebhook(
 // The DryRunValidator itself is a synchronous library called via
 // ValidateDirect; it does not subscribe to anything.
 //
-// Returns (nil, nil, error) if engine creation or shared-dependency
-// construction fails.
-//
-// Returns (dryRunValidator, configValidator, nil) on success, where:
-//   - dryRunValidator is non-nil iff at least one watched resource has
-//     enableValidationWebhook=true (i.e., the watched-resource admission
-//     path is active). nil otherwise.
-//   - configValidator is ALWAYS non-nil — the HAProxyTemplateConfig
-//     admission webhook is independent of watched-resource rules. The
-//     chart-side ValidatingWebhookConfiguration may or may not route
-//     HAProxyTemplateConfig admission to the controller (chart-side
-//     `webhook.haproxyTemplateConfig.enabled`), but the controller is
-//     always ready to handle it. If the cluster routes the admission
-//     and we returned a nil validator, the request would silently
-//     succeed at the pure server's fail-open path — exactly the bug
-//     Gitar flagged on commit 8d326660.
+// Returns (nil, nil) when no watched resource has enableValidationWebhook=true
+// — no GVK is routed to the watched-resource path, and the test runner's temp
+// directory + ProposalValidator would be wasted setup. HAProxyTemplateConfig
+// admission no longer exists: a per-object webhook cannot judge a multi-object
+// change set, so the config gate is the pre-upgrade preflight hook plus the
+// fail-closed load gate (ADR-0016).
 func createDryRunValidator(
 	cfg *coreconfig.Config,
 	bus *busevents.EventBus,
 	storeProvider stores.StoreProvider,
 	wiring *reconciliationWiring,
 	pluggableValidator *pluggablevalidator.Manager,
-	k8sClient *client.Client,
-	crdNames []string,
-	runningConfigVersion string,
 	logger *slog.Logger,
-) (*dryrunvalidator.Component, webhook.ConfigValidatorFunc, error) {
+) (*dryrunvalidator.Component, error) {
 	rules := webhook.ExtractWebhookRules(cfg)
+	if len(rules) == 0 {
+		logger.Debug("No watched-resource webhook rules; DryRunValidator skipped")
+		return nil, errNoWebhookRules
+	}
 
 	logger.Debug("Creating webhook validators", "watched_resource_rules", len(rules))
 
@@ -226,7 +213,7 @@ func createDryRunValidator(
 	// the failure mode Phase 11.5 CI surfaced.
 	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, wiring.engineWiring.Declarations, helpers.EngineOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating template engine for dry-run validation: %w", err)
+		return nil, fmt.Errorf("creating template engine for dry-run validation: %w", err)
 	}
 
 	// Create RenderService (pure service for rendering).
@@ -272,68 +259,7 @@ func createDryRunValidator(
 		GeneralDir:        dirConfig.GeneralDir,
 	})
 
-	// ConfigValidator is ALWAYS built when this function runs. The
-	// HAProxyTemplateConfig admission webhook is independent of
-	// watched-resource webhook rules — even when no Ingress / HTTPRoute
-	// admission is configured, the chart's ValidatingWebhookConfiguration
-	// may still route HAProxyTemplateConfig admission here, and the
-	// controller must be ready to handle it. (Gitar caught this on
-	// commit 8d326660 — the previous shape early-returned when
-	// `len(rules) == 0` and left ConfigValidator nil.)
-	configValidator := webhook.NewConfigValidator(&webhook.ConfigValidatorConfig{
-		Logger:             logger,
-		StrictValidator:    validationService,
-		StoreProvider:      storeProvider,
-		Capabilities:       wiring.capabilities,
-		HTTPStoreComponent: wiring.httpStore,
-		Declarations:       wiring.engineWiring.Declarations,
-		TypedResourceTypes: wiring.engineWiring.TypedResourceTypes,
-		// Bootstrap schemas from the PROSPECTIVE config at admission, mirroring
-		// the daemon load gate, so both gates build the engine from the same
-		// type set (wiring.engineWiring above is the startup-fixed fallback). The
-		// load-gate's TypeBootstrapper and the webhook's SchemaBootstrapper
-		// share an underlying signature, so the closure converts directly.
-		Bootstrap: webhook.SchemaBootstrapper(newIterationTypeBootstrapper(k8sClient, logger)),
-		// Resolve the prospective config to its EFFECTIVE form before
-		// validation — the same requires/requiresFields stripping the load
-		// gate applies (issue #79: without it, admission denies every config
-		// update on clusters missing an optional watched resource's CRDs).
-		EffectiveResolver: func(ctx context.Context, c *coreconfig.Config) (*coreconfig.Config, error) {
-			effective, _, err := resolveEffectiveConfig(ctx, c, k8sClient, logger)
-			return effective, err
-		},
-		// Judge what the controller would actually load: the prospective
-		// object substituted into the merged set, not the object alone.
-		MergeWithSiblings: func(ctx context.Context, incoming *unstructured.Unstructured) (*unstructured.Unstructured, bool, error) {
-			return mergeWithSiblingConfigs(ctx, k8sClient, crdNames, incoming)
-		},
-		// Same resolver the load gate uses, so a config is admitted against the
-		// suite it will be loaded with rather than its inline tests alone.
-		ResolveTests: func(ctx context.Context, cfg *coreconfig.Config, crd *v1alpha1.HAProxyTemplateConfig) error {
-			return unionDiscoveredValidationTests(ctx, k8sClient, cfg, crd, logger)
-		},
-		// The chart app version of the controller's currently-running config
-		// (its app.kubernetes.io/version label). When a prospective config's
-		// same label differs (a rolling upgrade applying a config from a newer
-		// chart version while this older pod still serves admission), a template
-		// compile/render failure is deferred to the target controller's load
-		// gate instead of hard-denying and blocking the whole upgrade. Comparing
-		// like-with-like (both chart-stamped labels) keeps steady state matching
-		// regardless of the build/ldflag version scheme.
-		RunningConfigVersion: runningConfigVersion,
-	})
-
-	// DryRunValidator is only needed when at least one watched resource
-	// has `enableValidationWebhook: true`. With no such rules, no GVK is
-	// routed to the watched-resource path, and the test runner's temp
-	// directory + ProposalValidator are wasted setup.
-	if len(rules) == 0 {
-		logger.Debug("No watched-resource webhook rules; DryRunValidator skipped, only HAProxyTemplateConfig admission wired")
-		return nil, configValidator.ValidateDirect, nil
-	}
-
-	dryrun := buildDryRunValidator(bus, renderService, validationService, storeProvider, pluggableValidator, wiring.gvrMapper, logger)
-	return dryrun, configValidator.ValidateDirect, nil
+	return buildDryRunValidator(bus, renderService, validationService, storeProvider, pluggableValidator, wiring.gvrMapper, logger), nil
 }
 
 // buildDryRunValidator constructs the watched-resource admission validator.
@@ -397,6 +323,7 @@ func setupReconciliation(
 	setup *componentSetup,
 	cfg *coreconfig.Config,
 	crd *v1alpha1.HAProxyTemplateConfig,
+	sources []events.ConfigSourceRef,
 	creds *coreconfig.Credentials,
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
@@ -421,7 +348,9 @@ func setupReconciliation(
 	// This ensures reconciliation components (especially Discovery) receive the initial state
 	// even though they were created after the initial CRD/Secret watcher events
 	// Note: We pass the actual CRD (not nil) so ConfigPublisher can cache it for creating HAProxyCfg resources
-	setup.Bus.Publish(events.NewConfigValidatedEvent(cfg, crd, "initial", "initial"))
+	initialValidated := events.NewConfigValidatedEvent(cfg, crd, "initial", "initial")
+	initialValidated.Sources = sources
+	setup.Bus.Publish(initialValidated)
 	logger.Debug("Published initial ConfigValidatedEvent (buffered until EventBus.Start())")
 
 	setup.Bus.Publish(events.NewCredentialsUpdatedEvent(creds, "initial"))
@@ -437,48 +366,4 @@ func setupReconciliation(
 		"correlation_id", initialReconciliation.CorrelationID())
 
 	return wiring, nil
-}
-
-// mergeWithSiblingConfigs substitutes the prospective object for its namesake
-// in the controller's configured set and merges, yielding the config the
-// controller would load if the apply went through.
-//
-// Returns managed=false when the object is not one this controller merges;
-// there is then nothing meaningful to judge it against.
-func mergeWithSiblingConfigs(
-	ctx context.Context,
-	k8sClient *client.Client,
-	crdNames []string,
-	incoming *unstructured.Unstructured,
-) (*unstructured.Unstructured, bool, error) {
-	if !slices.Contains(crdNames, incoming.GetName()) {
-		return nil, false, nil
-	}
-
-	// Concurrent, like fetchAndValidateInitialConfig: this runs inside the
-	// admission timeout, so N-1 serial round-trips would spend the budget the
-	// strict render needs, and the cost grows with every library added. Each
-	// fetch writes its own slot because the slice order IS the merge order.
-	sources := make([]*unstructured.Unstructured, len(crdNames))
-	g, gCtx := errgroup.WithContext(ctx)
-	for i, name := range crdNames {
-		if name == incoming.GetName() {
-			sources[i] = incoming
-			continue
-		}
-		g.Go(func() error {
-			sibling, err := k8sClient.GetResource(gCtx, crdGVR, name)
-			if err != nil {
-				return fmt.Errorf("fetching sibling HAProxyTemplateConfig %q: %w", name, err)
-			}
-			sources[i] = sibling
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return nil, true, err
-	}
-
-	merged, _, err := conversion.MergeSpecs(sources)
-	return merged, true, err
 }

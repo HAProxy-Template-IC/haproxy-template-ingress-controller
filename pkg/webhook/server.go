@@ -241,9 +241,6 @@ func (s *Server) Start(ctx context.Context) error {
 	//
 	// Bump this suffix whenever the config's validation contract changes in a
 	// way an older controller would misjudge.
-	if s.config.Path != ValidateConfigPath {
-		mux.HandleFunc(ValidateConfigPath, s.handleValidation)
-	}
 	mux.HandleFunc("/healthz", s.handleHealthz)
 
 	addr := fmt.Sprintf("%s:%d", s.config.BindAddress, s.config.Port)

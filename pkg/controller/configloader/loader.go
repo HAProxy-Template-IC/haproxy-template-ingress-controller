@@ -5,11 +5,9 @@ import (
 	"slices"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceloader"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -36,10 +34,6 @@ const (
 // Kubernetes. It simply reacts to ConfigResourceChangedEvent and produces
 // ConfigParsedEvent.
 type ConfigLoaderComponent struct {
-	// resolveTests folds in tests carried by other objects. Optional: a nil
-	// resolver means the config's inline tests are the whole suite.
-	resolveTests ValidationTestResolver
-
 	*resourceloader.BaseLoader
 
 	// names is the configured merge order. A change event for a name that is
@@ -66,13 +60,11 @@ type ConfigLoaderComponent struct {
 func NewConfigLoaderComponent(
 	eventBus *busevents.EventBus,
 	crdNames []string,
-	resolveTests ValidationTestResolver,
 	logger *slog.Logger,
 ) *ConfigLoaderComponent {
 	c := &ConfigLoaderComponent{
-		names:        slices.Clone(crdNames),
-		sources:      make(map[string]*unstructured.Unstructured, len(crdNames)),
-		resolveTests: resolveTests,
+		names:   slices.Clone(crdNames),
+		sources: make(map[string]*unstructured.Unstructured, len(crdNames)),
 	}
 	c.BaseLoader = resourceloader.NewBaseLoader(
 		eventBus, logger, ComponentName, EventBufferSize, c,
@@ -80,10 +72,6 @@ func NewConfigLoaderComponent(
 	)
 	return c
 }
-
-// ValidationTestResolver folds every validation test the config selects into
-// it, returning an error rather than an empty suite on any failure.
-type ValidationTestResolver func(cfg *coreconfig.Config, crd *v1alpha1.HAProxyTemplateConfig) error
 
 // ProcessEvent handles a single event from the EventBus.
 func (c *ConfigLoaderComponent) ProcessEvent(event busevents.Event) {
@@ -125,8 +113,9 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 		return
 	}
 	for _, override := range overrides {
-		c.Logger().Info("Template snippet overridden by a later config",
-			"snippet", override.Name,
+		c.Logger().Info("Config entry overridden by the last config in the merge order",
+			"section", override.Section,
+			"name", override.Name,
 			"overridden_from", override.PreviousSource,
 			"defined_by", override.WinningSource)
 	}
@@ -138,17 +127,6 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 		return
 	}
 
-	// The live gate must judge the same suite the load gate does, otherwise a
-	// config change is validated against the inline tests alone and the
-	// discovered ones only reappear at the next restart.
-	if c.resolveTests != nil {
-		if err := c.resolveTests(cfg, templateConfig); err != nil {
-			c.Logger().Error("Failed to resolve validation tests; keeping previous configuration",
-				"error", err, "names", c.names)
-			return
-		}
-	}
-
 	version := conversion.CompositeVersion(sources)
 	c.Logger().Info("Configuration processed successfully",
 		"names", c.names,
@@ -158,6 +136,7 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 	// Note: SecretVersion will be empty here - it gets populated later when
 	// the ConfigChangeHandler correlates with credentials.
 	parsedEvent := events.NewConfigParsedEvent(cfg, templateConfig, version, "")
+	parsedEvent.Sources = sourceRefs(sources)
 	c.EventBus().Publish(parsedEvent)
 }
 
@@ -191,4 +170,18 @@ func (c *ConfigLoaderComponent) record(name string, resource *unstructured.Unstr
 		sources = append(sources, source)
 	}
 	return sources, true
+}
+
+// sourceRefs captures each source's identity and the generation the merge
+// observed, for per-object status stamping.
+func sourceRefs(sources []*unstructured.Unstructured) []events.ConfigSourceRef {
+	refs := make([]events.ConfigSourceRef, 0, len(sources))
+	for _, source := range sources {
+		refs = append(refs, events.ConfigSourceRef{
+			Namespace:  source.GetNamespace(),
+			Name:       source.GetName(),
+			Generation: source.GetGeneration(),
+		})
+	}
+	return refs
 }

@@ -4,7 +4,6 @@
 {{- $webhookEnabled := .Values.controller.webhook.enabled }}
 {{- $webhookSecretName := include "haptic.webhook.secretName" . }}
 {{- $webhookResourceTimeoutSeconds := include "haptic.webhook.resourceTimeoutSeconds" . | int }}
-{{- $webhookConfigTimeoutSeconds := include "haptic.webhook.configTimeoutSeconds" . | int }}
 {{- $labels := include "haptic.labels.withCommon" . }}
 {{- $validatorsEnabled := include "haptic.validators.enabled" . }}
 {{- $validators := $controller.validators }}
@@ -92,7 +91,13 @@ spec:
                   fieldPath: {{ $env.field }}
             {{- end }}
             - name: CRD_NAME
-              value: {{ $controller.configName | quote }}
+              {{- /* One object per enabled library, operator's config LAST
+                     (merge order = precedence order). Derived from the same
+                     haptic.prepareLibraries evaluation that emits the
+                     objects, so the two cannot disagree; the literal list is
+                     pinned by deployment_test.yaml against
+                     library_loader_test.yaml. */}}
+              value: {{ include "haptic.libraryConfigNames" . | fromYamlArray | join "," | quote }}
             - name: SECRET_NAME
               value: {{ include "haptic.dataplane.credentialsSecretName" . }}
             - name: WEBHOOK_SERVICE_NAME
@@ -112,8 +117,6 @@ spec:
               value: /etc/webhook/certs
             - name: WEBHOOK_RESOURCE_ADMISSION_TIMEOUT
               value: {{ printf "%ds" (sub $webhookResourceTimeoutSeconds 1) | quote }}
-            - name: WEBHOOK_CONFIG_ADMISSION_TIMEOUT
-              value: {{ printf "%ds" (sub $webhookConfigTimeoutSeconds 1) | quote }}
             {{- end }}
             {{- with $controller.extraEnv }}
             {{- toYaml . | nindent 12 }}

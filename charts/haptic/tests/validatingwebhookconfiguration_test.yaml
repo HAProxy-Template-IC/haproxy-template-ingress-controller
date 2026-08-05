@@ -9,24 +9,6 @@ tests:
           path: webhooks[?(@.name == "ingresses.validation.RELEASE-NAME-haptic-webhook")].timeoutSeconds
           value: 10
 
-  - it: should give HAProxyTemplateConfig admission the maximum default timeout
-    asserts:
-      - equal:
-          path: webhooks[?(@.name == "haproxytemplateconfig.validation.RELEASE-NAME-haptic-webhook")].timeoutSeconds
-          value: 30
-
-  - it: should render custom split admission timeouts
-    set:
-      controller.webhook.timeoutSeconds: 7
-      controller.webhook.haproxyTemplateConfig.timeoutSeconds: 23
-    asserts:
-      - equal:
-          path: webhooks[?(@.name == "ingresses.validation.RELEASE-NAME-haptic-webhook")].timeoutSeconds
-          value: 7
-      - equal:
-          path: webhooks[?(@.name == "haproxytemplateconfig.validation.RELEASE-NAME-haptic-webhook")].timeoutSeconds
-          value: 23
-
   - it: should reject a watched-resource timeout without controller response margin
     set:
       controller.webhook.timeoutSeconds: 1
@@ -40,10 +22,3 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: "controller.webhook.timeoutSeconds must be an integer between 2 and 30."
-
-  - it: should reject a HAProxyTemplateConfig timeout above the Kubernetes maximum
-    set:
-      controller.webhook.haproxyTemplateConfig.timeoutSeconds: 31
-    asserts:
-      - failedTemplate:
-          errorMessage: "controller.webhook.haproxyTemplateConfig.timeoutSeconds must be an integer between 2 and 30."

@@ -599,7 +599,7 @@ func outputIncludeProfile(results *testrunner.TestResults) {
 // written. Anything beyond that must be complete objects, because merge order
 // and precedence are only meaningful between identifiable configs.
 func loadConfigFromFiles(filePaths []string) (*v1alpha1.HAProxyTemplateConfigSpec, error) {
-	merged, bareSpec, testDocs, err := mergeConfigFiles(filePaths)
+	merged, bareSpec, err := mergeConfigFiles(filePaths)
 	if err != nil {
 		return nil, err
 	}
@@ -611,41 +611,7 @@ func loadConfigFromFiles(filePaths []string) (*v1alpha1.HAProxyTemplateConfigSpe
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(merged.Object, config); err != nil {
 		return nil, fmt.Errorf("converting merged config: %w", err)
 	}
-	if err := unionFileValidationTests(&config.Spec, testDocs); err != nil {
-		return nil, err
-	}
 	return &config.Spec, nil
-}
-
-// unionFileValidationTests folds tests carried by companion objects into the
-// spec, so validating rendered chart output offline exercises the same suite the
-// controller runs in the cluster.
-func unionFileValidationTests(spec *v1alpha1.HAProxyTemplateConfigSpec, testDocs []*unstructured.Unstructured) error {
-	if len(testDocs) == 0 {
-		return nil
-	}
-
-	sources := []conversion.ValidationTestSource{{
-		Origin: "HAProxyTemplateConfig spec.validationTests",
-		Tests:  spec.ValidationTests,
-	}}
-	for _, doc := range testDocs {
-		typed := &v1alpha1.HAProxyValidationTests{}
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(doc.Object, typed); err != nil {
-			return fmt.Errorf("reading HAProxyValidationTests %s: %w", doc.GetName(), err)
-		}
-		sources = append(sources, conversion.ValidationTestSource{
-			Origin: "HAProxyValidationTests/" + doc.GetName(),
-			Tests:  typed.Spec.ValidationTests,
-		})
-	}
-
-	union, err := conversion.UnionValidationTests(sources)
-	if err != nil {
-		return err
-	}
-	spec.ValidationTests = union
-	return nil
 }
 
 // mergeConfigFiles reads every HAProxyTemplateConfig document across the given
@@ -655,7 +621,6 @@ func unionFileValidationTests(spec *v1alpha1.HAProxyTemplateConfigSpec, testDocs
 func mergeConfigFiles(filePaths []string) (
 	merged *unstructured.Unstructured,
 	bareSpec *v1alpha1.HAProxyTemplateConfigSpec,
-	testDocs []*unstructured.Unstructured,
 	err error,
 ) {
 	var sources []*unstructured.Unstructured
@@ -665,36 +630,30 @@ func mergeConfigFiles(filePaths []string) (
 
 		data, readErr := os.ReadFile(cleanPath)
 		if readErr != nil {
-			return nil, nil, nil, fmt.Errorf("reading file: %w", readErr)
+			return nil, nil, fmt.Errorf("reading file: %w", readErr)
 		}
 
 		documents, splitErr := splitConfigDocuments(data)
 		if splitErr != nil {
-			return nil, nil, nil, fmt.Errorf("reading %s: %w", filePath, splitErr)
+			return nil, nil, fmt.Errorf("reading %s: %w", filePath, splitErr)
 		}
 
 		if len(documents) == 0 && len(filePaths) == 1 {
 			spec, parseErr := parseConfigSpec(data)
-			return nil, spec, nil, parseErr
+			return nil, spec, parseErr
 		}
-		for _, doc := range documents {
-			if doc.GetKind() == "HAProxyValidationTests" {
-				testDocs = append(testDocs, doc)
-				continue
-			}
-			sources = append(sources, doc)
-		}
+		sources = append(sources, documents...)
 	}
 
 	if len(sources) == 0 {
-		return nil, nil, nil, fmt.Errorf("no HAProxyTemplateConfig documents in %s", strings.Join(filePaths, ", "))
+		return nil, nil, fmt.Errorf("no HAProxyTemplateConfig documents in %s", strings.Join(filePaths, ", "))
 	}
 
 	merged, _, err = conversion.MergeSpecs(sources)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	return merged, nil, testDocs, nil
+	return merged, nil, nil
 }
 
 // dumpMergedSpec prints the merged spec and returns. It is the only way to see
@@ -705,25 +664,13 @@ func mergeConfigFiles(filePaths []string) (
 // typed spec: the typed form adds zero values for every field the YAML omits
 // (`logging: {}`, `extraContext: null`), which would drown any real difference.
 func dumpMergedSpec() error {
-	merged, bareSpec, testDocs, err := mergeConfigFiles(validateConfigFiles)
+	merged, bareSpec, err := mergeConfigFiles(validateConfigFiles)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
 	var payload any = bareSpec
 	if merged != nil {
-		spec, _ := merged.Object["spec"].(map[string]any)
-		// Fold companion tests in, so what this prints is the whole suite the
-		// controller would run. Without it a consumer of the dump — the
-		// playground's presets, for one — would silently get a config with no
-		// tests at all.
-		if len(testDocs) > 0 && spec != nil {
-			tests, unionErr := unionDumpedTests(spec, testDocs)
-			if unionErr != nil {
-				return unionErr
-			}
-			spec["validationTests"] = tests
-		}
 		payload = merged.Object["spec"]
 	}
 	out, err := yaml.Marshal(payload)
@@ -757,13 +704,16 @@ func splitConfigDocuments(data []byte) ([]*unstructured.Unstructured, error) {
 			return nil, err
 		}
 		document := &unstructured.Unstructured{Object: object}
-		// Both kinds are kept. Dropping the tests objects would make this
-		// command — and scripts/test-templates.sh, the gate CI runs — report
-		// success having executed none of their tests, because an empty suite
-		// passes unconditionally.
 		switch document.GetKind() {
-		case "HAProxyTemplateConfig", "HAProxyValidationTests":
+		case "HAProxyTemplateConfig":
 			documents = append(documents, document)
+		case "HAProxyValidationTests":
+			// Retired kind (ADR-0016): tests live inline on the config
+			// objects. Silently dropping the document would run a reduced
+			// suite and report success, so refuse it instead.
+			return nil, fmt.Errorf(
+				"HAProxyValidationTests %q: this kind is retired — its validationTests belong inline on a HAProxyTemplateConfig; re-render with the current chart",
+				document.GetName())
 		}
 	}
 }
@@ -905,28 +855,4 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 	}
 
 	return resolvedPaths.ToValidationPaths(), capabilities, localVersion, cleanup, nil
-}
-
-// unionDumpedTests folds companion tests into the verbatim merged spec for
-// --dump-merged. It goes through the typed union rather than merging the
-// unstructured maps directly, so the dump obeys the same collision and _global
-// rules the controller does instead of a second, quietly different set.
-func unionDumpedTests(spec map[string]any, testDocs []*unstructured.Unstructured) (map[string]any, error) {
-	inline := &v1alpha1.HAProxyTemplateConfigSpec{}
-	if raw, ok := spec["validationTests"]; ok {
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(
-			map[string]any{"validationTests": raw}, inline); err != nil {
-			return nil, fmt.Errorf("reading inline validationTests: %w", err)
-		}
-	}
-	if err := unionFileValidationTests(inline, testDocs); err != nil {
-		return nil, err
-	}
-
-	out, err := runtime.DefaultUnstructuredConverter.ToUnstructured(inline)
-	if err != nil {
-		return nil, fmt.Errorf("re-encoding merged validationTests: %w", err)
-	}
-	tests, _ := out["validationTests"].(map[string]any)
-	return tests, nil
 }

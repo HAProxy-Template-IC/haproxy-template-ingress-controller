@@ -15,6 +15,7 @@
 package conversion
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -24,34 +25,58 @@ import (
 	"dario.cat/mergo"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 )
 
 const (
-	// migrationCoverageKey is the one spec field that accumulates across a
-	// merged set instead of being overwritten. It is a list of per-source
+	// migrationCoverageKey is one of the two spec fields that accumulate across
+	// a merged set instead of being overwritten. It is a list of per-source
 	// declarations, one per contributing template library, so an overwrite
 	// would keep only the last library's entry and silently make the
 	// migration report under-report.
 	migrationCoverageKey = "migrationCoverage"
 
-	// templateSnippetsKey names the merged namespace where a duplicate key is
-	// worth reporting. Snippets are addressed by name from `render_glob`
-	// patterns, so two sources defining the same name resolve to the later one
-	// with nothing to show for it.
+	// validationTestsKey is the other accumulating field. Tests are unioned
+	// per source rather than mergo-merged: a deep map merge of two tests
+	// sharing a name produces a hybrid neither author wrote (one side's
+	// assertions over the other side's surviving fixtures) with no error and
+	// nothing logged — and both gates that run the suite merge through this
+	// function, so the reduced suite would pass them silently.
+	validationTestsKey = "validationTests"
+
 	templateSnippetsKey = "templateSnippets"
+	mapsKey             = "maps"
+	filesKey            = "files"
+	sslCertificatesKey  = "sslCertificates"
+	k8sResourcesKey     = "k8sResources"
+	haproxyConfigKey    = "haproxyConfig"
 
 	specKey = "spec"
 )
 
-// SnippetOverride records one templateSnippets name defined by more than one
-// source. An operator overriding a bundled snippet is the documented escape
-// hatch and the expected case; two libraries colliding is a bug, and before the
-// merge moved into the controller there was nothing to notice it.
-type SnippetOverride struct {
-	Name string
-	// PreviousSource last defined the snippet before it was replaced.
+// guardedSections are the named-map spec sections where a name defined by two
+// sources is a silent last-writer-wins under mergo. Within these, a duplicate
+// among all but the last source is an error; the last source — by convention
+// the operator's own config — may override anything, reported as a
+// SpecOverride. The exemption is positional rather than marker-based because
+// every chart-rendered object is partial (base owns haproxyConfig, the main
+// object owns podSelector), so no marker distinguishes "library shard" from
+// "the object whose overrides are intentional".
+var guardedSections = []string{templateSnippetsKey, mapsKey, filesKey, sslCertificatesKey, k8sResourcesKey}
+
+// SpecOverride records one guarded-section name defined by more than one
+// source. An operator overriding a bundled entry is the documented escape
+// hatch and the expected case; it is reported so the override is visible
+// rather than silent.
+type SpecOverride struct {
+	// Section is the spec section the name lives in (templateSnippets, maps,
+	// files, sslCertificates, k8sResources, or haproxyConfig).
+	Section string
+	Name    string
+	// PreviousSource last defined the name before it was replaced.
 	PreviousSource string
-	// WinningSource defines the snippet that ends up in the merged config.
+	// WinningSource defines the entry that ends up in the merged config.
 	WinningSource string
 }
 
@@ -61,41 +86,65 @@ type SnippetOverride struct {
 // The merge primitive is mergo.MergeWithOverwrite — literally the call sprig's
 // `mustMergeOverwrite` makes (vendor/github.com/Masterminds/sprig/v3/dict.go),
 // against the same vendored mergo, starting from the same empty accumulator.
-// The Helm chart prepares one config per template library and this assembles
-// them, so the two sides have to agree exactly; sharing the primitive is what
-// guarantees that, where a reimplementation would drift.
+//
+// Two spec fields never reach mergo:
+//
+//   - migrationCoverage accumulates (a list of per-source declarations);
+//   - validationTests are unioned per source through UnionValidationTests —
+//     error on a non-`_global` duplicate, `_global` contributions accumulate —
+//     because a mergo deep-merge of two same-named tests silently fabricates a
+//     hybrid test neither author wrote.
+//
+// Within guardedSections, a name defined by two of the first N-1 sources is an
+// error; the LAST source may override anything, each such override is
+// returned, and the override REPLACES the entry — a mergo deep-merge of two
+// same-named entries would blend the operator's fields with library leftovers.
+// haproxyConfig gets the same guard on the whole section: it is one template,
+// not a named map, and a second source setting it replaces the main config
+// outright.
 //
 // Identity and metadata come from the LAST source — by convention the
 // operator's own config — so status write-back and events target the object an
 // operator edits.
 //
 // The returned object is safe to hand to ParseCRD; sources are not modified.
-func MergeSpecs(sources []*unstructured.Unstructured) (*unstructured.Unstructured, []SnippetOverride, error) {
+func MergeSpecs(sources []*unstructured.Unstructured) (*unstructured.Unstructured, []SpecOverride, error) {
 	if len(sources) == 0 {
 		return nil, nil, errors.New("no HAProxyTemplateConfig sources to merge")
 	}
 
 	merged := map[string]any{}
 	coverage := []any{}
-	definedBy := map[string]string{}
-	var overrides []SnippetOverride
+	definedBy := map[string]map[string]string{} // section -> name -> source
+	var testSources []ValidationTestSource
+	var overrides []SpecOverride
 
-	for _, source := range sources {
-		if err := validateResourceType(source); err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", source.GetName(), err)
-		}
-
-		spec, err := extractSpec(source)
+	for i, source := range sources {
+		spec, err := prepareSourceSpec(source, &coverage, &testSources)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		if entries, ok := spec[migrationCoverageKey].([]any); ok {
-			coverage = append(coverage, entries...)
-			delete(spec, migrationCoverageKey)
+		isLast := i == len(sources)-1
+		sectionOverrides, err := guardSections(definedBy, spec, source.GetName(), isLast)
+		if err != nil {
+			return nil, nil, err
 		}
+		overrides = append(overrides, sectionOverrides...)
 
-		overrides = append(overrides, snippetOverrides(definedBy, spec, source.GetName())...)
+		// An override REPLACES the entry. Left to mergo, two same-named
+		// entries deep-merge: an operator overriding a library file but
+		// omitting a sub-field the library set would inherit that field
+		// silently — the same hybrid hazard validationTests are routed
+		// around above. Dropping the losing entry first makes the merge
+		// below insert the winning one whole.
+		for _, o := range sectionOverrides {
+			if o.Section == haproxyConfigKey {
+				delete(merged, haproxyConfigKey)
+			} else if section, ok := merged[o.Section].(map[string]any); ok {
+				delete(section, o.Name)
+			}
+		}
 
 		if err := mergo.MergeWithOverwrite(&merged, spec); err != nil {
 			return nil, nil, fmt.Errorf("merging spec of %s: %w", source.GetName(), err)
@@ -104,6 +153,18 @@ func MergeSpecs(sources []*unstructured.Unstructured) (*unstructured.Unstructure
 
 	if len(coverage) > 0 {
 		merged[migrationCoverageKey] = coverage
+	}
+
+	if len(testSources) > 0 {
+		union, err := UnionValidationTests(testSources)
+		if err != nil {
+			return nil, nil, err
+		}
+		unionMap, err := validationTestsToUnstructured(union)
+		if err != nil {
+			return nil, nil, err
+		}
+		merged[validationTestsKey] = unionMap
 	}
 
 	last := sources[len(sources)-1]
@@ -139,6 +200,34 @@ func validateResourceType(resource *unstructured.Unstructured) error {
 	return nil
 }
 
+// prepareSourceSpec validates one source's type, pulls the two accumulating
+// fields out of its spec (migrationCoverage into coverage, validationTests
+// into testSources), and returns the remaining spec for mergo.
+func prepareSourceSpec(source *unstructured.Unstructured, coverage *[]any, testSources *[]ValidationTestSource) (map[string]any, error) {
+	if err := validateResourceType(source); err != nil {
+		return nil, fmt.Errorf("%s: %w", source.GetName(), err)
+	}
+
+	spec, err := extractSpec(source)
+	if err != nil {
+		return nil, err
+	}
+
+	if entries, ok := spec[migrationCoverageKey].([]any); ok {
+		*coverage = append(*coverage, entries...)
+		delete(spec, migrationCoverageKey)
+	}
+
+	tests, ok, err := extractValidationTests(spec, source.GetName())
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		*testSources = append(*testSources, tests)
+	}
+	return spec, nil
+}
+
 // extractSpec returns a deep copy of the source's spec, or an empty map when
 // the object carries none.
 func extractSpec(source *unstructured.Unstructured) (map[string]any, error) {
@@ -152,25 +241,114 @@ func extractSpec(source *unstructured.Unstructured) (map[string]any, error) {
 	return spec, nil
 }
 
-// snippetOverrides records which snippet names this source redefines and
-// updates definedBy to name it as the current owner. Sorted so the report is
-// stable across runs.
-func snippetOverrides(definedBy map[string]string, spec map[string]any, source string) []SnippetOverride {
-	snippets, ok := spec[templateSnippetsKey].(map[string]any)
-	if !ok {
-		return nil
+// extractValidationTests removes the source's validationTests from its spec
+// (so mergo never sees them) and returns them as a typed union source.
+//
+// The unstructured→typed round trip is deliberate: UnionValidationTests on the
+// API types is the single implementation of the union semantics, including the
+// `_global` conflict rules, and this path must not drift from it. Fields the
+// type does not know are dropped by the round trip, which is a no-op in
+// practice — the structural CRD schema already prunes them, and ParseCRD is
+// the next consumer either way.
+func extractValidationTests(spec map[string]any, sourceName string) (ValidationTestSource, bool, error) {
+	raw, ok := spec[validationTestsKey].(map[string]any)
+	delete(spec, validationTestsKey)
+	if !ok || len(raw) == 0 {
+		return ValidationTestSource{}, false, nil
 	}
 
-	var overrides []SnippetOverride
-	for _, name := range slices.Sorted(maps.Keys(snippets)) {
-		if previous, exists := definedBy[name]; exists {
-			overrides = append(overrides, SnippetOverride{
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return ValidationTestSource{}, false, fmt.Errorf("encoding validationTests of %s: %w", sourceName, err)
+	}
+	var tests map[string]v1alpha1.ValidationTest
+	if err := json.Unmarshal(encoded, &tests); err != nil {
+		return ValidationTestSource{}, false, fmt.Errorf("parsing validationTests of %s: %w", sourceName, err)
+	}
+	return ValidationTestSource{
+		Origin: expectedKind + "/" + sourceName,
+		Tests:  tests,
+	}, true, nil
+}
+
+// validationTestsToUnstructured converts the union result back into the
+// map-shaped spec field of the merged object.
+func validationTestsToUnstructured(tests map[string]v1alpha1.ValidationTest) (map[string]any, error) {
+	encoded, err := json.Marshal(tests)
+	if err != nil {
+		return nil, fmt.Errorf("encoding merged validationTests: %w", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(encoded, &out); err != nil {
+		return nil, fmt.Errorf("re-parsing merged validationTests: %w", err)
+	}
+	// An empty runtime.RawExtension marshals to JSON null (omitempty does not
+	// apply to structs), which no real input carries — the apiserver prunes
+	// nulls on write. Drop them so the round trip is shape-faithful.
+	for _, test := range out {
+		fields, ok := test.(map[string]any)
+		if !ok {
+			continue
+		}
+		for key, value := range fields {
+			if value == nil {
+				delete(fields, key)
+			}
+		}
+	}
+	return out, nil
+}
+
+// guardSections enforces the duplicate-name rule over guardedSections and the
+// whole-section rule over haproxyConfig, recording the last source's
+// overrides and rejecting everyone else's.
+func guardSections(definedBy map[string]map[string]string, spec map[string]any, source string, isLast bool) ([]SpecOverride, error) {
+	var overrides []SpecOverride
+
+	record := func(section, name string) error {
+		owners := definedBy[section]
+		if owners == nil {
+			owners = map[string]string{}
+			definedBy[section] = owners
+		}
+		previous, exists := owners[name]
+		if exists && !isLast {
+			return fmt.Errorf(
+				"%s %q is defined by both %s and %s: only the last config in the merge order may override an entry, "+
+					"otherwise one definition silently replaces the other",
+				section, name, previous, source)
+		}
+		if exists {
+			overrides = append(overrides, SpecOverride{
+				Section:        section,
 				Name:           name,
 				PreviousSource: previous,
 				WinningSource:  source,
 			})
 		}
-		definedBy[name] = source
+		owners[name] = source
+		return nil
 	}
-	return overrides
+
+	for _, section := range guardedSections {
+		entries, ok := spec[section].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, name := range slices.Sorted(maps.Keys(entries)) {
+			if err := record(section, name); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// haproxyConfig is one template, not a named map: a second source setting
+	// it replaces the main config outright, so the section itself is the name.
+	if cfg, ok := spec[haproxyConfigKey].(map[string]any); ok && len(cfg) > 0 {
+		if err := record(haproxyConfigKey, haproxyConfigKey); err != nil {
+			return nil, err
+		}
+	}
+
+	return overrides, nil
 }

@@ -162,6 +162,9 @@ tests:
 
   - it: should accept the shipped defaults and pass them to the render context
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     asserts:
       # The library reads them from here, so this is the seam between the two.
       - equal:
@@ -196,6 +199,9 @@ tests:
 
   - it: should pass every excluded family to the source-side scrape list
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     asserts:
       # families is what becomes metrics=-<name> on the scrape URL, which is the
       # half that actually cuts vector's peak RSS (the pattern filter runs after
@@ -209,6 +215,9 @@ tests:
 
   - it: should let one exclusion be disabled without disturbing the others
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       # The entire point of the map shape. Against the old list, turning one off
       # meant restating every other entry — and silently inheriting none of the
@@ -275,6 +284,9 @@ tests:
 
   - it: should strip empty access-log fields by default
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     asserts:
       - equal:
           path: spec.templatingSettings.extraContext.vector.omitEmptyLogFields
@@ -292,6 +304,9 @@ tests:
 
   - it: should bind the hub metrics on loopback with vector on and pod-routable with it off
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       spoaHub.enabled: true
     asserts:
@@ -301,6 +316,9 @@ tests:
 
   - it: should bind the hub metrics pod-routable when vector is disabled
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       vector.enabled: false
       spoaHub.enabled: true
@@ -386,6 +404,9 @@ tests:
 
   - it: should default controller_class to the IngressClass controller name
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     asserts:
       - equal:
           path: spec.templatingSettings.extraContext.vector.requestMetrics.controllerClass
@@ -393,6 +414,9 @@ tests:
 
   - it: should let controller_class be set to the ingress-nginx value for a drop-in
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       vector.requestMetrics.controllerClass: k8s.io/ingress-nginx
     asserts:
@@ -402,6 +426,9 @@ tests:
 
   - it: should strip a trailing underscore from the prefix
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       # Operators think of this as `nginx_ingress_controller_`; the exporter joins
       # namespace and name with an underscore itself, so keeping it would render
@@ -414,6 +441,9 @@ tests:
 
   - it: should exclude the superseded HAProxy families while request metrics are on
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     asserts:
       - contains:
           path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
@@ -429,6 +459,9 @@ tests:
 
   - it: should restore the superseded families when request metrics are off
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       # `requires` exists for exactly this: without it, turning the replacement
       # off would drop the originals with nothing standing in for them.

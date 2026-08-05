@@ -115,7 +115,13 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name == "CRD_NAME")].value
-          value: edge-config
+          value: edge-config-base,edge-config-ssl,edge-config-ingress,edge-config-gateway,edge-config-ingress-annotations-compat,edge-config-haptic-annotations,edge-config-spoa-hub,edge-config-vector,edge-config
+
+  - it: pins the default CRD_NAME list against library_loader_test (merge order, operator last)
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "CRD_NAME")].value
+          value: haptic-config-base,haptic-config-ssl,haptic-config-ingress,haptic-config-gateway,haptic-config-ingress-annotations-compat,haptic-config-haptic-annotations,haptic-config-spoa-hub,haptic-config-vector,haptic-config
 
   - it: should set resources when specified
     set:
@@ -221,9 +227,6 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name == "WEBHOOK_RESOURCE_ADMISSION_TIMEOUT")].value
           value: 9s
-      - equal:
-          path: spec.template.spec.containers[0].env[?(@.name == "WEBHOOK_CONFIG_ADMISSION_TIMEOUT")].value
-          value: 29s
 
   - it: should derive controller admission deadlines from custom API-server timeouts
     set:
@@ -233,9 +236,6 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name == "WEBHOOK_RESOURCE_ADMISSION_TIMEOUT")].value
           value: 6s
-      - equal:
-          path: spec.template.spec.containers[0].env[?(@.name == "WEBHOOK_CONFIG_ADMISSION_TIMEOUT")].value
-          value: 22s
 
   # Extra volumes and volume mounts
   - it: should include extra volumes when specified

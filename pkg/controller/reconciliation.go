@@ -180,12 +180,16 @@ func createReconciliationComponents(
 	//     the rolling-restart reaction path.
 	strictPipeline, fastPipeline := buildValidationPipelines(cfg, localVersion, renderService, logger)
 
-	// Coordinator: leader-side render + validate + deploy. Uses fast pipeline.
+	// Coordinator: leader-side render + validate + deploy. Fast pipeline for
+	// steady state; the strict one serves the iteration's first render — the
+	// one a config change produced — restoring the semantic check that config
+	// admission carried before ADR-0016 removed it.
 	coordinatorComponent := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
-		EventBus:      setup.Bus,
-		Pipeline:      fastPipeline,
-		StoreProvider: storeProvider,
-		Logger:        logger,
+		EventBus:       setup.Bus,
+		Pipeline:       fastPipeline,
+		StrictPipeline: strictPipeline,
+		StoreProvider:  storeProvider,
+		Logger:         logger,
 	})
 
 	// ProposalValidator: admission webhook + HTTP-store content promotion.

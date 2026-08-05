@@ -393,7 +393,7 @@ See [Templating — Custom Template Variables](./templating.md#custom-template-v
 
 ### `validationTests`
 
-Embedded validation tests (optional; run by the admission webhook, the `validate` CLI, and the controller itself on config load).
+Embedded validation tests (optional; run by the pre-rollout validation Job, the `validate` CLI, and the controller itself on config load and on every live config change). Across a merged set, a test name may be defined by only one object — a duplicate is an error naming both — while the reserved `_global` baseline accumulates across objects.
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|

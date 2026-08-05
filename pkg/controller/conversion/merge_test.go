@@ -260,11 +260,11 @@ func TestMergeSpecs_DoesNotMutateSources(t *testing.T) {
 	}, base.Object["spec"], "the first source must be untouched")
 }
 
-func TestMergeSpecs_SnippetOverrides(t *testing.T) {
+func TestMergeSpecs_SpecOverrides(t *testing.T) {
 	tests := []struct {
 		name    string
 		sources []*unstructured.Unstructured
-		want    []SnippetOverride
+		want    []SpecOverride
 	}{
 		{
 			name: "distinct snippet names report nothing",
@@ -284,27 +284,28 @@ func TestMergeSpecs_SnippetOverrides(t *testing.T) {
 					"global-settings-100-logging": snippet("log 127.0.0.1"),
 				}}),
 			},
-			want: []SnippetOverride{{
+			want: []SpecOverride{{
+				Section:        "templateSnippets",
 				Name:           "global-settings-100-logging",
 				PreviousSource: "haptic-config-00-base",
 				WinningSource:  "haptic-config",
 			}},
 		},
 		{
-			name: "a three-way collision reports each hop, sorted by name",
+			name: "the last source may override entries from several sections at once",
 			sources: []*unstructured.Unstructured{
-				source("base", map[string]any{"templateSnippets": map[string]any{
-					"x": snippet("1"), "y": snippet("1"),
-				}}),
-				source("ssl", map[string]any{"templateSnippets": map[string]any{
-					"x": snippet("2"), "y": snippet("2"),
-				}}),
-				source("gateway", map[string]any{"templateSnippets": map[string]any{"x": snippet("3")}}),
+				source("base", map[string]any{
+					"haproxyConfig": map[string]any{"template": "global"},
+					"maps":          map[string]any{"host.map": map[string]any{"template": "A"}},
+				}),
+				source("haptic-config", map[string]any{
+					"haproxyConfig": map[string]any{"template": "global\n  daemon"},
+					"maps":          map[string]any{"host.map": map[string]any{"template": "B"}},
+				}),
 			},
-			want: []SnippetOverride{
-				{Name: "x", PreviousSource: "base", WinningSource: "ssl"},
-				{Name: "y", PreviousSource: "base", WinningSource: "ssl"},
-				{Name: "x", PreviousSource: "ssl", WinningSource: "gateway"},
+			want: []SpecOverride{
+				{Section: "maps", Name: "host.map", PreviousSource: "base", WinningSource: "haptic-config"},
+				{Section: "haproxyConfig", Name: "haproxyConfig", PreviousSource: "base", WinningSource: "haptic-config"},
 			},
 		},
 	}
@@ -316,4 +317,171 @@ func TestMergeSpecs_SnippetOverrides(t *testing.T) {
 			assert.Equal(t, tt.want, overrides)
 		})
 	}
+}
+
+// An override replaces the entry. Left to mergo, two same-named entries
+// deep-merge: an operator overriding a library file but omitting a sub-field
+// the library set would inherit that field silently — a hybrid neither author
+// wrote, with nothing logged.
+func TestMergeSpecs_AnOverrideReplacesTheEntryOutright(t *testing.T) {
+	merged, overrides, err := MergeSpecs([]*unstructured.Unstructured{
+		source("base", map[string]any{
+			"files": map[string]any{"custom.lua": map[string]any{
+				"template":     "-- library body",
+				"languageHint": "lua",
+			}},
+			"haproxyConfig": map[string]any{
+				"template":       "global",
+				"postProcessing": []any{map[string]any{"type": "regex_replace"}},
+			},
+		}),
+		source("haptic-config", map[string]any{
+			"files":         map[string]any{"custom.lua": map[string]any{"template": "-- operator body"}},
+			"haproxyConfig": map[string]any{"template": "global\n  daemon"},
+		}),
+	})
+	require.NoError(t, err)
+	require.Len(t, overrides, 2)
+
+	file, _, err := unstructured.NestedMap(merged.Object, "spec", "files", "custom.lua")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"template": "-- operator body"}, file,
+		"the library's languageHint must not survive into the operator's override")
+
+	cfg, _, err := unstructured.NestedMap(merged.Object, "spec", "haproxyConfig")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"template": "global\n  daemon"}, cfg,
+		"the library's postProcessing must not survive into the operator's haproxyConfig")
+}
+
+// A collision anywhere before the last source is an error, not a log line:
+// with N chart shards, mergo's silent later-wins would let two libraries
+// swallow each other's entries with nothing to show for it.
+func TestMergeSpecs_DuplicateNamesAmongShardsAreErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		sources []*unstructured.Unstructured
+		wantErr []string
+	}{
+		{
+			name: "two shards defining one snippet, a third source after them",
+			sources: []*unstructured.Unstructured{
+				source("base", map[string]any{"templateSnippets": map[string]any{"x": snippet("1")}}),
+				source("ssl", map[string]any{"templateSnippets": map[string]any{"x": snippet("2")}}),
+				source("haptic-config", map[string]any{}),
+			},
+			wantErr: []string{"templateSnippets", `"x"`, "base", "ssl"},
+		},
+		{
+			name: "two shards defining the same map file",
+			sources: []*unstructured.Unstructured{
+				source("ingress", map[string]any{"maps": map[string]any{"host.map": map[string]any{"template": "A"}}}),
+				source("gateway", map[string]any{"maps": map[string]any{"host.map": map[string]any{"template": "B"}}}),
+				source("haptic-config", map[string]any{}),
+			},
+			wantErr: []string{"maps", `"host.map"`, "ingress", "gateway"},
+		},
+		{
+			name: "two shards both carrying haproxyConfig",
+			sources: []*unstructured.Unstructured{
+				source("base", map[string]any{"haproxyConfig": map[string]any{"template": "global"}}),
+				source("rogue", map[string]any{"haproxyConfig": map[string]any{"template": "defaults"}}),
+				source("haptic-config", map[string]any{}),
+			},
+			wantErr: []string{"haproxyConfig", "base", "rogue"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := MergeSpecs(tt.sources)
+			require.Error(t, err)
+			for _, fragment := range tt.wantErr {
+				assert.Contains(t, err.Error(), fragment)
+			}
+		})
+	}
+}
+
+// Regression for the merge this function exists to prevent: under plain mergo,
+// two sources sharing a test name produced a hybrid — the later source's
+// description and assertions over the earlier source's surviving fixtures —
+// with err=nil and nothing reported. Reproduced against the real MergeSpecs
+// before this union existed.
+func TestMergeSpecs_DuplicateValidationTestIsAnError(t *testing.T) {
+	a := source("shard-a", map[string]any{"validationTests": map[string]any{
+		"test-dup": map[string]any{
+			"description": "A's description",
+			"fixtures":    map[string]any{"ingresses": []any{map[string]any{"kind": "Ingress"}}},
+			"assertions":  []any{map[string]any{"type": "contains", "pattern": "A"}},
+		},
+	}})
+	b := source("shard-b", map[string]any{"validationTests": map[string]any{
+		"test-dup": map[string]any{
+			"description": "B's description",
+			"assertions":  []any{map[string]any{"type": "contains", "pattern": "B"}},
+		},
+	}})
+
+	_, _, err := MergeSpecs([]*unstructured.Unstructured{a, b})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"test-dup"`)
+	assert.Contains(t, err.Error(), "HAProxyTemplateConfig/shard-a")
+	assert.Contains(t, err.Error(), "HAProxyTemplateConfig/shard-b")
+}
+
+// The duplicate-test error has no positional exemption: overriding a test
+// silently weakens the suite both gates run, which is RULE #2 territory. An
+// operator wanting different behaviour writes a differently-named test.
+func TestMergeSpecs_LastSourceMayNotOverrideAValidationTest(t *testing.T) {
+	_, _, err := MergeSpecs([]*unstructured.Unstructured{
+		source("base", map[string]any{"validationTests": map[string]any{
+			"test-x": map[string]any{"description": "bundled"},
+		}}),
+		source("haptic-config", map[string]any{"validationTests": map[string]any{
+			"test-x": map[string]any{"description": "operator"},
+		}}),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"test-x"`)
+}
+
+// _global is the shared baseline several libraries each contribute part of:
+// fixtures accumulate in source order rather than replacing, and a scalar two
+// sources set to different values is a conflict, not a merge.
+func TestMergeSpecs_GlobalBaselineAccumulatesAcrossShards(t *testing.T) {
+	merged := mergedSpec(t,
+		source("shard-a", map[string]any{"validationTests": map[string]any{
+			"_global": map[string]any{"fixtures": map[string]any{
+				"ingresses": []any{map[string]any{"name": "from-a"}},
+			}},
+		}}),
+		source("shard-b", map[string]any{"validationTests": map[string]any{
+			"_global": map[string]any{"fixtures": map[string]any{
+				"ingresses": []any{map[string]any{"name": "from-b"}},
+			}},
+		}}),
+	)
+
+	fixtures, _, err := unstructured.NestedSlice(
+		map[string]any{"spec": merged}, "spec", "validationTests", "_global", "fixtures", "ingresses")
+	require.NoError(t, err)
+	require.Len(t, fixtures, 2, "_global fixture lists must accumulate, not replace")
+	assert.Equal(t, map[string]any{"name": "from-a"}, fixtures[0])
+	assert.Equal(t, map[string]any{"name": "from-b"}, fixtures[1])
+}
+
+func TestMergeSpecs_GlobalScalarConflictIsAnError(t *testing.T) {
+	_, _, err := MergeSpecs([]*unstructured.Unstructured{
+		source("shard-a", map[string]any{"validationTests": map[string]any{
+			"_global": map[string]any{"minHAProxyVersion": "3.0"},
+		}}),
+		source("shard-b", map[string]any{"validationTests": map[string]any{
+			"_global": map[string]any{"minHAProxyVersion": "3.1"},
+		}}),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "minHAProxyVersion")
+	assert.Contains(t, err.Error(), "HAProxyTemplateConfig/shard-a")
+	assert.Contains(t, err.Error(), "HAProxyTemplateConfig/shard-b")
 }

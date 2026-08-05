@@ -143,11 +143,12 @@ func TestStatusUpdater_HandleConfigValidated_Success(t *testing.T) {
 	assert.Equal(t, reasonValidationSucceeded, cond.Reason)
 	assert.Equal(t, testGeneration, cond.ObservedGeneration)
 
-	// Cached config reference should be populated for subsequent HAProxy validation events.
+	// Cached config references should be populated for subsequent HAProxy validation events.
 	u.mu.RLock()
-	assert.Equal(t, testNamespace, u.configNamespace)
-	assert.Equal(t, testName, u.configName)
-	assert.Equal(t, testGeneration, u.configGeneration)
+	require.Len(t, u.configRefs, 1)
+	assert.Equal(t, testNamespace, u.configRefs[0].Namespace)
+	assert.Equal(t, testName, u.configRefs[0].Name)
+	assert.Equal(t, testGeneration, u.configRefs[0].Generation)
 	u.mu.RUnlock()
 }
 
@@ -161,7 +162,9 @@ func TestReportConfigLoadFailure(t *testing.T) {
 	_, logger := testutil.NewTestBusAndLogger()
 
 	failures := []string{"test-ssl-x failed: boom", "test-ssl-y failed: kaboom"}
-	ReportConfigLoadFailure(context.Background(), crdClient, htc, failures, logger)
+	ReportConfigLoadFailure(context.Background(), crdClient, events.ConfigSourceRef{
+		Namespace: htc.Namespace, Name: htc.Name, Generation: htc.Generation,
+	}, failures, logger)
 
 	status := getStatus(t, crdClient)
 	assert.Equal(t, "Invalid", status.ValidationStatus)
@@ -181,7 +184,10 @@ func TestReportConfigLoadFailure_GetError(t *testing.T) {
 	// CRD not seeded — Get() returns NotFound; must not panic, just log + return.
 	crdClient := crdclientfake.NewSimpleClientset()
 	_, logger := testutil.NewTestBusAndLogger()
-	ReportConfigLoadFailure(context.Background(), crdClient, newHTC(), []string{"boom"}, logger)
+	htc := newHTC()
+	ReportConfigLoadFailure(context.Background(), crdClient, events.ConfigSourceRef{
+		Namespace: htc.Namespace, Name: htc.Name, Generation: htc.Generation,
+	}, []string{"boom"}, logger)
 }
 
 func TestStatusUpdater_HandleConfigInvalid(t *testing.T) {
@@ -260,7 +266,8 @@ func TestStatusUpdater_HandleConfigValidated_GetError(t *testing.T) {
 
 	// Cache was still populated before the Get() call — that's by design.
 	u.mu.RLock()
-	assert.Equal(t, testNamespace, u.configNamespace)
+	require.Len(t, u.configRefs, 1)
+	assert.Equal(t, testNamespace, u.configRefs[0].Namespace)
 	u.mu.RUnlock()
 }
 
@@ -298,7 +305,8 @@ func TestStatusUpdater_HandleConfigInvalid_Success(t *testing.T) {
 	assert.NotNil(t, status.LastValidated)
 
 	u.mu.RLock()
-	assert.Equal(t, testName, u.configName)
+	require.Len(t, u.configRefs, 1)
+	assert.Equal(t, testName, u.configRefs[0].Name)
 	u.mu.RUnlock()
 }
 
@@ -430,4 +438,85 @@ func TestStatusUpdater_ErrorCountMessage(t *testing.T) {
 	errs := map[string][]string{"a": {"1", "2"}, "b": {"3"}}
 	u.handleConfigInvalid(context.Background(), events.NewConfigInvalidEvent("v3", htc, errs))
 	assert.Equal(t, fmt.Sprintf("%d validation error(s)", 3), getStatus(t, crd).ValidationMessage)
+}
+
+// shard builds one member of a merged set.
+func shard(name string, generation int64) *v1alpha1.HAProxyTemplateConfig {
+	return &v1alpha1.HAProxyTemplateConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:  testNamespace,
+			Name:       name,
+			Generation: generation,
+		},
+	}
+}
+
+func shardStatus(t *testing.T, crdClient *crdclientfake.Clientset, name string) v1alpha1.HAProxyTemplateConfigStatus {
+	t.Helper()
+	got, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyTemplateConfigs(testNamespace).
+		Get(context.Background(), name, metav1.GetOptions{})
+	require.NoError(t, err)
+	return got.Status
+}
+
+// The verdict is a property of the merged set, so every source is stamped —
+// with ITS OWN observedGeneration, because that field is only meaningful
+// against the same object's metadata.generation. A designated primary could
+// not represent a shard edit at all (ADR-0016).
+func TestStatusUpdater_StampsEverySourceOfTheMergedSet(t *testing.T) {
+	a, b, c := shard("haptic-config-base", 4), shard("haptic-config-ssl", 7), shard("haptic-config", 2)
+	u, crdClient := newStatusUpdaterFixture(t, a, b, c)
+
+	event := events.NewConfigValidatedEvent(nil, c, "v9", "")
+	event.Sources = []events.ConfigSourceRef{
+		{Namespace: testNamespace, Name: a.Name, Generation: a.Generation},
+		{Namespace: testNamespace, Name: b.Name, Generation: b.Generation},
+		{Namespace: testNamespace, Name: c.Name, Generation: c.Generation},
+	}
+	u.handleConfigValidated(context.Background(), event)
+
+	for _, tc := range []struct {
+		name       string
+		generation int64
+	}{
+		{a.Name, a.Generation}, {b.Name, b.Generation}, {c.Name, c.Generation},
+	} {
+		status := shardStatus(t, crdClient, tc.name)
+		assert.Equal(t, "Valid", status.ValidationStatus, tc.name)
+		assert.Equal(t, tc.generation, status.ObservedGeneration,
+			"%s must carry ITS OWN generation, not the merged identity's", tc.name)
+		cond := meta.FindStatusCondition(status.Conditions, conditionValidated)
+		require.NotNil(t, cond, tc.name)
+		assert.Equal(t, tc.generation, cond.ObservedGeneration, tc.name)
+	}
+}
+
+// A repeat verdict must not write: with N sources per set, N-1 statuses are
+// usually unchanged, and rewriting them would churn resourceVersions for a
+// timestamp refresh nobody reads.
+func TestStatusUpdater_SkipsNoOpStatusWrites(t *testing.T) {
+	htc := newHTC()
+	u, crdClient := newStatusUpdaterFixture(t, htc)
+
+	event := events.NewConfigValidatedEvent(nil, htc, "v1", "")
+	u.handleConfigValidated(context.Background(), event)
+
+	var writes int
+	crdClient.PrependReactor("update", "haproxytemplateconfigs", func(a clienttesting.Action) (bool, runtime.Object, error) {
+		if subAction, ok := a.(clienttesting.UpdateAction); ok && subAction.GetSubresource() == "status" {
+			writes++
+		}
+		return false, nil, nil
+	})
+
+	// Same verdict again — everything but LastValidated would be identical.
+	u.handleConfigValidated(context.Background(), events.NewConfigValidatedEvent(nil, htc, "v2", ""))
+	assert.Zero(t, writes, "an unchanged status must not be rewritten")
+
+	// A real change still writes.
+	u.handleConfigInvalid(context.Background(), events.NewConfigInvalidEvent("v3", htc, map[string][]string{
+		"basic": {"boom"},
+	}))
+	assert.Equal(t, 1, writes, "a changed status must still be written")
 }
