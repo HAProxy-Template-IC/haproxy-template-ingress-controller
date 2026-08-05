@@ -53,22 +53,23 @@ templateSnippets:
             {%- var rid = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
             {#- A cache-enabled route is switched to `backend varnish_cache` in the
                 frontend, so the application backend that holds an auth deny is
-                never entered on the client leg — an uncredentialed caller is
-                served the authenticated response from cache. Varnish's builtin
-                does not save us: it only refuses cached responses to requests
-                carrying Authorization or Cookie, and these credentials are
-                neither.
+                never entered on the client leg — an uncredentialed caller would
+                be served the authenticated response from cache. Varnish's
+                builtin does not save us: it refuses cached responses only to
+                requests carrying Authorization or Cookie, and none of these
+                credentials are either.
 
-                API-key auth is enforced on the client leg by
-                frontend-filters-860-haptic-api-key-cache-routes. HMAC and
-                consumer-groups are not yet, so the combination is refused rather
-                than shipped leaking. Remove the guard when their client-leg
-                enforcement lands. -#}
-            {%- for _, ann := range []any{"hmac-secret", "consumer-groups-secret"} %}
-              {%- if ingress.Metadata.Annotations["haproxy-haptic.org/" + tostring(ann)] != "" %}
-                {{ fail("Ingress '" + rid + "' combines 'haproxy-haptic.org/cache-enable' with 'haproxy-haptic.org/" + tostring(ann) + "'. A cache-enabled route is served from the cache without entering the backend that enforces that credential, so a cached response would be returned to callers who present none. Remove cache-enable from this route, or authenticate it with 'haproxy-haptic.org/api-key-secret', which is enforced on the client leg.") }}
-              {%- end %}
-            {%- end %}
+                All three credential kinds are therefore enforced on the CLIENT
+                leg for a cache-enabled route, before the cache is consulted:
+                api-key by frontend-filters-860, HMAC by -861, consumer-groups by
+                -862. This combination used to be refused outright; the refusal
+                is gone because the enforcement exists, not because the risk did.
+                Basic auth and JWT need no such snippet: both carry the
+                credential in `Authorization`, which the builtin already refuses
+                to serve from cache. The three handled here are exactly the ones
+                using a custom header or a derived identity, which the builtin
+                cannot see. A fourth credential kind needs its own client-leg
+                snippet only if it is in that second group. -#}
             {%- enLines = append(enLines, rid + " 1") %}
             {%- var ttl = ingress.Metadata.Annotations["haproxy-haptic.org/cache-ttl"] %}
             {%- if ttl != "" %}
