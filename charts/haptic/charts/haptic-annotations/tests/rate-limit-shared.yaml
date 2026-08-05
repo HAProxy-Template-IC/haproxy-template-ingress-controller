@@ -148,6 +148,135 @@ validationTests:
           - "set-var\\(txn\\.haptic_consumer\\).*haptic-apikeys-default-api-keys\\.map"
           - "send-spoe-group spoa-hub check-ratelimit-group if .*txn\\.rl_keyspec.* consumer"
 
+  test-haptic-rate-limit-shared-consumer-cache-route:
+    _helm_skip_test: '{{ if not (and .Values.cache.varnish.enabled .Values.rateLimit.shared.enabled) }}true{{ end }}'
+    description: >-
+      A cache-enabled route with a consumer-keyed shared limit dispatches on
+      the CLIENT leg (issue #134): the api-key snippet at band 860 establishes
+      the consumer, the dispatch at 863 is scoped to cache-enabled routes via
+      the cache-enable map, and both precede the varnish_cache switch. The
+      backend copy is dropped — it would be inert on both legs.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: api-keys }
+          type: Opaque
+          data:
+            keys: YXBpa2V5LWFiYzEyMzphbGljZQo=
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cache-rl-consumer
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+              haproxy-haptic.org/rate-limit-requests: "50"
+              haproxy-haptic.org/rate-limit-key: "consumer"
+              haproxy-haptic.org/api-key-secret: "api-keys"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cache-rl-consumer.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:rate-limit.map
+        pattern: "default/cache-rl-consumer 50 1 50 lease consumer"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "# haptic/shared-rate-limit consumer on the client leg"
+      # Every client-leg dispatch rule carries the cache-enable-map scope, so a
+      # non-cached consumer route keeps its backend dispatch undoubled.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request send-spoe-group spoa-hub check-ratelimit-group if \\{ var\\(txn\\.rl_limit\\) -m found \\} \\{ var\\(txn\\.rl_keyspec\\) -m str consumer \\} \\{ var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-enable\\.map\\) -m found \\}"
+      - type: match_order
+        target: haproxy.cfg
+        description: identity (860) before dispatch (863) before the cache switch (865)
+        patterns:
+          - "set-var\\(txn\\.haptic_consumer\\).*haptic-apikeys-default-api-keys\\.map"
+          - "send-spoe-group spoa-hub check-ratelimit-group if .*txn\\.rl_keyspec.* consumer .*haptic-cache-enable"
+          - "use_backend varnish_cache"
+      - type: not_contains
+        target: haproxy.cfg
+        description: no backend copy — inert on the client leg, no txn.rl_* on the origin leg
+        pattern: "# haptic/shared-rate-limit consumer \\(default/cache-rl-consumer\\)"
+
+  test-haptic-rate-limit-shared-consumer-cache-requires-api-key:
+    _helm_skip_test: '{{ if not (and .Values.cache.varnish.enabled .Values.rateLimit.shared.enabled) }}true{{ end }}'
+    description: >-
+      cache-enable + rate-limit-key consumer without api-key-secret is refused
+      at admission: no client-leg identity source exists (JWT resolves in the
+      backend a cached route never enters), so the limit could only fall back
+      to source IP silently.
+    extraContext:
+      renderMode: admission
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cache-rl-noid
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/rate-limit-requests: "50"
+              haproxy-haptic.org/rate-limit-key: "consumer"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cache-rl-noid.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "combines 'haproxy-haptic.org/cache-enable' with 'haproxy-haptic.org/rate-limit-key: consumer'"
+
+  test-haptic-rate-limit-shared-consumer-cache-no-api-key-fails-closed:
+    _helm_skip_test: '{{ if not (and .Values.cache.varnish.enabled .Values.rateLimit.shared.enabled) }}true{{ end }}'
+    description: >-
+      The same pairing on a route that already exists at reconcile time must
+      not brick the fleet: the route fails closed with 503 (plus a Warning
+      Event) instead of aborting the render, and no dispatch is emitted.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cache-rl-noid
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/rate-limit-requests: "50"
+              haproxy-haptic.org/rate-limit-key: "consumer"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cache-rl-noid.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.denied_by\\) str\\(rate_limit_consumer_unavailable\\) if \\{ var\\(txn\\.resource_id\\) -m str default/cache-rl-noid \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 503 if \\{ var\\(txn\\.resource_id\\) -m str default/cache-rl-noid \\}"
+      - type: not_contains
+        target: haproxy.cfg
+        description: no client-leg dispatch for a route whose identity source is missing
+        pattern: "# haptic/shared-rate-limit consumer on the client leg"
+
   test-haptic-rate-limit-shared-invalid-requests:
     _helm_skip_test: '{{ if not .Values.rateLimit.shared.enabled }}true{{ end }}'
     description: non-positive rate-limit-requests fails the render

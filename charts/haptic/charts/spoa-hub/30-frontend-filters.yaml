@@ -12,19 +12,22 @@ templateSnippets:
   # dispatch. The caller chooses the key dimension and is responsible for
   # attaching the SPOE filter to its proxy. Keeping verdict handling here makes
   # the pre-WAF frontend path and post-auth backend path fail closed identically.
+  # extraCond ("" for none) is an additional ACL appended to every rule — the
+  # cache client-leg dispatch scopes itself to cache-enabled routes with it.
   util-spoa-rate-limit-dispatch:
     template: |
-      {% macro DispatchSharedRateLimit(keySpec string) string %}
+      {% macro DispatchSharedRateLimit(keySpec string, extraCond string) string %}
       {%- var failClosed = tostring(extraContext | dig("rateLimit", "shared", "failClosed") | fallback(false)) == "true" %}
+      {%- if extraCond != "" %}{%- extraCond = " " + extraCond %}{%- end %}
       {# Build <ns>/<name>|<dimension>. Consumer mode uses the identity set by
           native API-key/JWT backend rules and falls back to source IP when the
           route has no authenticated identity. #}
-      http-request set-var(txn.rl_dim) src if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }
+      http-request set-var(txn.rl_dim) src if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }{{ extraCond }}
       {%- if keySpec == "consumer" %}
-      http-request set-var(txn.rl_dim) var(txn.haptic_consumer) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str consumer } { var(txn.haptic_consumer) -m found }
+      http-request set-var(txn.rl_dim) var(txn.haptic_consumer) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str consumer } { var(txn.haptic_consumer) -m found }{{ extraCond }}
       {%- end %}
-      http-request set-var(txn.rl_key) var(txn.resource_id),concat(|,txn.rl_dim) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }
-      http-request send-spoe-group spoa-hub check-ratelimit-group if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }
+      http-request set-var(txn.rl_key) var(txn.resource_id),concat(|,txn.rl_dim) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }{{ extraCond }}
+      http-request send-spoe-group spoa-hub check-ratelimit-group if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }{{ extraCond }}
       {# No verdict means the hub or plugin could not answer — a reload, a
           restart, a timeout. The request is ALLOWED: a rate limit protects the
           origin from abuse, and turning an internal blip into 429s sheds
@@ -41,17 +44,17 @@ templateSnippets:
           limiting is visible. Deliberately NOT denied_by, and deliberately its
           own variable: a shared one is overwritten when several controls degrade
           in the same request, which is exactly when the signal matters most. #}
-      http-request set-var(txn.rate_limit_degraded) str(1) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }
+      http-request set-var(txn.rate_limit_degraded) str(1) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
       {%- if failClosed %}
-      http-request set-var(txn.denied_by) str(rate_limit_shared_unavailable) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }
-      http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }
+      http-request set-var(txn.denied_by) str(rate_limit_shared_unavailable) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
+      http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
       {%- end %}
-      http-request set-var(txn.denied_by) str(rate_limit_shared) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.allowed) -m bool }
-      http-request deny deny_status 429 hdr Retry-After %[var(txn.hub.rate_limit.retry_after)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.allowed) -m bool }
+      http-request set-var(txn.denied_by) str(rate_limit_shared) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.allowed) -m bool }{{ extraCond }}
+      http-request deny deny_status 429 hdr Retry-After %[var(txn.hub.rate_limit.retry_after)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.allowed) -m bool }{{ extraCond }}
       {# http-after-response also covers HAProxy's internally generated 429. #}
-      http-after-response set-header X-RateLimit-Limit %[var(txn.hub.rate_limit.limit)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found }
-      http-after-response set-header X-RateLimit-Remaining %[var(txn.hub.rate_limit.remaining)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found }
-      http-after-response set-header X-RateLimit-Reset %[var(txn.hub.rate_limit.reset)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found }
+      http-after-response set-header X-RateLimit-Limit %[var(txn.hub.rate_limit.limit)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
+      http-after-response set-header X-RateLimit-Remaining %[var(txn.hub.rate_limit.remaining)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
+      http-after-response set-header X-RateLimit-Reset %[var(txn.hub.rate_limit.reset)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
       {% end %}
 
   # Body-inspecting features pass req.body to SPOE, and HAProxy only exposes
@@ -208,7 +211,7 @@ templateSnippets:
       {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-ratelimit" %}
-      {{ DispatchSharedRateLimit("ip") }}
+      {{ DispatchSharedRateLimit("ip", "") }}
       {%- end %}
 
   # Coraza WAF dispatch. Reusable HAPTIC policies add a per-Ingress body
