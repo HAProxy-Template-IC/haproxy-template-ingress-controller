@@ -944,19 +944,27 @@ validationTests:
           - "http-request set-var\\(txn\\.haptic_consumer\\) var\\(txn\\.haptic_apikey\\),map\\([^)]*\\) if \\{ var\\(txn\\.resource_id\\) -m str default/cached-api \\}"
           - "use_backend varnish_cache if \\{ var\\(txn\\.resource_id\\),map\\("
 
-  test-haptic-cache-refuses-unenforceable-auth-combination:
+  test-haptic-cache-with-hmac-enforced-on-client-leg:
     description: >-
-      HMAC and consumer-group credentials are checked only in the application
-      backend, which a cache-enabled route never enters on the client leg. Until
-      that enforcement moves, the combination is refused at admission rather than
-      shipped serving authenticated responses to callers with no credential.
+      A cache-enabled route is switched to `backend varnish_cache` in the
+      frontend, so the application backend holding the HMAC deny is never
+      entered — an uncredentialed caller would be served the authenticated
+      response from cache. The check must therefore run on the client leg,
+      before the cache is consulted. This combination used to be refused
+      outright; it is allowed now because the enforcement exists.
     extraContext:
-      renderMode: admission
       cache:
         varnish:
           enabled: true
           replicas: 2
     fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: hmac-keys }
+          type: Opaque
+          data:
+            secret: c3VwZXJzZWNyZXQ=
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -974,12 +982,77 @@ validationTests:
                   paths:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
+      - type: haproxy_valid
+      # Scoped to the route and emitted in a frontend, so it runs before the
+      # cache backend is selected.
       - type: contains
-        target: rendering_error
-        pattern: "combines 'haproxy-haptic.org/cache-enable' with 'haproxy-haptic.org/hmac-secret'"
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 401 if \{ var\(txn\.resource_id\) -m str default/cached-hmac \} !\{ req\.hdr\(X-Signature\),strcmp\(txn\.haptic_hmac\) -m int 0 \}'
       - type: contains
-        target: rendering_error
-        pattern: "returned to callers who present none"
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.haptic_hmac\) req\.body,hmac\(sha256,'
+      # The route really is cache-enabled — otherwise this proves nothing.
+      - type: contains
+        target: "map:haptic-cache-enable.map"
+        pattern: 'default/cached-hmac 1'
+
+  test-haptic-cache-with-consumer-groups-enforced-on-client-leg:
+    description: >-
+      Same for consumer-group authorization on a cache-enabled route: the 403
+      must be emitted on the client leg, after the api-key snippet has resolved
+      txn.haptic_consumer there.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: cg-secret }
+          type: Opaque
+          data:
+            groups: YWxpY2U6Z3JvdXAtYQo=
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: apikeys }
+          type: Opaque
+          data:
+            keys: azE6YWxpY2UK
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cached-cg
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/api-key-secret: apikeys
+              haproxy-haptic.org/consumer-groups-secret: cg-secret
+              haproxy-haptic.org/allowed-consumer-groups: "group-a"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cached-cg.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 403 if \{ var\(txn\.resource_id\) -m str default/cached-cg \}'
+      # Ordering is load-bearing: 860 resolves txn.haptic_consumer, 862 reads it.
+      # Reversed, the map lookup sees an unset variable and denies everyone.
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - 'set-var\(txn\.haptic_consumer\) var\(txn\.haptic_apikey\),map'
+          - 'deny deny_status 403 if \{ var\(txn\.resource_id\) -m str default/cached-cg \}'
+      - type: contains
+        target: "map:haptic-cache-enable.map"
+        pattern: 'default/cached-cg 1'
 
   test-haptic-cache-cert-header-without-cache-key:
     description: >-
@@ -1015,3 +1088,52 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request set-header X-Haptic-Cache-Vary %\\[ssl_c_s_dn\\(CN\\)\\] if \\{ var\\(txn\\.resource_id\\) -m str default/cert-only \\}"
       - { type: contains, target: "map:haptic-cache-private.map", pattern: "(?m)^default/cert-only 1$" }
+
+  test-haptic-cache-consumer-groups-without-apikey-fails-closed:
+    description: >-
+      Consumer-group authorization on a cached route needs the identity resolved
+      on the client leg, which only api-key does. With JWT identity the consumer
+      is resolved in the backend a cached route never enters, so the group map
+      would read an unset variable and deny every caller — and taking `sub` from
+      the unverified token instead would authorize on a forged claim. The pairing
+      is refused rather than shipping either failure.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: cg-secret }
+          type: Opaque
+          data:
+            groups: YWxpY2U6Z3JvdXAtYQo=
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cached-cg-nokey
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/consumer-groups-secret: cg-secret
+              haproxy-haptic.org/allowed-consumer-groups: "group-a"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cached-cg-nokey.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 503 if \{ var\(txn\.resource_id\) -m str default/cached-cg-nokey \}'
+      # Must never emit a 403 that reads an unset consumer — that denies everyone
+      # while looking like working authorization.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'deny deny_status 403 if \{ var\(txn\.resource_id\) -m str default/cached-cg-nokey \}'
