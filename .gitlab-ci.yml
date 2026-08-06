@@ -68,7 +68,7 @@ variables:
   # renovate: datasource=github-releases depName=goreleaser/goreleaser
   GORELEASER_VERSION: "2.17.1"
   # renovate: datasource=github-releases depName=sigstore/cosign
-  COSIGN_VERSION: "3.1.2"
+  COSIGN_VERSION: "3.1.3"
   # renovate: datasource=github-releases depName=anchore/syft
   SYFT_VERSION: "1.50.0"
   # CI image base path - tag is computed from Dockerfile content hash (see compute-ci-image-tag job)
