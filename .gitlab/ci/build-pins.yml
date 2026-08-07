@@ -1,0 +1,107 @@
+# Update procedure: docs/agents/build-pins.md
+variables:
+  # renovate: datasource=docker depName=golang
+  GO_VERSION: "1.26"
+  # renovate: datasource=docker depName=python
+  PYTHON_VERSION: "3.14"
+  # renovate: datasource=docker depName=docker
+  DOCKER_VERSION: "29"
+  DOCKER_STATIC_VERSION: "29.7.1"
+  DOCKER_STATIC_SHA256: "0fcea2a8b4d1b54ccc9010e3451b78504a369d414f37eb3bb79300e1b5c22ce6"
+  DOCKER_BUILDX_VERSION: "0.36.1"
+  DOCKER_BUILDX_SHA256: "48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778"
+  DEBIAN_SNAPSHOT: "20260805T000000Z"
+  ALPINE_BASH_VERSION: "5.3.9-r1"
+  ALPINE_CURL_VERSION: "8.21.0-r0"
+  ALPINE_JQ_VERSION: "1.8.1-r0"
+  ALPINE_MAKE_VERSION: "4.4.1-r4"
+  # renovate: datasource=github-releases depName=kubernetes-sigs/kind
+  KIND_VERSION: "0.32.0"
+  DEFAULT_KIND_NODE_VERSION: "v1.36.1"
+  # renovate: datasource=github-releases depName=helm/chart-testing
+  CT_VERSION: "3.14.0"
+  # renovate: datasource=github-releases depName=helm-unittest/helm-unittest
+  HELM_UNITTEST_VERSION: "1.1.2"
+  # renovate: datasource=github-releases depName=yannh/kubeconform
+  KUBECONFORM_VERSION: "0.8.0"
+  # renovate: datasource=pypi depName=yamllint
+  YAMLLINT_VERSION: "1.38.0"
+  # renovate: datasource=pypi depName=yamale
+  YAMALE_VERSION: "6.1.0"
+  # renovate: datasource=npm depName=markdownlint-cli2
+  MARKDOWNLINT_VERSION: "0.23.2"
+  # renovate: datasource=pypi depName=mkdocs
+  MKDOCS_VERSION: "1.6.1"
+  # renovate: datasource=pypi depName=mkdocs-material
+  MKDOCS_MATERIAL_VERSION: "9.7.7"
+  # renovate: datasource=pypi depName=mike
+  MIKE_VERSION: "2.2.0"
+  # renovate: datasource=github-releases depName=errata-ai/vale
+  VALE_VERSION: "3.17.1"
+  # renovate: datasource=github-releases depName=goreleaser/goreleaser
+  GORELEASER_VERSION: "2.17.1"
+  # renovate: datasource=github-releases depName=sigstore/cosign
+  COSIGN_VERSION: "3.1.3"
+  # renovate: datasource=github-releases depName=anchore/syft
+  SYFT_VERSION: "1.50.0"
+  # renovate: datasource=github-releases depName=google/go-containerregistry
+  GO_CONTAINERREGISTRY_VERSION: "0.21.8"
+  # renovate: datasource=github-releases depName=oras-project/oras
+  ORAS_VERSION: "1.3.3"
+  # renovate: datasource=github-releases depName=helm/helm
+  HELM_VERSION: "3.20.1"
+  HELM_MIN_VERSION: "3.10.3"
+  # renovate: datasource=github-releases depName=kubernetes/kubernetes
+  KUBECTL_VERSION: "1.36.3"
+  # renovate: datasource=github-releases depName=mikefarah/yq
+  YQ_VERSION: "4.53.3"
+  # renovate: datasource=github-releases depName=boumenot/gocover-cobertura
+  GOCOVER_COBERTURA_VERSION: "1.5.0"
+  PAGES_DEPLOY_SOURCE_COMMIT: "cdaddc7aa72914987aec13d97292d14491231c5a"
+  PAGES_DEPLOY_SOURCE_REF: "pages-publisher-cdaddc7aa72914987aec13d97292d14491231c5a"
+  PAGES_ARTIFACT_FALLBACK_REF: "pages-publisher-cdaddc7aa72914987aec13d97292d14491231c5a"
+  HELM_DIFF_SOURCE_COMMIT: "ae426d7ea0cc9d55fb03c25ff3bd8c526e9635a7"
+  CRDS_CATALOG_SOURCE_COMMIT: "52b0261318acc7dd0b66e032759b1f218216b980"
+  CI_REGISTRY_REPOSITORY_ID: "9595253"
+  PYTHON_DOCS_REGISTRY_REPOSITORY_ID: "9595250"
+
+  GO_BUILD_IMAGE: "golang:1.26-bookworm@sha256:6c5605ab3a9a9fb3c4eafe5b3d63cdbf3881caf113262b67862547b54a9db599"
+  PYTHON_DOCS_BASE_IMAGE: "python:3.14-slim@sha256:a7fb1e634c4a578f9e0bd6327f11a3cde11b7a9395f48e24360c0988bcc5c2bc"
+  CONFORMANCE_BASE_IMAGE: "gcr.io/distroless/static-debian12:latest@sha256:a9fcaedd4c9b59e12dd65d954f0b5044f19b0647a8a3712e77205df9e7b102cd"
+  BUILDKIT_IMAGE: "moby/buildkit:v0.32.2-rootless@sha256:504731e577c20559c00f968f33219f30115e70be29ab96728d1d06e963fc494b"
+  ALPINE_CI_IMAGE: "alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"
+  DOCKER_CI_IMAGE: "docker:29-cli@sha256:27a51d5ab1cd38d9eeaba7b415b8c07bc10c31e1cf1ec8d78f6413fcfab3f44f"
+  DOCKER_DIND_IMAGE: "docker:29-dind@sha256:e8faad5a8dc5279dff929afc5449f2791736912fff9f99351d742db2fad01b4c"
+  BINFMT_IMAGE: "tonistiigi/binfmt:qemu-v10.0.4@sha256:8f58e6214f4cc9dc83ce8f5acad1ece508eb6b20e696a8c1e9f274481982c541"
+  KIND_NODE_IMAGE_130: "kindest/node:v1.30.13@sha256:8673291894dc400e0fb4f57243f5fdc6e355ceaa765505e0e73941aa1b6e0b80"
+  KIND_NODE_IMAGE_136: "kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5"
+  HAPROXY_IMAGE_30: "haproxytech/haproxy-debian:3.0.26@sha256:8ae10ed7248f78655b0986ee66c20f6c7f12e7395c80c992b4ffce6373fcc421"
+  HAPROXY_IMAGE_31: "haproxytech/haproxy-debian:3.1.17@sha256:6777767e63fa743413f937988c823016b4d2e0b3aeaacc82b2c1a30c4256c07a"
+  HAPROXY_IMAGE_32: "haproxytech/haproxy-debian:3.2.22@sha256:56229a011b5df73f51ba26aaa512cc45187b6f5c06e582e5cbffb06e68d096b2"
+  HAPROXY_IMAGE_33: "haproxytech/haproxy-debian:3.3.13@sha256:0f4d27f6a17827702c3b97098da748197340063da8c130aaee1de0fa9552ca38"
+  HAPROXY_IMAGE_34: "haproxytech/haproxy-debian:3.4.3@sha256:1a7b16457e75092cc1554830d66d1bdc51d6893429ec0cd37982a367182a252c"
+  CHART_TESTING_IMAGE: "quay.io/helmpack/chart-testing:v3.14.0@sha256:425ff3058dfc192fffb94e471e732b9bc995c375df963eba417ff01aea594e83"
+  HELM_UNITTEST_IMAGE: "helmunittest/helm-unittest:4.2.3-1.1.2@sha256:e9909f7bc32be541c5ed2f3303badbb2633ffa926566aeac386c946288164d2d"
+  KUBECONFORM_IMAGE: "ghcr.io/yannh/kubeconform:v0.8.0-alpine@sha256:6b90a5f23d846140ce0194fe050b1995e546eba938f3a6bf10c039dd5e24588f"
+  VECTOR_IMAGE: "timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39"
+  VARNISH_FIXTURE_IMAGE: "varnish:9.0@sha256:4c27969e671ef7ca9110072ba298fb4a53027ddf244266adfa46df0f722f88c1"
+  VALKEY_FIXTURE_IMAGE: "valkey/valkey:9.1.1-alpine@sha256:ee91f7a174ac4d6a6b0685b3a60e321f0a9dbbb691f9b0e285be2ba1d1be8328"
+  NGINX_FIXTURE_IMAGE: "nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752"
+  OPENSSL_FIXTURE_IMAGE: "alpine/openssl:latest@sha256:0a0b910a215ef38890e24526795f11d92c6f1016682fc4ef37fc5c44e23b758f"
+  CURL_FIXTURE_IMAGE: "alpine/curl:latest@sha256:7e0084208deb6b1dd71bba78e4d5ada7e29054b7782214d037fa78739faf3fe9"
+  BUSYBOX_FIXTURE_IMAGE: "busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
+  GRPC_ECHO_FIXTURE_IMAGE: "gcr.io/k8s-staging-gateway-api/echo-basic:v20260204-monthly-2026.01-60-g28382302@sha256:0a56ed5de3f279bba546e27c24f0a0ee982d7f1f99499081b8904cd826d1407d"
+  METRICS_SERVER_FIXTURE_IMAGE: "registry.k8s.io/metrics-server/metrics-server:v0.7.2@sha256:ffcb2bf004d6aa0a17d90e0247cf94f2865c8901dcab4427034c341951c239f9"
+
+  VALE_SHA256: "db947f89f2292e6a0381a61de155f6a5f5cb4cb460ca178ea412ef605559cefd"
+  KIND_SHA256: "50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54"
+  KUBECTL_SHA256: "ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336"
+  HELM_SHA256: "0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3"
+  HELM_MIN_SHA256: "950439759ece902157cf915b209b8d694e6f675eaab5099fb7894f30eeaee9a2"
+  YQ_SHA256: "fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4"
+  CT_SHA256: "d16f0583616885423826241164ce1f6589c6fe5332fa74f374ebd2bd3cb3fe1f"
+  HELM_UNITTEST_SHA256: "de03d6b7ba7683282064702d0b36fbbe812ab2a22691fa3a8b2ce57c2682609c"
+  KUBECONFORM_SHA256: "9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883"
+  GORELEASER_SHA256: "a99bbc7ae0d8d897b07c4c497a9b62f222558804715ef219d1af05a7e417bc80"
+  COSIGN_SHA256: "4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
+  SYFT_SHA256: "bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788"

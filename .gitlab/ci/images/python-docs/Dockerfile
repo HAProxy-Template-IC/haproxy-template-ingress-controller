@@ -1,21 +1,22 @@
-# CI image for documentation builds with MkDocs
-# Build with: docker build -t python-docs:latest .
+ARG PYTHON_DOCS_BASE_IMAGE=python:must-be-supplied@sha256:0000000000000000000000000000000000000000000000000000000000000000
+FROM ${PYTHON_DOCS_BASE_IMAGE}
 
-# renovate: datasource=docker depName=python
-ARG PYTHON_VERSION=3.14
-FROM python:${PYTHON_VERSION}-slim
+ARG MKDOCS_VERSION
+ARG MKDOCS_MATERIAL_VERSION
+ARG MIKE_VERSION
+ARG DEBIAN_SNAPSHOT
 
-# Install git, curl, jq, and unzip (needed for MR previews and version management)
-RUN apt-get update && apt-get install -y --no-install-recommends git curl jq unzip \
+RUN . /etc/os-release \
+    && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
+    && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s %s main\n' \
+       "${DEBIAN_SNAPSHOT}" "${VERSION_CODENAME}" >/etc/apt/sources.list \
+    && apt-get -o Acquire::Check-Valid-Until=false update \
+    && apt-get install -y --no-install-recommends git curl jq unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install MkDocs with Material theme and versioning support
-# Pin mkdocs<2 to avoid incompatibility with mkdocs-material
-# (see https://squidfunk.github.io/mkdocs-material/blog/2026/02/18/mkdocs-2.0/)
-RUN pip install --no-cache-dir \
-    "mkdocs>=1.6,<2" \
-    mkdocs-material \
-    mike
+COPY requirements.lock /tmp/requirements.lock
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock \
+    && rm /tmp/requirements.lock
 
 # Verify installations
 RUN mkdocs --version && mike --version

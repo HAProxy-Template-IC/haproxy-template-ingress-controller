@@ -1,0 +1,13 @@
+.gitlab/ci/image-build-inputs.txt
+.gitlab/ci/build-pins.yml
+.gitlab/ci/images/ci/Dockerfile
+.gitlab/ci/images/ci/package.json
+.gitlab/ci/images/ci/package-lock.json
+.gitlab/ci/images/ci/requirements.in
+.gitlab/ci/images/ci/requirements.lock
+.gitlab/ci/images/ci/tools/go.mod
+.gitlab/ci/images/ci/tools/go.sum
+.gitlab/ci/images/python-docs/Dockerfile
+.gitlab/ci/images/python-docs/requirements.in
+.gitlab/ci/images/python-docs/requirements.lock
+scripts/ci-image-input-hash.sh
