@@ -29,6 +29,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // effectiveResolution mirrors pkg/core/config.Resolution as served by
@@ -57,9 +59,7 @@ func (dc *debugClient) healthzSettled(ctx context.Context) bool {
 }
 
 func (dc *debugClient) getEffectiveResolution(ctx context.Context) (*effectiveResolution, error) {
-	body, err := dc.clientset.CoreV1().Services(dc.namespace).ProxyGet(
-		"http", dc.serviceName, dc.port, "/debug/vars/effectiveConfigResolution", nil,
-	).DoRaw(ctx)
+	body, err := dc.loopback.Get(ctx, "/debug/vars/effectiveConfigResolution")
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +167,9 @@ func TestGatewayAPICRDUpgradeInPlace(t *testing.T) {
 				namespace:   ControllerNamespace,
 				serviceName: DebugServiceNameValue,
 				port:        strconv.Itoa(DebugPort),
+				loopback: testutil.NewLoopbackPodClient(
+					client.RESTConfig(), cs, ControllerNamespace, LabelSelectorController, DebugPort,
+				),
 			}
 
 			// Baseline: TCPRoute watched at v1 (the suite installs the

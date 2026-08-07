@@ -20,73 +20,59 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/flowcontrol"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
+	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
-// DebugClient provides access to the controller's debug HTTP server via Kubernetes API proxy.
-// This approach uses the API server's built-in service proxy, which routes requests through
-// the API server to the service. This is more reliable than port-forwarding (SPDY) and
-// doesn't require NodePort exposure through DinD extraPortMappings.
+// DebugClient reaches the controller's loopback-only debug endpoints.
 type DebugClient struct {
-	clientset   kubernetes.Interface
-	namespace   string
-	serviceName string
-	port        string
+	loopback  *testutil.LoopbackPodClient
+	haptic    hapticclient.Interface
+	namespace string
 }
 
-// NewDebugClient creates a new debug client for accessing the controller via API proxy.
-// The clientset is used to make proxied HTTP requests through the Kubernetes API server.
-func NewDebugClient(clientset kubernetes.Interface, namespace, serviceName string, port int32) *DebugClient {
-	return &DebugClient{
-		clientset:   clientset,
-		namespace:   namespace,
-		serviceName: serviceName,
-		port:        strconv.Itoa(int(port)),
+// NewDebugClient creates a client that port-forwards to ready controller pods.
+func NewDebugClient(config *rest.Config, clientset kubernetes.Interface, namespace string, port int32) (*DebugClient, error) {
+	configCopy := rest.CopyConfig(config)
+	configCopy.RateLimiter = flowcontrol.NewFakeAlwaysRateLimiter()
+	haptic, err := hapticclient.NewForConfig(configCopy)
+	if err != nil {
+		return nil, fmt.Errorf("create HAPTIC client: %w", err)
 	}
+	return &DebugClient{
+		loopback: testutil.NewLoopbackPodClient(
+			config,
+			clientset,
+			namespace,
+			"app="+ControllerDeploymentName,
+			int(port),
+		),
+		haptic:    haptic,
+		namespace: namespace,
+	}, nil
 }
 
-// proxyGet makes an HTTP GET request through the Kubernetes API server proxy.
-// Includes retry logic with exponential backoff for resilience during parallel test execution.
-//
-// With 17 parallel tests, the Kind cluster's API server can become overloaded,
-// returning 503 "server unable to handle request" errors. The retry budget is
-// tuned to handle these transient failures while still allowing higher-level
-// Wait functions to make multiple attempts within their timeout budgets.
+// proxyGet retries idempotent requests when a pod restarts or a tunnel drops.
 func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error) {
 	const (
-		// Retry budget is tuned to work with the outer Wait functions:
-		// - maxRetries reduced from 8 to 4 to allow more outer loop attempts
-		// - maxBackoff reduced from 4s to 2s to fail faster on persistent errors
-		// - minTimeForRetries reduced from 10s to 5s to attempt retries more often
-		//
-		// With these settings, worst-case per proxyGet is ~5.4s (1.4s backoff + 4 API calls)
-		// instead of ~22s (14.2s backoff + 8 API calls). This allows the outer Wait
-		// functions (with 30-60s timeouts) to make more attempts.
 		maxRetries        = 4
 		initialBackoff    = 200 * time.Millisecond
 		maxBackoff        = 2 * time.Second
 		minTimeForRetries = 5 * time.Second
 	)
 
-	// Check if we have enough time remaining for retries.
-	// If deadline is tight, try once and fail fast to let the Wait function retry.
 	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		if remaining < minTimeForRetries {
-			// Not enough time for meaningful retries - try once and return
-			return dc.clientset.CoreV1().Services(dc.namespace).ProxyGet(
-				"http",
-				dc.serviceName,
-				dc.port,
-				path,
-				nil,
-			).DoRaw(ctx)
+		if time.Until(deadline) < minTimeForRetries {
+			return dc.loopback.Get(ctx, path)
 		}
 	}
 
@@ -107,13 +93,7 @@ func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error
 			}
 		}
 
-		body, err := dc.clientset.CoreV1().Services(dc.namespace).ProxyGet(
-			"http",
-			dc.serviceName,
-			dc.port,
-			path,
-			nil,
-		).DoRaw(ctx)
+		body, err := dc.loopback.Get(ctx, path)
 
 		if err == nil {
 			return body, nil
@@ -121,39 +101,12 @@ func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error
 
 		lastErr = err
 
-		// Check if the parent context is cancelled - don't retry in that case
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-
-		// Check if error is retryable (server overloaded, temporary unavailability)
-		errStr := err.Error()
-		if strings.Contains(errStr, "unable to handle the request") ||
-			strings.Contains(errStr, "connection refused") ||
-			strings.Contains(errStr, "no endpoints available") ||
-			strings.Contains(errStr, "connection reset") ||
-			strings.Contains(errStr, "i/o timeout") ||
-			strings.Contains(errStr, "an error on the server") ||
-			strings.Contains(errStr, "EOF") ||
-			// Service-existence race during controller pod restart: the
-			// API-server proxy briefly returns NotFound on the Service
-			// resource ("get services ...") between Pod-Ready and
-			// Endpoints-fully-propagated, even after WaitForServiceEndpoints
-			// has succeeded. The Service object is never actually deleted
-			// — this is a transient API-server view that resolves within
-			// the existing 4-retry / ~5s budget. Legitimate "service
-			// doesn't exist" cases still surface via the outer Wait
-			// function timeouts (30-60s).
-			strings.Contains(errStr, "could not find the requested resource") {
-			// Retryable error, continue to next attempt
-			continue
-		}
-
-		// Non-retryable error, return immediately
-		return nil, err
 	}
 
-	return nil, fmt.Errorf("proxyGet failed after %d retries: %w", maxRetries, lastErr)
+	return nil, fmt.Errorf("debug GET failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // GetConfig retrieves the current controller configuration from the debug server.
@@ -444,7 +397,7 @@ func (dc *DebugClient) WaitForValidationStatus(ctx context.Context, expected str
 		})
 }
 
-// getJSON fetches JSON from the debug server via API proxy.
+// getJSON fetches JSON from the loopback-only debug server.
 func (dc *DebugClient) getJSON(ctx context.Context, path string) (map[string]any, error) {
 	body, err := dc.proxyGet(ctx, path)
 	if err != nil {
@@ -464,52 +417,27 @@ func (dc *DebugClient) GetAuxiliaryFiles(ctx context.Context) (map[string]any, e
 	return dc.getJSON(ctx, DebugPathAuxFiles)
 }
 
-// GetGeneralFileContent retrieves the content of a specific general file from auxiliary files.
-// Returns the content string and any error encountered.
+// GetGeneralFileContent reads a rendered general file from its output CRD.
 func (dc *DebugClient) GetGeneralFileContent(ctx context.Context, fileName string) (string, error) {
-	auxFiles, err := dc.GetAuxiliaryFiles(ctx)
+	files, err := dc.haptic.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(dc.namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to get auxiliary files: %w", err)
+		return "", fmt.Errorf("list HAProxyGeneralFiles: %w", err)
 	}
-
-	files, ok := auxFiles["files"].(map[string]any)
-	if !ok {
-		return "", fmt.Errorf("files field not found or wrong type")
-	}
-
-	// The struct field is GeneralFiles (not general_files) - Go JSON serialization uses struct field names
-	// Note: When Go slice is nil, JSON marshals as null, which unmarshals to nil any.
-	// Check for nil explicitly before type assertion.
-	generalFilesRaw := files["GeneralFiles"]
-	if generalFilesRaw == nil {
-		// No auxiliary files rendered yet - return file not found
-		return "", fmt.Errorf("file %s not found in auxiliary files (no files rendered yet)", fileName)
-	}
-	generalFiles, ok := generalFilesRaw.([]any)
-	if !ok {
-		return "", fmt.Errorf("GeneralFiles field has unexpected type %T", generalFilesRaw)
-	}
-
-	for _, file := range generalFiles {
-		fileMap, ok := file.(map[string]any)
-		if !ok {
+	for i := range files.Items {
+		file := &files.Items[i]
+		if file.Spec.FileName != fileName {
 			continue
 		}
-		// The struct field is Filename (not Name)
-		name, ok := fileMap["Filename"].(string)
-		if !ok {
-			continue
+		if !file.Spec.Compressed {
+			return file.Spec.Content, nil
 		}
-		if name == fileName {
-			content, ok := fileMap["Content"].(string)
-			if !ok {
-				return "", fmt.Errorf("content field not found or wrong type for file %s", fileName)
-			}
-			return content, nil
+		content, err := compression.Decompress(file.Spec.Content)
+		if err != nil {
+			return "", fmt.Errorf("decompress HAProxyGeneralFile %s: %w", file.Name, err)
 		}
+		return content, nil
 	}
-
-	return "", fmt.Errorf("file %s not found in auxiliary files", fileName)
+	return "", fmt.Errorf("HAProxyGeneralFile for %q not found", fileName)
 }
 
 // WaitForAuxFileContains waits until a specific auxiliary file contains the expected content.

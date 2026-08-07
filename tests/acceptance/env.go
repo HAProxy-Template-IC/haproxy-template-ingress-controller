@@ -1010,7 +1010,10 @@ func EnsureDebugClientReady(ctx context.Context, t *testing.T, client klient.Cli
 		return nil, fmt.Errorf("failed waiting for debug service endpoints: %w", err)
 	}
 
-	return NewDebugClient(clientset, namespace, serviceName, DebugPort), nil
+	// Port-forward rather than the API server's Service proxy: /debug/* is
+	// loopback-only, and the proxy arrives from the pod network.
+	_ = serviceName
+	return NewDebugClient(client.RESTConfig(), clientset, namespace, DebugPort)
 }
 
 // SetupDebugClient creates the debug service (if not exists) and returns a debug client.
@@ -1038,7 +1041,10 @@ func SetupDebugClient(ctx context.Context, client klient.Client, clientset kuber
 		return nil, fmt.Errorf("failed waiting for debug service endpoints: %w", err)
 	}
 
-	return NewDebugClient(clientset, namespace, serviceName, DebugPort), nil
+	// Port-forward rather than the API server's Service proxy: /debug/* is
+	// loopback-only, and the proxy arrives from the pod network.
+	_ = serviceName
+	return NewDebugClient(client.RESTConfig(), clientset, namespace, DebugPort)
 }
 
 // MetricsClient provides access to the controller's metrics endpoint via Kubernetes API proxy.

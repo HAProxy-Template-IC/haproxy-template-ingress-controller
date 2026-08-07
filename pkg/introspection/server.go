@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -161,13 +162,17 @@ func (s *Server) SetHealthChecker(checker HealthCheckFunc) {
 func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// Register custom handlers first (allow overriding defaults)
 	for _, h := range s.customHandlers {
+		if strings.HasPrefix(h.pattern, "/debug/") {
+			mux.HandleFunc(h.pattern, requireLoopback(h.handler))
+			continue
+		}
 		mux.HandleFunc(h.pattern, h.handler)
 	}
 
 	// Variable endpoints (GET only)
-	mux.HandleFunc("/debug/vars", requireGET(s.handleIndex))
-	mux.HandleFunc("/debug/vars/", requireGET(s.handleVar)) // Trailing slash for path matching
-	mux.HandleFunc("/debug/vars/all", requireGET(s.handleAllVars))
+	mux.HandleFunc("/debug/vars", requireLoopback(requireGET(s.handleIndex)))
+	mux.HandleFunc("/debug/vars/", requireLoopback(requireGET(s.handleVar))) // Trailing slash for path matching
+	mux.HandleFunc("/debug/vars/all", requireLoopback(requireGET(s.handleAllVars)))
 
 	// Health check endpoints (GET only)
 	mux.HandleFunc("/health", requireGET(s.handleHealth))
@@ -175,7 +180,7 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 
 	// Forward pprof requests to DefaultServeMux where net/http/pprof registers its handlers.
 	// The pprof import side-effect registers on http.DefaultServeMux, so we forward to it.
-	mux.Handle("/debug/pprof/", http.DefaultServeMux)
+	mux.Handle("/debug/pprof/", requireLoopback(http.DefaultServeMux.ServeHTTP))
 
 	// Catch-all for 404
 	mux.HandleFunc("/", s.handleNotFound)
