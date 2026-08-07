@@ -100,6 +100,9 @@ func WaitForE2EEnvironmentReady(ctx context.Context, client klient.Client) error
 		namespace:   ControllerNamespace,
 		serviceName: DebugServiceNameValue,
 		port:        strconv.Itoa(DebugPort),
+		loopback: testutil.NewLoopbackPodClient(
+			client.RESTConfig(), cs, ControllerNamespace, LabelSelectorController, DebugPort,
+		),
 	}
 	if err := testutil.WaitForConditionWithDescription(ctx, cfg,
 		"controller /healthz returns 200 (all components ready, leader-only running)",
@@ -214,12 +217,13 @@ type debugClient struct {
 	namespace   string
 	serviceName string
 	port        string
+	// /debug/* is loopback-only, so it is reached by port-forward. The health
+	// endpoints stay on the Service proxy, which the kubelet also uses.
+	loopback *testutil.LoopbackPodClient
 }
 
 func (dc *debugClient) getPipelineStatus(ctx context.Context) (*pipelineStatus, error) {
-	body, err := dc.clientset.CoreV1().Services(dc.namespace).ProxyGet(
-		"http", dc.serviceName, dc.port, DebugPathPipeline, nil,
-	).DoRaw(ctx)
+	body, err := dc.loopback.Get(ctx, DebugPathPipeline)
 	if err != nil {
 		return nil, err
 	}

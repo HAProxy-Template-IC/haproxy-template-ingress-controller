@@ -16,6 +16,7 @@ package introspection
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 )
 
@@ -91,6 +92,29 @@ func requireGET(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			WriteError(w, http.StatusMethodNotAllowed, "only GET is allowed")
+			return
+		}
+		handler(w, r)
+	}
+}
+
+// requireLoopback rejects any request that did not arrive over the loopback
+// interface. /debug/* exposes rendered auxiliary files, which can carry
+// certificate private keys, and the chart publishes this port on a Service —
+// so pod-network reachability would expose key material. Health endpoints are
+// deliberately NOT wrapped: the kubelet probes them from off-pod and they
+// expose no secrets.
+//
+// Reach the endpoints with `kubectl port-forward`, and restrict
+// pods/portforward with RBAC.
+func requireLoopback(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+			WriteError(w, http.StatusForbidden, "diagnostics are available on loopback only; use kubectl port-forward")
 			return
 		}
 		handler(w, r)

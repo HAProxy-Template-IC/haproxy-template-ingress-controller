@@ -113,9 +113,7 @@ var gwPodPortLineRe = regexp.MustCompile(`(?m)^\s*# gw-pod-port: (\S+) = (\d+)\s
 // template output — it still carries the `# gw-pod-port:` allocator-dump
 // comments, unlike the config after HAProxy's own parser normalises it.
 func (dc *debugClient) getRenderedConfig(ctx context.Context) (string, error) {
-	body, err := dc.clientset.CoreV1().Services(dc.namespace).ProxyGet(
-		"http", dc.serviceName, dc.port, "/debug/vars/rendered", nil,
-	).DoRaw(ctx)
+	body, err := dc.loopback.Get(ctx, "/debug/vars/rendered")
 	if err != nil {
 		return "", err
 	}
@@ -340,6 +338,9 @@ func TestGatewayChurn(t *testing.T) {
 				namespace:   ControllerNamespace,
 				serviceName: DebugServiceNameValue,
 				port:        strconv.Itoa(DebugPort),
+				loopback: testutil.NewLoopbackPodClient(
+					client.RESTConfig(), cs, ControllerNamespace, LabelSelectorController, DebugPort,
+				),
 			}
 
 			// Survivor fixtures: one namespace, its own echo backend, and
