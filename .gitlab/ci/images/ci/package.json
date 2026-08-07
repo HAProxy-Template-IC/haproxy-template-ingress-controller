@@ -1,0 +1,7 @@
+{
+  "name": "haptic-ci-tools",
+  "private": true,
+  "dependencies": {
+    "markdownlint-cli2": "0.23.2"
+  }
+}

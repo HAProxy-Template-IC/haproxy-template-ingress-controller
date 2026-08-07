@@ -5,20 +5,14 @@
 # available for all versions without depending on haproxy.debian.net.
 # Go toolchain is copied from the official golang image.
 
-# Global ARGs must be declared before the first FROM to be available to all stages
-# renovate: datasource=docker depName=golang
-ARG GO_VERSION=1.26
-# Clamped to stable upstream series by a packageRule in renovate.json (upstream
-# tags `vX.Y-devN` during development and `vX.Y.Z` at release; we skip series
-# that have no stable release yet).
-# renovate: datasource=github-tags depName=haproxy/haproxy versioning=loose
-ARG HAPROXY_VERSION=3.4
+ARG GO_BUILD_IMAGE=golang:must-be-supplied@sha256:0000000000000000000000000000000000000000000000000000000000000000
+ARG HAPROXY_IMAGE=haproxytech/haproxy-debian:must-be-supplied@sha256:0000000000000000000000000000000000000000000000000000000000000000
 
 # Stage 1: Go toolchain source
-FROM golang:${GO_VERSION}-bookworm AS go-toolchain
+FROM ${GO_BUILD_IMAGE} AS go-toolchain
 
 # Stage 2: CI image based on official HAProxy image
-FROM haproxytech/haproxy-debian:${HAPROXY_VERSION}
+FROM ${HAPROXY_IMAGE}
 
 # Copy Go toolchain from official image
 COPY --from=go-toolchain /usr/local/go /usr/local/go
@@ -26,112 +20,161 @@ ENV GOPATH=/go \
     PATH="/usr/local/go/bin:/go/bin:${PATH}"
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
 
-# renovate: datasource=docker depName=docker
-ARG DOCKER_VERSION=29
-# renovate: datasource=github-releases depName=kubernetes-sigs/kind
-ARG KIND_VERSION=0.32.0
-# renovate: datasource=github-releases depName=helm/chart-testing
-ARG CT_VERSION=3.14.0
-# renovate: datasource=github-releases depName=helm-unittest/helm-unittest
-ARG HELM_UNITTEST_VERSION=1.1.2
-# renovate: datasource=github-releases depName=yannh/kubeconform
-ARG KUBECONFORM_VERSION=0.8.0
-# renovate: datasource=pypi depName=yamllint
-ARG YAMLLINT_VERSION=1.38.0
-# markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
-ARG MARKDOWNLINT_VERSION=0.14.0
-# renovate: datasource=github-releases depName=errata-ai/vale
-ARG VALE_VERSION=3.17.1
-# renovate: datasource=github-releases depName=goreleaser/goreleaser
-ARG GORELEASER_VERSION=2.17.1
-# renovate: datasource=github-releases depName=sigstore/cosign
-ARG COSIGN_VERSION=3.1.3
-# renovate: datasource=github-releases depName=anchore/syft
-ARG SYFT_VERSION=1.50.0
-# renovate: datasource=github-releases depName=helm/helm versioning=semver allowedVersions=<4
-ARG HELM_VERSION=3.20.1
-# renovate: datasource=github-releases depName=kubernetes/kubernetes
-ARG KUBECTL_VERSION=1.36.3
-# renovate: datasource=github-releases depName=mikefarah/yq
-ARG YQ_VERSION=4.53.3
-# renovate: datasource=github-releases depName=boumenot/gocover-cobertura
-ARG GOCOVER_COBERTURA_VERSION=1.5.0
+ARG DOCKER_STATIC_VERSION
+ARG DOCKER_STATIC_SHA256
+ARG DOCKER_BUILDX_VERSION
+ARG DOCKER_BUILDX_SHA256
+ARG DEBIAN_SNAPSHOT
+ARG KIND_VERSION
+ARG CT_VERSION
+ARG HELM_UNITTEST_VERSION
+ARG KUBECONFORM_VERSION
+ARG YAMLLINT_VERSION
+ARG YAMALE_VERSION
+ARG MARKDOWNLINT_VERSION
+ARG VALE_VERSION
+ARG GORELEASER_VERSION
+ARG COSIGN_VERSION
+ARG SYFT_VERSION
+ARG HELM_VERSION
+ARG HELM_MIN_VERSION
+ARG KUBECTL_VERSION
+ARG YQ_VERSION
+ARG GOCOVER_COBERTURA_VERSION
+ARG VALE_SHA256
+ARG KIND_SHA256
+ARG KUBECTL_SHA256
+ARG HELM_SHA256
+ARG HELM_MIN_SHA256
+ARG YQ_SHA256
+ARG CT_SHA256
+ARG HELM_UNITTEST_SHA256
+ARG KUBECONFORM_SHA256
+ARG GORELEASER_SHA256
+ARG COSIGN_SHA256
+ARG SYFT_SHA256
 
-# Install git (for go modules), Docker CLI, and other build dependencies
-RUN apt-get update \
+# Install build dependencies from one immutable Debian repository state.
+RUN . /etc/os-release \
+    && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
+    && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s %s main\n' \
+       "${DEBIAN_SNAPSHOT}" "${VERSION_CODENAME}" >/etc/apt/sources.list \
+    && apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends \
-       ca-certificates gnupg git make \
+       ca-certificates curl gnupg git make \
        jq python3-pip nodejs npm \
        brotli gzip \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg \
-       | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
-    && . /etc/os-release \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
-       https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
-       > /etc/apt/sources.list.d/docker.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-       docker-ce-cli=5:${DOCKER_VERSION}.\* docker-buildx-plugin \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yamllint, yamale (for ct), and markdownlint-cli2 for config file linting
-# Pin markdownlint-cli2@0.14.0 - newer versions pull string-width 7.x which requires Node.js 20+
-RUN pip3 install --break-system-packages yamllint==${YAMLLINT_VERSION} yamale \
-    && npm install -g markdownlint-cli2@${MARKDOWNLINT_VERSION}
+RUN curl -fsSL -o /tmp/docker.tgz \
+        "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_STATIC_VERSION}.tgz" \
+    && echo "${DOCKER_STATIC_SHA256}  /tmp/docker.tgz" | sha256sum --check - \
+    && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
+    && install /tmp/docker/docker /usr/local/bin/docker \
+    && rm -rf /tmp/docker /tmp/docker.tgz \
+    && mkdir -p /usr/local/lib/docker/cli-plugins \
+    && curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx \
+        "https://github.com/docker/buildx/releases/download/v${DOCKER_BUILDX_VERSION}/buildx-v${DOCKER_BUILDX_VERSION}.linux-amd64" \
+    && echo "${DOCKER_BUILDX_SHA256}  /usr/local/lib/docker/cli-plugins/docker-buildx" | sha256sum --check - \
+    && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+
+COPY requirements.lock /tmp/requirements.lock
+RUN pip3 install --break-system-packages --require-hashes -r /tmp/requirements.lock \
+    && rm /tmp/requirements.lock
+
+COPY package.json package-lock.json /opt/markdownlint/
+RUN npm ci --omit=dev --ignore-scripts --prefix /opt/markdownlint \
+    && ln -s /opt/markdownlint/node_modules/.bin/markdownlint-cli2 /usr/local/bin/markdownlint-cli2
 
 # Install vale (prose linter for the docs site)
-RUN curl -fsSL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
-    | tar -xz -C /usr/local/bin vale
+RUN curl -fsSL -o /tmp/vale.tar.gz \
+        "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
+    && echo "${VALE_SHA256}  /tmp/vale.tar.gz" | sha256sum --check - \
+    && tar -xzf /tmp/vale.tar.gz -C /usr/local/bin vale \
+    && rm /tmp/vale.tar.gz
 
 # Install kind
 RUN curl -fsSL -o /usr/local/bin/kind \
     "https://kind.sigs.k8s.io/dl/v${KIND_VERSION}/kind-linux-amd64" \
+    && echo "${KIND_SHA256}  /usr/local/bin/kind" | sha256sum --check - \
     && chmod +x /usr/local/bin/kind
 
 # Install kubectl
 RUN curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /usr/local/bin/kubectl \
     "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+    && echo "${KUBECTL_SHA256}  /usr/local/bin/kubectl" | sha256sum --check - \
     && chmod +x /usr/local/bin/kubectl
 
 # Install Helm
-RUN curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
-    | tar xzf - -C /usr/local/bin --strip-components=1 linux-amd64/helm
+RUN curl -fsSL -o /tmp/helm.tar.gz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
+    && echo "${HELM_SHA256}  /tmp/helm.tar.gz" | sha256sum --check - \
+    && tar -xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm \
+    && rm /tmp/helm.tar.gz
+RUN curl -fsSL -o /tmp/helm-min.tar.gz "https://get.helm.sh/helm-v${HELM_MIN_VERSION}-linux-amd64.tar.gz" \
+    && echo "${HELM_MIN_SHA256}  /tmp/helm-min.tar.gz" | sha256sum --check - \
+    && tar -xzf /tmp/helm-min.tar.gz -C /tmp --strip-components=1 linux-amd64/helm \
+    && mv /tmp/helm /usr/local/bin/helm-min \
+    && rm /tmp/helm-min.tar.gz
 
 # Install yq
 RUN curl -fsSL -o /usr/local/bin/yq \
     "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
+    && echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum --check - \
     && chmod +x /usr/local/bin/yq
 
-# Install gocover-cobertura for coverage report conversion
-RUN go install github.com/boumenot/gocover-cobertura@v${GOCOVER_COBERTURA_VERSION}
+COPY tools/go.mod tools/go.sum /opt/ci-tools/
+RUN cd /opt/ci-tools \
+    && go mod verify \
+    && go build -mod=readonly -trimpath -o /usr/local/bin/gocover-cobertura github.com/boumenot/gocover-cobertura \
+    && go build -mod=readonly -trimpath -o /usr/local/bin/crane github.com/google/go-containerregistry/cmd/crane \
+    && go build -mod=readonly -trimpath -o /usr/local/bin/oras oras.land/oras/cmd/oras
 
 # Install chart-testing (ct) with configuration files
 RUN mkdir -p /etc/ct \
-    && curl -fsSL "https://github.com/helm/chart-testing/releases/download/v${CT_VERSION}/chart-testing_${CT_VERSION}_linux_amd64.tar.gz" \
-    | tar xzf - -C /tmp \
+    && curl -fsSL -o /tmp/chart-testing.tar.gz \
+        "https://github.com/helm/chart-testing/releases/download/v${CT_VERSION}/chart-testing_${CT_VERSION}_linux_amd64.tar.gz" \
+    && echo "${CT_SHA256}  /tmp/chart-testing.tar.gz" | sha256sum --check - \
+    && tar -xzf /tmp/chart-testing.tar.gz -C /tmp \
     && mv /tmp/ct /usr/local/bin/ct \
     && mv /tmp/etc/* /etc/ct/ \
-    && rm -rf /tmp/etc
+    && rm -rf /tmp/etc /tmp/chart-testing.tar.gz
 
-# Install helm-unittest plugin
-RUN helm plugin install https://github.com/helm-unittest/helm-unittest.git --version v${HELM_UNITTEST_VERSION}
+# Helm 3 rejects the release archive's Helm 4-only platformHooks field.
+RUN curl -fsSL -o /tmp/helm-unittest.tar.gz \
+        "https://github.com/helm-unittest/helm-unittest/releases/download/v${HELM_UNITTEST_VERSION}/helm-unittest-linux-amd64-${HELM_UNITTEST_VERSION}.tgz" \
+    && echo "${HELM_UNITTEST_SHA256}  /tmp/helm-unittest.tar.gz" | sha256sum --check - \
+    && plugin_dir="$(helm env HELM_PLUGINS)/helm-unittest" \
+    && mkdir -p "${plugin_dir}" \
+    && tar -xzf /tmp/helm-unittest.tar.gz -C "${plugin_dir}" \
+    && yq -i 'del(.platformHooks)' "${plugin_dir}/plugin.yaml" \
+    && rm /tmp/helm-unittest.tar.gz
 
 # Install kubeconform
-RUN curl -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
-    | tar xzf - -C /usr/local/bin kubeconform
+RUN curl -fsSL -o /tmp/kubeconform.tar.gz \
+        "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+    && echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum --check - \
+    && tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform \
+    && rm /tmp/kubeconform.tar.gz
 
 # Install goreleaser
-RUN curl -fsSL "https://github.com/goreleaser/goreleaser/releases/download/v${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz" \
-    | tar xzf - -C /usr/local/bin goreleaser
+RUN curl -fsSL -o /tmp/goreleaser.tar.gz \
+        "https://github.com/goreleaser/goreleaser/releases/download/v${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz" \
+    && echo "${GORELEASER_SHA256}  /tmp/goreleaser.tar.gz" | sha256sum --check - \
+    && tar -xzf /tmp/goreleaser.tar.gz -C /usr/local/bin goreleaser \
+    && rm /tmp/goreleaser.tar.gz
 
 # Install cosign
 RUN curl -fsSL -o /usr/local/bin/cosign \
     "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+    && echo "${COSIGN_SHA256}  /usr/local/bin/cosign" | sha256sum --check - \
     && chmod +x /usr/local/bin/cosign
 
 # Install syft for SBOM generation
-RUN curl -fsSL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
-    | tar xzf - -C /usr/local/bin syft
+RUN curl -fsSL -o /tmp/syft.tar.gz \
+        "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+    && echo "${SYFT_SHA256}  /tmp/syft.tar.gz" | sha256sum --check - \
+    && tar -xzf /tmp/syft.tar.gz -C /usr/local/bin syft \
+    && rm /tmp/syft.tar.gz
 
 # Verify installations
-RUN go version && haproxy -v && docker --version && kind version && kubectl version --client && helm version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1 && ct version && helm unittest --help | head -1 && kubeconform -v && goreleaser --version && cosign version && syft version && vale --version
+RUN go version && haproxy -v && docker --version && docker buildx version && kind version && kubectl version --client && helm version && helm-min version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1 && ct version && helm unittest --help >/dev/null && kubeconform -v && goreleaser --version && cosign version && syft version && crane version && oras version && vale --version
