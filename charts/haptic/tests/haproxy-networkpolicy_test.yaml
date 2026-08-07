@@ -1,0 +1,108 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: haproxy network policy
+# Permissive mode (allowExternal, the default) deliberately admits every port
+# from anywhere, because Gateway listener ports are added to the Service at
+# runtime and the chart cannot enumerate them. It must still carve out the
+# internal ports whose own rule names a single allowed client: NetworkPolicy
+# rules are additive, so matching those here unions with the narrow rule and
+# re-opens the port to the whole cluster.
+templates:
+  - haproxy-networkpolicy.yaml
+tests:
+  - it: fences the backend-fetch and dataplane ports out of the permissive rule
+    set:
+      cache.varnish.enabled: true
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - protocol: TCP
+              port: 1
+              endPort: 5554
+            - protocol: TCP
+              port: 5556
+              endPort: 8089
+            - protocol: TCP
+              port: 8091
+              endPort: 65535
+      - notContains:
+          path: spec.ingress
+          content: {}
+
+  - it: fences the dataplane port when the cache tier is off
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - protocol: TCP
+              port: 1
+              endPort: 5554
+            - protocol: TCP
+              port: 5556
+              endPort: 65535
+      - notContains:
+          path: spec.ingress
+          content: {}
+
+  # Carve-out ports are sorted numerically, not lexically, and parsed base 10 —
+  # `int` reads the zero-padded sort key as octal.
+  - it: orders the carved-out ports numerically
+    set:
+      cache.varnish.enabled: true
+      cache.varnish.loopbackPort: 1000
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - protocol: TCP
+              port: 1
+              endPort: 999
+            - protocol: TCP
+              port: 1001
+              endPort: 5554
+            - protocol: TCP
+              port: 5556
+              endPort: 65535
+
+  - it: keeps the narrow rules that the carve-out exists to protect
+    set:
+      cache.varnish.enabled: true
+    asserts:
+      - contains:
+          path: spec.ingress
+          content:
+            ports:
+              - port: 8090
+                protocol: TCP
+            from:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: haptic-varnish-cache
+                    app.kubernetes.io/instance: RELEASE-NAME-haptic-varnish-cache
+      - contains:
+          path: spec.ingress
+          content:
+            ports:
+              - port: 5555
+                protocol: TCP
+            from:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: controller
+                    app.kubernetes.io/instance: RELEASE-NAME
+                    app.kubernetes.io/name: haptic
+
+  - it: leaves restrictive mode alone
+    set:
+      cache.varnish.enabled: true
+      haproxy.networkPolicy.allowExternal: false
+      haproxy.networkPolicy.allowedSources:
+        - podSelector: {}
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - port: 80
+              protocol: TCP
+            - port: 443
+              protocol: TCP

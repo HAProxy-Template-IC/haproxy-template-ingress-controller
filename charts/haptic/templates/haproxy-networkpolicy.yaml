@@ -39,7 +39,30 @@ spec:
     # rule covers the static http/https/stats ports plus any
     # gw-<port>-<proto> entries the gateway library writes onto
     # haptic-haproxy.
-    - {}
+    {{- $fenced := list (printf "%05d" (int $ports.dataplane)) }}
+    {{- if .Values.cache.varnish.enabled }}
+    {{- $fenced = append $fenced (printf "%05d" (int (.Values.cache.varnish.loopbackPort | default 8090))) }}
+    {{- end }}
+    # Carved out below: the internal ports whose own rule further down names a
+    # single allowed client. NetworkPolicy rules are additive, so matching them
+    # here would union with those rules and re-open the ports cluster-wide.
+    - ports:
+        {{- $next := 1 }}
+        {{- range $padded := ($fenced | uniq | sortAlpha) }}
+        {{- /* atoi, not int: int parses the zero-padded string as octal. */ -}}
+        {{- $port := atoi $padded }}
+        {{- if gt $port $next }}
+        - protocol: TCP
+          port: {{ $next }}
+          endPort: {{ sub $port 1 }}
+        {{- end }}
+        {{- $next = int (add $port 1) }}
+        {{- end }}
+        {{- if le $next 65535 }}
+        - protocol: TCP
+          port: {{ $next }}
+          endPort: 65535
+        {{- end }}
     {{- else }}
     # Restrictive mode: explicit port + source allowlist.
     - ports:
