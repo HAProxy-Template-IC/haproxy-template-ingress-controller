@@ -93,5 +93,11 @@ func (b *BaseLoader) AssertUnstructured(eventTypeName string, resource any) (*un
 			"got", fmt.Sprintf("%T", resource))
 		return nil, false
 	}
+	// A typed nil satisfies the assertion above, so `ok` alone does not mean
+	// the pointer is usable — every Unstructured method dereferences it.
+	if u == nil {
+		b.Logger().Error(eventTypeName + " carries a nil resource")
+		return nil, false
+	}
 	return u, true
 }
