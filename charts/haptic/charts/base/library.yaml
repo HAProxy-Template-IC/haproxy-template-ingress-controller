@@ -674,12 +674,19 @@ templateSnippets:
   map-pod-names-500-endpoints:
     requires: [endpoints]
     template: |
+      {%- var seenAddr = map[string]bool{} %}
       {%- for _, slice := range resources.endpoints.List() %}
       {%- for _, ep := range slice.Endpoints %}
       {%- var pod = ep.TargetRef.Name %}
       {%- if pod != "" %}
       {%- for _, addr := range ep.Addresses %}
+      {%- if !seenAddr[addr] %}
+      {%- seenAddr[addr] = true %}
+      {# A pod in several Services appears once per EndpointSlice. map() returns
+         the first match, so repeats are inert here — but the runtime API rejects
+         a duplicate `add`, so a repeated key can only be rebuilt by a reload. #}
       {{ addr }} {{ pod }}
+      {%- end %}
       {%- end %}
       {%- end %}
       {%- end %}
@@ -3457,6 +3464,48 @@ validationTests:
         target: haproxy.cfg
         pattern: '%\(span_id\)'
         description: The span fields are absent, not empty, when nothing mints them
+
+  test-pod-names-map-one-line-per-address:
+    requires: [endpoints]
+    description: >-
+      A pod in two Services renders one pod-names line, not one per EndpointSlice.
+      The runtime API rejects a duplicate add, so a repeated key can only be
+      rebuilt by a full reload — which resets rate-limit stick-table state.
+    fixtures:
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: dup-a
+            labels: { kubernetes.io/service-name: dup-a }
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.9"]
+              targetRef: { kind: Pod, name: dup-pod }
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: dup-b
+            labels: { kubernetes.io/service-name: dup-b }
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.9"]
+              targetRef: { kind: Pod, name: dup-pod }
+          ports:
+            - port: 8080
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:pod-names.map
+        pattern: '(?m)^10\.0\.0\.9 dup-pod$'
+      - type: not_contains
+        target: map:pod-names.map
+        pattern: '(?m)^10\.0\.0\.9 dup-pod\n10\.0\.0\.9 dup-pod$'
+        description: The address appears once even though two EndpointSlices carry it
 
   test-server-pod-name-via-runtime-map:
     requires: [endpoints]

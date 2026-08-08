@@ -68,7 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Endpoint churn no longer forces a full HAProxy reload when a runtime-map key already exists. The delta is computed from an earlier `show map`, so a key it classed as new can be present by the time the add runs — a concurrent reload loads the on-disk file the pre-config phase already wrote — and the resulting conflict fell back to a reload, resetting rate-limit stick-table state. The add now converges the key with `set map` instead. Rotating 32 workloads at once produced 32 such reloads.
+- Endpoint churn no longer forces a full HAProxy reload, which used to reset rate-limit stick-table state on every rotation. `pod-names.map` emitted one line per EndpointSlice, so a pod belonging to several Services produced the same `address pod` row two or three times. HAProxy accepts repeats when it loads the file and `map()` returns the first match, so they were inert for routing — but the Dataplane API rejects a duplicate `add`, so any change to a repeated key could only be rebuilt by a reload. The map now emits each address once. A runtime-map `add` that still finds its key present converges it with `set map` rather than failing.
 
 - Fixed a controller panic when a watched config or credentials object was absent as the watcher finished its initial sync. The watcher handed the callback a typed nil pointer wrapped in a non-nil interface, so the callback's `obj == nil` guard did not fire and the loader dereferenced it. The panic was recovered and the controller converged, but each occurrence lost one event. A component panic now also logs a stack trace.
 
