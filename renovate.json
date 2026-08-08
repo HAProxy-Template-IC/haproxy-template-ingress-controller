@@ -210,6 +210,14 @@
         "versions-spoa.env"
       ],
       "groupName": "spoa hub bundle"
+    },
+    {
+      "description": "Ignore the placeholder ARG defaults in the CI image Dockerfiles. They read `<image>:must-be-supplied@sha256:0000...`, are always overridden with --build-arg from .gitlab/ci/build-pins.yml (where the real tag@digest pins live and ARE tracked by the customManagers above), and exist only so a build without the arg fails loudly. Renovate's dockerfile manager reads them as real dependencies and reports `Could not determine new digest` for golang, python and haproxytech/haproxy-debian on every run - permanent Dependency Dashboard noise that hides a genuine lookup failure when one occurs.",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchCurrentValue": "must-be-supplied",
+      "enabled": false
     }
   ]
 }
