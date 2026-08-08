@@ -165,7 +165,7 @@ func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig st
 		currentConfig = preParsedCurrent
 	} else {
 		o.logger.Debug("Parsing current configuration")
-		currentConfig, err = o.parser.ParseFromString(currentConfigStr)
+		currentConfig, err = o.parser.ParseFromStringUncached(currentConfigStr)
 		if err != nil {
 			snippet := currentConfigStr
 			if len(snippet) > 200 {

@@ -34,6 +34,10 @@ func (m *mockConfigParser) ParseFromString(config string) (*parserconfig.Structu
 	return &parserconfig.StructuredConfig{}, nil
 }
 
+func (m *mockConfigParser) ParseFromStringUncached(config string) (*parserconfig.StructuredConfig, error) {
+	return m.ParseFromString(config)
+}
+
 // createTestOrchestratorWithParser creates an orchestrator backed by a mock HTTP server.
 func createTestOrchestratorWithParser(t *testing.T, handler http.HandlerFunc, p ConfigParser) (orch *orchestrator, cleanup func()) {
 	t.Helper()

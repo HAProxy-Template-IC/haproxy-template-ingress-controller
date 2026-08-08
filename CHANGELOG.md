@@ -68,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The HAProxy config parser cache no longer thrashes under churn. Post-reload read-backs and current-config reads carry HAProxy's own `_version` header, which changes on every push, so those parses could never hit the cache — but they still populated it, evicting the desired config, which is the one parse reused across replicas. With four slots, a single deploy cycle flushed the cache; a live cluster measured a 2.4% hit rate (50 hits to 2,079 misses). Single-use parses now bypass the cache entirely.
+
 - Endpoint churn no longer forces a full HAProxy reload, which used to reset rate-limit stick-table state on every rotation. `pod-names.map` emitted one line per EndpointSlice, so a pod belonging to several Services produced the same `address pod` row two or three times. HAProxy accepts repeats when it loads the file and `map()` returns the first match, so they were inert for routing — but the Dataplane API rejects a duplicate `add`, so any change to a repeated key could only be rebuilt by a reload. The map now emits each address once. A runtime-map `add` that still finds its key present converges it with `set map` rather than failing.
 
 - Fixed a controller panic when a watched config or credentials object was absent as the watcher finished its initial sync. The watcher handed the callback a typed nil pointer wrapped in a non-nil interface, so the callback's `obj == nil` guard did not fire and the loader dereferenced it. The panic was recovered and the controller converged, but each occurrence lost one event. A component panic now also logs a stack trace.
