@@ -884,6 +884,18 @@ build-playground-wasm:
       preset_count=$(ls "$base"/presets/*.config.yaml | wc -l)
       if [ "$preset_count" -lt 6 ]; then echo "expected >=6 preset configs, got $preset_count"; exit 1; fi
       echo "OK: $(du -sh "$base" | cut -f1) bundle, ${preset_count} presets"
+    - |
+      # Lineage marker the Pages deploy verifies before it publishes this
+      # bundle: deploy-docs.sh compares these four fields against the values
+      # trigger-pages/trigger-docs-release passed it, so a bundle can only be
+      # published as the commit, pipeline and job that actually built it.
+      # Shape and field names are fixed by identity_matches() in that script —
+      # a rename there silently stops matching, so the deploy fails closed.
+      if [ -n "$CI_COMMIT_TAG" ]; then VERSION="${CI_COMMIT_TAG#v}"; else VERSION="dev"; fi
+      printf '{"version":"%s","commit":"%s","pipeline":"%s","job":"%s"}\n' \
+        "$VERSION" "$CI_COMMIT_SHA" "$CI_PIPELINE_ID" "$CI_JOB_ID" \
+        > "public/playground/${VERSION}/release-identity.json"
+      cat "public/playground/${VERSION}/release-identity.json"
   artifacts:
     name: "playground-${CI_COMMIT_REF_SLUG}"
     paths:
