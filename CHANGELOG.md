@@ -68,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Endpoint churn no longer forces a full HAProxy reload when a runtime-map key already exists. The delta is computed from an earlier `show map`, so a key it classed as new can be present by the time the add runs — a concurrent reload loads the on-disk file the pre-config phase already wrote — and the resulting conflict fell back to a reload, resetting rate-limit stick-table state. The add now converges the key with `set map` instead. Rotating 32 workloads at once produced 32 such reloads.
+
 - Fixed a controller panic when a watched config or credentials object was absent as the watcher finished its initial sync. The watcher handed the callback a typed nil pointer wrapped in a non-nil interface, so the callback's `obj == nil` guard did not fire and the loader dereferenced it. The panic was recovered and the controller converged, but each occurrence lost one event. A component panic now also logs a stack trace.
 
 - Removed `HAProxyCfg.status.deployedToPods[].observedGeneration`, added earlier in this unreleased cycle. It existed to let an observer order a pod against the spec, but the generation for a pod's checksum is only knowable once that checksum is published, so the field was a lagging reconstruction that needed three ordered fallbacks and still produced wrong answers. The question it was added for — has this configuration reached every replica? — is already answered per resource by the controller's own deployed-phase status (an Ingress address, a Gateway `Programmed` condition, a route's parent conditions), which is level-triggered and carries `observedGeneration` against the resource's own generation per Kubernetes convention.
