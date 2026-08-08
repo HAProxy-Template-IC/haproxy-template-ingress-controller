@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -25,8 +26,11 @@ import (
 
 	"golang.org/x/sync/errgroup"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	apitypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
@@ -36,6 +40,13 @@ import (
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+)
+
+const (
+	// metadataKey is the object field the ownerReference patch targets.
+	metadataKey = "metadata"
+	// configKind is the owning kind stamped onto objects the config owns.
+	configKind = "HAProxyTemplateConfig"
 )
 
 // fetchAndValidateInitialConfig fetches, parses, and validates the initial HAProxyTemplateConfig CRD and credentials Secret.
@@ -61,31 +72,28 @@ type InitialConfigBundle struct {
 func fetchAndValidateInitialConfig(
 	ctx context.Context,
 	k8sClient *client.Client,
-	crdNames []string,
+	crdName string,
 	secretName string,
 	crdGVR schema.GroupVersionResource,
+	libraryGVR schema.GroupVersionResource,
 	secretGVR schema.GroupVersionResource,
 	logger *slog.Logger,
 ) (*InitialConfigBundle, error) {
-	logger.Info("Fetching initial CRDs and credentials", "crd_names", crdNames)
+	logger.Info("Fetching initial CRDs and credentials", "crd_name", crdName)
 
-	crdResources := make([]*unstructured.Unstructured, len(crdNames))
+	var configResource *unstructured.Unstructured
 	var secretResource *unstructured.Unstructured
 
 	g, gCtx := errgroup.WithContext(ctx)
 
-	// Fetch every HAProxyTemplateConfig. Order is the merge order, so each
-	// fetch writes its own slot rather than appending.
-	for i, crdName := range crdNames {
-		g.Go(func() error {
-			resource, err := k8sClient.GetResource(gCtx, crdGVR, crdName)
-			if err != nil {
-				return fmt.Errorf("fetching HAProxyTemplateConfig %q: %w", crdName, err)
-			}
-			crdResources[i] = resource
-			return nil
-		})
-	}
+	g.Go(func() error {
+		var err error
+		configResource, err = k8sClient.GetResource(gCtx, crdGVR, crdName)
+		if err != nil {
+			return fmt.Errorf("fetching HAProxyTemplateConfig %q: %w", crdName, err)
+		}
+		return nil
+	})
 
 	// Fetch Secret (credentials)
 	g.Go(func() error {
@@ -101,6 +109,19 @@ func fetchAndValidateInitialConfig(
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
+
+	// Which snippets to fetch is only known once the config is in hand, so this
+	// runs after the group rather than inside it.
+	crdResources, unresolved, err := ResolveLibraryRefs(ctx, k8sClient, libraryGVR, configResource)
+	if err != nil {
+		return nil, err
+	}
+	if len(unresolved) > 0 {
+		return nil, fmt.Errorf("HAProxyTemplateConfig %q references HAProxyTemplateLibrary that are missing or at a different revision: %s",
+			crdName, strings.Join(unresolved, ", "))
+	}
+
+	ensureLibraryOwnership(ctx, k8sClient, libraryGVR, crdResources, logger)
 
 	// Parse initial configuration
 	logger.Info("Parsing initial configuration and credentials")
@@ -248,8 +269,9 @@ func reportLoadGateFailure(ctx context.Context, k8sClient *client.Client, bundle
 func waitForInitialConfig(
 	ctx context.Context,
 	k8sClient *client.Client,
-	crdNames []string,
+	crdName string,
 	crdGVR schema.GroupVersionResource,
+	libraryGVR schema.GroupVersionResource,
 	state *configState,
 	logger *slog.Logger,
 ) error {
@@ -257,13 +279,13 @@ func waitForInitialConfig(
 	state.SetWaiting("waiting for HAProxyTemplateConfig")
 
 	// Try immediately first
-	missing, _ := missingConfigs(ctx, k8sClient, crdGVR, crdNames)
+	missing, _ := incompleteConfigSet(ctx, k8sClient, crdGVR, libraryGVR, crdName)
 	if len(missing) == 0 {
-		logger.Info("HAProxyTemplateConfigs found", "names", crdNames)
+		logger.Info("HAProxyTemplateConfig and its snippets found", "name", crdName)
 		return nil
 	}
 
-	logger.Info("Waiting for HAProxyTemplateConfigs to become available",
+	logger.Info("Waiting for the HAProxyTemplateConfig set to become available",
 		"missing", missing,
 		"poll_interval", ConfigPollInterval)
 
@@ -275,63 +297,45 @@ func waitForInitialConfig(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			missing, err := missingConfigs(ctx, k8sClient, crdGVR, crdNames)
+			missing, err := incompleteConfigSet(ctx, k8sClient, crdGVR, libraryGVR, crdName)
 			if err != nil {
 				// Log at debug level - transient errors during polling are expected
-				logger.Debug("Error checking for HAProxyTemplateConfigs", "error", err)
+				logger.Debug("Error checking for the HAProxyTemplateConfig set", "error", err)
 				continue
 			}
 			if len(missing) == 0 {
-				logger.Info("HAProxyTemplateConfigs found", "names", crdNames)
+				logger.Info("HAProxyTemplateConfig and its snippets found", "name", crdName)
 				return nil
 			}
-			logger.Debug("HAProxyTemplateConfigs not yet available, continuing to wait",
+			logger.Debug("HAProxyTemplateConfig set not yet complete, continuing to wait",
 				"missing", missing)
 		}
 	}
 }
 
-// missingConfigs returns the names that do not exist yet, in the given order.
-// A non-NotFound error aborts the check — the answer would be unreliable and
-// the caller retries anyway.
-func missingConfigs(ctx context.Context, k8sClient *client.Client, gvr schema.GroupVersionResource, names []string) ([]string, error) {
-	var missing []string
-	for _, name := range names {
-		exists, err := checkConfigExists(ctx, k8sClient, gvr, name)
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			missing = append(missing, name)
-		}
-	}
-	return missing, nil
-}
-
-// checkConfigExists checks if the HAProxyTemplateConfig resource exists.
-// Returns (true, nil) if exists, (false, nil) if not found, or (false, err) on other errors.
-func checkConfigExists(ctx context.Context, k8sClient *client.Client, gvr schema.GroupVersionResource, name string) (bool, error) {
-	_, err := k8sClient.GetResource(ctx, gvr, name)
+// incompleteConfigSet reports what still stands between the controller and a
+// renderable configuration: the config object itself, or any snippet it
+// references that is absent or at a different revision.
+func incompleteConfigSet(
+	ctx context.Context,
+	k8sClient *client.Client,
+	crdGVR schema.GroupVersionResource,
+	libraryGVR schema.GroupVersionResource,
+	crdName string,
+) ([]string, error) {
+	config, err := k8sClient.GetResource(ctx, crdGVR, crdName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return false, nil
+			return []string{fmt.Sprintf("HAProxyTemplateConfig %s (missing)", crdName)}, nil
 		}
-		return false, err
+		return nil, err
 	}
-	return true, nil
-}
 
-// primaryConfigName is the config that represents the whole merged set: the
-// last one, which by convention is the operator's own rather than a bundled
-// library's. It owns the identity derived from the set — the published
-// HAProxyCfg's name and the object that carries validation status — so a
-// single-config install behaves exactly as it did before configs could be
-// merged.
-func primaryConfigName(crdNames []string) string {
-	if len(crdNames) == 0 {
-		return ""
+	_, unresolved, err := ResolveLibraryRefs(ctx, k8sClient, libraryGVR, config)
+	if err != nil {
+		return nil, err
 	}
-	return crdNames[len(crdNames)-1]
+	return unresolved, nil
 }
 
 // logSpecOverrides reports each guarded-section name the last config in the
@@ -418,4 +422,151 @@ func extractValidationDirConfig(dataplaneConfig *coreconfig.DataplaneConfig) val
 		SSLCertsDir: path.Base(dataplaneConfig.SSLCertsDir),
 		GeneralDir:  path.Base(dataplaneConfig.GeneralStorageDir),
 	}
+}
+
+// ResolveLibraryRefs fetches the HAProxyTemplateLibrary a config references,
+// in merge order, and returns them followed by the config itself — the config
+// is last so its inline content wins over every referenced snippet.
+//
+// A reference resolves only when the object exists AND its spec.revision equals
+// the revision the reference names. Both strings come from whoever wrote the
+// objects; nothing here derives a revision from content, so an operator editing
+// a snippet in place keeps a resolving reference while a half-applied set does
+// not. Unresolved references are returned for the caller to report, not
+// treated as an error.
+func ResolveLibraryRefs(
+	ctx context.Context,
+	k8sClient *client.Client,
+	libraryGVR schema.GroupVersionResource,
+	config *unstructured.Unstructured,
+) (sources []*unstructured.Unstructured, unresolved []string, err error) {
+	refs, found, err := unstructured.NestedSlice(config.Object, "spec", "libraryRefs")
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading spec.libraryRefs: %w", err)
+	}
+	if !found {
+		return []*unstructured.Unstructured{config}, nil, nil
+	}
+
+	sources = make([]*unstructured.Unstructured, 0, len(refs)+1)
+	for i, entry := range refs {
+		fields, ok := entry.(map[string]any)
+		if !ok {
+			return nil, nil, fmt.Errorf("spec.libraryRefs[%d] is not an object", i)
+		}
+		name, _ := fields["name"].(string)
+		want, _ := fields["revision"].(string)
+		if name == "" || want == "" {
+			return nil, nil, fmt.Errorf("spec.libraryRefs[%d] needs both name and revision", i)
+		}
+
+		observed, getErr := k8sClient.GetResource(ctx, libraryGVR, name)
+		if getErr != nil {
+			if !apierrors.IsNotFound(getErr) {
+				return nil, nil, fmt.Errorf("fetching HAProxyTemplateLibrary %q: %w", name, getErr)
+			}
+			unresolved = append(unresolved, fmt.Sprintf("%s (missing)", name))
+			continue
+		}
+		got, _, _ := unstructured.NestedString(observed.Object, "spec", "revision")
+		if got != want {
+			unresolved = append(unresolved, fmt.Sprintf("%s (want revision %q, have %q)", name, want, got))
+			continue
+		}
+		sources = append(sources, observed)
+	}
+
+	return append(sources, config), unresolved, nil
+}
+
+// ensureLibraryOwnership stamps an ownerReference from the config onto each
+// HAProxyTemplateLibrary it references, so resource-tree views (Argo CD,
+// `kubectl tree`) show the relationship and `helm uninstall` cannot strand the
+// content objects.
+//
+// The chart cannot do this: an ownerReference needs the owner's UID, which does
+// not exist until the config is applied. Best-effort — a failure here must
+// never stop a valid configuration from loading, so every error is logged and
+// swallowed.
+func ensureLibraryOwnership(
+	ctx context.Context,
+	k8sClient *client.Client,
+	libraryGVR schema.GroupVersionResource,
+	sources []*unstructured.Unstructured,
+	logger *slog.Logger,
+) {
+	config := conversion.ConfigOf(sources)
+	if config == nil {
+		return
+	}
+	owner := metav1.OwnerReference{
+		APIVersion: config.GetAPIVersion(),
+		Kind:       config.GetKind(),
+		Name:       config.GetName(),
+		UID:        config.GetUID(),
+		Controller: ptr.To(true),
+	}
+	if owner.UID == "" {
+		return
+	}
+
+	for _, library := range conversion.LibrariesOf(sources) {
+		if hasOwner(library.GetOwnerReferences(), owner.UID) {
+			continue
+		}
+		patch, err := json.Marshal(map[string]any{
+			metadataKey: map[string]any{
+				"ownerReferences": append(withoutSupersededController(library.GetOwnerReferences(), &owner), owner),
+			},
+		})
+		if err != nil {
+			logger.Warn("Building the ownerReference patch failed", "library", library.GetName(), "error", err)
+			continue
+		}
+		if _, err := k8sClient.DynamicClient().
+			Resource(libraryGVR).
+			Namespace(library.GetNamespace()).
+			Patch(ctx, library.GetName(), apitypes.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+			logger.Warn("Could not stamp the config as owner of a HAProxyTemplateLibrary; "+
+				"resource-tree views will not show the relationship",
+				"library", library.GetName(), "error", err)
+			continue
+		}
+		logger.Debug("Stamped ownerReference on HAProxyTemplateLibrary", "library", library.GetName())
+	}
+}
+
+func hasOwner(refs []metav1.OwnerReference, uid apitypes.UID) bool {
+	for _, ref := range refs {
+		if ref.UID == uid {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutSupersededController drops a controller reference left by an earlier
+// incarnation of the same owner — same kind and name, different UID.
+//
+// Deleting and recreating the config gives it a new UID. A library that
+// outlives that (orphan or foreground deletion, or one the collector has not
+// reached) still carries the old reference, and an object may have only ONE
+// controller reference: appending would make the apiserver reject the patch.
+// Since the failure is swallowed, the tree relationship would then never be
+// re-established and nothing would say why.
+func withoutSupersededController(
+	refs []metav1.OwnerReference,
+	owner *metav1.OwnerReference,
+) []metav1.OwnerReference {
+	kept := make([]metav1.OwnerReference, 0, len(refs))
+	for _, ref := range refs {
+		superseded := ref.Controller != nil && *ref.Controller &&
+			ref.Kind == owner.Kind && ref.APIVersion == owner.APIVersion &&
+			ref.Name == owner.Name && ref.UID != owner.UID
+		if superseded {
+			continue
+		}
+		kept = append(kept, ref)
+	}
+	return kept
 }

@@ -109,14 +109,49 @@ trap cleanup EXIT
 
 k() { kubectl --context "$CTX" -n "$NS" "$@"; }
 
+# Every HAPTIC config object as one JSON document, tolerating a kind whose CRD
+# is not installed yet: the baseline chart predates HAProxyTemplateLibrary, so
+# `kubectl get` on it errors there. A missing kind must read as "no objects" —
+# letting it error feeds empty stdin to the parsers below and fails the suite
+# for the wrong reason.
+config_objects() {
+  local kind out merged=""
+  for kind in haproxytemplateconfig haproxytemplatelibrary; do
+    out=$(kubectl --context "$CTX" -n "$NS" get "$kind" -o json 2>/dev/null) || out='{"items":[]}'
+    merged="${merged}${out}"$'\n'
+  done
+  printf '%s' "$merged" | python3 -c '
+import json, sys
+
+decoder = json.JSONDecoder()
+buf = sys.stdin.read()
+items = []
+i = 0
+while i < len(buf):
+    while i < len(buf) and buf[i].isspace():
+        i += 1
+    if i >= len(buf):
+        break
+    doc, i = decoder.raw_decode(buf, i)
+    items.extend(doc.get("items", []))
+json.dump({"items": items}, sys.stdout)
+'
+}
+
 # Fingerprint of what the fleet is actually configured by: the merged spec the
 # controller would load. Compared before and after a rejected upgrade — equality
 # is the contract that a failed upgrade changes nothing.
+#
+# Covers BOTH kinds: template content lives in HAProxyTemplateLibrary objects,
+# so a config-only fingerprint would be blind to every template change and this
+# suite's whole premise — "a rejected upgrade mutated nothing" — would pass
+# without testing anything. Kind is part of the key so two objects sharing a
+# name cannot collide.
 config_fingerprint() {
-  kubectl --context "$CTX" -n "$NS" get haproxytemplateconfig -o json 2>/dev/null \
+  config_objects \
     | python3 -c 'import json,sys,hashlib
 d=json.load(sys.stdin)
-specs=sorted((i["metadata"]["name"], json.dumps(i.get("spec",{}),sort_keys=True)) for i in d["items"])
+specs=sorted((i["kind"], i["metadata"]["name"], json.dumps(i.get("spec",{}),sort_keys=True)) for i in d["items"])
 print(hashlib.sha256(json.dumps(specs).encode()).hexdigest())'
 }
 
@@ -243,6 +278,19 @@ if ! have_diff_plugin; then
     fail "could not install helm-diff; this suite must exercise the diff path, not skip it"
   fi
 fi
+
+# The upgrade itself needs nothing from an operator: the crd-upgrade-hook Job
+# (pre-install/pre-upgrade, weight -5) runs `apply-crds` before Helm applies the
+# release, so `helm upgrade` installs a newly added CRD kind on its own.
+#
+# `helm diff` runs BEFORE hooks, so at diff time that kind is not registered yet
+# and helm cannot map it. Applying the CRDs here puts the cluster in exactly the
+# state the hook produces moments later, so the diff leg measures the upgrade
+# rather than the ordering of helm's own phases. It stays strict afterwards and
+# still catches every other mapping or rendering break.
+info "applying the target chart's CRDs (the state crd-upgrade-hook reaches before helm applies)"
+kubectl --context "$CTX" apply --server-side --force-conflicts -f "$CHART/crds/" >/dev/null \
+  || fail "could not apply the target chart's CRDs; the crd-upgrade-hook would hit the same failure"
 
 if have_diff_plugin; then
   info "diffing the upgrade (the path helmfile takes, before any hook has run)"
@@ -391,8 +439,7 @@ if helm upgrade "$RELEASE" "$WORK/broken-chart" \
   # then wrong, not the product.
   echo "--- config fingerprint: before=${PRE_FP:0:12} after=$(config_fingerprint | cut -c1-12) ---"
   echo "--- is the corruption actually in the live config? ---"
-  k get haproxytemplateconfig -o json 2>/dev/null \
-    | grep -c 'var x = ' || echo "  0 (the broken template never landed)"
+  config_objects | grep -c 'var x = ' || echo "  0 (the broken template never landed)"
   echo "--- preflight hook state ---"
   k get jobs -o wide 2>/dev/null
   k get pods -l app.kubernetes.io/component=pre-rollout-validation -o wide 2>/dev/null
@@ -419,7 +466,10 @@ POST_FP="$(config_fingerprint)"
 
 # The hook aborts before the first manifest object, so the broken template
 # must never have reached etcd and the running fleet must be untouched.
-LIVE_CFG="$(k get haproxytemplateconfig -o json 2>/dev/null || true)"
+# The corruption goes into a library file, so it lands in a
+# HAProxyTemplateLibrary — checking only the config would find nothing and
+# report success no matter what the gate did.
+LIVE_CFG="$(config_objects)"
 case "$LIVE_CFG" in
   *'{%- var x = %}'*) fail "the broken template reached the live config; the gate held only after the damage" ;;
 esac
@@ -489,7 +539,7 @@ fi
 # Not `| grep -q`: under pipefail it SIGPIPEs kubectl on the first match and the
 # pipeline reports failure despite finding the marker. `-o json` because -o yaml
 # folds long scalars across lines and splits it.
-LIVE_CFG="$(k get haproxytemplateconfig -o json 2>/dev/null || true)"
+LIVE_CFG="$(config_objects)"
 case "$LIVE_CFG" in
   *'{%- var x = %}'*) : ;;
   *) fail "the broken template never reached the live HAProxyTemplateConfig; phase 4 would prove nothing" ;;

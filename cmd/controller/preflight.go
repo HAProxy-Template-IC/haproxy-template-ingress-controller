@@ -451,10 +451,12 @@ func varnishImage() string {
 	return "varnish:9.0"
 }
 
-// collectConfigDocuments picks the HAProxyTemplateConfig documents out of the
-// rendered manifests and returns them as a single multi-document stream. All
-// config objects come from one chart template, so the in-file document order —
-// which the split preserves — is the chart's merge order.
+// collectConfigDocuments picks the HAProxyTemplateConfig and its
+// HAProxyTemplateLibrary objects out of the rendered manifests and returns them
+// as a single multi-document stream.
+//
+// Document order carries no meaning: the consumer assembles by
+// spec.libraryRefs. Ordering here is only for reproducibility.
 func collectConfigDocuments(manifests map[string]string) (string, error) {
 	names := make([]string, 0, len(manifests))
 	for name := range manifests {
@@ -470,7 +472,8 @@ func collectConfigDocuments(manifests map[string]string) (string, error) {
 			continue
 		}
 		for _, doc := range strings.Split(content, "\n---") {
-			if !strings.Contains(doc, "kind: HAProxyTemplateConfig") {
+			if !strings.Contains(doc, "kind: HAProxyTemplateConfig") &&
+				!strings.Contains(doc, "kind: HAProxyTemplateLibrary") {
 				continue
 			}
 			docs = append(docs, strings.TrimSpace(doc))

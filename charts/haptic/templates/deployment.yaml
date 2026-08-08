@@ -91,13 +91,10 @@ spec:
                   fieldPath: {{ $env.field }}
             {{- end }}
             - name: CRD_NAME
-              {{- /* One object per enabled library, operator's config LAST
-                     (merge order = precedence order). Derived from the same
-                     haptic.prepareLibraries evaluation that emits the
-                     objects, so the two cannot disagree; the literal list is
-                     pinned by deployment_test.yaml against
-                     library_loader_test.yaml. */}}
-              value: {{ include "haptic.libraryConfigNames" . | fromYamlArray | join "," | quote }}
+              {{- /* One name. Which snippets it pulls in, and in what order,
+                     is declared in that object's spec.libraryRefs — so there
+                     is no second list here that could disagree with it. */}}
+              value: {{ .Values.controller.configName | quote }}
             - name: SECRET_NAME
               value: {{ include "haptic.dataplane.credentialsSecretName" . }}
             - name: WEBHOOK_SERVICE_NAME

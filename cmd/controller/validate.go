@@ -649,7 +649,15 @@ func mergeConfigFiles(filePaths []string) (
 		return nil, nil, fmt.Errorf("no HAProxyTemplateConfig documents in %s", strings.Join(filePaths, ", "))
 	}
 
-	merged, _, err = conversion.MergeSpecs(sources)
+	// Ordered by the config's spec.libraryRefs, not by document order: Helm
+	// sorts a rendered stream by kind, so every config precedes every snippets
+	// object there — the reverse of merge order.
+	ordered, err := conversion.AssembleSources(sources)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	merged, _, err = conversion.MergeSpecs(ordered)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -705,7 +713,7 @@ func splitConfigDocuments(data []byte) ([]*unstructured.Unstructured, error) {
 		}
 		document := &unstructured.Unstructured{Object: object}
 		switch document.GetKind() {
-		case "HAProxyTemplateConfig":
+		case "HAProxyTemplateConfig", "HAProxyTemplateLibrary":
 			documents = append(documents, document)
 		case "HAProxyValidationTests":
 			// Retired kind (ADR-0016): tests live inline on the config

@@ -68,6 +68,7 @@ const (
 	EventTypeConfigValidated          = "config.validated"
 	EventTypeConfigInvalid            = "config.invalid"
 	EventTypeConfigResourceChanged    = "config.resource.changed"
+	EventTypeLibrarySetChanged        = "snippets.set.changed"
 
 	// Resource event types.
 	EventTypeResourceIndexUpdated = "resource.index.updated"

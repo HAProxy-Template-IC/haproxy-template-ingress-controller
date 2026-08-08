@@ -201,7 +201,7 @@ func TestMergeSpecs_Errors(t *testing.T) {
 					"metadata":   map[string]any{"name": "not-a-config"},
 				}},
 			},
-			wantErr: "not-a-config: expected HAProxyTemplateConfig, got ConfigMap",
+			wantErr: "not-a-config: expected HAProxyTemplateConfig or HAProxyTemplateLibrary, got ConfigMap",
 		},
 		{
 			name: "wrong apiVersion names the offending object",
@@ -484,4 +484,46 @@ func TestMergeSpecs_GlobalScalarConflictIsAnError(t *testing.T) {
 	assert.Contains(t, err.Error(), "minHAProxyVersion")
 	assert.Contains(t, err.Error(), "HAProxyTemplateConfig/shard-a")
 	assert.Contains(t, err.Error(), "HAProxyTemplateConfig/shard-b")
+}
+
+// The controller writes to its own inputs: it stamps an ownerReference on every
+// library it references, and writes status back to the config. Those bump
+// resourceVersion without changing any configuration. Keying the composite
+// version on resourceVersion made each look like a config change, which
+// triggered a full validationTests run — under load the live gate timed out,
+// the change was rejected, and template status patches never applied. Ingress
+// conformance saw it as "The Ingress status shows the IP address" timing out.
+func TestCompositeVersion_IgnoresMetadataOnlyWrites(t *testing.T) {
+	object := func(name string, generation int64, resourceVersion string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{
+			"metadata": map[string]any{
+				"name":            name,
+				"generation":      generation,
+				"resourceVersion": resourceVersion,
+			},
+		}}
+	}
+
+	before := CompositeVersion([]*unstructured.Unstructured{
+		object("lib-base", 3, "100"),
+		object("haptic-config", 5, "200"),
+	})
+
+	// An ownerReference patch and a status write: resourceVersion moves on both,
+	// generation on neither.
+	afterMetadataWrites := CompositeVersion([]*unstructured.Unstructured{
+		object("lib-base", 3, "101"),
+		object("haptic-config", 5, "201"),
+	})
+	assert.Equal(t, before, afterMetadataWrites,
+		"a metadata-only write must not read as a config change")
+
+	// An operator editing a library in place bumps its generation, and that
+	// MUST still reinitialise — it is the case the revision contract exists for.
+	afterSpecEdit := CompositeVersion([]*unstructured.Unstructured{
+		object("lib-base", 4, "101"),
+		object("haptic-config", 5, "201"),
+	})
+	assert.NotEqual(t, before, afterSpecEdit,
+		"an in-place spec edit to a library must change the composite version")
 }

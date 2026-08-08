@@ -19,7 +19,7 @@ Usage: render the merged config first, then run this script:
 
     helm template charts/haptic \
       --set controller.templateLibraries.gateway.experimentalChannel=true \
-      | yq 'select(.kind == "HAProxyTemplateConfig")' > /tmp/merged.yaml
+      | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' > /tmp/merged.yaml
     python3 scripts/gen-gateway-requires.py /tmp/merged.yaml
 """
 

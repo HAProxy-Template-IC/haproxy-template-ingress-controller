@@ -361,19 +361,20 @@ verify_haproxy_configs_warning_free() {
 }
 
 verify_config_admission_warning_free() {
-    # The suite rides the config shards inline (ADR-0016 — the companion
-    # HAProxyValidationTests kind is retired). An empty suite passes the load
-    # gate vacuously, so its presence is asserted explicitly.
+    # Tests ride the library objects inline (ADR-0017). An empty suite passes
+    # the load gate vacuously, so its presence is asserted explicitly. Both
+    # kinds are counted: a config may carry its own tests too, and looking only
+    # at the config would report zero and fail for the wrong reason.
     local total_tests
-    total_tests=$(kubectl get haproxytemplateconfigs -n "$NAMESPACE" \
+    total_tests=$(kubectl get haproxytemplateconfigs,haproxytemplatelibraries -n "$NAMESPACE" \
         -l "app.kubernetes.io/instance=${RELEASE_NAME}" -o json 2>/dev/null \
         | python3 -c 'import json,sys; print(sum(len(i.get("spec",{}).get("validationTests") or {}) for i in json.load(sys.stdin)["items"]))')
     if [[ "${total_tests:-0}" -eq 0 ]]; then
-        die "No config shard carries validationTests — an empty suite passes the load gate vacuously" 10
+        die "No HAProxyTemplateLibrary carries validationTests — an empty suite passes the load gate vacuously" 10
     fi
-    info "Inline validationTests across the config shards: ${total_tests}"
+    info "Inline validationTests across the library objects: ${total_tests}"
 
-    info "Re-applying every HAProxyTemplateConfig through apply-time admission (CEL + schema; warnings are fatal)..."
+    info "Re-applying the HAProxyTemplateConfig through apply-time admission (CEL + schema; warnings are fatal)..."
 
     local configs=()
     mapfile -t configs < <(
@@ -381,9 +382,40 @@ verify_config_admission_warning_free() {
             -l "app.kubernetes.io/instance=${RELEASE_NAME}" \
             -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
     )
-    if [[ ${#configs[@]} -lt 2 ]]; then
-        die "Expected one HAProxyTemplateConfig per enabled library plus the operator's, found ${#configs[@]}" 10
+    if [[ ${#configs[@]} -ne 1 ]]; then
+        die "Expected exactly one HAProxyTemplateConfig, found ${#configs[@]} — bulk content belongs in HAProxyTemplateLibrary objects" 10
     fi
+
+    # Every library must be referenced at the revision it reports, or the
+    # controller holds last-good and this install is not serving what the
+    # chart rendered.
+    kubectl get haproxytemplateconfig "${configs[0]}" -n "$NAMESPACE" -o json \
+        | python3 -c '
+import json, subprocess, sys
+
+cfg = json.load(sys.stdin)
+refs = cfg.get("spec", {}).get("libraryRefs") or []
+if not refs:
+    sys.exit("the config references no HAProxyTemplateLibrary — the libraries would not be merged at all")
+
+namespace = cfg["metadata"]["namespace"]
+raw = subprocess.run(
+    ["kubectl", "get", "haproxytemplatelibraries", "-n", namespace, "-o", "json"],
+    capture_output=True, text=True, check=True,
+).stdout
+observed = {i["metadata"]["name"]: i.get("spec", {}).get("revision") for i in json.loads(raw)["items"]}
+
+for ref in refs:
+    name = ref["name"]
+    want = ref["revision"]
+    got = observed.get(name)
+    if got is None:
+        sys.exit("libraryRefs names %s, which does not exist" % name)
+    if got != want:
+        sys.exit("%s is at revision %r, but the config expects %r" % (name, got, want))
+
+print("All %d library references resolve at the revision they name" % len(refs))
+' || die "The config'"'"'s libraryRefs do not resolve — the controller would hold the last-good configuration" 10
 
     # A server-side dry-run replace routes each object through apply-time
     # validation (the CRD schema and its CEL completeness rule — the

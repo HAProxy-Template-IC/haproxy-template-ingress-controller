@@ -228,3 +228,30 @@ func NewConfigResourceChangedEvent(resource any) *ConfigResourceChangedEvent {
 }
 
 func (e *ConfigResourceChangedEvent) EventType() string { return EventTypeConfigResourceChanged }
+
+// LibrarySetChangedEvent carries every HAProxyTemplateLibrary the controller
+// can currently see, whenever any of them changes.
+//
+// It is a whole-set snapshot rather than a per-object delta because the loader
+// needs the complete set to decide whether a config's references resolve, and
+// because a deletion then needs no representation of its own: the object is
+// simply absent from the next snapshot.
+type LibrarySetChangedEvent struct {
+	// Snippets holds the raw HAProxyTemplateLibrary resources.
+	// Type: []any to avoid circular dependencies.
+	// Consumers should type-assert elements to *unstructured.Unstructured.
+	Snippets []any
+
+	timestamped
+}
+
+// NewLibrarySetChangedEvent creates a new LibrarySetChangedEvent.
+// Performs a defensive copy of the slice.
+func NewLibrarySetChangedEvent(snippets []any) *LibrarySetChangedEvent {
+	return &LibrarySetChangedEvent{
+		Snippets:    copySlice(snippets),
+		timestamped: newTimestamped(),
+	}
+}
+
+func (e *LibrarySetChangedEvent) EventType() string { return EventTypeLibrarySetChanged }

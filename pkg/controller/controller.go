@@ -106,6 +106,12 @@ var (
 		Version:  hapticAPIVersion,
 		Resource: "haproxytemplateconfigs",
 	}
+	// libraryGVR is the GVR for HAProxyTemplateLibrary custom resource.
+	libraryGVR = schema.GroupVersionResource{
+		Group:    hapticAPIGroup,
+		Version:  hapticAPIVersion,
+		Resource: "haproxytemplatelibraries",
+	}
 	// secretGVR is the GVR for Kubernetes Secrets.
 	secretGVR = schema.GroupVersionResource{
 		Group:    "",
@@ -379,7 +385,7 @@ func (p *persistentInfra) InReinitGrace() bool {
 // Parameters:
 //   - ctx: Context for cancellation (SIGTERM, SIGINT, etc.)
 //   - k8sClient: Kubernetes client for API access
-//   - crdNames: Names of the HAProxyTemplateConfigs to merge, in merge order
+//   - crdName: Name of the HAProxyTemplateConfig this controller serves
 //     (later wins); the last one is the primary, see primaryConfigName
 //   - secretName: Name of the Secret containing HAProxy Dataplane API credentials
 //   - webhookCertDir: Directory holding the webhook TLS cert (tls.crt/tls.key); empty disables the webhook
@@ -393,7 +399,7 @@ func (p *persistentInfra) InReinitGrace() bool {
 func Run(
 	ctx context.Context,
 	k8sClient *client.Client,
-	crdNames []string,
+	crdName string,
 	secretName, webhookCertDir string,
 	webhookAdmissionTimeouts WebhookAdmissionTimeouts,
 	debugPort int,
@@ -401,7 +407,7 @@ func Run(
 	logger := slog.Default()
 
 	logger.Debug("HAProxy Template Ingress Controller starting",
-		"crd_names", crdNames,
+		"crd_name", crdName,
 		"secret", secretName,
 		"webhook_cert_dir", webhookCertDir,
 		"namespace", k8sClient.Namespace())
@@ -442,7 +448,7 @@ func Run(
 			return nil
 		default:
 			// Run one iteration
-			err := runIteration(ctx, k8sClient, crdNames, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, webhookPort, infra, logger)
+			err := runIteration(ctx, k8sClient, crdName, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, webhookPort, infra, logger)
 			if err != nil {
 				// Check if error is context cancellation (graceful shutdown)
 				if ctx.Err() != nil {
@@ -543,7 +549,7 @@ func setupComponents(
 	ctx context.Context,
 	introspectionRegistry *introspection.Registry,
 	typeBootstrapper validator.TypeBootstrapper,
-	crdNames []string,
+	crdName string,
 	logger *slog.Logger,
 ) *componentSetup {
 	logger.Info("Stage 1: Creating config management components")
@@ -572,7 +578,7 @@ func setupComponents(
 
 	// Create components
 	eventCommentator := commentator.NewEventCommentator(bus, logger, 500)
-	configLoaderComponent := configloader.NewConfigLoaderComponent(bus, crdNames, logger)
+	configLoaderComponent := configloader.NewConfigLoaderComponent(bus, crdName, logger)
 	credentialsLoaderComponent := credentialsloader.NewCredentialsLoaderComponent(bus, logger)
 
 	// Create config validators (scatter-gather responders for HAProxyTemplateConfig CRD validation)

@@ -120,7 +120,7 @@ kubectl exec -n haptic deployment/haptic-controller -- haptic-controller config 
 A Helm install splits the configuration across one `HAProxyTemplateConfig` per
 enabled template library plus one for your own `controller.config`, so no single
 object shows the whole picture. `--input` fetches every object named in the
-Deployment's `CRD_NAME` and prints the merged spec — the input side, as opposed
+Deployment's `CRD_NAME`, follows its `spec.libraryRefs`, and prints the merged spec — the input side, as opposed
 to the rendered HAProxy output above:
 
 ```bash

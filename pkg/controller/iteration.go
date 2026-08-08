@@ -89,17 +89,17 @@ func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *corec
 func waitAndLoadInitialConfig(
 	ctx context.Context,
 	k8sClient *client.Client,
-	crdNames []string,
+	crdName string,
 	secretName string,
 	state *configState,
 	logger *slog.Logger,
 ) (*InitialConfigBundle, error) {
-	if err := waitForInitialConfig(ctx, k8sClient, crdNames, crdGVR, state, logger); err != nil {
+	if err := waitForInitialConfig(ctx, k8sClient, crdName, crdGVR, libraryGVR, state, logger); err != nil {
 		return nil, err
 	}
 	return fetchAndValidateInitialConfig(
-		ctx, k8sClient, crdNames, secretName,
-		crdGVR, secretGVR, logger,
+		ctx, k8sClient, crdName, secretName,
+		crdGVR, libraryGVR, secretGVR, logger,
 	)
 }
 
@@ -121,7 +121,7 @@ func waitAndLoadInitialConfig(
 func runIteration(
 	ctx context.Context,
 	k8sClient *client.Client,
-	crdNames []string,
+	crdName string,
 	secretName string,
 	webhookCertDir string,
 	webhookAdmissionTimeouts WebhookAdmissionTimeouts,
@@ -142,7 +142,7 @@ func runIteration(
 	// The type bootstrapper is also reused by the step-2.5 startup validationTests
 	// gate below, so it's hoisted to a local rather than constructed inline.
 	typeBootstrapper := newIterationTypeBootstrapper(k8sClient, logger)
-	setup := setupComponents(ctx, infra.IntrospectionRegistry, typeBootstrapper, crdNames, logger)
+	setup := setupComponents(ctx, infra.IntrospectionRegistry, typeBootstrapper, crdName, logger)
 	defer setup.Cancel()
 
 	// 0.25. Create EventBuffer early (subscribes in constructor)
@@ -160,7 +160,7 @@ func runIteration(
 
 	// 1+2. Wait for the HAProxyTemplateConfig to exist (fresh-install race),
 	// then fetch and validate it together with the credentials Secret.
-	bundle, err := waitAndLoadInitialConfig(ctx, k8sClient, crdNames, secretName, state, logger)
+	bundle, err := waitAndLoadInitialConfig(ctx, k8sClient, crdName, secretName, state, logger)
 	if err != nil {
 		return err
 	}
@@ -196,7 +196,7 @@ func runIteration(
 	// rejection via `kubectl get/describe` rather than only in this crash-looping
 	// pod's logs) and then returns the error — the gate stays fail-closed.
 	if err := validateInitialConfigValidationTests(ctx, cfg, bundle, k8sClient, typeBootstrapper, logger); err != nil {
-		return fmt.Errorf("initial HAProxyTemplateConfig %v failed validationTests on load: %w", crdNames, err)
+		return fmt.Errorf("initial HAProxyTemplateConfig %q failed validationTests on load: %w", crdName, err)
 	}
 
 	// Mark config as loaded and record initial CRD/Secret versions so the
@@ -218,14 +218,14 @@ func runIteration(
 
 	// 4. Setup config watchers
 	if err := setupConfigWatchers(
-		setup, k8sClient, crdNames, secretName,
-		crdGVR, secretGVR, logger,
+		setup, k8sClient, crdName, secretName,
+		crdGVR, libraryGVR, secretGVR, logger,
 	); err != nil {
 		return err
 	}
 
 	// 4.5. Setup CurrentConfigStore for slot-aware server assignment
-	currentConfigStore, err := setupCurrentConfigStore(setup, k8sClient, primaryConfigName(crdNames), haproxyCfgGVR, logger)
+	currentConfigStore, err := setupCurrentConfigStore(setup, k8sClient, crdName, haproxyCfgGVR, logger)
 	if err != nil {
 		return err
 	}

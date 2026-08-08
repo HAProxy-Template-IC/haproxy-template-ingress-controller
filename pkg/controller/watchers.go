@@ -84,48 +84,58 @@ func setupResourceWatchers(
 func setupConfigWatchers(
 	setup *componentSetup,
 	k8sClient *client.Client,
-	crdNames []string,
+	crdName string,
 	secretName string,
 	crdGVR schema.GroupVersionResource,
+	libraryGVR schema.GroupVersionResource,
 	secretGVR schema.GroupVersionResource,
 	logger *slog.Logger,
 ) error {
 	logger.Info("Stage 4: Starting config watchers")
 
-	// One watcher per configured HAProxyTemplateConfig. Each emits its own
-	// change event; the configloader keeps the set and re-merges, so a change
-	// to any one of them re-derives the whole config. A helm upgrade writes
-	// them one at a time, which the handler's reinit debounce coalesces.
-	crdWatchers := make([]*watcher.SingleWatcher, 0, len(crdNames))
-	for _, crdName := range crdNames {
-		crdWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
-			GVR:       crdGVR,
-			Namespace: k8sClient.Namespace(),
-			Name:      crdName,
-			OnChange: func(obj any) error {
-				setup.Bus.Publish(events.NewConfigResourceChangedEvent(obj))
+	crdWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
+		GVR:       crdGVR,
+		Namespace: k8sClient.Namespace(),
+		Name:      crdName,
+		OnChange: func(obj any) error {
+			setup.Bus.Publish(events.NewConfigResourceChangedEvent(obj))
+			return nil
+		},
+		// OnSyncComplete delivers the current state after initial sync.
+		// This ensures eventual consistency: if updates arrived during the sync window
+		// (when OnChange callbacks are suppressed), the current state is delivered here.
+		OnSyncComplete: func(obj any) error {
+			if obj == nil {
+				logger.Debug("CRD watcher sync complete, no resource in cache (skipping event)", "name", crdName)
 				return nil
-			},
-			// OnSyncComplete delivers the current state after initial sync.
-			// This ensures eventual consistency: if updates arrived during the sync window
-			// (when OnChange callbacks are suppressed), the current state is delivered here.
-			OnSyncComplete: func(obj any) error {
-				if obj == nil {
-					logger.Debug("CRD watcher sync complete, no resource in cache (skipping event)", "name", crdName)
-					return nil
-				}
-				logger.Debug("CRD watcher sync complete, publishing current state", "name", crdName)
-				setup.Bus.Publish(events.NewConfigResourceChangedEvent(obj))
-				return nil
-			},
-		}, k8sClient)
+			}
+			logger.Debug("CRD watcher sync complete, publishing current state", "name", crdName)
+			setup.Bus.Publish(events.NewConfigResourceChangedEvent(obj))
+			return nil
+		},
+	}, k8sClient)
+	if err != nil {
+		return fmt.Errorf("creating HAProxyTemplateConfig watcher for %q: %w", crdName, err)
+	}
+	crdWatchers := []*watcher.SingleWatcher{crdWatcher}
+
+	publish := func(store types.Store) {
+		libraries, err := store.List()
 		if err != nil {
-			return fmt.Errorf("creating HAProxyTemplateConfig watcher for %q: %w", crdName, err)
+			// Publishing a partial set would unresolve references that are
+			// actually fine, so skip and wait for the next notification.
+			logger.Error("Listing HAProxyTemplateLibrary failed, skipping this update", "error", err)
+			return
 		}
-		crdWatchers = append(crdWatchers, crdWatcher)
+		setup.Bus.Publish(events.NewLibrarySetChangedEvent(libraries))
+	}
+	libraryWatcher, err := watcher.New(
+		libraryWatcherConfig(libraryGVR, k8sClient.Namespace(), publish), k8sClient, logger)
+	if err != nil {
+		return fmt.Errorf("creating HAProxyTemplateLibrary watcher: %w", err)
 	}
 
-	secretWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
+	secretWatcher, secretErr := watcher.NewSingle(&types.SingleWatcherConfig{
 		GVR:       secretGVR,
 		Namespace: k8sClient.Namespace(),
 		Name:      secretName,
@@ -146,15 +156,17 @@ func setupConfigWatchers(
 			return nil
 		},
 	}, k8sClient)
-	if err != nil {
-		return fmt.Errorf("creating Secret watcher: %w", err)
+	if secretErr != nil {
+		return fmt.Errorf("creating Secret watcher: %w", secretErr)
 	}
 
 	// Start watchers (tracked by errgroup for graceful shutdown)
-	for i, crdWatcher := range crdWatchers {
+	for _, w := range crdWatchers {
 		startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel,
-			fmt.Sprintf("HAProxyTemplateConfig watcher (%s)", crdNames[i]), crdWatcher.Start)
+			fmt.Sprintf("HAProxyTemplateConfig watcher (%s)", crdName), w.Start)
 	}
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel,
+		"HAProxyTemplateLibrary watcher", libraryWatcher.Start)
 	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "Secret watcher", secretWatcher.Start)
 
 	logger.Debug("Watchers started, waiting for initial sync")
@@ -162,14 +174,21 @@ func setupConfigWatchers(
 	// Wait for watchers to complete initial sync in parallel
 	watcherGroup, watcherCtx := errgroup.WithContext(setup.IterCtx)
 
-	for i, crdWatcher := range crdWatchers {
+	for _, w := range crdWatchers {
 		watcherGroup.Go(func() error {
-			if err := crdWatcher.WaitForSync(watcherCtx); err != nil {
-				return fmt.Errorf("HAProxyTemplateConfig watcher sync failed for %q: %w", crdNames[i], err)
+			if err := w.WaitForSync(watcherCtx); err != nil {
+				return fmt.Errorf("HAProxyTemplateConfig watcher sync failed for %q: %w", crdName, err)
 			}
 			return nil
 		})
 	}
+
+	watcherGroup.Go(func() error {
+		if _, err := libraryWatcher.WaitForSync(watcherCtx); err != nil {
+			return fmt.Errorf("HAProxyTemplateLibrary watcher sync failed: %w", err)
+		}
+		return nil
+	})
 
 	watcherGroup.Go(func() error {
 		if err := secretWatcher.WaitForSync(watcherCtx); err != nil {
@@ -257,4 +276,38 @@ func setupCurrentConfigStore(
 	logger.Debug("HAProxyCfg watcher started for current config updates")
 
 	return store, nil
+}
+
+// libraryWatcherConfig describes the HAProxyTemplateLibrary watch.
+//
+// Libraries are watched by KIND rather than by name: which ones matter is
+// declared in the config's spec.libraryRefs, and that changes without any
+// library object changing. Each notification carries the whole set, so a
+// deletion needs no handling of its own — the object is simply absent from the
+// next snapshot.
+//
+// Extracted so its validity is testable: watcher.New rejects a config with no
+// IndexBy at RUNTIME, which surfaces only as a controller that never becomes
+// ready.
+func libraryWatcherConfig(
+	gvr schema.GroupVersionResource,
+	namespace string,
+	publish func(types.Store),
+) types.WatcherConfig {
+	return types.WatcherConfig{
+		GVR:       gvr,
+		Namespace: namespace,
+		// Name alone identifies a library within the namespace, and it is what
+		// spec.libraryRefs names.
+		IndexBy: []string{"metadata.name"},
+		OnChange: func(store types.Store, _ types.ChangeStats) {
+			publish(store)
+		},
+		// Always fires, so a namespace with no libraries still delivers the
+		// empty set the loader needs to distinguish "none exist" from "not
+		// observed yet" — without it such a cluster would wait forever.
+		OnSyncComplete: func(store types.Store, _ int) {
+			publish(store)
+		},
+	}
 }

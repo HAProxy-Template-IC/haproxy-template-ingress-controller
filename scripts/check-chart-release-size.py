@@ -5,8 +5,8 @@ if it approaches the hard Kubernetes Secret limit (1,048,576 bytes).
 Helm stores a release as base64(gzip(json(release))) in a Secret's data field.
 After the conditional-subchart refactor (chart MR !1105) the dominant — in fact
 near-total — contributor is `release.manifest` (the rendered output: the merged
-HAProxyTemplateConfig carrying every *enabled* library's validationTests +
-templateSnippets). The parent chart's own `templates/` + `libraries/` source
+HAProxyTemplateLibrary objects carrying every *enabled* library's
+validationTests + templateSnippets, plus the operator's HAProxyTemplateConfig). The parent chart's own `templates/` + `libraries/` source
 contribute the rest.
 
 CRITICAL: the moved vendor/library SOURCE under `charts/<subchart>/` is NOT

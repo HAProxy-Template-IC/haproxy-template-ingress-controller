@@ -115,13 +115,18 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name == "CRD_NAME")].value
-          value: edge-config-base,edge-config-ssl,edge-config-ingress,edge-config-gateway,edge-config-ingress-annotations-compat,edge-config-haptic-annotations,edge-config-spoa-hub,edge-config-vector,edge-config
+          value: edge-config
 
-  - it: pins the default CRD_NAME list against library_loader_test (merge order, operator last)
+  # One name. Which snippets it pulls in, and in what order, is declared in
+  # that object's spec.libraryRefs — there is no second list to disagree with.
+  - it: names exactly one config, whatever libraries are enabled
+    set:
+      controller.templateLibraries.gateway.enabled: false
+      controller.templateLibraries.vector.enabled: false
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name == "CRD_NAME")].value
-          value: haptic-config-base,haptic-config-ssl,haptic-config-ingress,haptic-config-gateway,haptic-config-ingress-annotations-compat,haptic-config-haptic-annotations,haptic-config-spoa-hub,haptic-config-vector,haptic-config
+          value: haptic-config
 
   - it: should set resources when specified
     set:

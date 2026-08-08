@@ -4,27 +4,22 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: haproxytemplateconfigs.haproxy-haptic.org
+  name: haproxytemplatelibraries.haproxy-haptic.org
 spec:
   group: haproxy-haptic.org
   names:
-    kind: HAProxyTemplateConfig
-    listKind: HAProxyTemplateConfigList
-    plural: haproxytemplateconfigs
+    kind: HAProxyTemplateLibrary
+    listKind: HAProxyTemplateLibraryList
+    plural: haproxytemplatelibraries
     shortNames:
-    - htplcfg
-    - haptpl
-    singular: haproxytemplateconfig
+    - htpllib
+    singular: haproxytemplatelibrary
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.validationStatus
-      name: Status
+    - jsonPath: .spec.revision
+      name: Revision
       type: string
-    - description: Spec generation the controller last processed
-      jsonPath: .status.observedGeneration
-      name: Observed
-      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -32,10 +27,21 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          HAProxyTemplateConfig defines the configuration for the HAProxy Template Ingress Controller.
+          HAProxyTemplateLibrary carries template library content that a
+          HAProxyTemplateConfig pulls in through spec.libraryRefs.
 
-          As a custom resource it provides OpenAPI validation, type safety, and support for
-          embedded validation tests.
+          A library is a complete content contributor, not just a bag of snippets: it
+          can define map files, general files, SSL certificates, Kubernetes resources
+          and the main haproxyConfig template as well.
+
+          It exists so the bulk of a configuration — templateSnippets and
+          validationTests are ~94% of the rendered bytes — lives outside the object an
+          operator reads and edits, and so a library too large for one object can be
+          split across several without changing how it merges.
+
+          It carries content only. A library cannot declare podSelector,
+          watchedResources or dataplane settings, so it can never redefine the
+          controller's operational identity.
         properties:
           apiVersion:
             description: |-
@@ -55,209 +61,9 @@ spec:
           metadata:
             type: object
           spec:
-            description: |-
-              HAProxyTemplateConfigSpec defines the desired state of HAProxyTemplateConfig.
-
-              One object per controller. Bulk template content lives in
-              HAProxyTemplateLibrary objects pulled in through LibraryRefs, so this object
-              stays small enough to read, diff and `kubectl edit`.
-
-              The CEL rule below runs in the apiserver at apply time, where it cannot be
-              unreachable the way a webhook can. PodSelector and WatchedResources are
-              required unconditionally, because no referenced library can supply them.
-              HAProxyConfig may come from a library, so it is required only when nothing is
-              referenced. Everything else the controller needs is enforced after the merge
-              by config.ValidateStructure.
+            description: HAProxyTemplateLibrarySpec is the content one snippets object
+              contributes.
             properties:
-              controller:
-                description: Controller contains controller-level settings (ports,
-                  leader election, etc.).
-                properties:
-                  configPublishing:
-                    description: ConfigPublishing configures how rendered configs
-                      are stored in CRDs.
-                    properties:
-                      compressionThreshold:
-                        default: 1048576
-                        description: |-
-                          CompressionThreshold is the minimum size in bytes at which configs are compressed.
-
-                          Configs smaller than this threshold are stored uncompressed.
-                          Compression uses zstd+base64 encoding.
-
-                          Default: 1048576 (1 MiB)
-                          A value of 0 is treated as unset and the default applies.
-                        format: int64
-                        minimum: 0
-                        type: integer
-                    type: object
-                  leaderElection:
-                    description: LeaderElection configures leader election for high
-                      availability.
-                    properties:
-                      enabled:
-                        description: |-
-                          Enabled determines whether leader election is active.
-
-                          If false, the controller assumes it is the sole instance (single-replica mode).
-                          Default: true
-                        type: boolean
-                      leaseDuration:
-                        description: |-
-                          LeaseDuration is the duration that non-leader candidates will wait
-                          to force acquire leadership (measured against time of last observed ack).
-
-                          Format: Go duration string (e.g., "15s", "30s")
-                          Default: 30s (DefaultLeaderElectionLeaseDuration in pkg/core/config/defaults.go;
-                          the Helm chart's values.yaml sets the same value at controller.config.controller.leaderElection.leaseDuration)
-                        type: string
-                      leaseName:
-                        description: |-
-                          LeaseName is the name of the Lease resource used for coordination.
-
-                          Default: haptic-leader
-                        minLength: 1
-                        type: string
-                      renewDeadline:
-                        description: |-
-                          RenewDeadline is the duration that the acting leader will retry
-                          refreshing leadership before giving up.
-
-                          Format: Go duration string (e.g., "20s")
-                          Default: 20s (DefaultLeaderElectionRenewDeadline)
-                          Must be less than LeaseDuration
-                        type: string
-                      retryPeriod:
-                        description: |-
-                          RetryPeriod is the duration the LeaderElector clients should wait
-                          between tries of actions.
-
-                          Format: Go duration string (e.g., "5s")
-                          Default: 5s (DefaultLeaderElectionRetryPeriod)
-                          Must be less than RenewDeadline
-                        type: string
-                    type: object
-                type: object
-              credentialsSecretRef:
-                description: |-
-                  CredentialsSecretRef references the Secret containing HAProxy Dataplane API credentials.
-
-                  The Secret must contain the following keys:
-                    - dataplane_username: Username for HAProxy Dataplane API
-                    - dataplane_password: Password for HAProxy Dataplane API
-
-                  If the namespace is omitted, it defaults to the same namespace as this config resource.
-                properties:
-                  name:
-                    description: Name is the name of the Secret.
-                    minLength: 1
-                    type: string
-                  namespace:
-                    description: |-
-                      Namespace is the namespace of the Secret.
-
-                      If empty, defaults to the same namespace as the HAProxyTemplateConfig.
-                    type: string
-                required:
-                - name
-                type: object
-              dataplane:
-                description: Dataplane configures the Dataplane API for production
-                  HAProxy instances.
-                properties:
-                  configFile:
-                    description: |-
-                      ConfigFile is the path to the main HAProxy configuration file.
-
-                      Used for validation.
-                      Default: /etc/haproxy/haproxy.cfg
-                    type: string
-                  configPublishInterval:
-                    description: |-
-                      ConfigPublishInterval throttles how often the rendered HAProxy config is
-                      republished as the HAProxyCfg observability CRD. The CRD itself is not on
-                      the deployment hot path, but during endpoint churn rewriting the (~500 KB)
-                      CRD on every reconciliation creates significant etcd write pressure;
-                      throttling republishes reduces that write load while leaving the
-                      event-driven push to HAProxy pods untouched.
-
-                      Format: Go duration string (e.g., "10s", "1m").
-                      Default: 10s
-                    type: string
-                  deploymentTimeout:
-                    description: |-
-                      DeploymentTimeout is the maximum time to wait for a deployment to complete.
-                      If exceeded, the scheduler assumes the deployment was lost and retries.
-                      This is a safety net for race conditions during leadership transitions.
-                      Format: Go duration string (e.g., "30s", "1m")
-                      Default: 30s
-                    type: string
-                  driftPreventionInterval:
-                    description: |-
-                      DriftPreventionInterval triggers periodic deployments to prevent configuration drift.
-
-                      A deployment is automatically triggered if no deployment has occurred within this interval.
-                      This detects and corrects drift caused by external Dataplane API clients.
-                      Format: Go duration string (e.g., "60s", "5m")
-                      Default: 60s
-                    type: string
-                  generalStorageDir:
-                    description: |-
-                      GeneralStorageDir is the directory for general files (error pages, etc.).
-
-                      Used for both validation and deployment.
-                      Default: /etc/haproxy/general
-                    type: string
-                  mapsDir:
-                    description: |-
-                      MapsDir is the directory for HAProxy map files.
-
-                      Used for both validation and deployment.
-                      Default: /etc/haproxy/maps
-                    type: string
-                  minDeploymentInterval:
-                    description: |-
-                      MinDeploymentInterval enforces minimum time between consecutive deployments.
-
-                      This prevents rapid-fire deployments from hammering HAProxy instances.
-                      Format: Go duration string (e.g., "2s", "500ms")
-                      Default: 2s
-                    type: string
-                  port:
-                    description: |-
-                      Port is the Dataplane API port for production HAProxy pods.
-
-                      Default: 5555
-                    maximum: 65535
-                    minimum: 1
-                    type: integer
-                  reloadVerificationTimeout:
-                    description: |-
-                      ReloadVerificationTimeout is the maximum time the Dataplane sync waits for
-                      HAProxy to report a graceful reload as completed before failing the sync.
-                      Set this higher than the Dataplane API's own reload-delay setting.
-
-                      Format: Go duration string (e.g., "10s", "30s").
-                      Default: 10s
-                    type: string
-                  sslCertsDir:
-                    description: |-
-                      SSLCertsDir is the directory for SSL certificates.
-
-                      Used for both validation and deployment.
-                      Default: /etc/haproxy/certs (the Helm chart sets /etc/haproxy/ssl)
-                    type: string
-                  syncTimeout:
-                    description: |-
-                      SyncTimeout is the overall timeout for a single Dataplane sync to one
-                      HAProxy endpoint. The sync covers parse + diff + raw config push +
-                      optional reload-verification. If exceeded, the sync is cancelled and the
-                      scheduler retries on the next reconciliation.
-
-                      Format: Go duration string (e.g., "2m", "30s").
-                      Default: 2m
-                    type: string
-                type: object
               files:
                 additionalProperties:
                   description: "GeneralFile defines a general file generated from
@@ -325,17 +131,14 @@ spec:
                   required:
                   - template
                   type: object
-                description: |-
-                  Files maps file names to their template definitions.
-
-                  These generate auxiliary files like custom error pages.
+                description: Files maps file names to their template definitions.
                 type: object
               haproxyConfig:
                 description: |-
                   HAProxyConfig contains the main HAProxy configuration template.
 
-                  Exactly one object in a merged set supplies it (the base library);
-                  config.ValidateStructure rejects a merged config whose template is empty.
+                  Exactly one member of a merged set supplies it, or the referencing
+                  config does.
                 properties:
                   postProcessing:
                     description: |-
@@ -432,94 +235,8 @@ spec:
                   required:
                   - template
                   type: object
-                description: |-
-                  K8sResources maps resource template names to their template
-                  definitions. Each entry's rendered output is parsed as one or
-                  more Kubernetes resources (multi-doc YAML, separated by `---`)
-                  and applied via Server-Side Apply with field manager `haptic`.
-
-                  The controller injects an OwnerReference to the
-                  HAProxyTemplateConfig CR (controller=true,
-                  blockOwnerDeletion=true) on every applied resource so cascade
-                  garbage collection removes them when the CR is deleted (e.g.
-                  `helm uninstall`). Resources that disappear from the rendered
-                  set across reconciliations are pruned via the
-                  `haproxy-haptic.org/managed-by` label the applier injects.
-
-                  Templates have full access to the same engine context as
-                  haproxyConfig — `resources`, filters, `templateSnippets`,
-                  `fileRegistry`, `extraContext`, etc. — so a k8sResources
-                  template can render extension points (`render_glob` patterns)
-                  and consume cached state (`shared.ComputeIfAbsent`).
-                type: object
-              libraryRefs:
-                description: |-
-                  LibraryRefs pulls in HAProxyTemplateLibrary objects, in merge order.
-
-                  Earlier entries are overridden by later ones, and this object's own
-                  inline content wins last — so the object an operator edits is always the
-                  override point, with no dependence on ordering.
-
-                  The controller renders only when every reference resolves to an object
-                  whose spec.revision equals the revision named here. Otherwise it keeps
-                  serving the last-good configuration, because a partially applied set is
-                  not safe to render: libraries deliberately override one another, so a
-                  missing member silently changes behaviour rather than removing it.
-                items:
-                  description: |-
-                    LibraryRef names one HAProxyTemplateLibrary object and the revision of it
-                    this configuration expects.
-                  properties:
-                    name:
-                      description: Name of the HAProxyTemplateLibrary object, in this
-                        config's namespace.
-                      maxLength: 253
-                      minLength: 1
-                      type: string
-                    revision:
-                      description: |-
-                        Revision the referenced object must report in spec.revision.
-
-                        The controller compares the two strings and never recomputes either from
-                        the content. A writer that applies both objects together stamps the same
-                        value on each, so a half-applied set is visible as a mismatch — while an
-                        in-place edit to a snippet's content leaves the revision alone and takes
-                        effect immediately.
-                      maxLength: 253
-                      minLength: 1
-                      type: string
-                  required:
-                  - name
-                  - revision
-                  type: object
-                type: array
-                x-kubernetes-list-map-keys:
-                - name
-                x-kubernetes-list-type: map
-              logging:
-                description: Logging configures logging behavior.
-                properties:
-                  level:
-                    description: |-
-                      Level controls the log level.
-
-                      Values: TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive)
-
-                      If not set, the LOG_LEVEL environment variable is used.
-                      If neither is set, defaults to INFO.
-                    enum:
-                    - TRACE
-                    - DEBUG
-                    - INFO
-                    - WARN
-                    - ERROR
-                    - trace
-                    - debug
-                    - info
-                    - warn
-                    - error
-                    - ""
-                    type: string
+                description: K8sResources maps resource template names to their template
+                  definitions.
                 type: object
               maps:
                 additionalProperties:
@@ -572,24 +289,13 @@ spec:
                   required:
                   - template
                   type: object
-                description: |-
-                  Maps maps map file names to their template definitions.
-
-                  These generate HAProxy map files for backend routing and other features.
+                description: Maps maps map file names to their template definitions.
                 type: object
               migrationCoverage:
                 description: |-
-                  MigrationCoverage declares, per migration source (another ingress
-                  controller whose annotations a template library emulates), how each
-                  of the source's annotations is handled. The controller treats this
-                  as opaque data: it is contributed by template libraries and consumed
-                  by the playground's migration report, which reads it from a build-time
-                  chart render — no entry influences rendering or reconciliation, and
-                  nothing in a cluster reads the stored copy.
-
-                  This is the one spec field that ACCUMULATES across a merged set rather
-                  than being overwritten: every contributing library's declaration
-                  survives, in merge order. See conversion.MergeSpecs.
+                  MigrationCoverage declares how a migration source's annotations are
+                  handled. Opaque to the controller; consumed by the playground's
+                  migration report.
                 items:
                   description: |-
                     MigrationCoverageSource documents one migration source: how to detect
@@ -664,30 +370,22 @@ spec:
                   - source
                   type: object
                 type: array
-                x-kubernetes-list-map-keys:
-                - source
-                x-kubernetes-list-type: map
-              podSelector:
+              revision:
                 description: |-
-                  PodSelector identifies which HAProxy pods to configure.
+                  Revision identifies this content to the configs that reference it. A
+                  referencing spec.libraryRefs entry must carry the same string or the
+                  controller holds the last-good configuration rather than rendering a
+                  half-applied set.
 
-                  Required in the merged config (config.ValidateStructure rejects an empty
-                  matchLabels); optional here only because the merged result is what is checked.
-                properties:
-                  matchLabels:
-                    additionalProperties:
-                      type: string
-                    description: |-
-                      MatchLabels are the labels to match HAProxy pods.
-
-                      Example:
-                        app: haproxy
-                        component: loadbalancer
-                    minProperties: 1
-                    type: object
-                required:
-                - matchLabels
-                type: object
+                  The writer chooses the value and the controller only ever compares it
+                  against the reference — it never derives a revision from the content.
+                  That is what lets `kubectl edit` change a snippet in place and take
+                  effect: the content moves, the revision does not, so the reference still
+                  matches. A digest of the content is the convenient source for a
+                  generator, because it changes exactly when the content does.
+                maxLength: 253
+                minLength: 1
+                type: string
               sslCertificates:
                 additionalProperties:
                   description: |-
@@ -739,10 +437,8 @@ spec:
                   required:
                   - template
                   type: object
-                description: |-
-                  SSLCertificates maps certificate names to their template definitions.
-
-                  These generate SSL certificate files for HAProxy.
+                description: SSLCertificates maps certificate names to their template
+                  definitions.
                 type: object
               templateSnippets:
                 additionalProperties:
@@ -767,14 +463,15 @@ spec:
                   required:
                   - template
                   type: object
-                description: |-
-                  TemplateSnippets maps snippet names to reusable template fragments.
-
-                  Snippets can be included in other templates using {{ render "name" }}.
+                description: TemplateSnippets maps snippet names to reusable template
+                  fragments.
                 type: object
               templatingSettings:
-                description: TemplatingSettings configures template rendering behavior
-                  and custom variables.
+                description: |-
+                  TemplatingSettings lets a library ship defaults for the template context.
+
+                  Template configuration, not operational identity: the referencing config
+                  merges last, so anything an operator sets wins over every library.
                 properties:
                   engine:
                     description: |-
@@ -1026,290 +723,20 @@ spec:
                 description: |-
                   ValidationTests contains embedded validation test definitions.
 
-                  The map key is the test name, which must be unique across the whole
-                  merged set: the controller unions tests per source and rejects a name
-                  two objects both define, because a silent override would leave one
-                  author believing an assertion runs that does not. The reserved
-                  `_global` entry is the exception — it is a shared baseline several
-                  objects each contribute part of, and its fixtures accumulate.
-
-                  These tests are executed at startup (the load gate), on every live
-                  config change, and via the "controller validate" / "preflight" CLI
-                  commands before deployment.
+                  Names must be unique across the merged set: the controller unions tests
+                  per source and rejects a name two sources both define, because a silent
+                  override would leave one author believing an assertion runs that does
+                  not. The reserved `_global` entry accumulates instead.
                 type: object
-              validators:
-                description: |-
-                  Validators declares pluggable validator sidecars consulted by the
-                  admission webhook before admitting changes that affect plugin
-                  configuration. See `docs/site/docs/operations/pluggable-validators.md`
-                  for setup; the wire protocol is at
-                  `docs/development/validator-protocol.md`.
-
-                  An empty list (the default) disables pluggable validation — the
-                  webhook keeps performing template + HAProxy syntax dry-run only.
-                items:
-                  description: |-
-                    ValidatorConfig declares one pluggable validator sidecar that the
-                    controller will consult during admission webhook processing.
-
-                    The wire protocol between the controller and a validator sidecar is
-                    documented in `docs/development/validator-protocol.md` and is owned
-                    by HAPTIC. Reference implementation: `haproxy-spoa-hub
-                    --validate-socket <path>` shipped alongside HAPTIC; any conforming
-                    implementation may be substituted. The validator program is opaque
-                    to HAPTIC — its internal architecture (whether it has plugins, how
-                    it dispatches files, how it parses content) is its own concern.
-
-                    Operators declare zero, one, or many validators. Each one runs in
-                    its own sidecar container in the controller pod and shares a Unix
-                    domain socket via an emptyDir volume; the chart wires this up
-                    automatically when `spec.validators` is non-empty.
-
-                    Routing: HAPTIC matches each rendered file's path against every
-                    validator's `files` glob list. Files that match are sent to that
-                    validator over its socket. A file that matches multiple validators'
-                    globs is sent to each of them. Files that match no validator's
-                    globs are not validated by any sidecar (they still flow through the
-                    existing template + HAProxy syntax dry-run).
-                  properties:
-                    dataFiles:
-                      description: |-
-                        DataFiles lists glob patterns for files this validator needs in order
-                        to check the files it validates, but must not validate on their own.
-
-                        Every matching file is attached to every request sent to this
-                        validator, marked as data. The validator does not parse them; it
-                        resolves references from the validated file into them.
-
-                        A WAF ruleset is the motivating case: the validator sidecar runs in
-                        the controller pod and cannot read the HAProxy pod's filesystem, so a
-                        hub config that `Include`s a ruleset by path can only be checked if
-                        the ruleset's content travels with the request.
-
-                        A file matching both `files` and `dataFiles` is treated as data —
-                        validating a reference target standalone reports on the wrong thing.
-                      items:
-                        type: string
-                      type: array
-                      x-kubernetes-list-type: set
-                    files:
-                      description: |-
-                        Files is a list of glob patterns matched against rendered file
-                        paths to decide which files to send to this validator.
-
-                        Glob syntax follows Go's `path/filepath.Match` rules:
-                          - `*` matches any run of non-`/` characters.
-                          - `?` matches any single non-`/` character.
-                          - `[a-z]` matches any character in the range.
-                          - `**` is NOT supported; use multiple entries to cover
-                            directory hierarchies.
-
-                        At least one glob MUST be specified. Each glob MUST be an
-                        absolute path (start with `/`) so it matches the rendered file
-                        paths that the controller produces (e.g. `/etc/haproxy/maps/host.map`,
-                        `/etc/haproxy-spoa-hub/config.toml`). Operators get the matching
-                        behaviour they expect from a path-style glob.
-                      items:
-                        type: string
-                      minItems: 1
-                      type: array
-                      x-kubernetes-list-type: set
-                    maxConnections:
-                      description: |-
-                        MaxConnections caps the size of the controller's connection
-                        pool to this validator's socket. The pool starts small (one
-                        idle connection) and grows on contention up to this cap;
-                        connections idle past the validator's idle timeout are reaped
-                        transparently and reopened on next use.
-
-                        Defaults to 4 when omitted. Setting 1 reproduces a serial
-                        client (one validation in flight at a time). Higher values
-                        allow more concurrent validations during reconciliation bursts
-                        at the cost of file descriptors and validator-side resource
-                        pressure.
-                      format: int32
-                      maximum: 32
-                      minimum: 1
-                      type: integer
-                    name:
-                      description: |-
-                        Name is the operator-facing identifier for this validator.
-
-                        MUST be a valid RFC 1123 label (lowercase alphanumeric and `-`,
-                        1-63 characters). MUST be unique across the validators array.
-                        Surfaces in admission denial messages so operators can identify
-                        which validator rejected a change.
-                      maxLength: 63
-                      minLength: 1
-                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                      type: string
-                    socketPath:
-                      description: |-
-                        SocketPath is the absolute filesystem path to the validator's
-                        Unix domain socket inside the controller pod.
-
-                        The chart-rendered shared `emptyDir` volume mounts at
-                        `/var/run/haptic-validators/`; the conventional path is
-                        `/var/run/haptic-validators/<name>.sock`. Custom paths must
-                        still resolve inside the controller pod's filesystem.
-                      minLength: 1
-                      pattern: ^/
-                      type: string
-                    timeoutMs:
-                      description: |-
-                        TimeoutMs is the per-call deadline, in milliseconds, covering
-                        the request-response cycle for one file (connect-or-acquire +
-                        write + read).
-
-                        Defaults to 5000 (5 seconds) when omitted. Validator calls
-                        exceeding this deadline are surfaced as `result: "error"` so a
-                        wedged sidecar does not stall the webhook path indefinitely.
-                      format: int32
-                      maximum: 60000
-                      minimum: 1
-                      type: integer
-                  required:
-                  - files
-                  - name
-                  - socketPath
-                  type: object
-                type: array
-                x-kubernetes-list-map-keys:
-                - name
-                x-kubernetes-list-type: map
-              watchedResources:
-                additionalProperties:
-                  description: WatchedResource configures watching for a specific
-                    Kubernetes resource type.
-                  properties:
-                    apiVersion:
-                      description: |-
-                        APIVersion is the Kubernetes API version (e.g., "networking.k8s.io/v1").
-
-                        Mutually exclusive with apiVersions (exactly one must be set; the
-                        controller's config validation enforces this). Equivalent to a
-                        one-element apiVersions list.
-                      type: string
-                    apiVersions:
-                      description: |-
-                        APIVersions is an ordered candidate list of API versions. The
-                        controller resolves the entry to the FIRST candidate the apiserver
-                        serves and watches that version. Mutually exclusive with apiVersion.
-
-                        Example: ["gateway.networking.k8s.io/v1", "gateway.networking.k8s.io/v1beta1"]
-                      items:
-                        type: string
-                      minItems: 1
-                      type: array
-                    debounceInterval:
-                      description: |-
-                        DebounceInterval overrides the watcher's refractory window.
-                        "0" disables debouncing; default 2s.
-                      type: string
-                    enableValidationWebhook:
-                      description: |-
-                        EnableValidationWebhook enables admission webhook validation for this resource.
-
-                        When enabled, the controller will validate resources of this type before they're saved.
-                        Default: false
-                      type: boolean
-                    fieldSelector:
-                      description: |-
-                        FieldSelector filters resources using client-side JSONPath evaluation.
-                        Unlike Kubernetes' native fieldSelector (which only supports limited fields),
-                        this supports any JSONPath expression.
-
-                        Format: "field.path=value"
-                        Example: "spec.ingressClassName=haproxy-internal"
-                      type: string
-                    indexBy:
-                      description: |-
-                        IndexBy specifies JSONPath expressions for extracting index keys.
-
-                        Resources are indexed by these values for O(1) lookup in templates.
-
-                        Examples:
-                          - ["metadata.namespace", "metadata.name"]
-                          - ["metadata.labels['kubernetes.io/service-name']"]
-                      items:
-                        type: string
-                      type: array
-                    labelSelector:
-                      description: |-
-                        LabelSelector filters resources by labels (server-side filtering).
-
-                        Equality-only: comma-separated "key=value" pairs.
-                        Example: "app=nginx,environment=production"
-                        Set-based syntax (e.g. "tier in (frontend,api)", "!disabled") is NOT supported —
-                        the controller's parseLabelSelector splits on ',' and '=' and silently drops the rest.
-                      type: string
-                    optional:
-                      description: |-
-                        Optional marks this resource as non-essential: when NO candidate
-                        version is served by the cluster, the watch is dropped and every
-                        templateSnippet / validationTest whose requires list names this
-                        resource is stripped from the effective config at load time, instead
-                        of failing startup.
-                      type: boolean
-                    resources:
-                      description: |-
-                        Resources is the plural form of the Kubernetes resource type (e.g., "ingresses", "services").
-
-                        This is the name used in RBAC rules and API paths.
-                      minLength: 1
-                      type: string
-                    store:
-                      description: |-
-                        Store specifies the storage backend for this resource type.
-
-                        Valid values:
-                          - "full": MemoryStore - keeps all resources in memory (faster, higher memory usage)
-                          - "on-demand": CachedStore - fetches resources on-demand with caching (slower, lower memory usage)
-
-                        Default: "full"
-
-                        Use "on-demand" for large resources accessed infrequently (e.g., Secrets).
-                        Use "full" for frequently accessed resources (e.g., Ingress, Service, EndpointSlice).
-                      enum:
-                      - full
-                      - on-demand
-                      type: string
-                  required:
-                  - resources
-                  type: object
-                description: |-
-                  WatchedResources maps resource type names to their watch configuration.
-
-                  Each key is a user-defined name for the resource type (e.g., "ingresses", "services").
-                  This name is used in templates to access the resources.
-
-                  The merged config must declare at least one (config.ValidateStructure);
-                  a single object may declare none.
-                type: object
-              watchedResourcesIgnoreFields:
-                description: |-
-                  WatchedResourcesIgnoreFields specifies JSONPath expressions for fields
-                  to remove from all watched resources to reduce memory usage.
-
-                  Example: ["metadata.managedFields", "metadata.resourceVersion"]
-                items:
-                  type: string
-                type: array
+            required:
+            - revision
             type: object
-            x-kubernetes-validations:
-            - message: a HAProxyTemplateConfig needs podSelector, at least one watchedResources
-                entry, and haproxyConfig — either inline or supplied by a spec.libraryRefs
-                entry
-              rule: has(self.podSelector) && has(self.watchedResources) && size(self.watchedResources)
-                > 0 && (has(self.haproxyConfig) || (has(self.libraryRefs) && size(self.libraryRefs)
-                > 0))
           status:
-            description: HAProxyTemplateConfigStatus defines the observed state of
-              HAProxyTemplateConfig.
+            description: HAProxyTemplateLibraryStatus reports what the controller
+              observed.
             properties:
               conditions:
-                description: Conditions represent the latest available observations
-                  of the config's state.
+                description: Conditions represent the latest available observations.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -1365,34 +792,11 @@ spec:
                   - type
                   type: object
                 type: array
-              lastValidated:
-                description: LastValidated is the timestamp of the last successful
-                  validation.
-                format: date-time
-                type: string
               observedGeneration:
                 description: ObservedGeneration reflects the generation most recently
-                  observed by the controller.
+                  observed.
                 format: int64
                 type: integer
-              validationErrors:
-                description: |-
-                  ValidationErrors contains detailed validation error messages.
-                  Each entry includes the template name, error location, and context.
-                items:
-                  type: string
-                type: array
-              validationMessage:
-                description: ValidationMessage contains human-readable validation
-                  details.
-                type: string
-              validationStatus:
-                description: ValidationStatus indicates the overall validation status.
-                enum:
-                - Valid
-                - Invalid
-                - Unknown
-                type: string
             type: object
         type: object
     served: true

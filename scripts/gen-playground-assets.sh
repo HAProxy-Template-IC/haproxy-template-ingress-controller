@@ -45,13 +45,13 @@ render_config() {
   # The playground is the only consumer; the chart omits it by default (!1492).
   sets+=(--set controller.config.includeMigrationCoverage=true)
   echo "==> $id config -> $OUT/presets/$id.config.yaml"
-  # The chart renders one HAProxyTemplateConfig per enabled template library
-  # (ADR-0014), but the playground shows and renders a single config. Merge the
-  # set through the controller's own merge rather than a yq-based one, so the
-  # preset is exactly what the controller would assemble.
+  # The chart renders one HAProxyTemplateConfig plus one HAProxyTemplateLibrary
+  # per enabled library (ADR-0017), but the playground shows and renders a
+  # single config. Merge through the controller's own merge rather than a
+  # yq-based one, so the preset is exactly what the controller would assemble.
   local rendered="$OUT/presets/.$id.multi.yaml"
   helm template "$CHART" --namespace default "${av[@]}" "${sets[@]}" \
-    | yq 'select(.kind == "HAProxyTemplateConfig")' > "$rendered"
+    | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' > "$rendered"
   (cd "$REPO" && go run ./cmd/controller validate -f "$rendered" --dump-merged) \
     > "$OUT/presets/$id.config.yaml"
   rm -f "$rendered"

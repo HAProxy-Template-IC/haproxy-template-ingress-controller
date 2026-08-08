@@ -42,28 +42,34 @@ type HAProxyTemplateConfig struct {
 
 // HAProxyTemplateConfigSpec defines the desired state of HAProxyTemplateConfig.
 //
-// A controller can be pointed at several of these at once (`--crd-name` takes an
-// ordered list) and merges them, later wins. **The merged set, not any single
-// object, is the unit of completeness** — the chart emits one config per template
-// library, and a library config legitimately carries nothing but
-// `templateSnippets` and `validationTests`. That is why fields the controller
-// genuinely requires are marked optional here and enforced after the merge by
-// config.ValidateStructure instead of by the apiserver — except for a
-// standalone (non-partial) object, whose completeness the CEL rule below
-// restores at apply time: it is the one shape with nothing to merge with, so
-// judging it alone is correct, and the apiserver enforcing it cannot be
-// unreachable the way a webhook can.
+// One object per controller. Bulk template content lives in
+// HAProxyTemplateLibrary objects pulled in through LibraryRefs, so this object
+// stays small enough to read, diff and `kubectl edit`.
 //
-// +kubebuilder:validation:XValidation:rule="(has(self.partial) && self.partial) || (has(self.podSelector) && has(self.watchedResources) && size(self.watchedResources) > 0 && has(self.haproxyConfig))",message="a complete HAProxyTemplateConfig needs podSelector, at least one watchedResources entry, and haproxyConfig; a config that is one shard of a merged set declares spec.partial: true"
+// The CEL rule below runs in the apiserver at apply time, where it cannot be
+// unreachable the way a webhook can. PodSelector and WatchedResources are
+// required unconditionally, because no referenced library can supply them.
+// HAProxyConfig may come from a library, so it is required only when nothing is
+// referenced. Everything else the controller needs is enforced after the merge
+// by config.ValidateStructure.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.podSelector) && has(self.watchedResources) && size(self.watchedResources) > 0 && (has(self.haproxyConfig) || (has(self.libraryRefs) && size(self.libraryRefs) > 0))",message="a HAProxyTemplateConfig needs podSelector, at least one watchedResources entry, and haproxyConfig — either inline or supplied by a spec.libraryRefs entry"
 type HAProxyTemplateConfigSpec struct {
-	// Partial marks this object as one shard of a merged set rather than a
-	// complete configuration, exempting it from the completeness rule above.
-	// The chart sets it on every object it renders — including the operator's
-	// own, which carries podSelector but not haproxyConfig (the base library
-	// owns that). A hand-written standalone config leaves it unset and gets
-	// apply-time completeness checking in the apiserver.
+	// LibraryRefs pulls in HAProxyTemplateLibrary objects, in merge order.
+	//
+	// Earlier entries are overridden by later ones, and this object's own
+	// inline content wins last — so the object an operator edits is always the
+	// override point, with no dependence on ordering.
+	//
+	// The controller renders only when every reference resolves to an object
+	// whose spec.revision equals the revision named here. Otherwise it keeps
+	// serving the last-good configuration, because a partially applied set is
+	// not safe to render: libraries deliberately override one another, so a
+	// missing member silently changes behaviour rather than removing it.
 	// +optional
-	Partial bool `json:"partial,omitempty"`
+	// +listType=map
+	// +listMapKey=name
+	LibraryRefs []LibraryRef `json:"libraryRefs,omitempty"`
 
 	// CredentialsSecretRef references the Secret containing HAProxy Dataplane API credentials.
 	//
@@ -78,7 +84,7 @@ type HAProxyTemplateConfigSpec struct {
 	// PodSelector identifies which HAProxy pods to configure.
 	//
 	// Required in the merged config (config.ValidateStructure rejects an empty
-	// matchLabels); optional per object so a library config need not repeat it.
+	// matchLabels); optional here only because the merged result is what is checked.
 	// +optional
 	PodSelector PodSelector `json:"podSelector,omitempty"`
 

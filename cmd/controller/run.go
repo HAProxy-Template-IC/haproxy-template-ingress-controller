@@ -40,7 +40,7 @@ import (
 )
 
 var (
-	runCRDNames                        []string
+	runCRDName                         string
 	runSecretName                      string
 	runWebhookCertDir                  string
 	runWebhookResourceAdmissionTimeout time.Duration
@@ -79,10 +79,9 @@ Example usage:
 }
 
 func init() {
-	runCmd.Flags().StringSliceVar(&runCRDNames, "crd-name", nil,
-		"Name of a HAProxyTemplateConfig holding controller configuration. Repeatable (or comma-separated, "+
-			"env: CRD_NAME): the configs are merged in the order given, later wins, so the operator's own config "+
-			"goes last. The Helm chart passes one per enabled template library plus the operator's.")
+	runCmd.Flags().StringVar(&runCRDName, "crd-name", "",
+		"Name of the HAProxyTemplateConfig holding controller configuration (env: CRD_NAME). Template library "+
+			"content is pulled in through its spec.libraryRefs.")
 	runCmd.Flags().StringVar(&runSecretName, "secret-name", "",
 		"Name of the Secret containing HAProxy Dataplane API credentials (env: SECRET_NAME)")
 	runCmd.Flags().StringVar(&runWebhookCertDir, "webhook-cert-dir", "",
@@ -95,37 +94,21 @@ func init() {
 		"Port for debug HTTP server (0 to disable, env: DEBUG_PORT)")
 }
 
-// resolveConfigNames applies the flag > env > default priority to the config
-// names. A single name is the degenerate case and behaves exactly as it did
-// before configs could be merged.
-func resolveConfigNames(fromFlag []string) []string {
-	if len(fromFlag) > 0 {
-		return fromFlag
+// resolveConfigName applies the flag > env > default priority.
+func resolveConfigName(fromFlag string) string {
+	if name := strings.TrimSpace(fromFlag); name != "" {
+		return name
 	}
-	if names := splitConfigNames(os.Getenv("CRD_NAME")); len(names) > 0 {
-		return names
+	if name := strings.TrimSpace(os.Getenv("CRD_NAME")); name != "" {
+		return name
 	}
-	return []string{defaultCRDName}
-}
-
-// splitConfigNames parses the comma-separated CRD_NAME form, trimming each entry
-// and dropping empties. A hand-set value with a trailing comma or a space after
-// one ("a, b,") would otherwise reach GetResource as an empty or space-padded
-// name and surface as a confusing not-found instead of being ignored.
-func splitConfigNames(fromEnv string) []string {
-	var names []string
-	for _, name := range strings.Split(fromEnv, ",") {
-		if name = strings.TrimSpace(name); name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
+	return defaultCRDName
 }
 
 func runController(_ *cobra.Command, _ []string) error {
 	// Configuration priority: CLI flags > Environment variables > Defaults
 
-	runCRDNames = resolveConfigNames(runCRDNames)
+	runCRDName = resolveConfigName(runCRDName)
 
 	// Secret name
 	if runSecretName == "" {
@@ -193,7 +176,7 @@ func runController(_ *cobra.Command, _ []string) error {
 	logger.Info("HAProxy Template Ingress Controller starting",
 		"version", version,
 		"source_hash", sourceHash,
-		"crd_names", runCRDNames,
+		"crd_name", runCRDName,
 		"secret", runSecretName,
 		"webhook_cert_dir", runWebhookCertDir,
 		"webhook_resource_admission_timeout", runWebhookResourceAdmissionTimeout,
@@ -228,7 +211,7 @@ func runController(_ *cobra.Command, _ []string) error {
 	if err := controller.Run(
 		ctx,
 		k8sClient,
-		runCRDNames,
+		runCRDName,
 		runSecretName,
 		runWebhookCertDir,
 		controller.WebhookAdmissionTimeouts{
