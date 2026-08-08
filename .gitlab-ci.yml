@@ -3276,8 +3276,13 @@ trigger-docs-release:
     - if: $CI_COMMIT_TAG =~ /^v.*/
   inherit:
     variables: false
+  # Both, for the same reason as trigger-pages below: the downstream `pages`
+  # job hard-requires each via `${VAR:?}`, and `inherit: variables: false`
+  # means only what is listed here reaches it. On a tag pipeline CI_COMMIT_SHA
+  # is the tagged commit, which is what the downstream checks out and asserts.
   variables:
     DOC_VERSION: ${CI_COMMIT_TAG}
+    HAPTIC_RELEASE_COMMIT_SHA: ${CI_COMMIT_SHA}
   trigger:
     project: haproxy-haptic/haproxy-haptic.gitlab.io
     branch: main
@@ -3376,6 +3381,13 @@ trigger-pages:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   inherit:
     variables: false
+  # The downstream `pages` job hard-requires both (`${DOC_VERSION:?}`), and
+  # `inherit: variables: false` means nothing reaches it that is not listed
+  # here. Main publishes the moving `dev` docs; deploy-docs.sh accepts `dev`
+  # or a semver, and pins the source it checks out to this SHA.
+  variables:
+    DOC_VERSION: dev
+    HAPTIC_RELEASE_COMMIT_SHA: ${CI_COMMIT_SHA}
   trigger:
     project: haproxy-haptic/haproxy-haptic.gitlab.io
     branch: main
