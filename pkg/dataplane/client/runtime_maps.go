@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -72,6 +73,15 @@ func (c *DataplaneClient) ReplaceRuntimeMap(ctx context.Context, name, desiredCo
 			err = c.deleteRuntimeMapEntry(ctx, name, op.key)
 		case opAdd:
 			err = c.addRuntimeMapEntry(ctx, name, op.key, op.value)
+			// The delta is computed from a `show map` taken earlier, so a key
+			// it classed as new can already exist by the time the add runs: a
+			// concurrent reload loads the on-disk file the pre-config phase
+			// already wrote. Converge with `set` — treating the conflict as
+			// success would latch whatever value is there, which for a reused
+			// pod IP is the previous pod's name.
+			if errors.Is(err, errMapEntryExists) {
+				err = c.setRuntimeMapEntry(ctx, name, op.key, op.value)
+			}
 		}
 		if err != nil {
 			return err
@@ -243,11 +253,19 @@ func (c *DataplaneClient) addRuntimeMapEntry(ctx context.Context, name, key, val
 		return fmt.Errorf("adding runtime map '%s' entry '%s': %w", name, key, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return fmt.Errorf("adding runtime map '%s' entry '%s': %w", name, key, errMapEntryExists)
+	}
 	if _, err := checkCreateResponse(resp, "runtime map entry", key); err != nil {
 		return err
 	}
 	return nil
 }
+
+// errMapEntryExists reports that `add map` rejected a key the live map already
+// holds. ReplaceRuntimeMap converges it with `set` instead of failing; see the
+// call site for why the key can be present when the delta said it was new.
+var errMapEntryExists = errors.New("runtime map entry already exists")
 
 // setRuntimeMapEntry replaces the value of an existing key in-place via
 // `set map <name> <key> <value>`. Atomic: the key never loses its mapping
