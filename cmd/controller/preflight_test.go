@@ -50,6 +50,18 @@ func TestCollectConfigDocuments(t *testing.T) {
 			want: []string{"name: cfg"},
 		},
 		{
+			// Dropping these silently produced a config whose libraryRefs
+			// pointed at documents that were not in the stream, so preflight
+			// failed to load every chart-rendered configuration.
+			name: "keeps the HAProxyTemplateLibrary objects the config references",
+			manifests: map[string]string{
+				"haptic/templates/deployment.yaml": "kind: Deployment\nmetadata:\n  name: c\n",
+				"haptic/templates/haproxytemplateconfig.yaml": "kind: HAProxyTemplateConfig\nmetadata:\n  name: cfg\n" +
+					"\n---\nkind: HAProxyTemplateLibrary\nmetadata:\n  name: lib-base\n",
+			},
+			want: []string{"name: cfg", "name: lib-base"},
+		},
+		{
 			name: "splits multi-document files",
 			manifests: map[string]string{
 				"haptic/templates/all.yaml": "kind: Service\nmetadata:\n  name: s\n" +

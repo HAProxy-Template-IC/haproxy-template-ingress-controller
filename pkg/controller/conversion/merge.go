@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"dario.cat/mergo"
@@ -57,12 +58,12 @@ const (
 
 // guardedSections are the named-map spec sections where a name defined by two
 // sources is a silent last-writer-wins under mergo. Within these, a duplicate
-// among all but the last source is an error; the last source — by convention
-// the operator's own config — may override anything, reported as a
-// SpecOverride. The exemption is positional rather than marker-based because
-// every chart-rendered object is partial (base owns haproxyConfig, the main
-// object owns podSelector), so no marker distinguishes "library shard" from
-// "the object whose overrides are intentional".
+// among the referenced snippets is an error; only the last source may override
+// anything, reported as a SpecOverride.
+//
+// The last source is always the HAProxyTemplateConfig itself — assembly appends
+// it after the snippets it references — so the exemption lands exactly on the
+// object an operator edits, and nowhere else.
 var guardedSections = []string{templateSnippetsKey, mapsKey, filesKey, sslCertificatesKey, k8sResourcesKey}
 
 // SpecOverride records one guarded-section name defined by more than one
@@ -175,25 +176,50 @@ func MergeSpecs(sources []*unstructured.Unstructured) (*unstructured.Unstructure
 
 // CompositeVersion identifies the state of a whole merged set as one string.
 //
-// The merged object carries the LAST source's metadata, so its resourceVersion
-// alone would not change when only a library config changed — and the
-// redundant-reinit guard compares versions for equality, so such a change would
-// be silently filtered out. Naming every member makes the version change
-// whenever any member does.
+// The merged object carries the LAST source's metadata, so that object's version
+// alone would not change when only a library changed — and the redundant-reinit
+// guard compares versions for equality, so such a change would be silently
+// filtered out. Naming every member makes the version change whenever any
+// member's SPEC does.
+//
+// Keyed on metadata.generation, NOT resourceVersion. resourceVersion moves on
+// every write, including ones that change no configuration: the controller's own
+// ownerReference stamping on each library, and its status writes. Each of those
+// then looked like a config change and triggered a full validationTests run —
+// under load the live gate timed out, the change was rejected, and template
+// status patches (Ingress status among them) never applied.
+//
+// Generation is the right key because the apiserver bumps it on spec changes
+// only: an operator's in-place edit to a library still reinitialises, while a
+// metadata-only patch does not.
 func CompositeVersion(sources []*unstructured.Unstructured) string {
 	parts := make([]string, 0, len(sources))
 	for _, source := range sources {
-		parts = append(parts, source.GetName()+"="+source.GetResourceVersion())
+		parts = append(parts, source.GetName()+"="+strconv.FormatInt(source.GetGeneration(), 10))
 	}
 	return strings.Join(parts, ",")
 }
 
 // validateResourceType rejects anything that isn't an HAProxyTemplateConfig of
-// the expected API version.
+// the expected API version. The MERGED object is one, so this stays strict —
+// a bare snippets object is not a configuration and must never parse as one.
 func validateResourceType(resource *unstructured.Unstructured) error {
 	if kind := resource.GetKind(); kind != expectedKind {
 		return fmt.Errorf("expected %s, got %s", expectedKind, kind)
 	}
+	return validateAPIVersion(resource)
+}
+
+// validateMergeSourceType accepts either kind, because a merged set is the
+// HAProxyTemplateLibrary a config references followed by the config itself.
+func validateMergeSourceType(resource *unstructured.Unstructured) error {
+	if kind := resource.GetKind(); kind != expectedKind && kind != libraryKind {
+		return fmt.Errorf("expected %s or %s, got %s", expectedKind, libraryKind, kind)
+	}
+	return validateAPIVersion(resource)
+}
+
+func validateAPIVersion(resource *unstructured.Unstructured) error {
 	if apiVersion := resource.GetAPIVersion(); apiVersion != expectedAPIVersion {
 		return fmt.Errorf("expected apiVersion %s, got %s", expectedAPIVersion, apiVersion)
 	}
@@ -204,7 +230,7 @@ func validateResourceType(resource *unstructured.Unstructured) error {
 // fields out of its spec (migrationCoverage into coverage, validationTests
 // into testSources), and returns the remaining spec for mergo.
 func prepareSourceSpec(source *unstructured.Unstructured, coverage *[]any, testSources *[]ValidationTestSource) (map[string]any, error) {
-	if err := validateResourceType(source); err != nil {
+	if err := validateMergeSourceType(source); err != nil {
 		return nil, fmt.Errorf("%s: %w", source.GetName(), err)
 	}
 
@@ -314,8 +340,8 @@ func guardSections(definedBy map[string]map[string]string, spec map[string]any, 
 		previous, exists := owners[name]
 		if exists && !isLast {
 			return fmt.Errorf(
-				"%s %q is defined by both %s and %s: only the last config in the merge order may override an entry, "+
-					"otherwise one definition silently replaces the other",
+				"%s %q is defined by both %s and %s: only the HAProxyTemplateConfig may override an entry a "+
+					"snippet defines, otherwise one definition silently replaces the other",
 				section, name, previous, source)
 		}
 		if exists {
@@ -351,4 +377,119 @@ func guardSections(definedBy map[string]map[string]string, spec map[string]any, 
 	}
 
 	return overrides, nil
+}
+
+// LibraryRef is one spec.libraryRefs entry: the snippets object a config pulls
+// in, and the revision it expects that object to report.
+type LibraryRef struct {
+	Name     string
+	Revision string
+}
+
+// LibraryRefsOf reads spec.libraryRefs in declared order. Declared order IS
+// merge order, so this is the only place that order comes from.
+func LibraryRefsOf(config *unstructured.Unstructured) ([]LibraryRef, error) {
+	raw, found, err := unstructured.NestedSlice(config.Object, "spec", "libraryRefs")
+	if err != nil {
+		return nil, fmt.Errorf("reading spec.libraryRefs: %w", err)
+	}
+	if !found {
+		return nil, nil
+	}
+
+	refs := make([]LibraryRef, 0, len(raw))
+	for i, entry := range raw {
+		fields, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("spec.libraryRefs[%d] is not an object", i)
+		}
+		name, _ := fields["name"].(string)
+		revision, _ := fields["revision"].(string)
+		if name == "" || revision == "" {
+			return nil, fmt.Errorf("spec.libraryRefs[%d] needs both name and revision", i)
+		}
+		refs = append(refs, LibraryRef{Name: name, Revision: revision})
+	}
+	return refs, nil
+}
+
+// RevisionOf reads a snippets object's spec.revision, returning "" when absent
+// so it cannot accidentally equal a reference.
+func RevisionOf(snippets *unstructured.Unstructured) string {
+	revision, _, _ := unstructured.NestedString(snippets.Object, "spec", "revision")
+	return revision
+}
+
+// AssembleSources orders a flat set of documents into merge order: the
+// snippets the config references, in the order it declares them, followed by
+// the config itself so its inline content wins.
+//
+// Document order is deliberately NOT used. Helm sorts rendered manifests by
+// kind, so a `helm template` stream lists every HAProxyTemplateConfig before
+// any HAProxyTemplateLibrary — the reverse of merge order. spec.libraryRefs is
+// the only ordering authority.
+func AssembleSources(documents []*unstructured.Unstructured) ([]*unstructured.Unstructured, error) {
+	var config *unstructured.Unstructured
+	snippets := make(map[string]*unstructured.Unstructured, len(documents))
+	for _, document := range documents {
+		switch document.GetKind() {
+		case expectedKind:
+			if config != nil {
+				return nil, fmt.Errorf("expected one %s, got both %q and %q",
+					expectedKind, config.GetName(), document.GetName())
+			}
+			config = document
+		case libraryKind:
+			snippets[document.GetName()] = document
+		}
+	}
+	if config == nil {
+		return nil, fmt.Errorf("no %s among the documents", expectedKind)
+	}
+
+	refs, err := LibraryRefsOf(config)
+	if err != nil {
+		return nil, err
+	}
+
+	ordered := make([]*unstructured.Unstructured, 0, len(refs)+1)
+	for _, ref := range refs {
+		observed, found := snippets[ref.Name]
+		if !found {
+			return nil, fmt.Errorf("%s %q references %s %q, which is not among the documents",
+				expectedKind, config.GetName(), libraryKind, ref.Name)
+		}
+		if got := RevisionOf(observed); got != ref.Revision {
+			return nil, fmt.Errorf("%s %q expects %s %q at revision %q, but it reports %q",
+				expectedKind, config.GetName(), libraryKind, ref.Name, ref.Revision, got)
+		}
+		ordered = append(ordered, observed)
+	}
+	return append(ordered, config), nil
+}
+
+// ConfigOf returns the HAProxyTemplateConfig among a merged set, or nil.
+//
+// Selected by KIND, not by position. Assembly appends the config after the
+// libraries it references, but nothing enforces that, and a reorder would
+// otherwise make callers silently act on a library — stamping status onto a
+// library's identity, or treating the config as one of its own dependencies.
+func ConfigOf(sources []*unstructured.Unstructured) *unstructured.Unstructured {
+	for _, source := range sources {
+		if source.GetKind() == expectedKind {
+			return source
+		}
+	}
+	return nil
+}
+
+// LibrariesOf returns the HAProxyTemplateLibrary sources, in merge order.
+func LibrariesOf(sources []*unstructured.Unstructured) []*unstructured.Unstructured {
+	libraries := make([]*unstructured.Unstructured, 0, len(sources))
+	for _, source := range sources {
+		if source.GetKind() == libraryKind {
+			libraries = append(libraries, source)
+		}
+	}
+	return libraries
 }

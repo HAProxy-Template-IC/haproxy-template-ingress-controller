@@ -34,71 +34,78 @@ var configGVR = schema.GroupVersionResource{
 	Group: "haproxy-haptic.org", Version: "v1alpha1", Resource: "haproxytemplateconfigs",
 }
 
-// TestConfigShape pins what the chart installs: one HAProxyTemplateConfig per
-// enabled template library plus the operator's own config, every one marked
-// spec.partial, tests inline, merged by the controller in CRD_NAME order.
+var libraryGVR = schema.GroupVersionResource{
+	Group:    "haproxy-haptic.org",
+	Version:  "v1alpha1",
+	Resource: "haproxytemplatelibraries",
+}
+
+// TestConfigShape pins what the chart installs.
 //
-// This deliberately overturns the single-object shape an earlier version of
-// this test called "the point, not an implementation detail". That shape was
-// the correct answer to the July 2026 revert of !1440, whose two reasons have
-// since been dissolved rather than ignored (ADR-0016):
+// The chart renders ONE HAProxyTemplateConfig plus one HAProxyTemplateLibrary
+// per enabled library. The config stays small enough to read and edit (~1% of
+// etcd's per-object limit); the snippets carry the bulk, which measured 94%
+// templateSnippets + validationTests.
 //
-//   - "a fragment is not a config, so the CRD must make every field optional"
-//     — that price was already paid: ADR-0014 dropped the Required markers and
-//     they were never restored. spec.partial plus the CRD's CEL rule now gives
-//     apply-time completeness back for standalone objects, enforced by the
-//     apiserver, which a webhook (failurePolicy: Ignore) never guaranteed.
-//   - "validators already running in clusters judge a fragment as a complete
-//     config" — the per-object config webhook is GONE: it structurally cannot
-//     judge a multi-object change (it sees the mid-batch state), and the
-//     apply-crds hook strips its legacy entry from live clusters during the
-//     upgrade. Whole-set validation happens where the whole set is visible:
-//     the pre-rollout preflight hook and the fail-closed load gate.
-//
-// What the split buys is the reason the controller exists as CRDs at all:
-// per-object size budgets (worst library: 44% of etcd's limit, versus 99.4%
-// for the single object that motivated all of this), and composability — an
-// arbitrary number of small configs merged in a declared order.
+// Snippets carry content only — no podSelector, watchedResources or dataplane —
+// so a library cannot redefine the controller's operational identity. That is
+// stronger than the spec.partial model this replaces, which waived the CRD's
+// completeness rule for every object in the set.
 func TestConfigShape(t *testing.T) {
 	feature := features.New("chart installs one config object per library, merged by the controller").
-		Assess("several partial objects, operator's config among them", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			items := listHaptic(ctx, t, cfg, configGVR)
-			if len(items) < 2 {
-				t.Fatalf("expected one HAProxyTemplateConfig per enabled library plus the operator's, got %d — "+
-					"a single object puts every library back under one etcd size budget", len(items))
+		Assess("exactly one config, referencing every library's snippets", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			configs := listHaptic(ctx, t, cfg, configGVR)
+			if len(configs) != 1 {
+				t.Fatalf("expected exactly one HAProxyTemplateConfig, got %d — bulk content belongs "+
+					"in HAProxyTemplateLibrary, leaving one config an operator can read and edit", len(configs))
+			}
+			config := configs[0]
+
+			if _, ok, _ := unstructured.NestedMap(config.Object, "spec", "podSelector"); !ok {
+				t.Fatal("the config carries no podSelector; no snippet can supply it, so the " +
+					"apiserver's CEL rule should have refused this object")
+			}
+			if watched, _, _ := unstructured.NestedMap(config.Object, "spec", "watchedResources"); len(watched) == 0 {
+				t.Fatal("the config declares no watchedResources; the union of every library's is meant to land here")
 			}
 
-			var haveOperator bool
-			var haproxyConfigOwners []string
-			for _, item := range items {
-				spec, _, _ := unstructured.NestedMap(item.Object, "spec")
-				partial, _, _ := unstructured.NestedBool(item.Object, "spec", "partial")
-				if !partial {
-					t.Fatalf("%s is not marked spec.partial — the CEL completeness rule would "+
-						"reject it at apply time, since no chart object is complete alone", item.GetName())
-				}
-				if _, ok := spec["podSelector"]; ok {
-					haveOperator = true
-				}
-				if _, ok := spec["haproxyConfig"]; ok {
-					haproxyConfigOwners = append(haproxyConfigOwners, item.GetName())
-				}
-				if _, ok := spec["validationTestsSelector"]; ok {
-					t.Fatalf("%s carries validationTestsSelector, which is retired: tests live inline", item.GetName())
+			refs, _, _ := unstructured.NestedSlice(config.Object, "spec", "libraryRefs")
+			if len(refs) == 0 {
+				t.Fatal("the config references no HAProxyTemplateLibrary: the libraries would not be merged at all")
+			}
+
+			observed := map[string]string{}
+			for _, item := range listHaptic(ctx, t, cfg, libraryGVR) {
+				revision, _, _ := unstructured.NestedString(item.Object, "spec", "revision")
+				observed[item.GetName()] = revision
+
+				for _, field := range []string{"podSelector", "watchedResources", "dataplane", "validators"} {
+					if _, ok := item.Object["spec"].(map[string]any)[field]; ok {
+						t.Fatalf("%s carries spec.%s — a library must not be able to redefine the "+
+							"controller's operational identity", item.GetName(), field)
+					}
 				}
 			}
-			if !haveOperator {
-				t.Fatal("no object carries podSelector: the operator's own config is missing from the set")
-			}
-			if len(haproxyConfigOwners) != 1 {
-				t.Fatalf("haproxyConfig must have exactly one owner (base), got %v — the controller "+
-					"rejects a second non-last owner as a silent template replacement", haproxyConfigOwners)
+
+			// Every reference must resolve at the revision it names, or the
+			// controller holds last-good and the fleet silently stops updating.
+			for i, entry := range refs {
+				fields, _ := entry.(map[string]any)
+				name, _ := fields["name"].(string)
+				want, _ := fields["revision"].(string)
+				got, present := observed[name]
+				if !present {
+					t.Fatalf("libraryRefs[%d] names %q, which does not exist", i, name)
+				}
+				if got != want {
+					t.Fatalf("libraryRefs[%d] expects %s at revision %q, but it reports %q", i, name, want, got)
+				}
 			}
 			return ctx
 		}).
-		Assess("tests ride the library objects", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("tests ride the snippets objects", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			total := 0
-			for _, item := range listHaptic(ctx, t, cfg, configGVR) {
+			for _, item := range listHaptic(ctx, t, cfg, libraryGVR) {
 				suite, _, _ := unstructured.NestedMap(item.Object, "spec", "validationTests")
 				total += len(suite)
 			}

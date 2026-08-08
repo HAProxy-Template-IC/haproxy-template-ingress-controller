@@ -25,24 +25,33 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 )
 
+const hapticAPIVersion = "v1alpha1"
+
 // templateConfigGVR is the input config CRD `config view --input` reads.
 var templateConfigGVR = schema.GroupVersionResource{
 	Group:    "haproxy-haptic.org",
-	Version:  "v1alpha1",
+	Version:  hapticAPIVersion,
 	Resource: "haproxytemplateconfigs",
 }
 
+// templateLibraryGVR holds the library content the config references.
+var templateLibraryGVR = schema.GroupVersionResource{
+	Group:    "haproxy-haptic.org",
+	Version:  hapticAPIVersion,
+	Resource: "haproxytemplatelibraries",
+}
+
 var (
-	configCRDNames   []string
+	configCRDName    string
 	configKubeconfig string
 	configNamespace  string
 	configShowInput  bool
@@ -98,7 +107,7 @@ Examples:
 }
 
 func init() {
-	configViewCmd.Flags().StringSliceVar(&configCRDNames, "crd-name", nil,
+	configViewCmd.Flags().StringVar(&configCRDName, "crd-name", "",
 		"Name of a HAProxyTemplateConfig. Repeatable or comma-separated (env: CRD_NAME); the last one is the "+
 			"primary, whose name the published HAProxyCfg is derived from.")
 	configViewCmd.Flags().BoolVar(&configShowInput, "input", false,
@@ -115,12 +124,7 @@ func init() {
 
 func runConfigView(_ *cobra.Command, _ []string) error {
 	// Configuration priority: CLI flags > Environment variables > Defaults
-	if len(configCRDNames) == 0 {
-		configCRDNames = splitConfigNames(os.Getenv("CRD_NAME"))
-	}
-	if len(configCRDNames) == 0 {
-		configCRDNames = []string{defaultCRDName}
-	}
+	configCRDName = resolveConfigName(configCRDName)
 
 	// Create Kubernetes client
 	k8sClient, err := client.New(client.Config{
@@ -145,17 +149,14 @@ func runConfigView(_ *cobra.Command, _ []string) error {
 		return errors.New("namespace not specified and could not be auto-detected (use --namespace flag)")
 	}
 
-	// The last name is the primary — it owns the identity derived from the
-	// whole merged set, including the published HAProxyCfg's name.
-	primaryName := configCRDNames[len(configCRDNames)-1]
-	runtimeConfigName := configpublisher.GenerateRuntimeConfigName(primaryName)
+	runtimeConfigName := configpublisher.GenerateRuntimeConfigName(configCRDName)
 
 	// Create a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if configShowInput {
-		return printMergedInputConfig(ctx, k8sClient, namespace, configCRDNames)
+		return printMergedInputConfig(ctx, k8sClient, namespace, configCRDName)
 	}
 
 	// Fetch the HAProxyCfg resource
@@ -182,20 +183,25 @@ func runConfigView(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-// printMergedInputConfig fetches every configured HAProxyTemplateConfig and
-// prints the merged spec — the input the controller assembles, as opposed to
-// the rendered HAProxy output `config view` shows by default.
+// printMergedInputConfig fetches the config plus every HAProxyTemplateLibrary
+// it references and prints the merged spec — the input the controller
+// assembles, as opposed to the rendered HAProxy output `config view` shows by
+// default.
 //
-// Splitting the config across one object per template library means no single
-// object shows the whole picture any more; this is how an operator gets it back.
-func printMergedInputConfig(ctx context.Context, k8sClient *client.Client, namespace string, names []string) error {
-	sources := make([]*unstructured.Unstructured, 0, len(names))
-	for _, name := range names {
-		source, err := k8sClient.DynamicClient().Resource(templateConfigGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("getting HAProxyTemplateConfig %s/%s: %w", namespace, name, err)
-		}
-		sources = append(sources, source)
+// Template library content lives in separate objects, so no single object shows
+// the whole picture; this is how an operator gets it back.
+func printMergedInputConfig(ctx context.Context, k8sClient *client.Client, namespace, name string) error {
+	config, err := k8sClient.DynamicClient().Resource(templateConfigGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("getting HAProxyTemplateConfig %s/%s: %w", namespace, name, err)
+	}
+
+	sources, unresolved, err := controller.ResolveLibraryRefs(ctx, k8sClient, templateLibraryGVR, config)
+	if err != nil {
+		return err
+	}
+	for _, ref := range unresolved {
+		fmt.Fprintf(os.Stderr, "# WARNING: unresolved snippet reference: %s\n", ref)
 	}
 
 	merged, overrides, err := conversion.MergeSpecs(sources)

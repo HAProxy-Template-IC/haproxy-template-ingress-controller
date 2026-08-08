@@ -37,9 +37,11 @@ import (
 // change set (it saw the mid-batch state and denied coupled edits) — and
 // semantic validation moved to the pre-rollout preflight hook, the strict
 // first render of each iteration, and the fail-closed load gate, all of which
-// see the complete set. What stays at APPLY time is structural completeness
-// for the one shape that is correctly judged alone: a standalone
-// (non-spec.partial) config.
+// see the complete set. What stays at APPLY time is structural completeness of
+// the config object, which is now always judged alone because there is exactly
+// one: podSelector and watchedResources are required unconditionally, since no
+// referenced snippet can supply them, and haproxyConfig is required unless
+// spec.libraryRefs names something that can.
 //
 // CEL is enforced by the apiserver itself, which — unlike the webhook it
 // replaces (failurePolicy: Ignore, whose fail-open windows this file's
@@ -60,13 +62,13 @@ func TestHAProxyTemplateConfigCompleteness(t *testing.T) {
 			})
 			return ctx
 		}).
-		Assess("an incomplete standalone config is rejected by the apiserver", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("an incomplete config is rejected by the apiserver", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			_, ns := hapticClientAndNamespace(ctx, t, cfg)
 
-			// A library-shaped fragment WITHOUT spec.partial: snippets only, no
-			// podSelector, no haproxyConfig — a hand-written config missing
-			// half its fields. Before ADR-0016 this loaded silently and failed
-			// only at the controller; now the apiserver refuses the write.
+			// Snippets only: no podSelector, no watchedResources, no
+			// haproxyConfig and nothing referenced. Under spec.partial this
+			// exact shape was ACCEPTED — every chart shard had it — so the
+			// apiserver could not judge completeness for eight of nine objects.
 			//
 			// Unstructured, not the typed client: the typed spec's value-typed
 			// fields serialize as empty objects, which trip per-field schema
@@ -74,23 +76,28 @@ func TestHAProxyTemplateConfigCompleteness(t *testing.T) {
 			// nothing about the rule this test pins. The chart's shards are
 			// YAML with the fields genuinely absent; this is that shape.
 			dyn := dynamicClient(t, cfg)
-			_, err := dyn.Resource(configGVR).Namespace(ns).Create(ctx, fragmentConfig(ns, "incomplete-standalone", false), metav1.CreateOptions{})
+			_, err := dyn.Resource(configGVR).Namespace(ns).Create(ctx, fragmentConfig(ns, "incomplete-config", false), metav1.CreateOptions{})
 			if err == nil {
-				_ = dyn.Resource(configGVR).Namespace(ns).Delete(context.Background(), "incomplete-standalone", metav1.DeleteOptions{})
-				t.Fatal("apiserver accepted an incomplete standalone config — the CEL completeness rule is not enforcing")
+				_ = dyn.Resource(configGVR).Namespace(ns).Delete(context.Background(), "incomplete-config", metav1.DeleteOptions{})
+				t.Fatal("apiserver accepted an incomplete config — the CEL completeness rule is not enforcing")
 			}
-			if !strings.Contains(err.Error(), "spec.partial") {
+			if !strings.Contains(err.Error(), "libraryRefs") {
 				t.Fatalf("rejection did not come from the CEL completeness rule: %v", err)
 			}
 			return ctx
 		}).
-		Assess("the same fragment marked partial is accepted", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("a config whose haproxyConfig comes from a snippet is accepted", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			_, ns := hapticClientAndNamespace(ctx, t, cfg)
 
+			// The chart's own shape: podSelector and watchedResources inline,
+			// haproxyConfig supplied by a referenced snippets object. The rule
+			// must accept it without the reference having to resolve yet —
+			// resolution is the controller's job, not the apiserver's.
 			dyn := dynamicClient(t, cfg)
-			created, err := dyn.Resource(configGVR).Namespace(ns).Create(ctx, fragmentConfig(ns, "partial-fragment", true), metav1.CreateOptions{})
+			created, err := dyn.Resource(configGVR).Namespace(ns).Create(ctx, fragmentConfig(ns, "config-with-refs", true), metav1.CreateOptions{})
 			if err != nil {
-				t.Fatalf("apiserver rejected a spec.partial fragment: %v — every chart shard has this shape", err)
+				t.Fatalf("apiserver rejected a config that sources haproxyConfig from a snippet: %v — "+
+					"this is the shape the chart renders", err)
 			}
 			t.Cleanup(func() {
 				_ = dyn.Resource(configGVR).Namespace(ns).Delete(context.Background(), created.GetName(), metav1.DeleteOptions{})
@@ -101,16 +108,31 @@ func TestHAProxyTemplateConfigCompleteness(t *testing.T) {
 	testEnv.Test(t, feature)
 }
 
-// fragmentConfig is a library-shaped shard as unstructured YAML-equivalent:
-// only templateSnippets, every other spec field genuinely absent.
-func fragmentConfig(namespace, name string, partial bool) *unstructured.Unstructured {
+// fragmentConfig builds an unstructured config. With complete=false it carries
+// only templateSnippets, every other spec field genuinely absent; with
+// complete=true it adds podSelector, watchedResources and a libraryRefs entry,
+// which is the shape the chart renders.
+func fragmentConfig(namespace, name string, complete bool) *unstructured.Unstructured {
 	spec := map[string]any{
 		"templateSnippets": map[string]any{
 			"orphan": map[string]any{"template": "# nothing"},
 		},
 	}
-	if partial {
-		spec["partial"] = true
+	if complete {
+		spec["podSelector"] = map[string]any{
+			"matchLabels": map[string]any{"app.kubernetes.io/component": "loadbalancer"},
+		}
+		spec["watchedResources"] = map[string]any{
+			"ingresses": map[string]any{
+				"apiVersion": "networking.k8s.io/v1",
+				// The plural, as used in RBAC and API paths. The CRD requires
+				// it and declares no `kind` field at all.
+				"resources": "ingresses",
+			},
+		}
+		spec["libraryRefs"] = []any{
+			map[string]any{"name": "some-library", "revision": "rev-1"},
+		}
 	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "haproxy-haptic.org/v1alpha1",

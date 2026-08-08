@@ -49,6 +49,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
 		&HAProxyTemplateConfig{},
 		&HAProxyTemplateConfigList{},
+		&HAProxyTemplateLibrary{},
+		&HAProxyTemplateLibraryList{},
 		&HAProxyCfg{},
 		&HAProxyCfgList{},
 		&HAProxyMapFile{},

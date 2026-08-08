@@ -276,16 +276,34 @@
        preflight hook consume this stream and merge in document order, so the
        library objects come first and the operator's last. */ -}}
 {{- $prepared := (include "haptic.prepareLibraries" . | fromYaml).libraries | default list }}
+{{- /* Ordered: the range below fills it in merge order, and the config's own
+       inline content wins after every ref. */ -}}
+{{- $libraryRefs := dict }}
+{{- $refOrder := list }}
 {{- range $library := $prepared }}
+{{- $refOrder = append $refOrder $library.name }}
 {{- /* statusPatch is a Helm-only field on a watchedResource — the ClusterRole
        turns it into a status/patch rule and the CRD has no such property. */ -}}
 {{- range $_, $resource := ($library.config.watchedResources | default dict) }}
   {{- $_ := unset $resource "statusPatch" }}
 {{- end }}
-{{- $_ := set $library.config "partial" true }}
+{{- /* Snippets carry CONTENT only. watchedResources is unioned onto the
+       operator's config by haptic.watchedResourcesUnion (the same union the
+       ClusterRole and the webhook already consume), so a library cannot
+       redefine the controller's operational identity. Copy the content keys
+       explicitly rather than deleting the rest: an allowlist cannot leak a
+       future field into an object whose schema has no room for it. */ -}}
+{{- $content := dict }}
+{{- range $key := (list "templatingSettings" "templateSnippets" "maps" "files" "sslCertificates" "k8sResources" "haproxyConfig" "validationTests" "migrationCoverage") }}
+  {{- with (index $library.config $key) }}
+    {{- $_ := set $content $key . }}
+  {{- end }}
+{{- end }}
+{{- $_ := set $content "revision" (printf "%s-%s" $library.name (toYaml $content | sha256sum | trunc 16)) }}
+{{- $_ := set $libraryRefs $library.name (get $content "revision") }}
 ---
 apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
+kind: HAProxyTemplateLibrary
 metadata:
   name: {{ printf "%s-%s" $controller.configName $library.name }}
   namespace: {{ $.Release.Namespace }}
@@ -294,7 +312,7 @@ metadata:
     app.kubernetes.io/component: template-library
     haproxy-haptic.org/template-library: {{ $library.name }}
 spec:
-  {{- toYaml $library.config | nindent 2 }}
+  {{- toYaml $content | nindent 2 }}
 {{- end }}
 {{- if $controller.config }}
 ---
@@ -308,11 +326,21 @@ metadata:
     app.kubernetes.io/component: operator-config
 spec:
   {{- $config := $controller.config | deepCopy }}
-  {{- /* Every chart-rendered object is partial: base owns haproxyConfig and
-         this one owns podSelector, so neither is complete alone. The CEL rule
-         on the CRD exempts partial objects; a hand-written standalone CR
-         leaves it unset and gets apply-time completeness checking. */ -}}
-  {{- $_ := set $config "partial" true }}
+  {{- /* Ordered refs to the snippets objects above; the merge order is declared
+         here and nowhere else, so nothing can disagree with it. The revision is
+         compared by the controller and never recomputed from content, which is
+         what lets `kubectl edit` on a snippet take effect. */ -}}
+  {{- $refs := list }}
+  {{- range $name := $refOrder }}
+    {{- $refs = append $refs (dict "name" (printf "%s-%s" $controller.configName $name) "revision" (get $libraryRefs $name)) }}
+  {{- end }}
+  {{- if $refs }}
+    {{- $_ := set $config "libraryRefs" $refs }}
+  {{- end }}
+  {{- /* Libraries declare the resources they need but cannot carry
+         watchedResources themselves, so the union lands here — the same union
+         the ClusterRole and the webhook consume. */ -}}
+  {{- $_ := set $config "watchedResources" (include "haptic.watchedResourcesUnion" $ | fromYaml) }}
   {{- /* controller.config seeds the CR spec wholesale, so a values key that is
          NOT part of the CRD has to be dropped here or server-side apply rejects
          the whole object ("field not declared in schema") and `helm upgrade`

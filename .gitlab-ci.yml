@@ -3311,14 +3311,33 @@ pages-preview:
       git clone --depth 1 https://gitlab.com/haproxy-haptic/haproxy-haptic.gitlab.io.git pages-repo
       chmod +x pages-repo/scripts/deploy-docs.sh
     - |
-      # Download production site from latest pages artifact
+      # The preview is built ON TOP of the published site so a reviewer sees the
+      # merged result. With no published artifact it degrades to this MR's docs
+      # alone rather than failing the pipeline.
+      #
+      # This job renders a preview; it validates nothing. Docs correctness is
+      # markdownlint + vale in `lint`, which still gates. Failing every docs MR
+      # because the separate pages project has no artifact to diff against
+      # blocks work this job cannot speak to — which is what happened while
+      # pages publishing was broken from 2026-08-07.
       echo "Downloading production site from pages artifact..."
       PAGES_PROJECT_ID="haproxy-haptic%2Fhaproxy-haptic.gitlab.io"
-      curl --location --output pages-artifact.zip \
+      status=$(curl --location --silent --show-error --write-out '%{http_code}' \
+        --output pages-artifact.zip \
         --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-        "https://gitlab.com/api/v4/projects/${PAGES_PROJECT_ID}/jobs/artifacts/main/download?job=pages"
-      unzip -q pages-artifact.zip
-      rm pages-artifact.zip
+        "https://gitlab.com/api/v4/projects/${PAGES_PROJECT_ID}/jobs/artifacts/main/download?job=pages" || echo 000)
+      if [ "$status" = 200 ] && unzip -qt pages-artifact.zip >/dev/null 2>&1; then
+        unzip -q pages-artifact.zip
+        echo "Preview built on top of the published site."
+      else
+        echo "WARNING: no published pages artifact (HTTP $status) — building a"
+        echo "STANDALONE preview of this MR's docs. Pages outside this MR and"
+        echo "version switching will be absent. Publishing on the pages"
+        echo "project's main branch is failing; fix that to restore the merged"
+        echo "preview."
+        mkdir -p public
+      fi
+      rm -f pages-artifact.zip
     - |
       # Set up versions backup for deploy script (single merged /docs/ site)
       mkdir -p /tmp/versions-backup
@@ -3329,8 +3348,13 @@ pages-preview:
       done
       export VERSIONS_BACKUP_DIR="/tmp/versions-backup"
 
-      # Build dev docs on top of existing site
-      pages-repo/scripts/deploy-docs.sh dev . ./public
+      # 4th arg selects the mode and defaults to `publish`. Publish mode
+      # requires the release-provenance variables (commit, pipeline, playground
+      # job name) so a published site records what produced it; a preview has no
+      # release, and the script derives everything it needs from CI_* in
+      # `preview` mode. Omitting the argument ran an MR preview through the
+      # publish path and failed on provenance it could not have.
+      pages-repo/scripts/deploy-docs.sh dev . ./public preview
     - echo "Preview available at ${CI_PAGES_URL}/"
   pages:
     path_prefix: "mr-$CI_MERGE_REQUEST_IID"

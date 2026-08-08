@@ -12,11 +12,11 @@ applies injects (each gated by optional `when`), applies unsets, strips
 `_helm_skip_test`).
 
 **The chart no longer merges libraries.** Each becomes its own
-HAProxyTemplateConfig (spec.partial: true, tests inline); the controller merges
-the set in CRD_NAME order, later wins, with per-source validationTests union
-and duplicate-name errors (ADR-0016). The duplicate check below is the same
-guard one stage earlier — a collision fails `helm template` instead of the
-controller's load.
+HAProxyTemplateLibrary (content only, tests inline); the operator's
+HAProxyTemplateConfig references them in spec.libraryRefs and the controller
+merges that order, later wins, with per-source validationTests union and
+duplicate-name errors. The duplicate check below is the same guard one stage
+earlier — a collision fails `helm template` instead of the controller's load.
 
 Schema for `_helm_load:` is documented in charts/CLAUDE.md. See ADR-0002
 (docs/adr/0002-decentralized-helm-library-loader.md) for the design rationale.

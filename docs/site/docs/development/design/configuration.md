@@ -6,7 +6,7 @@ Structured logfmt logs on stdout (via `slog.NewTextHandler`) round out the opera
 
 ## What the CRD covers
 
-`HAProxyTemplateConfig.spec` is the source of truth for controller behaviour. The controller reads an ordered list of these resources and merges them, later wins, so the **merged** spec is what everything downstream sees. It has four top-level groups:
+`HAProxyTemplateConfig.spec` is the source of truth for controller behaviour. There is one such object; it pulls in `HAProxyTemplateLibrary` objects through an ordered `spec.libraryRefs` and the controller merges them, later wins, with the config itself last — so the **merged** spec is what everything downstream sees. It has four top-level groups:
 
 - **Runtime settings** — `controller` (including `controller.configPublishing`), `dataplane`, `logging`, `templatingSettings`.
 - **Resource watching** — `podSelector`, `watchedResources`, `watchedResourcesIgnoreFields`. (HTTP fetching is driven by the `http.Fetch()` template function — URLs that appear in templates are auto-registered; there is no top-level `spec.httpResources` field, only `validationTests[].httpResources` (a sibling of `fixtures`, not nested inside it) for mocking responses during tests.)
@@ -19,16 +19,23 @@ The full field reference (types, defaults, validation rules) lives in [CRD Refer
 
 Users commonly compose configuration from three layers, in order of precedence:
 
-1. **Template libraries** shipped in the Helm chart (base, SSL, ingress, gateway, haproxytech, …). The chart renders each enabled one as its own `HAProxyTemplateConfig`, named `<configName>-<library>`.
-2. **`controller.config`** in Helm values — rendered as `<configName>` and merged last, so anything set here wins over every library.
-3. **Direct `HAProxyTemplateConfig` edits** (via `kubectl edit htplcfg <configName>`) for ad-hoc overrides. Edit only the operator object; the library objects are chart output that `helm upgrade` overwrites.
+1. **Template libraries** shipped in the Helm chart (base, SSL, ingress, gateway, haproxytech, …). The chart renders each enabled one as its own `HAProxyTemplateLibrary`, named `<configName>-<library>`. A library carries content only — `templateSnippets`, `validationTests`, `maps`, `files`, `sslCertificates`, `k8sResources`, `templatingSettings`, `haproxyConfig` — never `podSelector`, `watchedResources` or `dataplane`.
+2. **`controller.config`** in Helm values — rendered as the single `HAProxyTemplateConfig` named `<configName>` and merged last, so anything set here wins over every library.
+3. **Direct `HAProxyTemplateConfig` edits** (via `kubectl edit htplcfg <configName>`) for ad-hoc overrides. That object stays small — about 1% of etcd's per-object limit — because the bulk lives in the libraries. Editing a library in place works too and takes effect immediately; `helm upgrade` overwrites it.
 
-The controller performs the merge at startup, in the order given by the `CRD_NAME`
-environment variable on its Deployment. It uses the same merge primitive Helm's
-`mustMergeOverwrite` does, so the result is what a chart-side merge would have
-produced — that equivalence is why the merge could move without changing any
-rendered output. `migrationCoverage` is the one field that accumulates instead of
-being overwritten. See [ADR-0014](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/adr/0014-per-library-config-objects.md).
+Merge order is declared once, in `spec.libraryRefs`, and nowhere else. Each entry
+also names a `revision` that the referenced object must report: the controller
+compares the two strings and never derives either from the content, so a
+half-applied set shows up as a mismatch and the controller keeps serving the
+last-good configuration rather than rendering a set with a library missing. An
+in-place edit leaves the revision untouched, which is why it takes effect
+immediately.
+
+The merge uses the same primitive Helm's `mustMergeOverwrite` does, so the result
+is what a chart-side merge would have produced. `migrationCoverage` accumulates
+instead of being overwritten, and `validationTests` from every source are combined — a test name
+defined by two sources is an error naming both. See
+[ADR-0017](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/adr/0017-template-library-kind.md).
 
 One object per library exists because the single merged object had reached 99.4%
 of the ~1.5 MiB limit Kubernetes enforces per object. `make cr-size-check` gates

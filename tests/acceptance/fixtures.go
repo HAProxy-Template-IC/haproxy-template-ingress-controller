@@ -597,9 +597,20 @@ func NewRole(namespace, name string) *rbacv1.Role {
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
+				// Both kinds: the library watch starts unconditionally, and a
+				// denied list/watch fails its cache sync, which fails the whole
+				// iteration. The controller then never becomes ready and reports
+				// reconciliation_total 0 with nothing pointing at RBAC.
 				APIGroups: []string{"haproxy-haptic.org"},
-				Resources: []string{"haproxytemplateconfigs"},
+				Resources: []string{"haproxytemplateconfigs", "haproxytemplatelibraries"},
 				Verbs:     []string{"get", "watch", "list"},
+			},
+			{
+				// Stamping the config as owner of the libraries it references,
+				// so resource-tree views show the relationship.
+				APIGroups: []string{"haproxy-haptic.org"},
+				Resources: []string{"haproxytemplatelibraries"},
+				Verbs:     []string{"patch"},
 			},
 			{
 				// Mirrors the chart ClusterRole — the status_updater writes
@@ -708,9 +719,20 @@ func NewClusterRole(name, namespace string) *rbacv1.ClusterRole {
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
+				// Both kinds: the library watch starts unconditionally, and a
+				// denied list/watch fails its cache sync, which fails the whole
+				// iteration. The controller then never becomes ready and reports
+				// reconciliation_total 0 with nothing pointing at RBAC.
 				APIGroups: []string{"haproxy-haptic.org"},
-				Resources: []string{"haproxytemplateconfigs"},
+				Resources: []string{"haproxytemplateconfigs", "haproxytemplatelibraries"},
 				Verbs:     []string{"get", "watch", "list"},
+			},
+			{
+				// Stamping the config as owner of the libraries it references,
+				// so resource-tree views show the relationship.
+				APIGroups: []string{"haproxy-haptic.org"},
+				Resources: []string{"haproxytemplatelibraries"},
+				Verbs:     []string{"patch"},
 			},
 			{
 				APIGroups: []string{"networking.k8s.io"},

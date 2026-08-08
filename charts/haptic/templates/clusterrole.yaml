@@ -63,10 +63,16 @@ rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
-  # HAProxyTemplateConfig CRD
+  # HAProxyTemplateConfig CRD and the snippets it references
   - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxytemplateconfigs"]
+    resources: ["haproxytemplateconfigs", "haproxytemplatelibraries"]
     verbs: ["get", "list", "watch"]
+  # Stamping the config as owner of the snippets it references, so resource-tree
+  # views show the relationship. The chart cannot: an ownerReference needs the
+  # owner's UID, which does not exist until the config is applied.
+  - apiGroups: ["haproxy-haptic.org"]
+    resources: ["haproxytemplatelibraries"]
+    verbs: ["patch"]
   # HAProxyTemplateConfig status updates
   - apiGroups: ["haproxy-haptic.org"]
     resources: ["haproxytemplateconfigs/status"]

@@ -26,6 +26,7 @@ import (
 
 const (
 	expectedKind       = "HAProxyTemplateConfig"
+	libraryKind        = "HAProxyTemplateLibrary"
 	expectedAPIVersion = "haproxy-haptic.org/v1alpha1"
 )
 

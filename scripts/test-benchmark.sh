@@ -188,7 +188,7 @@ extract_base_config() {
     if ! helm template "$CHART_DIR" \
         --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
         --set controller.templateLibraries.gateway.enabled=true \
-        2>/dev/null | yq 'select(.kind == "HAProxyTemplateConfig")' \
+        2>/dev/null | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
         > "$output_file"; then
         error "Failed to render Helm chart"
         return 1

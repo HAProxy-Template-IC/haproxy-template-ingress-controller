@@ -405,7 +405,7 @@ func newResourceApplier(crd *v1alpha1.HAProxyTemplateConfig, k8sClient *client.C
 	// when the CR is removed (e.g. `helm uninstall`).
 	ownerRef := resourceapplier.OwnerReference{
 		APIVersion: v1alpha1.SchemeGroupVersion.String(),
-		Kind:       "HAProxyTemplateConfig",
+		Kind:       configKind,
 		Name:       crd.GetName(),
 		UID:        string(crd.GetUID()),
 	}

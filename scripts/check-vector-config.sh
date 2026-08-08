@@ -29,7 +29,7 @@ helm template "$CHART" --namespace default \
   --set controller.config.templatingSettings.extraContext.tracing.enabled=true \
   --set controller.config.templatingSettings.extraContext.tracing.otlp.endpoint=http://tempo:4318/v1/traces \
   2>/dev/null \
-  | yq 'select(.kind == "HAProxyTemplateConfig")' \
+  | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
   > "$WORK/config.yaml" || fail "helm template failed"
 
 "$CONTROLLER_BIN" validate --file "$WORK/config.yaml" --schema-dir "$REPO/tests/schemas" \

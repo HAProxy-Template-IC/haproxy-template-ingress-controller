@@ -52,22 +52,45 @@ tests:
           value: haptic-config
         documentIndex: 8
 
-  - it: marks every chart-rendered object partial
-    # Every one: base owns haproxyConfig, the operator object owns podSelector,
-    # so none is complete alone. The CRD's CEL completeness rule exempts
-    # partial objects and guards hand-written standalone configs.
+  - it: references every library snippets object, in merge order
+    # The ref list is the ONLY place merge order is declared, so nothing can
+    # disagree with it. The revision is compared by the controller and never
+    # recomputed from content, which is what lets kubectl edit on a snippet
+    # take effect.
     asserts:
       - equal:
-          path: spec.partial
-          value: true
+          path: spec.libraryRefs[0].name
+          value: haptic-config-base
+        documentIndex: 8
+      - equal:
+          path: spec.libraryRefs[7].name
+          value: haptic-config-vector
+        documentIndex: 8
+      - matchRegex:
+          path: spec.libraryRefs[0].revision
+          pattern: "^base-[0-9a-f]{16}$"
+        documentIndex: 8
+      - matchRegex:
+          path: spec.revision
+          pattern: "^base-[0-9a-f]{16}$"
         documentIndex: 0
-      - equal:
+
+  - it: keeps operational fields off the snippets objects
+    # A library cannot redefine the controller's own identity: the snippets
+    # schema has no room for these, and the watchedResources union lands on
+    # the config instead.
+    asserts:
+      - notExists:
+          path: spec.podSelector
+        documentIndex: 0
+      - notExists:
+          path: spec.watchedResources
+        documentIndex: 0
+      - notExists:
+          path: spec.dataplane
+        documentIndex: 0
+      - notExists:
           path: spec.partial
-          value: true
-        documentIndex: 3
-      - equal:
-          path: spec.partial
-          value: true
         documentIndex: 8
 
   - it: drops a disabled library's object entirely
@@ -95,7 +118,7 @@ tests:
   - it: should inject ingressClassName into ingresses.fieldSelector via _helm_load
     documentSelector:
       path: metadata.name
-      value: haptic-config-ingress
+      value: haptic-config
     set:
       ingressClass.name: my-class
     asserts:
@@ -106,7 +129,7 @@ tests:
   - it: should inject gatewayClassName into gateways.fieldSelector via _helm_load
     documentSelector:
       path: metadata.name
-      value: haptic-config-gateway
+      value: haptic-config
     capabilities:
       apiVersions:
         - gateway.networking.k8s.io/v1/GatewayClass
@@ -120,7 +143,7 @@ tests:
   - it: should inject controller-services labelSelector via _helm_load
     documentSelector:
       path: metadata.name
-      value: haptic-config-base
+      value: haptic-config
     asserts:
       - matchRegex:
           path: spec.watchedResources.controller_services.labelSelector
@@ -213,7 +236,7 @@ tests:
   - it: should load the gateway library regardless of cluster capabilities
     documentSelector:
       path: metadata.name
-      value: haptic-config-gateway
+      value: haptic-config
     asserts:
       - exists:
           path: spec.watchedResources.gateways
@@ -229,7 +252,7 @@ tests:
   - it: should declare TCPRoute as an optional multi-version watch with requires-annotated features
     documentSelector:
       path: metadata.name
-      value: haptic-config-gateway
+      value: haptic-config
     asserts:
       - equal:
           path: spec.watchedResources.tcproutes.optional
@@ -239,6 +262,14 @@ tests:
           value:
             - gateway.networking.k8s.io/v1
             - gateway.networking.k8s.io/v1alpha2
+
+  # The watch lands on the config (unioned there); the snippet that consumes it
+  # stays on the gateway library object, so the two are asserted separately.
+  - it: annotates the TCPRoute backend snippet with the watch it requires
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-gateway
+    asserts:
       - contains:
           path: spec.templateSnippets["backends-502-gateway-tcproute"].requires
           content: tcproutes
@@ -246,7 +277,7 @@ tests:
   - it: should exclude the incompatible BackendTLSPolicy v1alpha2 from the candidate list
     documentSelector:
       path: metadata.name
-      value: haptic-config-gateway
+      value: haptic-config
     asserts:
       - equal:
           path: spec.watchedResources.backendtlspolicies.apiVersions

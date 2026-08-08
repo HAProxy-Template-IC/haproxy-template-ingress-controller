@@ -40,15 +40,17 @@ import json, pathlib, sys, yaml
 work = pathlib.Path(sys.argv[1])
 tpl = None
 for d in yaml.safe_load_all((work / "render.yaml").read_text()):
-    if d and d.get("kind") == "HAProxyTemplateConfig":
-        # The transform lives in its own snippet so Helm can drop it from the
-        # config object when no OTLP endpoint is set. The chart renders one
-        # object per library (ADR-0016); only the vector shard carries it.
+    # Either kind: the transform lives in its own snippet so Helm can drop it
+    # when no OTLP endpoint is set, and template content now ships on
+    # HAProxyTemplateLibrary objects (ADR-0017) while a config may still carry
+    # snippets inline. Matching only the config found nothing and failed here.
+    if d and d.get("kind") in ("HAProxyTemplateConfig", "HAProxyTemplateLibrary"):
         snip = (d.get("spec", {}).get("templateSnippets") or {}).get("vector-span-transform")
         if snip:
             tpl = snip["template"]
 if tpl is None:
-    sys.exit("no HAProxyTemplateConfig carries the vector-span-transform snippet")
+    sys.exit("no HAProxyTemplateConfig or HAProxyTemplateLibrary carries the "
+             "vector-span-transform snippet")
 try:
     i = tpl.index("m, merr = string(.message)")
     j = tpl.index(". = spans", i) + len(". = spans")

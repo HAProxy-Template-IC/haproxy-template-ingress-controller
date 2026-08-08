@@ -30,6 +30,7 @@ func TestConfigLoaderComponent_ProcessCRD(t *testing.T) {
 			Name:            "test-config",
 			Namespace:       "default",
 			ResourceVersion: "12345",
+			Generation:      7,
 		},
 		Spec: v1alpha1.HAProxyTemplateConfigSpec{
 			CredentialsSecretRef: v1alpha1.SecretReference{
@@ -53,7 +54,7 @@ func TestConfigLoaderComponent_ProcessCRD(t *testing.T) {
 
 	// Create event bus and loader
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, logger)
+	loader := NewConfigLoaderComponent(bus, "test-config", logger)
 
 	// Subscribe to events and start
 	eventChan := bus.Subscribe("test-sub", 10)
@@ -66,12 +67,15 @@ func TestConfigLoaderComponent_ProcessCRD(t *testing.T) {
 	// Give loader time to subscribe
 	time.Sleep(testutil.DebounceWait)
 
-	// Publish ConfigResourceChangedEvent with CRD
+	// The loader needs a snippets snapshot before it can decide the set is
+	// complete; this config references none, so an empty one suffices.
+	bus.Publish(events.NewLibrarySetChangedEvent(nil))
 	bus.Publish(events.NewConfigResourceChangedEvent(unstructuredCRD))
 
 	// Wait for ConfigParsedEvent
 	parsedEvent := testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
-	assert.Equal(t, "test-config=12345", parsedEvent.Version)
+	assert.Equal(t, "test-config=7", parsedEvent.Version,
+		"the composite version keys on generation, so a status write cannot look like a config change")
 	assert.NotNil(t, parsedEvent.Config)
 }
 
@@ -91,7 +95,7 @@ func TestConfigLoaderComponent_UnsupportedResourceType(t *testing.T) {
 
 	// Create event bus and loader
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, []string{"test-deployment"}, logger)
+	loader := NewConfigLoaderComponent(bus, "test-deployment", logger)
 
 	// Subscribe to events and start
 	eventChan := bus.Subscribe("test-sub", 10)
@@ -113,7 +117,7 @@ func TestConfigLoaderComponent_UnsupportedResourceType(t *testing.T) {
 
 func TestConfigLoaderComponent_Stop(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, logger)
+	loader := NewConfigLoaderComponent(bus, "test-config", logger)
 	bus.Start()
 
 	done := make(chan struct{})
@@ -139,7 +143,7 @@ func TestConfigLoaderComponent_Stop(t *testing.T) {
 
 func TestConfigLoaderComponent_InvalidResourceType(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, logger)
+	loader := NewConfigLoaderComponent(bus, "test-config", logger)
 
 	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
@@ -164,7 +168,7 @@ func TestConfigLoaderComponent_InvalidResourceType(t *testing.T) {
 
 func TestConfigLoaderComponent_IgnoresOtherEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, []string{"test-config"}, logger)
+	loader := NewConfigLoaderComponent(bus, "test-config", logger)
 
 	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
@@ -185,14 +189,15 @@ func TestConfigLoaderComponent_IgnoresOtherEvents(t *testing.T) {
 
 // configResource builds a HAProxyTemplateConfig carrying one snippet, enough to
 // tell merged output apart by source.
-func configResource(name, resourceVersion, snippetName, snippetBody string) *unstructured.Unstructured {
+func configResource(name, snippetName, snippetBody string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "haproxy-haptic.org/v1alpha1",
 		"kind":       "HAProxyTemplateConfig",
 		"metadata": map[string]any{
 			"name":            name,
 			"namespace":       "default",
-			"resourceVersion": resourceVersion,
+			"resourceVersion": "1",
+			"generation":      int64(1),
 		},
 		"spec": map[string]any{
 			"podSelector":   map[string]any{"matchLabels": map[string]any{"app": "haproxy"}},
@@ -213,10 +218,15 @@ func snippets(t *testing.T, parsed *events.ConfigParsedEvent) map[string]corecon
 	return cfg.TemplateSnippets
 }
 
-func startLoader(t *testing.T, names []string) (bus *busevents.EventBus, published <-chan busevents.Event) {
+const (
+	testConfigName  = "operator-config"
+	testLibraryName = "lib-base"
+)
+
+func startLoader(t *testing.T) (bus *busevents.EventBus, published <-chan busevents.Event) {
 	t.Helper()
 	bus, logger := testutil.NewTestBusAndLogger()
-	loader := NewConfigLoaderComponent(bus, names, logger)
+	loader := NewConfigLoaderComponent(bus, testConfigName, logger)
 
 	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
@@ -229,18 +239,54 @@ func startLoader(t *testing.T, names []string) (bus *busevents.EventBus, publish
 	return bus, eventChan
 }
 
-// Each config arrives on its own watcher, so the loader must hold what it has
-// seen and stay quiet until the set is complete — a partial merge would drop
-// whichever library had not arrived yet.
-func TestConfigLoaderComponent_WaitsForEveryConfiguredSource(t *testing.T) {
-	bus, eventChan := startLoader(t, []string{"lib-base", "operator-config"})
+// libraryResource builds a HAProxyTemplateLibrary carrying one snippet.
+func libraryResource(resourceVersion, revision, snippetName, snippetBody string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "haproxy-haptic.org/v1alpha1",
+		"kind":       "HAProxyTemplateLibrary",
+		"metadata": map[string]any{
+			"name":            testLibraryName,
+			"namespace":       "default",
+			"resourceVersion": resourceVersion,
+			"generation":      int64(1),
+		},
+		"spec": map[string]any{
+			"revision": revision,
+			"templateSnippets": map[string]any{
+				snippetName: map[string]any{"template": snippetBody},
+			},
+		},
+	}}
+}
 
+// configWithRefs builds a HAProxyTemplateConfig carrying one snippet of its own
+// plus an ordered list of snippet references.
+func configWithRefs(snippetName, snippetBody string, refs ...[2]string) *unstructured.Unstructured {
+	config := configResource(testConfigName, snippetName, snippetBody)
+	entries := make([]any, 0, len(refs))
+	for _, ref := range refs {
+		entries = append(entries, map[string]any{"name": ref[0], "revision": ref[1]})
+	}
+	if len(entries) > 0 {
+		spec, _ := config.Object["spec"].(map[string]any)
+		spec["libraryRefs"] = entries
+	}
+	return config
+}
+
+// A referenced snippets object that has not arrived leaves the set incomplete.
+// Rendering anyway would silently drop a library rather than fail.
+func TestConfigLoaderComponent_WaitsForReferencedLibrary(t *testing.T) {
+	bus, eventChan := startLoader(t)
+
+	bus.Publish(events.NewLibrarySetChangedEvent(nil))
 	bus.Publish(events.NewConfigResourceChangedEvent(
-		configResource("lib-base", "1", "from-base", "base")))
+		configWithRefs("from-operator", "operator", [2]string{testLibraryName, "rev-1"})))
 	testutil.AssertNoEvent[*events.ConfigParsedEvent](t, eventChan, testutil.EventTimeout)
 
-	bus.Publish(events.NewConfigResourceChangedEvent(
-		configResource("operator-config", "1", "from-operator", "operator")))
+	bus.Publish(events.NewLibrarySetChangedEvent([]any{
+		libraryResource("1", "rev-1", "from-base", "base"),
+	}))
 
 	parsed := testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
 	require.NotNil(t, parsed.Config)
@@ -248,44 +294,132 @@ func TestConfigLoaderComponent_WaitsForEveryConfiguredSource(t *testing.T) {
 	assert.Contains(t, snippets(t, parsed), "from-operator")
 }
 
-// A later config wins, and a change to one member re-merges against the held
-// copies of the others rather than waiting for them to be re-sent.
-func TestConfigLoaderComponent_RemergesOnSingleSourceChange(t *testing.T) {
-	bus, eventChan := startLoader(t, []string{"lib-base", "operator-config"})
+// The revision is the half-applied-set detector: a snippets object present but
+// stamped differently from what the config expects must not be rendered.
+func TestConfigLoaderComponent_HoldsOnRevisionMismatch(t *testing.T) {
+	bus, eventChan := startLoader(t)
 
+	bus.Publish(events.NewLibrarySetChangedEvent([]any{
+		libraryResource("1", "rev-OLD", "from-base", "base"),
+	}))
 	bus.Publish(events.NewConfigResourceChangedEvent(
-		configResource("lib-base", "1", "shared", "from base")))
+		configWithRefs("mine", "mine", [2]string{testLibraryName, "rev-NEW"})))
+	testutil.AssertNoEvent[*events.ConfigParsedEvent](t, eventChan, testutil.EventTimeout)
+
+	// The writer finishes applying the set: the snippet catches up.
+	bus.Publish(events.NewLibrarySetChangedEvent([]any{
+		libraryResource("2", "rev-NEW", "from-base", "base v2"),
+	}))
+
+	parsed := testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
+	assert.Equal(t, "base v2", snippets(t, parsed)["from-base"].Template)
+}
+
+// Editing a snippet's content in place leaves spec.revision alone, so the
+// reference still resolves and the edit takes effect. Verifying a content hash
+// would break exactly this.
+func TestConfigLoaderComponent_InPlaceLibraryEditStillRenders(t *testing.T) {
+	bus, eventChan := startLoader(t)
+
+	bus.Publish(events.NewLibrarySetChangedEvent([]any{
+		libraryResource("1", "rev-1", "shared", "original"),
+	}))
 	bus.Publish(events.NewConfigResourceChangedEvent(
-		configResource("operator-config", "1", "shared", "from operator")))
+		configWithRefs("mine", "mine", [2]string{testLibraryName, "rev-1"})))
+
+	parsed := testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
+	assert.Equal(t, "original", snippets(t, parsed)["shared"].Template)
+
+	// kubectl edit: content changes, revision does not.
+	bus.Publish(events.NewLibrarySetChangedEvent([]any{
+		libraryResource("2", "rev-1", "shared", "hand-edited"),
+	}))
+
+	parsed = testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
+	assert.Equal(t, "hand-edited", snippets(t, parsed)["shared"].Template)
+}
+
+// Deleting a referenced snippet must stop rendering rather than silently drop
+// the library. A snapshot without it is how the deletion arrives.
+func TestConfigLoaderComponent_HoldsWhenReferencedLibraryDeleted(t *testing.T) {
+	bus, eventChan := startLoader(t)
+
+	bus.Publish(events.NewLibrarySetChangedEvent([]any{
+		libraryResource("1", "rev-1", "from-base", "base"),
+	}))
+	bus.Publish(events.NewConfigResourceChangedEvent(
+		configWithRefs("mine", "mine", [2]string{testLibraryName, "rev-1"})))
+	testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
+
+	bus.Publish(events.NewLibrarySetChangedEvent(nil))
+	testutil.AssertNoEvent[*events.ConfigParsedEvent](t, eventChan, testutil.EventTimeout)
+}
+
+// The config's own inline content wins over every referenced snippet, so the
+// object an operator edits is the override point regardless of ref order.
+func TestConfigLoaderComponent_ConfigOverridesReferencedLibraries(t *testing.T) {
+	bus, eventChan := startLoader(t)
+
+	bus.Publish(events.NewLibrarySetChangedEvent([]any{
+		libraryResource("1", "rev-1", "shared", "from base"),
+	}))
+	bus.Publish(events.NewConfigResourceChangedEvent(
+		configWithRefs("shared", "from operator", [2]string{testLibraryName, "rev-1"})))
 
 	parsed := testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
 	assert.Equal(t, "from operator", snippets(t, parsed)["shared"].Template)
 	assert.Equal(t, "lib-base=1,operator-config=1", parsed.Version)
-
-	// Only the library changes. The operator's copy is replayed from the held
-	// set, so its override must still win.
-	bus.Publish(events.NewConfigResourceChangedEvent(
-		configResource("lib-base", "2", "shared", "from base v2")))
-
-	parsed = testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
-	assert.Equal(t, "from operator", snippets(t, parsed)["shared"].Template)
-
-	// The version has to move even though the primary config did not — the
-	// reinit guard compares it for equality and would otherwise drop the change.
-	assert.Equal(t, "lib-base=2,operator-config=1", parsed.Version)
 }
 
 func TestConfigLoaderComponent_IgnoresUnconfiguredConfig(t *testing.T) {
-	bus, eventChan := startLoader(t, []string{"operator-config"})
+	bus, eventChan := startLoader(t)
 
+	bus.Publish(events.NewLibrarySetChangedEvent(nil))
 	bus.Publish(events.NewConfigResourceChangedEvent(
-		configResource("someone-elses-config", "1", "stray", "stray")))
+		configResource("someone-elses-config", "stray", "stray")))
 	testutil.AssertNoEvent[*events.ConfigParsedEvent](t, eventChan, testutil.EventTimeout)
 
 	bus.Publish(events.NewConfigResourceChangedEvent(
-		configResource("operator-config", "1", "mine", "mine")))
+		configResource("operator-config", "mine", "mine")))
 
 	parsed := testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
 	assert.NotContains(t, snippets(t, parsed), "stray")
 	assert.Contains(t, snippets(t, parsed), "mine")
+}
+
+// The multi-object Watcher stores indexer.ConvertedResource — a plain
+// map[string]any. Only SingleWatcher hands out *unstructured.Unstructured, and
+// every other test here feeds that, which is why they all passed while the
+// controller in a real cluster never rendered: the loader type-asserted, the
+// assertion failed, and it discarded every snapshot while logging that it was
+// still waiting for one.
+func TestConfigLoaderComponent_AcceptsPlainMapLibraries(t *testing.T) {
+	bus, eventChan := startLoader(t)
+
+	library := libraryResource("1", "rev-1", "from-library", "library")
+
+	bus.Publish(events.NewLibrarySetChangedEvent([]any{library.Object}))
+	bus.Publish(events.NewConfigResourceChangedEvent(
+		configWithRefs("mine", "mine", [2]string{testLibraryName, "rev-1"})))
+
+	parsed := testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, parsed.Config)
+	assert.Contains(t, snippets(t, parsed), "from-library",
+		"a library delivered as map[string]any must merge exactly like one delivered as Unstructured")
+}
+
+// A config that references nothing must render without ever seeing a library
+// snapshot. In a cluster with no libraries — or without the CRD installed at
+// all — that watch may never sync, and requiring a snapshot there meant the
+// controller never reconciled: acceptance saw it as "reconciliation_total is
+// 0, controller still initializing".
+func TestConfigLoaderComponent_RendersWithoutLibrariesWhenNoneReferenced(t *testing.T) {
+	bus, eventChan := startLoader(t)
+
+	bus.Publish(events.NewConfigResourceChangedEvent(
+		configResource(testConfigName, "inline", "self-contained")))
+
+	parsed := testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, parsed.Config)
+	assert.Contains(t, snippets(t, parsed), "inline")
 }

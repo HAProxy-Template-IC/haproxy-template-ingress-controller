@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Fail if any rendered HAProxyTemplateConfig approaches etcd's per-object limit.
+"""Fail if any rendered HAPTIC config object approaches etcd's per-object limit.
 
 etcd rejects a write above ~1.5 MiB, and the apiserver surfaces it as a plain
 `etcdserver: request is too large` on `helm install`. Nothing in the repo used
@@ -64,7 +64,11 @@ API_VERSIONS = [
 # Both kinds are measured. They are separate etcd objects with separate budgets,
 # so reporting only the config would hide a tests object growing toward the same
 # limit.
-KINDS = ("HAProxyTemplateConfig", "HAProxyValidationTests")
+# HAProxyTemplateLibrary is the kind that actually carries the bulk — the
+# config is ~1% of the limit while a library can reach 50%. Checking only the
+# config would report a comfortable margin while a library sat one growth
+# cycle from unstorable.
+KINDS = ("HAProxyTemplateConfig", "HAProxyTemplateLibrary", "HAProxyValidationTests")
 
 
 def run(cmd, stdin=None):
