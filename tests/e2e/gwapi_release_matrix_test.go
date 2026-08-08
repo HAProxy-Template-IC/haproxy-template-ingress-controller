@@ -20,7 +20,6 @@ import (
 	"context"
 	"os"
 	"reflect"
-	"strconv"
 	"testing"
 	"time"
 
@@ -95,12 +94,7 @@ func TestGatewayAPIReleaseMatrix(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build clientset: %v", err)
 			}
-			dc = &debugClient{
-				clientset:   cs,
-				namespace:   ControllerNamespace,
-				serviceName: DebugServiceNameValue,
-				port:        strconv.Itoa(DebugPort),
-			}
+			dc = newDebugClient(client.RESTConfig(), cs)
 
 			// TestMain already waited for the controller to become Ready on
 			// the old release — reaching this point IS the degraded-startup

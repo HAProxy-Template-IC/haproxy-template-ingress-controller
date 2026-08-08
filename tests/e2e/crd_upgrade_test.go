@@ -22,15 +22,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"strconv"
 	"testing"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
-
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // effectiveResolution mirrors pkg/core/config.Resolution as served by
@@ -162,15 +159,7 @@ func TestGatewayAPICRDUpgradeInPlace(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build clientset: %v", err)
 			}
-			dc = &debugClient{
-				clientset:   cs,
-				namespace:   ControllerNamespace,
-				serviceName: DebugServiceNameValue,
-				port:        strconv.Itoa(DebugPort),
-				loopback: testutil.NewLoopbackPodClient(
-					client.RESTConfig(), cs, ControllerNamespace, LabelSelectorController, DebugPort,
-				),
-			}
+			dc = newDebugClient(client.RESTConfig(), cs)
 
 			// Baseline: TCPRoute watched at v1 (the suite installs the
 			// v1.6.0 standard channel).

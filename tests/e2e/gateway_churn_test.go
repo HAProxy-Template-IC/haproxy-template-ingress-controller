@@ -333,15 +333,7 @@ func TestGatewayChurn(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build dynamic client: %v", err)
 			}
-			dc = &debugClient{
-				clientset:   cs,
-				namespace:   ControllerNamespace,
-				serviceName: DebugServiceNameValue,
-				port:        strconv.Itoa(DebugPort),
-				loopback: testutil.NewLoopbackPodClient(
-					client.RESTConfig(), cs, ControllerNamespace, LabelSelectorController, DebugPort,
-				),
-			}
+			dc = newDebugClient(client.RESTConfig(), cs)
 
 			// Survivor fixtures: one namespace, its own echo backend, and
 			// churnSurvivorCount Gateways+HTTPRoutes that the churn never

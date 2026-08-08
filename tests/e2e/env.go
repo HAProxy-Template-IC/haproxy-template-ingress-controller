@@ -95,15 +95,7 @@ func WaitForE2EEnvironmentReady(ctx context.Context, client klient.Client) error
 	if err != nil {
 		return fmt.Errorf("build clientset: %w", err)
 	}
-	dc := &debugClient{
-		clientset:   cs,
-		namespace:   ControllerNamespace,
-		serviceName: DebugServiceNameValue,
-		port:        strconv.Itoa(DebugPort),
-		loopback: testutil.NewLoopbackPodClient(
-			client.RESTConfig(), cs, ControllerNamespace, LabelSelectorController, DebugPort,
-		),
-	}
+	dc := newDebugClient(client.RESTConfig(), cs)
 	if err := testutil.WaitForConditionWithDescription(ctx, cfg,
 		"controller /healthz returns 200 (all components ready, leader-only running)",
 		func(ctx context.Context) (bool, error) {
@@ -220,6 +212,21 @@ type debugClient struct {
 	// /debug/* is loopback-only, so it is reached by port-forward. The health
 	// endpoints stay on the Service proxy, which the kubelet also uses.
 	loopback *testutil.LoopbackPodClient
+}
+
+// newDebugClient builds a debugClient with every field set. Construct through
+// this, never as a literal: an omitted `loopback` compiles and surfaces only as
+// a nil dereference in whichever test first reads a /debug/* endpoint.
+func newDebugClient(restConfig *rest.Config, cs kubernetes.Interface) *debugClient {
+	return &debugClient{
+		clientset:   cs,
+		namespace:   ControllerNamespace,
+		serviceName: DebugServiceNameValue,
+		port:        strconv.Itoa(DebugPort),
+		loopback: testutil.NewLoopbackPodClient(
+			restConfig, cs, ControllerNamespace, LabelSelectorController, DebugPort,
+		),
+	}
 }
 
 func (dc *debugClient) getPipelineStatus(ctx context.Context) (*pipelineStatus, error) {

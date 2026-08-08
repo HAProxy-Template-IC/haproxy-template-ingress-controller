@@ -2556,10 +2556,14 @@ nightly-scale:
   timeout: 45 minutes
   rules:
     - if: $SCHEDULE_KIND == "nightly"
-    # Standalone immediate runs without waiting for the schedule:
-    #   glab api --method POST projects/:id/pipeline \
-    #     -f ref=<branch> -f "variables[][key]=SCALE_RUN" \
-    #     -f "variables[][value]=1"
+    # Standalone immediate runs without waiting for the schedule. The
+    # variables array needs a JSON body: `-f "variables[][key]=..."` posts
+    # a form glab drops, creating a pipeline with NO variables and no
+    # nightly-scale job — a green-looking run that never measured anything.
+    #   glab api --method POST --header "Content-Type: application/json" \
+    #     --input - projects/:id/pipeline <<'EOF'
+    #   {"ref":"main","variables":[{"key":"SCALE_RUN","value":"1"}]}
+    #   EOF
     - if: $SCALE_RUN == "1"
   variables:
     HAPROXY_VERSION: "3.4"
