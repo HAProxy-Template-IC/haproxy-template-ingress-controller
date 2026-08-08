@@ -380,7 +380,13 @@ func (w *SingleWatcher) Start(ctx context.Context) error {
 		// The callback is invoked even if no resource exists (nil argument).
 		if w.config.OnSyncComplete != nil {
 			resource := w.getCurrentResourceFromCache()
-			if err := w.config.OnSyncComplete(resource); err != nil {
+			// Untyped nil, not the typed pointer: a nil pointer in an `any`
+			// makes a non-nil interface, so callers' `obj == nil` guards miss.
+			var current any
+			if resource != nil {
+				current = resource
+			}
+			if err := w.config.OnSyncComplete(current); err != nil {
 				if resource != nil {
 					slog.Warn("SingleWatcher OnSyncComplete callback failed",
 						"error", err,

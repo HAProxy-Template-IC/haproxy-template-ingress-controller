@@ -29,6 +29,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -334,9 +335,12 @@ func (b *Base) dispatch(event busevents.Event) {
 		if r == nil {
 			return
 		}
+		// The stack is the only thing that names the panicking line; the
+		// message and event type narrow it no further than the component.
 		b.logger.Error(b.name+" panicked during event handling",
 			"panic", r,
-			"event_type", fmt.Sprintf("%T", event))
+			"event_type", fmt.Sprintf("%T", event),
+			"stack", string(debug.Stack()))
 
 		ph, ok := b.handler.(PanicHandler)
 		if !ok {
@@ -372,7 +376,8 @@ func SafeDispatch(logger *slog.Logger, name string, event busevents.Event, handl
 		if r := recover(); r != nil {
 			logger.Error(name+" panicked during event handling",
 				"panic", r,
-				"event_type", fmt.Sprintf("%T", event))
+				"event_type", fmt.Sprintf("%T", event),
+				"stack", string(debug.Stack()))
 		}
 	}()
 	handle()
