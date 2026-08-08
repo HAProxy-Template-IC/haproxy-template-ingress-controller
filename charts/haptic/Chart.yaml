@@ -25,6 +25,9 @@ dependencies:
   - name: ingress-annotations-compat
     version: 0.1.0
     condition: controller.templateLibraries.ingressAnnotationsCompat.enabled
+  - name: governance
+    version: 0.1.0
+    condition: controller.templateLibraries.governance.enabled
   # No condition: spoa-hub's enable predicate is
   # `or .Values.controller.templateLibraries.spoaHub.enabled (include "haptic.spoaHub.enabled" .)`,
   # and Helm's condition: accepts only a values path. Gating on the flag alone

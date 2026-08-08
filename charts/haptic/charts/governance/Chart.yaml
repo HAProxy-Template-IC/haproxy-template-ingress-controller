@@ -1,0 +1,4 @@
+apiVersion: v2
+name: governance
+description: Governance rule engine — declarative constraints (min/max, required, allowed, pattern, anyOf, satisfiedBy) over any watched resource, enforced as reject/audit with optional clamping. Carries only library YAML; the parent chart merges it into the HAProxyTemplateConfig.
+version: 0.1.0

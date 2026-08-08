@@ -397,6 +397,11 @@ controller:
     # https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/adr/0003-annotation-compat-scaffold-level-2-5.md
     ingressAnnotationsCompat:
       enabled: true
+    # Governance rule engine. Generic over any watched resource, so it is
+    # independent of the annotation libraries above. Inert until you define
+    # controller.config.templatingSettings.extraContext.governance.rules.
+    governance:
+      enabled: true
     # haproxy-haptic.org/* — HAPTIC's native annotation vocabulary and the
     # only annotation library enabled by default. A best-of-breed superset of
     # the three vendor libraries below; the vocabulary to use for a powerful
