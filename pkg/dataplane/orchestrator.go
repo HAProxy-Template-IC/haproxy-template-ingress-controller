@@ -38,6 +38,10 @@ import (
 // Both CE (parser.Parser) and EE (enterprise.Parser) parsers implement this interface.
 type ConfigParser interface {
 	ParseFromString(config string) (*parserconfig.StructuredConfig, error)
+	// ParseFromStringUncached is for content that is unique by construction
+	// (a read-back carries HAProxy's own _version header), where a cache
+	// lookup cannot hit and the insert only evicts a reusable entry.
+	ParseFromStringUncached(config string) (*parserconfig.StructuredConfig, error)
 }
 
 const (
@@ -632,7 +636,7 @@ func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody,
 		"reload_id", reloadID,
 		"endpoint", o.client.Endpoint.URL)
 
-	readBackParsed, parseErr := o.parser.ParseFromString(readBack)
+	readBackParsed, parseErr := o.parser.ParseFromStringUncached(readBack)
 	// Kept despite seldom firing: both checksums are computed for the log line
 	// anyway, so this costs one string compare, and it is still correct for a
 	// config simple enough to survive re-serialisation unchanged. Normalising

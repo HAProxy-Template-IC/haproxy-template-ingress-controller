@@ -199,6 +199,21 @@ func New() (*Parser, error) {
 //	p, _ := parser.New()
 //	structured, err := p.ParseFromString(config)
 func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
+	return p.parse(config, true)
+}
+
+// ParseFromStringUncached parses without reading or writing the cache.
+//
+// For content that is unique by construction a lookup can never hit, and the
+// insert evicts an entry that could: a post-reload read-back carries HAProxy's
+// own `_version` header, which changes on every push. Routing those through the
+// cache kept the four slots full of single-use entries and evicted the desired
+// config, the one parse with reuse value (#139).
+func (p *Parser) ParseFromStringUncached(config string) (*StructuredConfig, error) {
+	return p.parse(config, false)
+}
+
+func (p *Parser) parse(config string, useCache bool) (*StructuredConfig, error) {
 	if config == "" {
 		return nil, errors.New("configuration string is empty")
 	}
@@ -206,9 +221,12 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	// Check cache first (fast path - no mutex needed for cache check)
 	// This dramatically reduces allocations when syncing the same desired config
 	// to multiple endpoints.
-	hash := hashConfig(config)
-	if cached := configCache.get(hash); cached != nil {
-		return cached, nil
+	var hash string
+	if useCache {
+		hash = hashConfig(config)
+		if cached := configCache.get(hash); cached != nil {
+			return cached, nil
+		}
 	}
 
 	// Lock to prevent concurrent access to client-native parser
@@ -217,8 +235,10 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	defer parserMutex.Unlock()
 
 	// Double-check cache after acquiring lock (another goroutine may have parsed)
-	if cached := configCache.get(hash); cached != nil {
-		return cached, nil
+	if useCache {
+		if cached := configCache.get(hash); cached != nil {
+			return cached, nil
+		}
 	}
 
 	// Parse directly from string - NO file I/O
@@ -256,8 +276,10 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	NormalizeConfigMetadata(conf)
 
 	// Cache the result for future requests with the same config
-	configCache.set(hash, conf)
-	configCache.missCount.Add(1)
+	if useCache {
+		configCache.set(hash, conf)
+		configCache.missCount.Add(1)
+	}
 
 	return conf, nil
 }
