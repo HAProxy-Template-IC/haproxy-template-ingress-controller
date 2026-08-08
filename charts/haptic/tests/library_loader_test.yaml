@@ -14,7 +14,7 @@ tests:
   - it: emits one object per enabled library plus the operator's, in merge order
     asserts:
       - hasDocuments:
-          count: 9
+          count: 10
       - equal:
           path: metadata.name
           value: haptic-config-base
@@ -37,20 +37,24 @@ tests:
         documentIndex: 4
       - equal:
           path: metadata.name
-          value: haptic-config-haptic-annotations
+          value: haptic-config-governance
         documentIndex: 5
       - equal:
           path: metadata.name
-          value: haptic-config-spoa-hub
+          value: haptic-config-haptic-annotations
         documentIndex: 6
       - equal:
           path: metadata.name
-          value: haptic-config-vector
+          value: haptic-config-spoa-hub
         documentIndex: 7
       - equal:
           path: metadata.name
-          value: haptic-config
+          value: haptic-config-vector
         documentIndex: 8
+      - equal:
+          path: metadata.name
+          value: haptic-config
+        documentIndex: 9
 
   - it: references every library snippets object, in merge order
     # The ref list is the ONLY place merge order is declared, so nothing can
@@ -61,15 +65,15 @@ tests:
       - equal:
           path: spec.libraryRefs[0].name
           value: haptic-config-base
-        documentIndex: 8
+        documentIndex: 9
       - equal:
-          path: spec.libraryRefs[7].name
+          path: spec.libraryRefs[8].name
           value: haptic-config-vector
-        documentIndex: 8
+        documentIndex: 9
       - matchRegex:
           path: spec.libraryRefs[0].revision
           pattern: "^base-[0-9a-f]{16}$"
-        documentIndex: 8
+        documentIndex: 9
       - matchRegex:
           path: spec.revision
           pattern: "^base-[0-9a-f]{16}$"
@@ -91,7 +95,7 @@ tests:
         documentIndex: 0
       - notExists:
           path: spec.partial
-        documentIndex: 8
+        documentIndex: 9
 
   - it: drops a disabled library's object entirely
     set:
@@ -99,7 +103,7 @@ tests:
       controller.templateLibraries.ingressAnnotationsCompat.enabled: false
     asserts:
       - hasDocuments:
-          count: 8
+          count: 9
 
   - it: should strip _helm_load metadata and underscore scratch keys from every spec
     asserts:
@@ -184,7 +188,7 @@ tests:
       - equal:
           path: metadata.name
           value: edge-config
-        documentIndex: 8
+        documentIndex: 9
 
   - it: should carry template-owned status patch policy in structured extraContext
     documentSelector:

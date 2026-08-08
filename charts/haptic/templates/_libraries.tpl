@@ -196,6 +196,7 @@ the cost of its source being stored in the release Secret.
     "subchart:ingress"
     "subchart:gateway"
     "subchart:ingress-annotations-compat"
+    "subchart:governance"
     "subchart:haptic-annotations"
     "subchart:haproxytech"
     "subchart:haproxy-ingress"

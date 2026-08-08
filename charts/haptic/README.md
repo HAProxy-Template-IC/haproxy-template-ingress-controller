@@ -67,6 +67,7 @@ Templates are merged at Helm render time in a fixed priority order (later librar
 | `ingress` | on | Kubernetes `networking.k8s.io/v1` Ingress |
 | `gateway` | on | Gateway API `HTTPRoute` / `GRPCRoute` / `TLSRoute` (requires Gateway CRDs installed) |
 | `ingressAnnotationsCompat` | on | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
+| `governance` | on | Declarative constraints over any watched resource; inert until you define `controller.config.templatingSettings.extraContext.governance.rules` |
 | `haproxytech` | off | `haproxy.org/*` annotation compatibility ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress)) |
 | `haproxy-ingress` | off | `haproxy-ingress.github.io/*` annotation compatibility ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/)) |
 | `nginx-ingress` | off | `nginx.ingress.kubernetes.io/*` annotation compatibility |
