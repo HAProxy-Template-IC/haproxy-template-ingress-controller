@@ -279,11 +279,16 @@ high-water range takes the un-lowered path from ~1.7x the loop to **~1.37x**.
 | pipeline, lowered | 659 us |
 | pipeline, un-lowered | 927 us |
 
-The remaining 1.37x is frame setup, the reflect trampoline, and a channel
-operation in the VM pool. The pool is the next candidate, but justifying
-`sync.Pool` over the channel needs a *concurrent* benchmark — the contention it
-would remove does not show single-goroutine — so it is deliberately not bundled
-here.
+The pool was the next candidate, and a CPU profile put it at ~26% of the
+closure-call path. `sync.Pool` is **not** the answer — it was removed on
+production evidence (`pinSlow` at 51% of allocations, 79% CPU in GC, entries
+always evicted across 30-120s render gaps) and that evidence is unchanged.
+Backing the pool with a mutex and a slice instead of a channel keeps the
+GC-resistance and takes get+put from 33.2ns to 10.6ns (scriggo !122), leaving
+the un-lowered path at **~1.32x** the loop.
+
+What remains is spread thin: `reflect.funcLayout` ~14%, allocation ~14%, and VM
+execution. Nothing dominant is left to remove.
 
 **This constrains Phase 3.** The pass runs before type checking and therefore
 has no type information; it works only because a literal closure's result type
