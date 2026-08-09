@@ -25,6 +25,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
@@ -165,7 +166,7 @@ func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig st
 		currentConfig = preParsedCurrent
 	} else {
 		o.logger.Debug("Parsing current configuration")
-		currentConfig, err = o.parser.ParseFromStringUncached(currentConfigStr)
+		currentConfig, err = o.parser.ParseFromStringUncachedFor(parser.SourceCurrent, currentConfigStr)
 		if err != nil {
 			snippet := currentConfigStr
 			if len(snippet) > 200 {
@@ -185,7 +186,7 @@ func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig st
 		desiredParsed = preParsedDesired
 	} else {
 		o.logger.Debug("Parsing desired configuration")
-		desiredParsed, err = o.parser.ParseFromString(desiredConfig)
+		desiredParsed, err = o.parser.ParseFromStringFor(parser.SourceDesired, desiredConfig)
 		if err != nil {
 			snippet := desiredConfig
 			if len(snippet) > 200 {

@@ -161,7 +161,7 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 		return
 	}
 
-	parsed, err := s.parser.ParseFromString(content)
+	parsed, err := s.parser.ParseFromStringFor(parser.SourceCurrentCR, content)
 	if err != nil {
 		s.logger.Warn("Failed to parse current config", "error", err)
 		return

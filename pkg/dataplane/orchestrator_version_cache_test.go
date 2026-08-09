@@ -34,6 +34,14 @@ func (m *mockConfigParser) ParseFromString(config string) (*parserconfig.Structu
 	return &parserconfig.StructuredConfig{}, nil
 }
 
+func (m *mockConfigParser) ParseFromStringFor(_, config string) (*parserconfig.StructuredConfig, error) {
+	return m.ParseFromString(config)
+}
+
+func (m *mockConfigParser) ParseFromStringUncachedFor(_, config string) (*parserconfig.StructuredConfig, error) {
+	return m.ParseFromString(config)
+}
+
 func (m *mockConfigParser) ParseFromStringUncached(config string) (*parserconfig.StructuredConfig, error) {
 	return m.ParseFromString(config)
 }

@@ -53,7 +53,7 @@ func (r *Runner) assertHAProxyValid(
 	// binary-only checks (cross-references, unknown keywords, global/defaults).
 	// Callers set SkipBinaryValidation must label these results accordingly.
 	if r.skipBinaryValidation {
-		_, err := dataplane.ValidateSyntaxAndSchema(haproxyConfig, r.haproxyVersion)
+		_, err := dataplane.ValidateSyntaxAndSchemaUncached(haproxyConfig, r.haproxyVersion)
 		if err != nil {
 			result.Passed = false
 			result.Error = fmt.Sprintf("HAProxy syntax/schema validation failed (config size: %d bytes): %s",
@@ -67,7 +67,7 @@ func (r *Runner) assertHAProxyValid(
 	// Pass nil version to use default v3.0 schema (safest for validation)
 	// Use strict validation (skipDNSValidation=false) for CLI to catch DNS issues during local validation
 	// Ignore returned parsedConfig - CLI validation doesn't need it for sync optimization
-	_, err := dataplane.ValidateConfiguration(haproxyConfig, auxiliaryFiles, validationPaths, nil, false)
+	_, err := dataplane.ValidateConfigurationUncached(haproxyConfig, auxiliaryFiles, validationPaths, nil, false)
 	// ErrValidationCacheHit means the config was already validated successfully, treat as pass
 	failed := err != nil && !errors.Is(err, dataplane.ErrValidationCacheHit)
 	if failed {
