@@ -722,18 +722,53 @@ When you're filtering, flattening, or deduplicating watched resources, chain typ
 
 ```scriggo
 {%%
-  type EP = resources.endpoints.Endpoints
   var addresses = resources.endpoints.List() |
-    flat_map(func(s *resources.endpoints.T) []EP { return s.Endpoints }) |
-    reject(func(e EP) bool { return e.TargetRef.Name == "" }) |
-    flat_map(func(e EP) []string { return e.Addresses }) |
+    flat_map(s => s.Endpoints) |
+    reject(e => e.TargetRef.Name == "") |
+    flat_map(e => e.Addresses) |
     unique()
 %%}
 ```
 
 The helpers are `map`, `filter`, `reject`, `flat_map`, `unique`, `unique_by`, `group_by` and `sort_by`. Each preserves the element type, so `e.TargetRef.Name` still resolves after four stages — and a typo in a field name fails the config load rather than rendering an empty file.
 
+#### `x => expr`
+
+`s => s.Endpoints` is a function of one argument returning one expression. You don't write either type: the parameter is the element type of whatever is piped in, and the result is whatever the expression evaluates to. Both are still checked — `reject(e => e.Adresses)` fails the load with an unknown-field error, and a predicate that doesn't return `bool` is rejected at the same point.
+
+The long form stays valid, and you need it when the body is more than one expression:
+
+```scriggo
+{%- var names = pods | map(func(p *resources.pods.T) string {
+    if p.Metadata.Labels["app"] != "" { return p.Metadata.Labels["app"] }
+    return p.Metadata.Name
+  }) %}
+```
+
+An arrow works anywhere a function is expected, not only in a pipeline — including your own helpers:
+
+```scriggo
+{%- var Where = func(ps []*resources.pods.T, pred func(*resources.pods.T) bool) []*resources.pods.T {
+    return ps | filter(pred)
+  } %}
+{%- var ready = Where(pods, p => p.Status.Phase == "Running") %}
+```
+
 Predicates are closures, not strings. That's deliberate: `dig`-style string paths return nothing when a field name is wrong, and nothing errors. `unique_by` and `group_by` additionally accept an attribute path (`unique_by("host")`) for data that reaches you as `any`.
+
+**Macros compose with chains from either end, but not in the middle.** A macro returns text, so it can consume a chain (`… | map(p => p.Name) | Render()`) or act as a stage closure (`… | map(Label)`) — it can't pass a collection onward. A shared helper that returns a *collection* is an exported `var` holding a function; it imports exactly like a macro and its return type is unrestricted:
+
+```scriggo
+{# in a snippet #}
+{% var ReadyAddresses = func(svc string) []string {
+     return resources.endpoints.Fetch(svc) | flat_map(s => s.Endpoints) |
+       reject(e => e.TargetRef.Name == "") | flat_map(e => e.Addresses)
+   } %}
+
+{# in another #}
+{% import "util-endpoints" for ReadyAddresses %}
+{%- for _, addr := range ReadyAddresses("default/api") %}
+```
 
 Four rules the compiler enforces:
 
@@ -743,6 +778,21 @@ Four rules the compiler enforces:
 - `map` keeps one output per input. Reach for `flat_map` when the closure returns a slice you want flattened in.
 
 Reach for a `{%% %%}` loop instead of a pipeline when the body has side effects — `fail()`, registering a file, recording an Event — or needs `break`.
+
+#### Asking whether an optional field was set
+
+A struct is falsy when every field is its zero value, so the question needs no helper:
+
+```scriggo
+{%- if ingress.Spec.DefaultBackend.Service %}   {# set #}
+{%- if not gateway.Spec.Tls.Frontend %}         {# absent or empty #}
+```
+
+Use `not` / `and` / `or` rather than `!` / `&&` / `||` when an operand is a struct — the Go operators need a `bool`, these coerce any value. That works inside a pipeline predicate too: `filter(o => not o.Spec.Tls.Frontend)`.
+
+Prefer this to a `dig()` probe like `dig(ingress, "spec", "defaultBackend") != nil`: same answer, and the field path is checked when the config loads.
+
+Absence and emptiness deliberately give the same answer, because that's the only distinction the typed shape carries: an optional object that the source omitted and one it supplied empty both arrive as the zero value.
 
 **Field name convention:** Go-PascalCase of the JSON tag, with NO acronym preservation. This matters because chart authors are used to upstream Go-style names (`APIVersion`, `IPBlock`) — those don't apply here. (Where the JSON tag already has an uppercase acronym, like `loadBalancerIP`, the typed field keeps it — `LoadBalancerIP` — which happens to match upstream; only rune 0 is ever changed.)
 

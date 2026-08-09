@@ -1557,7 +1557,16 @@ Type can be explicit or inferred from the assigned value. Uninitialized variable
 {%- end %}
 ```
 
-**Truthiness rules:** A condition is false for: `false`, `0`, `0.0`, `""`, `nil`, and empty collections (slices/maps). All other values are truthy.
+**Truthiness rules:** A condition is false for: `false`, `0`, `0.0`, `""`, `nil`, empty collections (slices/maps), and a **struct whose every field is its zero value**. All other values are truthy.
+
+That last one is how you ask whether an optional object was set, without a `dig()` presence probe:
+
+```scriggo
+{%- if ingress.Spec.DefaultBackend.Service %}      {# set #}
+{%- if not gateway.Spec.Tls.Frontend %}            {# absent or empty #}
+```
+
+Use the template-style `not` / `and` / `or` rather than `!` / `&&` / `||` when an operand is a struct: the Go operators require a `bool`, while these coerce any value through the rules above — including inside a pipeline predicate (`filter(o => not o.Spec.Tls.Frontend)`).
 
 **For loops:**
 
@@ -1727,7 +1736,8 @@ Scriggo supports both function call syntax and pipe syntax:
 | `dig(obj, keys...)` | Navigate nested maps **and** typed structs (via JSON-tag → Go-field lookup); optional `omitempty` fields with zero values normalise to nil | `dig(obj, "meta", "name")` |
 | `fallback(v, default)` | Return default if nil | `fallback(obj.field, "")` |
 | `dig_string(obj, default, keys...)` | Fused `dig + fallback + tostring` — string access at polymorphic boundaries (annotation / metadata lookups on `any`-typed values) | `v \| dig_string("", "metadata", "name")` |
-| `append(slice, item)` | Append to slice | `append(items, newItem)` |
+| `append(slice, item)` | Go's builtin, unshadowed: type-preserving, and `append(dst, src...)` spreads a slice of the **same** type. Widening into `[]any` is a compile error — box per element with a loop | `append(items, newItem)`, `append(all, more...)` |
+| `append_any(slice, item)` | For the two cases Go's append rejects: a nil slice, and a slice whose static type is `any` (a value read out of a `map[string]any`) | `m["xs"] = append_any(m["xs"], x)` |
 | `toSlice(v)` | Convert to []any | `toSlice(maybeNil)` |
 | `toStringSlice(v)` | Convert `[]any` to `[]string` | `toStringSlice(items)` |
 | `ceil(n)` | Ceiling of a float | `ceil(1.2)` → `2` |
@@ -1736,11 +1746,11 @@ Scriggo supports both function call syntax and pipe syntax:
 | `resource(name)` | Per-render items of a watched resource named **dynamically** (`[]any` of boxed `*T`), sharing the same memoized objects as `resources.<name>.List()` so a `jsonpathSet` write is observed downstream. Governance layer only | `resource("ingresses")` |
 | `jsonpathGet(item, path)` | Read a **concrete** JSONPath out of any watched-resource item (dotted keys, `['bracket']` keys, `[n]` indices). Returns nil if absent | `jsonpathGet(ing, "metadata.annotations['x']")` |
 | `jsonpathSet(item, path, value)` | Write a concrete JSONPath into a resource item **in place** (annotations via a reflect fast path, other fields via a JSON round-trip); returns bool. Filtered/wildcard paths are rejected (validate-only) | `jsonpathSet(ing, "metadata.annotations['x']", "100")` |
-| `map(slice, fn)` | Apply a function to every element; length preserved, result type from the closure | `eps \| map(func(e EP) string { return e.TargetRef.Name })` |
-| `filter(slice, pred)` / `reject(slice, pred)` | Keep / drop elements a closure accepts. Type-preserving | `eps \| reject(func(e EP) bool { return e.Ready })` |
-| `flat_map(slice, fn)` | Map each element to a slice and concatenate, flattening ONE level | `resources.endpoints.List() \| flat_map(func(s *resources.endpoints.T) []EP { return s.Endpoints })` |
+| `map(slice, fn)` | Apply a function to every element; length preserved, result type from the closure | `eps \| map(e => e.TargetRef.Name)` |
+| `filter(slice, pred)` / `reject(slice, pred)` | Keep / drop elements a closure accepts. Type-preserving | `eps \| reject(e => e.Ready)` |
+| `flat_map(slice, fn)` | Map each element to a slice and concatenate, flattening ONE level | `resources.endpoints.List() \| flat_map(s => s.Endpoints)` |
 | `unique(slice)` / `unique_by(slice, key)` | First occurrence per element / per key, input order preserved. `key` is a closure or an attribute path | `pairs \| unique_by("host")` |
-| `group_by(slice, key)` | Bucket into `map[string][]T`; iterate via `keys()` for deterministic output | `routes \| group_by(func(r R) string { return r.Host })` |
+| `group_by(slice, key)` | Bucket into `map[string][]T`; iterate via `keys()` for deterministic output | `routes \| group_by(r => r.Host)` |
 | `sort_by(slice, criteria)` | Sort by JSONPath criteria **or** a `func(a, b T) int` comparator | See sorting section |
 | `sort_ints(slice)` | Sort `[]any` of ints numerically (non-ints coerced via `toint`, sort to front) — use for ports/IDs where `sort_strings` would misorder (`"10"` before `"2"`) | `sort_ints(ports)` |
 | `glob_match(names, pattern)` | Filter by glob | `glob_match(templates, "backend-*")` |
@@ -2165,22 +2175,37 @@ nesting loops around a hand-rolled `map[string]bool{}`:
 
 ```scriggo
 {%%
-  type EP = resources.endpoints.Endpoints
   var ready = resources.endpoints.List() |
-    flat_map(func(s *resources.endpoints.T) []EP { return s.Endpoints }) |
-    reject(func(e EP) bool { return e.TargetRef.Name == "" }) |
-    unique_by(func(e EP) string { return e.TargetRef.Name })
+    flat_map(s => s.Endpoints) |
+    reject(e => e.TargetRef.Name == "") |
+    unique_by(e => e.TargetRef.Name)
 %%}
 ```
 
 Every field access is checked at engine compile time, so a typo or a renamed
 CRD field fails the load gate instead of rendering an empty map file.
 
+**`x => expr` is the default spelling.** The parameter type is the stage's
+element type and the result type is the expression's; both are inferred, both
+are still checked. Write the long `func(e EP) bool { … }` form only when the
+body needs more than one expression — and note that the long form is where a
+stage can silently widen to `any`, which an arrow cannot do.
+
+An arrow is accepted anywhere a function-typed parameter is, including a
+chart-local helper: `Where(pods, p => p.Ready)` types `p` from `Where`'s own
+signature.
+
 **Nested types are nameable.** Alongside `resources.<name>.T`, each nested shape
 is declared under its field path — `resources.endpoints.Endpoints`,
-`resources.gateways.SpecListeners`. Alias it once per snippet (`type EP = …`)
-rather than spelling the path at every stage. Resources without a loaded schema
-get no nested types, same as they get no typed `T`.
+`resources.gateways.SpecListeners`. Arrows removed most of the need to spell
+them; alias one (`type EP = …`) when a long-form closure still needs the name.
+Resources without a loaded schema get no nested types, same as they get no
+typed `T`.
+
+**A macro cannot be a mid-chain stage.** It returns text, so it can end a chain
+(`… | Render()`) or be a stage closure (`… | map(Label)`). A shared helper that
+returns a *collection* is an exported `var` holding a func — imported like a
+macro, with any return type (`map[string][]T` included).
 
 **Rules that bite:**
 

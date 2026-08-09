@@ -474,22 +474,11 @@ templateSnippets:
       #}
       # gateway/map-hostregex-gateway
       {%%
-        var seen = map[string]bool{}
-        var suffixEntries = []any{}
-        for _, gw := range resources.gateways.List() {
-          for _, listener := range gw.Spec.Listeners {
-            var h = listener.Hostname
-            if !hasPrefix(h, "*.") {
-              continue
-            }
-            var suffix = h[2:]
-            if seen[suffix] {
-              continue
-            }
-            seen[suffix] = true
-            suffixEntries = append(suffixEntries, map[string]any{"suffix": suffix})
-          }
-        }
+        var suffixEntries = resources.gateways.List() |
+          flat_map(gw => gw.Spec.Listeners) |
+          filter(l => hasPrefix(l.Hostname, "*.")) |
+          unique_by(l => l.Hostname) |
+          map(l => map[string]any{"suffix": l.Hostname[2:]})
         // Most-specific (longest) suffix wins HAProxy `map_reg` ties — that's
         // first-match-wins on file order, so emit longer suffixes first. Per
         // Gateway API spec: when a request Host matches multiple listeners'

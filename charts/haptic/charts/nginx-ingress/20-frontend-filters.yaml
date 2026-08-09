@@ -103,9 +103,9 @@ templateSnippets:
       {%- end %}
       {%- if len(hostKeys) > 0 %}
         {%- var sortedHosts = sort_strings(hostKeys) %}
-        {%- var lines = []any{} %}
+        {%- var lines = []string{} %}
         {%- for _, h := range sortedHosts %}{%- lines = append(lines, tostring(h) + " " + pairByHost[tostring(h)]) %}{%- end %}
-        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- var mapContent = join(lines, "\n") + "\n" %}
         {%- var _, mapErr = fileRegistry.Register("map", "from-to-www.map", mapContent) %}
         {%- if mapErr != nil %}{{ fail("failed to register from-to-www map: " + tostring(mapErr)) }}{%- end %}
         {%- var m, _ = pathResolver.GetPath("from-to-www.map", "map") %}
@@ -141,12 +141,14 @@ templateSnippets:
               {%- end %}
             {%- end %}
             {%- if len(hosts) > 0 && canaryBackend != "" %}
-              {%- var cond = HostMatchCondition(hosts) %}
-              {%- var canaryHeader = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header"] %}
-              {%- var canaryHeaderValue = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-value"] %}
-              {%- var canaryHeaderPattern = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-pattern"] %}
-              {%- var canaryCookie = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-cookie"] %}
-              {%- var canaryWeight = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-weight"] %}
+              {%%
+                var cond = HostMatchCondition(hosts)
+                var canaryHeader = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header"]
+                var canaryHeaderValue = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-value"]
+                var canaryHeaderPattern = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-pattern"]
+                var canaryCookie = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-cookie"]
+                var canaryWeight = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-weight"]
+              %%}
       # nginx-ingress/canary ({{ key }})
               {%- if canaryHeader != "" %}
                 {%- if canaryHeaderPattern != "" %}

@@ -469,9 +469,7 @@ templateSnippets:
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- var candidates = []any{} -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {#- dig() distinguishes an absent defaultBackend from one with no service;
-            typed access can observe neither. -#}
-        {%- if dig(ingress, "spec", "defaultBackend") != nil && dig(ingress, "spec", "defaultBackend", "service") != nil -%}
+        {%- if ingress.Spec.DefaultBackend.Service -%}
           {%- var ts = ingress.Metadata.CreationTimestamp -%}
           {%- var rules = ingress.Spec.Rules -%}
           {%- if len(rules) == 0 -%}
@@ -574,38 +572,13 @@ k8sResources:
           }
 
           // Spec walk must mirror GenerateIngressBackends: rule paths plus defaultBackend.
-          var degraded = []any{}
-          var seen = map[string]bool{}
-          var refs = []any{}
-          for _, rule := range ingress.Spec.Rules {
-            for _, path := range rule.Http.Paths {
-              refs = append(refs, map[string]any{
-                "service":  path.Backend.Service.Name,
-                "portName": path.Backend.Service.Port.Name,
-              })
-            }
-          }
-          refs = append(refs, map[string]any{
-            "service":  ingress.Spec.DefaultBackend.Service.Name,
-            "portName": ingress.Spec.DefaultBackend.Service.Port.Name,
-          })
-          for _, rawRef := range refs {
-            var ref = rawRef.(map[string]any)
-            var svcName = tostring(ref["service"])
-            var pn = tostring(ref["portName"])
-            if svcName == "" || pn == "" {
-              continue
-            }
-            var key = ns + "/" + svcName + "/" + pn
-            if seen[key] {
-              continue
-            }
-            seen[key] = true
-            if shared.Get("degradedBackendRef:" + key) != nil {
-              degraded = append(degraded, "Service '" + ns + "/" + svcName +
-                "' (port name '" + pn + "')")
-            }
-          }
+          var refs = ingress.Spec.Rules | flat_map(r => r.Http.Paths) | map(p => p.Backend.Service)
+          refs = append(refs, ingress.Spec.DefaultBackend.Service)
+          var degraded = refs |
+            reject(s => s.Name == "" || s.Port.Name == "") |
+            unique_by(s => s.Name + "/" + s.Port.Name) |
+            filter(s => shared.Get("degradedBackendRef:" + ns + "/" + s.Name + "/" + s.Port.Name) != nil) |
+            map(s => "Service '" + ns + "/" + s.Name + "' (port name '" + s.Port.Name + "')")
           if len(degraded) == 0 {
             continue
           }
@@ -639,7 +612,7 @@ k8sResources:
             },
             "type":   "Warning",
             "reason": "BackendUnresolved",
-            "message": "Backend " + join(toStringSlice(degraded), ", ") +
+            "message": "Backend " + join(degraded, ", ") +
               " not found: a by-name port reference resolves only through the" +
               " Service, so the backend has no endpoints and serves 503 until" +
               " the Service appears. If it never appears, check the Ingress" +

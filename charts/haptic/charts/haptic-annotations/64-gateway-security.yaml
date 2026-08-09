@@ -140,7 +140,7 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var methodsRaw = ingress.Metadata.Annotations["haproxy-haptic.org/allowed-methods"] %}
           {%- if methodsRaw != "" %}
-            {%- var methods = []any{} %}
+            {%- var methods = []string{} %}
             {%- for _, tok := range split(methodsRaw, ",") %}
               {%- var m = strip(tok) %}
               {%- if m != "" %}
@@ -153,8 +153,8 @@ templateSnippets:
             {%- if len(methods) > 0 %}
             {%- var cond = ResourceMatchCondition([]string{key}) %}
       # haptic/allowed-methods ({{ key }})
-      http-request set-var(txn.denied_by) str(method_not_allowed) if {{ cond }} !{ method {{ methods | toStringSlice() | join(" ") }} }
-      http-request deny deny_status 405 if {{ cond }} !{ method {{ methods | toStringSlice() | join(" ") }} }
+      http-request set-var(txn.denied_by) str(method_not_allowed) if {{ cond }} !{ method {{ join(methods, " ") }} }
+      http-request deny deny_status 405 if {{ cond }} !{ method {{ join(methods, " ") }} }
             {%- end %}
           {%- end %}
       {%- end -%}
@@ -187,7 +187,7 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var ctRaw = ingress.Metadata.Annotations["haproxy-haptic.org/require-content-type"] %}
           {%- if ctRaw != "" %}
-            {%- var types = []any{} %}
+            {%- var types = []string{} %}
             {%- for _, tok := range split(ctRaw, ",") %}
               {%- var ct = strip(tok) %}
               {%- if ct != "" %}
@@ -200,8 +200,8 @@ templateSnippets:
             {%- if len(types) > 0 %}
             {%- var cond = ResourceMatchCondition([]string{key}) %}
       # haptic/require-content-type ({{ key }})
-      http-request set-var(txn.denied_by) str(content_type) if {{ cond }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ types | toStringSlice() | join(" ") }} }
-      http-request return status 415 if {{ cond }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ types | toStringSlice() | join(" ") }} }
+      http-request set-var(txn.denied_by) str(content_type) if {{ cond }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ join(types, " ") }} }
+      http-request return status 415 if {{ cond }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ join(types, " ") }} }
             {%- end %}
           {%- end %}
       {%- end -%}
@@ -294,7 +294,7 @@ templateSnippets:
               {%- secretNs = parts[0] %}
               {%- secretName = parts[1] %}
             {%- end %}
-            {%- var groups = []any{} %}
+            {%- var groups = []string{} %}
             {%- for _, g := range split(allowed, ",") %}
               {%- var gt = strip(g) %}
               {%- if gt != "" %}
@@ -332,8 +332,8 @@ templateSnippets:
       http-request deny deny_status 503 if { var(txn.resource_id) -m str {{ key }} }
               {%- else %}
                 {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
-      http-request set-var(txn.denied_by) str(consumer_groups) if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ groups | toStringSlice() | join(" ") }} }
-      http-request deny deny_status 403 if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ groups | toStringSlice() | join(" ") }} }
+      http-request set-var(txn.denied_by) str(consumer_groups) if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ join(groups, " ") }} }
+      http-request deny deny_status 403 if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ join(groups, " ") }} }
               {%- end %}
             {%- end %}
           {%- end %}
@@ -512,7 +512,7 @@ templateSnippets:
               {%- if strip(groupsData) == "" %}
                 {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by 'haproxy-haptic.org/consumer-groups-secret' on Ingress '" + key + "' has an empty or missing 'groups' data key.") -}}
               {%- end %}
-              {%- var lines = []any{} %}
+              {%- var lines = []string{} %}
               {%- for _, ln := range split(groupsData, "\n") %}
                 {%- var t = strip(ln) %}
                 {%- if t == "" %}{%- continue %}{%- end %}
@@ -527,7 +527,7 @@ templateSnippets:
                 {%- end %}
                 {%- lines = append(lines, consumer + " " + grp) %}
               {%- end %}
-              {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+              {%- var mapContent = join(lines, "\n") + "\n" %}
               {%- var _, regErr = fileRegistry.Register("map", mapName, mapContent) %}
               {%- if regErr != nil %}{{ fail("failed to register consumer-groups map " + mapName + ": " + tostring(regErr)) }}{%- end %}
             {%- end %}
@@ -572,7 +572,7 @@ templateSnippets:
             {%- secretNs = parts[0] %}
             {%- secretName = parts[1] %}
           {%- end %}
-          {%- var groups = []any{} %}
+          {%- var groups = []string{} %}
           {%- for _, g := range split(allowed, ",") %}
             {%- var gt = strip(g) %}
             {%- if gt != "" %}
@@ -601,8 +601,8 @@ templateSnippets:
       http-request deny deny_status 503
             {%- else %}
               {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
-      http-request set-var(txn.denied_by) str(consumer_groups) unless { var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ groups | toStringSlice() | join(" ") }} }
-      http-request deny deny_status 403 unless { var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ groups | toStringSlice() | join(" ") }} }
+      http-request set-var(txn.denied_by) str(consumer_groups) unless { var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ join(groups, " ") }} }
+      http-request deny deny_status 403 unless { var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ join(groups, " ") }} }
             {%- end %}
           {%- end %}
         {%- end %}

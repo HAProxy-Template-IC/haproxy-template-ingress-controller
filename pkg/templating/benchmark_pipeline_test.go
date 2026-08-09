@@ -69,6 +69,17 @@ const benchPipelineTemplate = `{%%
     unique()
 %%}{{ len(lines) }}`
 
+// The same chain with inferred closure types. A lambda is an ordinary function
+// literal by the time lowering sees it, so this must fuse into the same loop —
+// the concise spelling may not cost anything.
+const benchArrowPipelineTemplate = `{%%
+  var lines = eps |
+    flat_map(s => s.Endpoints) |
+    reject(e => e.TargetRef.Name == "") |
+    flat_map(e => e.Addresses) |
+    unique()
+%%}{{ len(lines) }}`
+
 // benchNativePipelineTemplate is the same work as benchPipelineTemplate but
 // hoists the closures into variables, which makes the chain unlowerable
 // (compile-time lowering requires literal closures). It measures what an
@@ -116,6 +127,7 @@ func BenchmarkPipelineVsLoop(b *testing.B) {
 		data := benchFixture(s.slices, s.perSlice, s.addrs)
 		b.Run(s.name+"/loop", func(b *testing.B) { benchRender(b, benchLoopTemplate, data) })
 		b.Run(s.name+"/pipeline", func(b *testing.B) { benchRender(b, benchPipelineTemplate, data) })
+		b.Run(s.name+"/pipeline-arrow", func(b *testing.B) { benchRender(b, benchArrowPipelineTemplate, data) })
 		b.Run(s.name+"/pipeline-native", func(b *testing.B) { benchRender(b, benchNativePipelineTemplate, data) })
 	}
 }

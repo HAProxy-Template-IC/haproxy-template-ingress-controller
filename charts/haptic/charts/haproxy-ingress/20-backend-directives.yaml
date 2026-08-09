@@ -596,15 +596,17 @@ templateSnippets:
         {%- var rewrite = ingress.Metadata.Annotations["haproxy-ingress.github.io/rewrite-target"] %}
         {%- if rewrite != "" %}
           {#- Translate $1..$9 capture groups to \1..\9 -#}
-          {%- rewrite = replace(rewrite, "$1", "\\1") %}
-          {%- rewrite = replace(rewrite, "$2", "\\2") %}
-          {%- rewrite = replace(rewrite, "$3", "\\3") %}
-          {%- rewrite = replace(rewrite, "$4", "\\4") %}
-          {%- rewrite = replace(rewrite, "$5", "\\5") %}
-          {%- rewrite = replace(rewrite, "$6", "\\6") %}
-          {%- rewrite = replace(rewrite, "$7", "\\7") %}
-          {%- rewrite = replace(rewrite, "$8", "\\8") %}
-          {%- rewrite = replace(rewrite, "$9", "\\9") %}
+          {%%
+            rewrite = replace(rewrite, "$1", "\\1")
+            rewrite = replace(rewrite, "$2", "\\2")
+            rewrite = replace(rewrite, "$3", "\\3")
+            rewrite = replace(rewrite, "$4", "\\4")
+            rewrite = replace(rewrite, "$5", "\\5")
+            rewrite = replace(rewrite, "$6", "\\6")
+            rewrite = replace(rewrite, "$7", "\\7")
+            rewrite = replace(rewrite, "$8", "\\8")
+            rewrite = replace(rewrite, "$9", "\\9")
+          %%}
           {#- Capture/regex rewrites (value contains a \1..\9 backreference) stay
               backend-scoped; LITERAL rewrites go to path-rewrite.map via
               map-path-rewrite-690-haproxy-ingress (reload-free frontend set-path).

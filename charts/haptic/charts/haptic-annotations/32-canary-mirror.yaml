@@ -118,12 +118,14 @@ templateSnippets:
               {%- end %}
             {%- end %}
             {%- if len(hosts) > 0 && canaryBackend != "" %}
-              {%- var cond = HostMatchCondition(hosts) %}
-              {%- var canaryHeader = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header"] %}
-              {%- var canaryHeaderValue = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header-value"] %}
-              {%- var canaryHeaderPattern = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header-pattern"] %}
-              {%- var canaryCookie = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-cookie"] %}
-              {%- var canaryWeight = ingress.Metadata.Annotations["haproxy-haptic.org/canary-weight"] %}
+              {%%
+                var cond = HostMatchCondition(hosts)
+                var canaryHeader = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header"]
+                var canaryHeaderValue = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header-value"]
+                var canaryHeaderPattern = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header-pattern"]
+                var canaryCookie = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-cookie"]
+                var canaryWeight = ingress.Metadata.Annotations["haproxy-haptic.org/canary-weight"]
+              %%}
       # haptic/canary ({{ key }})
               {%- if canaryHeader != "" %}
                 {%- var safeHeader = ValidateConfigValue(canaryHeader, "haproxy-haptic.org/canary-by-header", key, false) %}

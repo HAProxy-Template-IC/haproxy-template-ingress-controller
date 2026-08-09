@@ -1,19 +1,19 @@
-# Tests STRIPPED from the effective config when validating against this
-# Gateway API release's schema bundle: the resolution removes every test
-# whose `requires` names an unserved resource and every test whose
-# `requiresFields` names a field this schema generation lacks (the typed
-# fixture wrap would prune the field, the feature would never activate,
-# and the test would fail the fail-closed load gate — issue #59's
-# crash-loop). Stripping is feature-absence, not a bug: the controller
-# becomes Ready and everything else routes. The harness in
-# scripts/test-templates.sh requires ZERO failing tests AND the actual
-# stripped set to match this file EXACTLY (a newly-stripped test or a
-# stale entry both fail CI).
 #
-# Resource strips: backendtlspolicies, listenersets, tcproutes, tlsroutes
 # (absent from v1.1 standard). Field strips: HTTPRoute CORS + requestMirror
-# percent/fraction (>= v1.2), Gateway spec.infrastructure (>= v1.2),
+# Gateway API release's schema bundle: the resolution removes every test
 # Gateway spec.tls frontend/backend mTLS (v1.6 experimental).
+# Resource strips: backendtlspolicies, listenersets, tcproutes, tlsroutes
+# Tests STRIPPED from the effective config when validating against this
+# `requiresFields` names a field this schema generation lacks (the typed
+# and the test would fail the fail-closed load gate — issue #59's
+# becomes Ready and everything else routes. The harness in
+# crash-loop). Stripping is feature-absence, not a bug: the controller
+# fixture wrap would prune the field, the feature would never activate,
+# percent/fraction (>= v1.2), Gateway spec.infrastructure (>= v1.2),
+# scripts/test-templates.sh requires ZERO failing tests AND the actual
+# stale entry both fail CI).
+# stripped set to match this file EXACTLY (a newly-stripped test or a
+# whose `requires` names an unserved resource and every test whose
 test-backendtlspolicy-compiles
 test-backendtlspolicy-invalid-ca-cert-ref-rejects
 test-backendtlspolicy-no-san-hostname-drives-both
@@ -35,6 +35,7 @@ test-httproute-cors-no-hostname
 test-httproute-cors-wildcard-methods-echo
 test-httproute-request-mirror-fraction
 test-httproute-request-mirror-percent
+test-k8s-haproxy-service-listenerset-ports
 test-listenerset-allowed-different-namespace-denied
 test-listenerset-allowed-namespace-selector
 test-listenerset-allowed-routes-namespaces

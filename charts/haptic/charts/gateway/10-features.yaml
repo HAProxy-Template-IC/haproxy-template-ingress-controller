@@ -431,9 +431,7 @@ templateSnippets:
             if !permitted {
               continue
             }
-            for _, l := range dig(ls, "spec", "listeners") | toSlice() {
-              allListeners = append(allListeners, l)
-            }
+            allListeners = append(allListeners, dig(ls, "spec", "listeners") | toSlice()...)
           }
           for _, listener := range allListeners {
             var protocol = tostring(listener | dig("protocol") | fallback("HTTP"))
@@ -519,62 +517,67 @@ templateSnippets:
   # spec.addresses set get their own dedicated LoadBalancer Service
   # via the gateway-static-addresses k8sResources template — skip
   # them here so we don't double-count.
+  # The ListenerSet half lives in features-141, gated on its own CRD, so this
+  # snippet never has to reach a ListenerSet through an untyped seam.
+  util-gateway-service-port-entry:
+    template: |
+      {#
+        One Service-port entry per (port, protocol). The name carries the key,
+        so deduping on it keeps the first contributor of a pair.
+      #}
+      {#- A func var, not a macro: a macro returns text, and this returns a map. -#}
+      {%- var ServicePortEntry = func(port int, protocol string) map[string]any {
+        if protocol == "" { protocol = "HTTP" }
+        var key = tostring(port) + "-" + toLower(protocol[0:1])
+        return map[string]any{
+          "name":       "gw-" + key,
+          "port":       port,
+          "targetPort": port,
+          "protocol":   "TCP",
+        }
+      } -%}
+
   features-140-gateway-service-extra-ports:
     requires: [gateways]
     template: |
-      {%- _ = render "util-listenersets-contrib" default "" -%}
+      {%- import "util-gateway-service-port-entry" for ServicePortEntry -%}
       {%%
-        var _, _ = shared.ComputeIfAbsent("extraServicePorts", func() any {
-          var ports = []any{}
-          var seen = map[string]bool{}
-          for _, gw := range resources.gateways.List() {
-            if len(gw.Spec.Addresses) > 0 {
-              continue
-            }
-            for _, listener := range gw.Spec.Listeners {
-              var port = toint(listener.Port)
-              var protocol = listener.Protocol
-              if protocol == "" { protocol = "HTTP" }
-              if port <= 0 { continue }
-              var key = tostring(port) + "-" + toLower(protocol[0:1])
-              if seen[key] { continue }
-              seen[key] = true
-              ports = append(ports, map[string]any{
-                "name":       "gw-" + key,
-                "port":       port,
-                "targetPort": port,
-                "protocol":   "TCP",
-              })
-            }
-          }
-          var lsSeamRaw = shared.Get("listenersetsUntyped")
-          var lsAll = []any{}
-          if lsSeamRaw != nil {
-            var lsSeamAll, lsSeamOk = lsSeamRaw.(map[string]any)["all"].([]any)
-            if lsSeamOk { lsAll = lsSeamAll }
-          }
-          for _, ls := range lsAll {
-            // Conservative: all declared listenersets contribute their
-            // ports to the Service surface; the routing-layer
-            // admission gate still applies separately.
-            for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
-              var port = toint(dig(listener, "port") | fallback(0))
-              var protocol = dig_string(listener, "", "protocol")
-              if protocol == "" { protocol = "HTTP" }
-              if port <= 0 { continue }
-              var key = tostring(port) + "-" + toLower(protocol[0:1])
-              if seen[key] { continue }
-              seen[key] = true
-              ports = append(ports, map[string]any{
-                "name":       "gw-" + key,
-                "port":       port,
-                "targetPort": port,
-                "protocol":   "TCP",
-              })
-            }
-          }
-          return ports
+        // A holder, so features-141 can add to it when the ListenerSet CRD is
+        // present. ComputeIfAbsent cannot be re-entered, so the value it
+        // returns has to be the mutable thing.
+        var holderAny, _ = shared.ComputeIfAbsent("extraServicePorts", func() any {
+          return map[string]any{"ports": []map[string]any{}}
         })
+        var holder = holderAny.(map[string]any)
+        holder["ports"] = resources.gateways.List() |
+          reject(gw => len(gw.Spec.Addresses) > 0) |
+          flat_map(gw => gw.Spec.Listeners) |
+          filter(l => toint(l.Port) > 0) |
+          map(l => ServicePortEntry(toint(l.Port), l.Protocol)) |
+          unique_by(e => tostring(e["name"]))
+      %%}
+
+  # Conservative: all declared listenersets contribute their ports to the
+  # Service surface; the routing-layer admission gate still applies separately.
+  #
+  # `requires: [listenersets]` is what makes the typed access below legal: the
+  # snippet is stripped whole on a cluster without the CRD, so it can name the
+  # type that a shared-context seam would otherwise have to hide behind `any`.
+  features-141-listenerset-service-extra-ports:
+    requires: [listenersets]
+    template: |
+      {%- import "util-gateway-service-port-entry" for ServicePortEntry -%}
+      {%%
+        var holderAny, _ = shared.ComputeIfAbsent("extraServicePorts", func() any {
+          return map[string]any{"ports": []map[string]any{}}
+        })
+        var holder = holderAny.(map[string]any)
+        var ports = holder["ports"].([]map[string]any)
+        ports = append(ports, resources.listenersets.List() |
+          flat_map(ls => ls.Spec.Listeners) |
+          filter(l => toint(l.Port) > 0) |
+          map(l => ServicePortEntry(toint(l.Port), l.Protocol))...)
+        holder["ports"] = ports | unique_by(e => tostring(e["name"]))
       %%}
 
   # ============================================================================

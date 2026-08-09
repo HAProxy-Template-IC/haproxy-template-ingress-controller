@@ -46,12 +46,14 @@ templateSnippets:
         {%- var proto = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/backend-protocol"] %}
         {#- Backend SSL must be on for any proxy-ssl-* directive to apply. -#}
         {%- if proto == "HTTPS" || proto == "GRPCS" %}
-          {%- var sslSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-secret"] %}
-          {%- var sslVerify = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-verify"] %}
-          {%- var sslVerifyDepth = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-verify-depth"] %}
-          {%- var sslName = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-name"] %}
-          {%- var sslCiphers = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-ciphers"] %}
-          {%- var sslProtocols = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-protocols"] %}
+          {%%
+            var sslSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-secret"]
+            var sslVerify = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-verify"]
+            var sslVerifyDepth = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-verify-depth"]
+            var sslName = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-name"]
+            var sslCiphers = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-ciphers"]
+            var sslProtocols = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-protocols"]
+          %%}
 
           {#- proxy-ssl-verify-depth has no per-server HAProxy equivalent:
               the verification depth keyword (`verifydepth`) exists only on

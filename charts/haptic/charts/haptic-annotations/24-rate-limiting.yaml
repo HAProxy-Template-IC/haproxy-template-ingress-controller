@@ -59,12 +59,14 @@ templateSnippets:
         client leg instead, with its own table proxy (backends-810).
       -#}
       {%- if ingress != nil && !(tostring(extraContext | dig("cache", "varnish", "enabled") | fallback("false")) == "true" && ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true") %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var rps = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-rps"] %}
-        {%- var rpm = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-rpm"] %}
-        {%- var conns = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-connections"] %}
+        {%%
+          var ns = ingress.Metadata.Namespace
+          var name = ingress.Metadata.Name
+          var key = ns + "/" + name
+          var rps = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-rps"]
+          var rpm = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-rpm"]
+          var conns = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-connections"]
+        %%}
         {#- Resolve the active cap by precedence: rps > rpm > connections.
             store/checkFetch pick the counter; defaultWindow drives expire. -#}
         {%- var threshold = "" %}

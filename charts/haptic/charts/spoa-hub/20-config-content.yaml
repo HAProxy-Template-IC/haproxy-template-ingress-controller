@@ -96,15 +96,17 @@ templateSnippets:
       type = "unix"
       address = "{{ socketPath }}"
       {% for _, plugin := range plugins %}
-        {%- var p = plugin.(map[string]any) -%}
-        {%- var pName = p["name"].(string) -%}
-        {%- var pLibrary = p["library"].(string) -%}
-        {%- var pMessages = p["messages"] | toSlice() -%}
-        {%- var pTimeoutMs = p["timeoutMs"] -%}
-        {%- var pMaxConcurrency = p | dig("maxConcurrency") -%}
-        {%- var pMaxQueue = p | dig("maxQueue") -%}
-        {%- var pQueueTimeoutMs = p | dig("queueTimeoutMs") -%}
-        {%- var pAdaptiveConcurrency = p | dig("adaptiveConcurrency") -%}
+        {%%
+          var p = plugin.(map[string]any)
+          var pName = p["name"].(string)
+          var pLibrary = p["library"].(string)
+          var pMessages = p["messages"] | toSlice()
+          var pTimeoutMs = p["timeoutMs"]
+          var pMaxConcurrency = p | dig("maxConcurrency")
+          var pMaxQueue = p | dig("maxQueue")
+          var pQueueTimeoutMs = p | dig("queueTimeoutMs")
+          var pAdaptiveConcurrency = p | dig("adaptiveConcurrency")
+        %%}
         {#- Every plugin's messages list is static, straight from values.
             The mirror plugin uses a single `mirror` message that fans out
             to every target for the request (its arg_targets carries a

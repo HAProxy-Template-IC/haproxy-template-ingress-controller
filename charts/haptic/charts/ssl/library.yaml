@@ -209,7 +209,7 @@ templateSnippets:
         {#- sessionTicketsToday pins the marker for tests; production uses the clock. -#}
         {%- var today = tostring(extraContext | dig("tls", "sessionTicketsToday") | fallback(now().UTC().Format("20060102"))) -%}
         {%- var cur = tostring(currentFiles["tls-ticket-keys"] | fallback("")) -%}
-        {%- var lines = []any{} -%}
+        {%- var lines = []string{} -%}
         {%- if cur != "" -%}
           {%- for _, ln := range split(trimSpace(cur), "\n") -%}
             {%- if trimSpace(tostring(ln)) != "" -%}
@@ -217,9 +217,9 @@ templateSnippets:
             {%- end -%}
           {%- end -%}
         {%- end -%}
-        {%- var out = []any{} -%}
+        {%- var out = []string{} -%}
         {%- if len(lines) < 3 -%}
-          {%- out = []any{NewTicketKey(today), NewTicketKey(today), NewTicketKey(today)} -%}
+          {%- out = []string{NewTicketKey(today), NewTicketKey(today), NewTicketKey(today)} -%}
         {%- else -%}
           {%- var newest = tostring(lines[len(lines)-1]) -%}
           {%- var decoded = newest | b64decode() -%}
@@ -228,10 +228,10 @@ templateSnippets:
           {%- if marker == today -%}
             {%- out = lines -%}
           {%- else -%}
-            {%- out = []any{lines[len(lines)-2], lines[len(lines)-1], NewTicketKey(today)} -%}
+            {%- out = []string{lines[len(lines)-2], lines[len(lines)-1], NewTicketKey(today)} -%}
           {%- end -%}
         {%- end -%}
-        {%- var content = (out | toStringSlice() | join("\n")) + "\n" -%}
+        {%- var content = join(out, "\n") + "\n" -%}
         {%- var _, tkErr = fileRegistry.Register("file", "tls-ticket-keys", content) -%}
         {%- if tkErr != nil -%}{{ fail("failed to register tls-ticket-keys file: " + tostring(tkErr)) }}{%- end -%}
       {%- end -%}
@@ -396,11 +396,11 @@ templateSnippets:
       {%- end -%}
 
       {%- for code, hosts := range hostsByCode -%}
-        {%- var lines = []any{} -%}
+        {%- var lines = []string{} -%}
         {%- for _, host := range hosts -%}
           {%- lines = append(lines, tostring(host) + " 1") -%}
         {%- end -%}
-        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" -%}
+        {%- var mapContent = join(lines, "\n") + "\n" -%}
         {%- var mapFilename = "ssl-redirect-" + code + ".map" -%}
         {%- var _, mapErr = fileRegistry.Register("map", mapFilename, mapContent) -%}
         {%- if mapErr != nil -%}{{ fail("failed to register ssl redirect map: " + tostring(mapErr)) }}{%- end -%}
@@ -520,12 +520,14 @@ templateSnippets:
             var gwOrderSorted = sort_strings(gwOrder)
           %%}
           {%- for _, gwKey := range gwOrderSorted %}
-            {%- var gi = byGateway[tostring(gwKey)].(map[string]any) %}
-            {%- var aclSan = "gw_" + replace(replace(replace(replace(tostring(gi["ns"]) + "_" + tostring(gi["name"]), "-", "_"), ".", "_"), ":", "_"), "/", "_") %}
-            {%- var listenerPatterns = gi["listenerPatterns"].(map[string]bool) %}
-            {%- var hasEmptyListener = gi["hasEmptyListener"].(bool) %}
-            {%- var routeSNIs = gi["routeSNIs"].(map[string]bool) %}
-            {%- var invalidSNIs = gi["invalidSNIs"].(map[string]bool) %}
+            {%%
+              var gi = byGateway[tostring(gwKey)].(map[string]any)
+              var aclSan = "gw_" + replace(replace(replace(replace(tostring(gi["ns"]) + "_" + tostring(gi["name"]), "-", "_"), ".", "_"), ":", "_"), "/", "_")
+              var listenerPatterns = gi["listenerPatterns"].(map[string]bool)
+              var hasEmptyListener = gi["hasEmptyListener"].(bool)
+              var routeSNIs = gi["routeSNIs"].(map[string]bool)
+              var invalidSNIs = gi["invalidSNIs"].(map[string]bool)
+            %%}
             {%%
               var lpRaw = []any{}
               for k := range listenerPatterns {

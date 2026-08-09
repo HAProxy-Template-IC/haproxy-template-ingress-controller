@@ -207,3 +207,81 @@ validationTests:
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "(?ms)name: gw-8090-h.*\\n.*port: 8090"
+
+  test-k8s-haproxy-service-listenerset-ports:
+    requires: [gatewayclasses, gateways, listenersets]
+    description: "A ListenerSet's non-default listener ports must reach the haproxy-service Service, same as a Gateway's. The two contributions are computed by separate snippets — features-141 is gated on the ListenerSet CRD so it can read the resource typed — and this pins that the gated half still lands in the Service. Without it, kube-proxy has no DNAT for the ListenerSet's ports and traffic on them times out while the Gateway's own ports work."
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: ls-parent-gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: l-80
+                port: 80
+                protocol: HTTP
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: svc-ports-ls
+            namespace: default
+          spec:
+            parentRef:
+              name: ls-parent-gw
+            listeners:
+              - name: ls-8085
+                protocol: HTTP
+                port: 8085
+              - name: ls-8086
+                protocol: HTTP
+                port: 8086
+    extraContext:
+      haproxyService:
+        type: LoadBalancer
+        labels:
+          app.kubernetes.io/component: loadbalancer
+        selector:
+          app.kubernetes.io/component: loadbalancer
+        annotations: {}
+        loadBalancerIP: ""
+        loadBalancerClass: ""
+        loadBalancerSourceRanges: []
+        externalTrafficPolicy: ""
+        internalTrafficPolicy: ""
+        healthCheckNodePort: 0
+        publishNotReadyAddresses: false
+        ports:
+          - name: http
+            port: 80
+            targetPort: http
+            protocol: TCP
+          - name: https
+            port: 443
+            targetPort: https
+            protocol: TCP
+          - name: stats
+            port: 8404
+            targetPort: stats
+            protocol: TCP
+    assertions:
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "(?ms)name: gw-8085-h.*\\n.*port: 8085"
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "(?ms)name: gw-8086-h.*\\n.*port: 8086"

@@ -118,20 +118,22 @@ templateSnippets:
         {%- var riRuleIdx int = routeInfo["ruleIdx"] %}
         {%- var riMatchIdx int = routeInfo["matchIdx"] %}
 
-        {%- var riKind = "" %}
-        {%- var riNs = "" %}
-        {%- var riName = "" %}
-        {%- var riIsGrpc = false %}
-        {%- var pathType = "PathPrefix" %}
-        {%- var pathValue = "/" %}
-        {%- var hasMethod = false %}
-        {%- var riMethod = "" %}
-        {%- var headerSpecs = []any{} %}
-        {%- var paramSpecs = []any{} %}
-        {%- var hasGrpcMethod = false %}
-        {%- var grpcService = "" %}
-        {%- var grpcMethodName = "" %}
-        {%- var grpcType = "Exact" %}
+        {%%
+          var riKind = ""
+          var riNs = ""
+          var riName = ""
+          var riIsGrpc = false
+          var pathType = "PathPrefix"
+          var pathValue = "/"
+          var hasMethod = false
+          var riMethod = ""
+          var headerSpecs = []any{}
+          var paramSpecs = []any{}
+          var hasGrpcMethod = false
+          var grpcService = ""
+          var grpcMethodName = ""
+          var grpcType = "Exact"
+        %%}
 
         {%- switch r := routeInfo["route"].(type) %}
         {%- case *resources.httproutes.T %}

@@ -270,6 +270,13 @@ the string form fails silently — `selectattr(eps, "targetRef.name", "ne", "")`
 matches nothing today because the dotted path reaches `dig` as one key. Trading
 that check away for idiom-consistency is a RULE #2 violation.
 
+The idiomatic spelling is the arrow, `reject(e => e.TargetRef.Name == "")`.
+Each helper opts in with `LambdaParams: elementLambdaParams`, which types the
+lambda from the input slice's element type; a new helper taking an element
+closure needs that line or its arrow form is rejected as uninferable. A
+parameter with a *declared* function type needs nothing — the fork reads the
+types from the signature.
+
 Return-type rules, all computable from argument types alone:
 
 | Helper | Return type |

@@ -234,21 +234,15 @@ templateSnippets:
           {%- for _, g := range resources.referencegrants.Fetch(toNs) -%}
             {%- if permitted == "false" -%}
               {%- var fromOk = false -%}
-              {%- for _, fr := range dig(g, "spec", "from") | toSlice() -%}
-                {%- var frGroup = tostring(dig(fr, "group") | fallback("")) -%}
-                {%- var frKind = tostring(dig(fr, "kind") | fallback("")) -%}
-                {%- var frNs = tostring(dig(fr, "namespace") | fallback("")) -%}
-                {%- if frGroup == fromGroup && frKind == fromKind && frNs == fromNs -%}
+              {%- for _, fr := range g.Spec.From -%}
+                {%- if fr.Group == fromGroup && fr.Kind == fromKind && fr.Namespace == fromNs -%}
                   {%- fromOk = true -%}
                 {%- end -%}
               {%- end -%}
               {%- if fromOk -%}
-                {%- for _, to := range dig(g, "spec", "to") | toSlice() -%}
+                {%- for _, to := range g.Spec.To -%}
                   {%- if permitted == "false" -%}
-                    {%- var toG = tostring(dig(to, "group") | fallback("")) -%}
-                    {%- var toK = tostring(dig(to, "kind") | fallback("")) -%}
-                    {%- var toN = tostring(dig(to, "name") | fallback("")) -%}
-                    {%- if toG == toGroup && toK == toKind && (toN == "" || toN == toName) -%}
+                    {%- if to.Group == toGroup && to.Kind == toKind && (to.Name == "" || to.Name == toName) -%}
                       {%- permitted = "true" -%}
                     {%- end -%}
                   {%- end -%}

@@ -199,7 +199,7 @@ templateSnippets:
             {{- fail("Invalid value '" + failOpenRaw + "' for annotation 'haproxy-haptic.org/request-schema-fail-open' on Ingress '" + key + "'. Expected 'true' or 'false'.") -}}
           {%- end -%}
 
-          {%- var contentTypes = []any{} -%}
+          {%- var contentTypes = []string{} -%}
           {%- if contentTypesRaw == "" -%}{%- contentTypesRaw = "application/json" -%}{%- end -%}
           {%- for _, tok := range split(contentTypesRaw, ",") -%}
             {%- var ct = strings_lower(strip(tok)) -%}
@@ -214,7 +214,7 @@ templateSnippets:
             {{- fail("Annotation 'haproxy-haptic.org/request-schema-content-types' on Ingress '" + key + "' must contain at least one media type.") -}}
           {%- end -%}
 
-          {%- var contentTypesJoined = contentTypes | toStringSlice() | join(",") -%}
+          {%- var contentTypesJoined = join(contentTypes, ",") -%}
           {#- Content types are route policy. Include them in the effective schema
               id so two routes can reuse the same schema source with different
               accepted media types without sharing the wrong compiled policy. -#}

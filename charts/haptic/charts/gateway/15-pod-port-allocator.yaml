@@ -341,7 +341,7 @@ templateSnippets:
       {%- end %}
       {%- var sortedKeys = sort_strings(keys) %}
       {%- var seenPod = map[string]bool{} %}
-      {%- var lines = []any{} %}
+      {%- var lines = []string{} %}
       {%- for _, key := range sortedKeys %}
         {#- Identity map: `<podPort> <podPort>`. A request landing on a
             per-Gateway bind (dst_port = the unique pod port) keeps
@@ -375,7 +375,7 @@ templateSnippets:
           behaviour for chart-static binds. -#}
       {%- var content = "" %}
       {%- if len(lines) > 0 %}
-        {%- content = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- content = join(lines, "\n") + "\n" %}
       {%- else %}
         {%- content = "# no per-Gateway pod-port allocations\n" %}
       {%- end %}
@@ -436,7 +436,7 @@ templateSnippets:
       {%- end %}
       {%- var sortedKeys = sort_strings(keys) %}
       {%- var seenPod = map[string]bool{} %}
-      {%- var lines = []any{} %}
+      {%- var lines = []string{} %}
       {%- for _, key := range sortedKeys %}
         {%- var keyStr = tostring(key) %}
         {%- var podPort = tostring(allocations[keyStr]) %}
@@ -449,7 +449,7 @@ templateSnippets:
       {%- end %}
       {%- var content = "" %}
       {%- if len(lines) > 0 %}
-        {%- content = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- content = join(lines, "\n") + "\n" %}
       {%- else %}
         {%- content = "# no per-Gateway pod-port allocations\n" %}
       {%- end %}

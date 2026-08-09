@@ -174,7 +174,7 @@ templateSnippets:
               {%- if host != "" && !seen[host] %}
                 {%- seen[host] = true %}
                 {%- portByCode[code][host] = redirectPort %}
-                {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}), host) %}
+                {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}).([]any), host) %}
               {%- end %}
             {%- end %}
           {%- end %}
@@ -182,9 +182,9 @@ templateSnippets:
       {%- end %}
       {%- for code, hostPort := range portByCode %}
         {%- var sortedHosts = sort_strings(coalesce(codeHosts[code], []any{})) %}
-        {%- var lines = []any{} %}
+        {%- var lines = []string{} %}
         {%- for _, h := range sortedHosts %}{%- lines = append(lines, tostring(h) + " " + hostPort[tostring(h)]) %}{%- end %}
-        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- var mapContent = join(lines, "\n") + "\n" %}
         {%- var _, mapErr = fileRegistry.Register("map", "ssl-redirect-port-" + code + ".map", mapContent) %}
         {%- if mapErr != nil %}{{ fail("failed to register ssl-redirect-port map: " + tostring(mapErr)) }}{%- end %}
         {%- var m, _ = pathResolver.GetPath("ssl-redirect-port-" + code + ".map", "map") %}

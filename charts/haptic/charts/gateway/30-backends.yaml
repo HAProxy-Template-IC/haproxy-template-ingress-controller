@@ -427,15 +427,17 @@ templateSnippets:
       {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
       {%- var backendKey = backendNs + "_" + routeNs + "_" + routeName + "_" + backendName + "_" + tostring(backendPort) -%}
       {%- if first_seen(dedupCategory, backendKey) -%}
-      {%- var protoFlag = "h2" -%}
-      {%- var routeTypeLabel = "GRPCRoute" -%}
-      {%- var beKey = BackendNameGateway(route, backend) -%}
-      {%- var resolvedProtoFlag = protoFlag -%}
-      {%- var btlsCaPath = "" -%}
-      {%- var btlsHostname = "" -%}
-      {%- var btlsVerifyHost = "" -%}
-      {%- var btlsBroken = false -%}
-      {%- var gwClientCertPath = "" -%}
+      {%%
+        var protoFlag = "h2"
+        var routeTypeLabel = "GRPCRoute"
+        var beKey = BackendNameGateway(route, backend)
+        var resolvedProtoFlag = protoFlag
+        var btlsCaPath = ""
+        var btlsHostname = ""
+        var btlsVerifyHost = ""
+        var btlsBroken = false
+        var gwClientCertPath = ""
+      %%}
       {%%
         var portNameForBackend = ""
         // Untyped: typed access would strip ALL gateway backends on clusters

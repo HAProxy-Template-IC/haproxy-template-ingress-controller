@@ -106,7 +106,7 @@ templateSnippets:
               {%- if host != "" && !seen[host] %}
                 {%- seen[host] = true %}
                 {%- portByCode[code][host] = redirectPort %}
-                {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}), host) %}
+                {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}).([]any), host) %}
               {%- end %}
             {%- end %}
           {%- end %}
@@ -114,9 +114,9 @@ templateSnippets:
       {%- end %}
       {%- for code, hostPort := range portByCode %}
         {%- var sortedHosts = sort_strings(coalesce(codeHosts[code], []any{})) %}
-        {%- var lines = []any{} %}
+        {%- var lines = []string{} %}
         {%- for _, h := range sortedHosts %}{%- lines = append(lines, tostring(h) + " " + hostPort[tostring(h)]) %}{%- end %}
-        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- var mapContent = join(lines, "\n") + "\n" %}
         {%- var _, mapErr = fileRegistry.Register("map", "haptic-ssl-redirect-port-" + code + ".map", mapContent) %}
         {%- if mapErr != nil %}{{ fail("failed to register haptic ssl-redirect-port map: " + tostring(mapErr)) }}{%- end %}
         {%- var m, _ = pathResolver.GetPath("haptic-ssl-redirect-port-" + code + ".map", "map") %}
@@ -221,9 +221,9 @@ templateSnippets:
       {%- end %}
       {%- if len(hostKeys) > 0 %}
         {%- var sortedHosts = sort_strings(hostKeys) %}
-        {%- var lines = []any{} %}
+        {%- var lines = []string{} %}
         {%- for _, h := range sortedHosts %}{%- lines = append(lines, tostring(h) + " " + pairByHost[tostring(h)]) %}{%- end %}
-        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- var mapContent = join(lines, "\n") + "\n" %}
         {%- var _, mapErr = fileRegistry.Register("map", "haptic-from-to-www.map", mapContent) %}
         {%- if mapErr != nil %}{{ fail("failed to register haptic from-to-www map: " + tostring(mapErr)) }}{%- end %}
         {%- var m, _ = pathResolver.GetPath("haptic-from-to-www.map", "map") %}
@@ -304,16 +304,16 @@ templateSnippets:
             {%- if host != "" && !seen[host] %}
               {%- seen[host] = true %}
               {%- codeMap[code][host] = redirectURL %}
-              {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}), host) %}
+              {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}).([]any), host) %}
             {%- end %}
           {%- end %}
         {%- end %}
       {%- end %}
       {%- for code, hostURL := range codeMap %}
         {%- var sortedHosts = sort_strings(coalesce(codeHosts[code], []any{})) %}
-        {%- var lines = []any{} %}
+        {%- var lines = []string{} %}
         {%- for _, h := range sortedHosts %}{%- lines = append(lines, tostring(h) + " " + hostURL[tostring(h)]) %}{%- end %}
-        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- var mapContent = join(lines, "\n") + "\n" %}
         {%- var _, mapErr = fileRegistry.Register("map", "haptic-default-backend-redirect-" + code + ".map", mapContent) %}
         {%- if mapErr != nil %}{{ fail("failed to register haptic default-backend-redirect map: " + tostring(mapErr)) }}{%- end %}
         {%- var m, _ = pathResolver.GetPath("haptic-default-backend-redirect-" + code + ".map", "map") %}
