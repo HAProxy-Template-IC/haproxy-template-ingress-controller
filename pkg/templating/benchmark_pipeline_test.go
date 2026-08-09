@@ -69,6 +69,17 @@ const benchPipelineTemplate = `{%%
     unique()
 %%}{{ len(lines) }}`
 
+// benchNativePipelineTemplate is the same work as benchPipelineTemplate but
+// hoists the closures into variables, which makes the chain unlowerable
+// (compile-time lowering requires literal closures). It measures what an
+// author pays when their spelling misses the optimisation.
+const benchNativePipelineTemplate = `{%%
+  var f = func(s Slice) []EP { return s.Endpoints }
+  var g = func(e EP) bool { return e.TargetRef.Name == "" }
+  var h = func(e EP) []string { return e.Addresses }
+  var lines = eps | flat_map(f) | reject(g) | flat_map(h) | unique()
+%%}{{ len(lines) }}`
+
 func benchRender(b *testing.B, tpl string, data []pipelineSlice) {
 	b.Helper()
 	engine, err := New(map[string]string{"t": tpl}, &Options{
@@ -105,6 +116,7 @@ func BenchmarkPipelineVsLoop(b *testing.B) {
 		data := benchFixture(s.slices, s.perSlice, s.addrs)
 		b.Run(s.name+"/loop", func(b *testing.B) { benchRender(b, benchLoopTemplate, data) })
 		b.Run(s.name+"/pipeline", func(b *testing.B) { benchRender(b, benchPipelineTemplate, data) })
+		b.Run(s.name+"/pipeline-native", func(b *testing.B) { benchRender(b, benchNativePipelineTemplate, data) })
 	}
 }
 

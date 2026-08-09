@@ -253,6 +253,38 @@ function argument is a **literal** closure — Kotlin's `inline fun` rule.
 `unique*`, `group_by` and `sort_by` are not loop-shaped and stay native, so a
 chain lowers its longest lowerable *prefix* and re-applies the rest.
 
+### The cliff, and shrinking it
+
+An optimisation with syntactic preconditions has a cliff, and an author has no
+way to see which side of it they are on. That is the real hazard here — not the
+1.7x itself but that a readability refactor can cost it silently. Two things
+were done about it, in order of how much they matter:
+
+**Widen the positions** so the spelling stops deciding (scriggo !120). Lowering
+only var initialisers left `for _, x := range src | flat_map(…)` on the native
+path — which is how `map-pod-names-500-endpoints` is written, so the chart's own
+flagship pipeline was not being lowered at all, silently. Range heads, simple
+assignments and bare show expressions now share one hoist. A chain nested inside
+another call's argument list stays native on purpose: hoisting it would evaluate
+the chain before its sibling arguments.
+
+**Shrink the penalty for missing** (scriggo !121), which matters more, because
+widening can never be exhaustive. `putPooledVM` cleared whole register banks —
+~20 KB per release, 43% of the cost of a native closure call. Clearing only the
+high-water range takes the un-lowered path from ~1.7x the loop to **~1.37x**.
+
+| 500 elements | time |
+|---|---|
+| loop | 678 us |
+| pipeline, lowered | 659 us |
+| pipeline, un-lowered | 927 us |
+
+The remaining 1.37x is frame setup, the reflect trampoline, and a channel
+operation in the VM pool. The pool is the next candidate, but justifying
+`sync.Pool` over the channel needs a *concurrent* benchmark — the contention it
+would remove does not show single-goroutine — so it is deliberately not bundled
+here.
+
 **This constrains Phase 3.** The pass runs before type checking and therefore
 has no type information; it works only because a literal closure's result type
 is written in the source, so the accumulator's element type is lifted out of the
