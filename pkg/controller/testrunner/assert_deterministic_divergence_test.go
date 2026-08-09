@@ -170,3 +170,45 @@ func TestAssertDeterministic_DetectsAuxiliaryFileDivergence(t *testing.T) {
 			"WHICH aux file diverged — empty error string would force them "+
 			"back to source code")
 }
+
+// TestDeterminismCheckIsAutomatic pins that the runner appends the check to
+// every rendering test, not only the ones whose author asked for it. It was
+// opt-in and 6 of 722 chart tests opted in, which let two host-map builders
+// ship ranging a map[string]bool unsorted — every declared assertion passed,
+// because assertions match entries and the defect is in their order.
+func TestDeterminismCheckIsAutomatic(t *testing.T) {
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: "global\n  daemon\n"},
+		ValidationTests: map[string]config.ValidationTest{
+			"no-assertions-declared": {
+				Description: "declares nothing; the runner must still check determinism",
+			},
+		},
+	}
+
+	engine, err := templating.New(map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template}, nil)
+	require.NoError(t, err)
+
+	tmpDir := t.TempDir()
+	paths := &dataplane.ValidationPaths{
+		TempDir:           tmpDir,
+		SSLCertsDir:       filepath.Join(tmpDir, "ssl"),
+		CRTListDir:        filepath.Join(tmpDir, "ssl"),
+		MapsDir:           filepath.Join(tmpDir, "maps"),
+		GeneralStorageDir: filepath.Join(tmpDir, "files"),
+		ConfigFile:        filepath.Join(tmpDir, "haproxy.cfg"),
+	}
+	runner := New(cfg, engine, paths, &Options{Logger: slog.Default(), Workers: 1})
+	results, err := runner.RunTests(t.Context(), "")
+	require.NoError(t, err)
+	require.Len(t, results.TestResults, 1)
+
+	var found bool
+	for _, a := range results.TestResults[0].Assertions {
+		if a.Type == "deterministic" {
+			found = true
+			assert.True(t, a.Passed, a.Error)
+		}
+	}
+	assert.True(t, found, "a test declaring no assertions must still be checked for determinism")
+}

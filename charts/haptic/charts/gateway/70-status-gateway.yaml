@@ -1326,30 +1326,21 @@ templateSnippets:
               }
             }
             var attachedLSCount = 0
-            var lsSeamRaw = shared.Get("listenersetsUntyped")
-            var lsSeamAll = []any{}
-            if lsSeamRaw != nil {
-              var lsSeamList, lsSeamOk = lsSeamRaw.(map[string]any)["all"].([]any)
-              if lsSeamOk { lsSeamAll = lsSeamList }
+            // Attachment and admission are decided once, by
+            // util-listenerset-candidates, which reads the resource typed
+            // behind its own CRD gate. Everything indexed under this Gateway
+            // has already passed the parentRef match this loop used to redo.
+            var lsByKey = map[string]any{}
+            var byLSAny = shared.Get("listenerSetCandidatesByLS")
+            if byLSAny != nil {
+              lsByKey = byLSAny.(map[string]any)
             }
-            for _, ls := range lsSeamAll {
-              if dig_string(ls, "", "spec", "parentRef", "name") != nameStr {
+            for _, lsKey := range keys(lsByKey) {
+              var lsInfo = lsByKey[lsKey].(map[string]any)
+              if tostring(lsInfo["gwKey"]) != nsStr + "/" + nameStr {
                 continue
               }
-              var lsNs = dig_string(ls, "", "metadata", "namespace")
-              var pNs = dig_string(ls, "", "spec", "parentRef", "namespace")
-              if pNs == "" { pNs = lsNs }
-              if pNs != nsStr {
-                continue
-              }
-              // Defer the admission decision to IsListenerSetAdmitted —
-              // the same helper the routing chain uses — so the
-              // Selector branch (and any future allowed-from rule) is
-              // handled identically. Closes
-              // ListenerSetAllowedNamespaceSelector where the previous
-              // inline switch only covered "All" and "Same" and fell
-              // through to permitted=false for Selector-admitted LSes.
-              if !hasPrefix(IsListenerSetAdmitted(gateway, ls), "true") {
+              if !lsInfo["accepted"].(bool) {
                 continue
               }
               // At least one listener must survive conflict detection.
@@ -1359,9 +1350,7 @@ templateSnippets:
               // only when at least one entry is `accepted=true` (i.e.
               // not in conflict and not invalid). LSes with no cache
               // entry fall through to attached (cache miss = optimistic).
-              var lsName = dig_string(ls, "", "metadata", "name")
-              var lsKey = lsNs + "/" + lsName
-              var listenersTotal = len(dig(ls, "spec", "listeners") | toSlice())
+              var listenersTotal = len(lsInfo["candidates"].([]any))
               if listenersTotal == 0 {
                 continue
               }
@@ -1541,15 +1530,15 @@ templateSnippets:
             // SSA typed-patch construction (".status.attachedListenerSets:
             // field not declared in schema") — the Gateway then never gets
             // its Accepted condition or addresses at all. Gate the key on
-            // the ListenerSet seam: listenersetsUntyped is non-nil exactly
-            // when the listenersets watch is active (the contrib snippet is
+            // the ListenerSet index: listenerSetCandidatesByLS is non-nil
+            // exactly when the listenersets watch is active (its producer is
             // stripped together with the watch when the CRD is unserved).
             var renderedVariant = map[string]interface{}{
               "addresses":  gwEffectiveAddresses,
               "conditions": renderedTopConditions,
               "listeners":  renderedListenerEntries,
             }
-            if lsSeamRaw != nil {
+            if shared.Get("listenerSetCandidatesByLS") != nil {
               renderedVariant["attachedListenerSets"] = attachedLSCount
             }
             statusPatch(nsStr, nameStr,

@@ -405,33 +405,19 @@ templateSnippets:
               }
             }
           }
-          var lsSeamRaw = shared.Get("listenersetsUntyped")
-          var lsAll = []any{}
-          if lsSeamRaw != nil {
-            var lsSeamAll, lsSeamOk = lsSeamRaw.(map[string]any)["all"].([]any)
-            if lsSeamOk { lsAll = lsSeamAll }
-          }
-          for _, ls := range lsAll {
-            if dig_string(ls, "", "spec", "parentRef", "name") != gwName {
-              continue
+          // Attachment and admission come from util-listenerset-candidates,
+          // which decided both once while reading the resource typed behind its
+          // own CRD gate. Its candidates are already this Gateway's.
+          var lsCandsAny = shared.Get("listenerSetCandidates")
+          if lsCandsAny != nil {
+            var part = lsCandsAny.(map[string]any)[gwNs + "/" + gwName]
+            if part != nil {
+              for _, cAny := range part.(map[string]any)["candidates"].([]any) {
+                if cAny.(map[string]any)["_accepted"].(bool) {
+                  allListeners = append(allListeners, cAny)
+                }
+              }
             }
-            var lsNs = dig_string(ls, "", "metadata", "namespace")
-            var pNs = dig_string(ls, "", "spec", "parentRef", "namespace")
-            if pNs == "" { pNs = lsNs }
-            if pNs != gwNs {
-              continue
-            }
-            var lsName = dig_string(ls, "", "metadata", "name")
-            var lsKey = lsNs + "/" + lsName
-            var permitted = false
-            var entryAny, hasEntry = lsStatuses[lsKey]
-            if hasEntry {
-              permitted = entryAny.(map[string]any)["permitted"].(bool)
-            }
-            if !permitted {
-              continue
-            }
-            allListeners = append(allListeners, dig(ls, "spec", "listeners") | toSlice()...)
           }
           for _, listener := range allListeners {
             var protocol = tostring(listener | dig("protocol") | fallback("HTTP"))

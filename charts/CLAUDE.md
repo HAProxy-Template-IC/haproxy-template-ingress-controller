@@ -807,6 +807,8 @@ validationTests:
 
 Tests run against the **merged configuration**, so they can validate cross-library interactions.
 
+**Every rendering test is checked for determinism automatically.** The runner renders twice and compares the config and every auxiliary file, so a template whose output depends on Go's map-iteration order fails the suite that covers it rather than the one test whose author thought to ask. Iterate a map with `keys()`, never a bare `range` — a reordered map file or rule block is a changed file to the controller, costing a sync and a reload on a config nobody edited. The check only sees what the fixture can express — a map with one key cannot be reordered, so give a map-ordered site a fixture with at least two — and detection is probabilistic even then, since two renders can coincidentally agree.
+
 **An absence assertion MUST pin its own opt-in.** A test's `extraContext` deep-merges *over the operator's*, so a `not_contains` that relies on a chart default holds only until someone enables that feature — and the load gate turns the resulting failure into a controller crash-loop on a config CI called green. Pin the toggle explicitly:
 
 ```yaml

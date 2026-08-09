@@ -1288,6 +1288,64 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request redirect scheme https"
 
+  # Two DIFFERENT redirect codes on purpose. The rule block is emitted one
+  # rule per code, and with a single code Go cannot reorder a one-element map,
+  # so a one-code fixture passes whether or not the template sorts. This is the
+  # fixture that gives the runner's automatic determinism check something to
+  # see at this site.
+  test-haproxytech-ssl-redirect-two-codes-ordered:
+    description: Two ssl-redirect codes emit their rules in a stable order
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: redirect-301
+            annotations:
+              haproxy.org/ssl-redirect: "true"
+              haproxy.org/ssl-redirect-code: "301"
+          spec:
+            rules:
+              - host: moved.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: redirect-302
+            annotations:
+              haproxy.org/ssl-redirect: "true"
+              haproxy.org/ssl-redirect-code: "302"
+          spec:
+            rules:
+              - host: temp.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - "ssl-redirect \\(code 301\\)"
+          - "ssl-redirect \\(code 302\\)"
+        description: Rules emit in ascending code order, not map order
+
   test-haproxytech-ssl-redirect-default-opt-out:
     description: SSL redirect does not apply when annotation is "false" even with default
     extraContext:

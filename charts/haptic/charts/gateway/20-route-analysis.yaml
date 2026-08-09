@@ -29,23 +29,36 @@ templateSnippets:
         })
       %%}
 
-  util-effective-listeners:
-    requires: [gateways, referencegrants]
+  # ListenerSet contributions to each Gateway's listener set: which ListenerSets
+  # attach, in what order, whether the Gateway admits them, and their listeners
+  # normalised to the same candidate shape util-effective-listeners builds for a
+  # Gateway's own listeners.
+  #
+  # `requires: [listenersets]` is what lets this read the resource typed. The
+  # snippet is stripped whole on a cluster without the CRD, so naming
+  # `resources.listenersets` here cannot break that cluster's render — which is
+  # exactly why the logic could not stay in util-effective-listeners, a snippet
+  # that has to compile everywhere.
+  util-listenerset-candidates:
+    requires: [gateways, listenersets, namespaces]
     template: |
-      {#
-        Provenance lives in flat `__source*` keys, not a nested `_source` map:
-        Scriggo rebinds literal map keys "kind"/"namespace"/"name" to
-        listener-field values ("protocol", "hostname") under this loop shape.
-      #}
-      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
-      {%- _ = render "util-listenersets-contrib" default "" -%}
       {%%
-        var _, _ = shared.ComputeIfAbsent("effectiveListeners", func() any {
-          // Statuses share this one cache value so "effectiveListeners populated"
-          // implies "statuses populated"; the F3 status patch reads both from here.
-          var statuses = map[string]any{}
-
-          var out = map[string][]any{}
+        // An absent creationTimestamp must sort last, not first.
+        var tsOr = func(ts string) string {
+          if ts == "" {
+            return "9999-12-31T23:59:59Z"
+          }
+          return ts
+        }
+        // A route's parentRef names a ListenerSet, not the Gateway it hangs off,
+        // so consumers resolving such a ref need the reverse index. Both are
+        // filled in the same pass, from the same decision, so they cannot
+        // disagree — and byListenerSet records an attached ListenerSet even when
+        // it declares no listeners, which still resolves a route's parent.
+        var byListenerSet = map[string]any{}
+        var _, _ = shared.ComputeIfAbsent("listenerSetCandidatesByLS", func() any { return byListenerSet })
+        var _, _ = shared.ComputeIfAbsent("listenerSetCandidates", func() any {
+          var byGateway = map[string]any{}
 
           for _, gw := range resources.gateways.List() {
             var gwNs = gw.Metadata.Namespace
@@ -53,6 +66,9 @@ templateSnippets:
             var gwKey = gwNs + "/" + gwName
 
             // No allowedListeners = default-deny (Gateway API SupportListenerSet).
+            // dig, not typed access: allowedListeners is newer than the oldest
+            // Gateway schema generation this can run against, and the ListenerSet
+            // CRD's presence does not promise the Gateway CRD ships it.
             var allowed = dig(gw, "spec", "allowedListeners")
             var allowedFrom = "None"
             var allowedSelector any = nil
@@ -66,68 +82,30 @@ templateSnippets:
               return map[string]any{"allowedFrom": allowedFrom, "allowed": allowed}
             })
 
-            // Untyped read: typed resources.listenersets here would strip this
-            // whole snippet on clusters without the ListenerSet CRD.
-            var lsDataRaw = shared.Get("listenersetsUntyped")
-            var lsAll = []any{}
-            if lsDataRaw != nil {
-              var lsUntypedAll, lsOk = lsDataRaw.(map[string]any)["all"].([]any)
-              if lsOk { lsAll = lsUntypedAll }
-            }
-            var attachedSets = []any{}
-            for _, ls := range lsAll {
-              if dig_string(ls, "", "spec", "parentRef", "name") != gwName {
-                continue
-              }
-              var lsNs = dig_string(ls, "", "metadata", "namespace")
-              var pNs = dig_string(ls, "", "spec", "parentRef", "namespace")
-              if pNs == "" { pNs = lsNs }
-              if pNs != gwNs {
-                continue
-              }
-              attachedSets = append(attachedSets, ls)
-            }
-            // Never hand-roll a nested-loop sort here: Scriggo mis-lowers them and
-            // silently drops elements. Empty creationTimestamp → sentinel, sorts last.
-            var lsSortItems = []any{}
-            for _, ls := range attachedSets {
-              var lsTs = dig_string(ls, "", "metadata", "creationTimestamp")
-              if lsTs == "" { lsTs = "9999-12-31T23:59:59Z" }
-              lsSortItems = append(lsSortItems, map[string]any{
-                "ts":  lsTs,
-                "key": dig_string(ls, "", "metadata", "namespace") + "/" + dig_string(ls, "", "metadata", "name"),
+            // Attached by parentRef, then ordered oldest-first. Never hand-roll a
+            // nested-loop sort here: Scriggo mis-lowers them and silently drops
+            // elements. Empty creationTimestamp sorts last via the sentinel.
+            // parentRef.namespace defaults to the ListenerSet's own namespace.
+            var lsSortItems = resources.listenersets.List() |
+              filter(ls => ls.Spec.ParentRef.Name == gwName) |
+              filter(ls => (ls.Spec.ParentRef.Namespace == "" && ls.Metadata.Namespace == gwNs) ||
+                ls.Spec.ParentRef.Namespace == gwNs) |
+              map(ls => map[string]any{
+                "ts":  tsOr(ls.Metadata.CreationTimestamp),
+                "key": ls.Metadata.Namespace + "/" + ls.Metadata.Name,
                 "ls":  ls,
               })
-            }
-            var lsSorted, _ = sort_by(lsSortItems, []string{"$.ts", "$.key"})
-            attachedSets = []any{}
-            for _, lsItem := range lsSorted {
-              attachedSets = append(attachedSets, lsItem.(map[string]any)["ls"])
+            var lsSorted, sortErr = sort_by(lsSortItems, []string{"$.ts", "$.key"})
+            if sortErr != nil {
+              fail("failed to order ListenerSets for " + gwKey + ": " + tostring(sortErr))
             }
 
             var candidates = []any{}
-
-            // Gateway's own listeners go first: they win every precedence conflict.
-            for li, l := range gw.Spec.Listeners {
-              var lc = map[string]any{
-                "name":          l.Name,
-                "hostname":      l.Hostname,
-                "port":          l.Port,
-                "protocol":      l.Protocol,
-                "tls":           l.Tls,
-                "allowedRoutes": l.AllowedRoutes,
-              }
-              lc["__sourceKind"] = "Gateway"
-              lc["__sourceNs"] = gwNs
-              lc["__sourceName"] = gwName
-              lc["_index"] = li
-              lc["_accepted"] = true
-              candidates = append(candidates, lc)
-            }
-
-            for _, ls := range attachedSets {
-              var lsNs = dig_string(ls, "", "metadata", "namespace")
-              var lsName = dig_string(ls, "", "metadata", "name")
+            var statuses = map[string]any{}
+            for _, lsItem := range lsSorted {
+              var ls = lsItem["ls"].(*resources.listenersets.T)
+              var lsNs = ls.Metadata.Namespace
+              var lsName = ls.Metadata.Name
               var lsKey = lsNs + "/" + lsName
 
               var permitted = false
@@ -168,7 +146,8 @@ templateSnippets:
               // allowedListeners is the policy (Gateway API conformance). RG
               // only gates Secret/ConfigMap references made by listeners.
 
-              // listenerConflicts is filled in after conflict detection, below.
+              // listenerConflicts is filled in after conflict detection, by the
+              // consumer that merges these candidates.
               statuses[lsKey] = map[string]any{
                 "permitted":         permitted,
                 "rejectionReason":   rejectionReason,
@@ -176,16 +155,23 @@ templateSnippets:
                 "listenerConflicts": []any{},
               }
 
+              var lsCandidates = []any{}
+              byListenerSet[lsKey] = map[string]any{
+                "gwKey":      gwKey,
+                "accepted":   permitted,
+                "candidates": lsCandidates,
+              }
+
               // Non-permitted listeners are still emitted (_accepted=false) so
               // status can report Programmed=False; routing loops skip them.
-              for li, l := range dig(ls, "spec", "listeners") | toSlice() {
+              for li, l := range ls.Spec.Listeners {
                 var lc = map[string]any{
-                  "name":          dig(l, "name"),
-                  "hostname":      dig(l, "hostname"),
-                  "port":          dig(l, "port"),
-                  "protocol":      dig(l, "protocol"),
-                  "tls":           dig(l, "tls"),
-                  "allowedRoutes": dig(l, "allowedRoutes"),
+                  "name":          l.Name,
+                  "hostname":      l.Hostname,
+                  "port":          l.Port,
+                  "protocol":      l.Protocol,
+                  "tls":           l.Tls,
+                  "allowedRoutes": l.AllowedRoutes,
                 }
                 lc["__sourceKind"] = "ListenerSet"
                 lc["__sourceNs"] = lsNs
@@ -193,6 +179,80 @@ templateSnippets:
                 lc["_index"] = li
                 lc["_accepted"] = permitted
                 candidates = append(candidates, lc)
+                lsCandidates = append(lsCandidates, lc)
+              }
+              byListenerSet[lsKey].(map[string]any)["candidates"] = lsCandidates
+            }
+
+            byGateway[gwKey] = map[string]any{"candidates": candidates, "statuses": statuses}
+          }
+          return byGateway
+        })
+
+      %%}
+
+  util-effective-listeners:
+    requires: [gateways, referencegrants]
+    template: |
+      {#
+        Provenance lives in flat `__source*` keys, not a nested `_source` map:
+        Scriggo rebinds literal map keys "kind"/"namespace"/"name" to
+        listener-field values ("protocol", "hostname") under this loop shape.
+      #}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- _ = render "util-listenerset-candidates" default "" -%}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("effectiveListeners", func() any {
+          // Statuses share this one cache value so "effectiveListeners populated"
+          // implies "statuses populated"; the F3 status patch reads both from here.
+          var statuses = map[string]any{}
+
+          var out = map[string][]any{}
+
+          var lsCandidates = map[string]any{}
+          var lsCandRaw = shared.Get("listenerSetCandidates")
+          if lsCandRaw != nil {
+            lsCandidates = lsCandRaw.(map[string]any)
+          }
+
+          for _, gw := range resources.gateways.List() {
+            var gwNs = gw.Metadata.Namespace
+            var gwName = gw.Metadata.Name
+            var gwKey = gwNs + "/" + gwName
+
+            var candidates = []any{}
+
+            // Gateway's own listeners go first: they win every precedence conflict.
+            for li, l := range gw.Spec.Listeners {
+              var lc = map[string]any{
+                "name":          l.Name,
+                "hostname":      l.Hostname,
+                "port":          l.Port,
+                "protocol":      l.Protocol,
+                "tls":           l.Tls,
+                "allowedRoutes": l.AllowedRoutes,
+              }
+              lc["__sourceKind"] = "Gateway"
+              lc["__sourceNs"] = gwNs
+              lc["__sourceName"] = gwName
+              lc["_index"] = li
+              lc["_accepted"] = true
+              candidates = append(candidates, lc)
+            }
+
+            // ListenerSet contributions for this Gateway, already admitted,
+            // ordered and normalised to the same candidate shape. Computed by
+            // util-listenerset-candidates, which is gated on the ListenerSet
+            // CRD — absent here means the cluster has no ListenerSets, or no
+            // ListenerSet API at all.
+            var lsPart = lsCandidates[gwKey]
+            if lsPart != nil {
+              var part = lsPart.(map[string]any)
+              for _, c := range part["candidates"].([]any) {
+                candidates = append(candidates, c)
+              }
+              for lsKey, st := range part["statuses"].(map[string]any) {
+                statuses[lsKey] = st
               }
             }
 
@@ -619,10 +679,8 @@ templateSnippets:
           {%- if len(effectiveHosts) == 0 %}
             {%- continue %}
           {%- end %}
-          {%- var hostnames = []any{} %}
-          {%- for h := range effectiveHosts %}
-            {%- hostnames = append(hostnames, h) %}
-          {%- end %}
+          {#- keys(): map order is random and this drives emitted output. -#}
+          {%- var hostnames = keys(effectiveHosts) %}
           {%- for _, hostname := range hostnames %}
             {%- for ruleIdx, rule := range route.Spec.Rules %}
               {%- var matchCount = len(rule.Matches) %}
@@ -674,10 +732,8 @@ templateSnippets:
           {%- if len(effectiveHosts) == 0 %}
             {%- continue %}
           {%- end %}
-          {%- var hostnames = []any{} %}
-          {%- for h := range effectiveHosts %}
-            {%- hostnames = append(hostnames, h) %}
-          {%- end %}
+          {#- keys(): map order is random and this drives emitted output. -#}
+          {%- var hostnames = keys(effectiveHosts) %}
           {%- for _, hostname := range hostnames %}
             {%- for ruleIdx, rule := range route.Spec.Rules %}
               {%- var matchCount = len(rule.Matches) %}

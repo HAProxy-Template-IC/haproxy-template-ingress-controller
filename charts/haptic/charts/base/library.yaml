@@ -2146,7 +2146,11 @@ templateSnippets:
       {%- for _, entry := range redirectHosts -%}
         {%- codes[tostring(entry | dig("code"))] = true -%}
       {%- end -%}
-      {%- for code := range codes %}
+      {#- keys(), not a bare range: Go randomises map iteration, so the rules
+          would emit in a different order each render. These are first-match-wins
+          redirect rules, and a reordered config is a reload for a config nobody
+          changed. -#}
+      {%- for _, code := range keys(codes) %}
       {%- var m, _ = pathResolver.GetPath("redirect-loc-" + code + ".map", "map") %}
       # base/redirect-location (code {{ code }})
       http-request redirect location %[var(txn.host),map({{ m }})] code {{ code }} if { var(txn.host),map({{ m }}) -m found }
