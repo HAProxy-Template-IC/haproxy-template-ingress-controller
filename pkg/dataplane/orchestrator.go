@@ -42,6 +42,10 @@ type ConfigParser interface {
 	// (a read-back carries HAProxy's own _version header), where a cache
 	// lookup cannot hit and the insert only evicts a reusable entry.
 	ParseFromStringUncached(config string) (*parserconfig.StructuredConfig, error)
+	// ...For variants carry a source label so a cache miss is attributable to
+	// the call site that caused it.
+	ParseFromStringFor(source, config string) (*parserconfig.StructuredConfig, error)
+	ParseFromStringUncachedFor(source, config string) (*parserconfig.StructuredConfig, error)
 }
 
 const (
@@ -636,7 +640,7 @@ func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody,
 		"reload_id", reloadID,
 		"endpoint", o.client.Endpoint.URL)
 
-	readBackParsed, parseErr := o.parser.ParseFromStringUncached(readBack)
+	readBackParsed, parseErr := o.parser.ParseFromStringUncachedFor(parser.SourceReadBack, readBack)
 	// Kept despite seldom firing: both checksums are computed for the log line
 	// anyway, so this costs one string compare, and it is still correct for a
 	// config simple enough to survive re-serialisation unchanged. Normalising
@@ -685,7 +689,7 @@ func (o *orchestrator) checkReadBackDivergence(readBackParsed *parserconfig.Stru
 	desiredParsed := opts.PreParsedConfig
 	if desiredParsed == nil {
 		var err error
-		desiredParsed, err = o.parser.ParseFromString(pushedBody)
+		desiredParsed, err = o.parser.ParseFromStringFor(parser.SourceDesired, pushedBody)
 		if err != nil {
 			return divergence("cannot parse the pushed body to prove read-back equivalence", err)
 		}
@@ -892,7 +896,11 @@ func (o *orchestrator) populatePostSyncParsedConfig(ctx context.Context, result 
 			"endpoint", o.client.Endpoint.URL, "error", err)
 		return
 	}
-	parsed, err := o.parser.ParseFromString(rawConfig)
+	// Uncached: GetRawConfiguration returns HAProxy's own config, which carries
+	// the _version header and so is a different string on every push. Caching it
+	// could never hit and evicted the desired config instead. The caller reuses
+	// this via SyncResult.PostSyncParsedConfig, not via the cache.
+	parsed, err := o.parser.ParseFromStringUncachedFor(parser.SourcePostSync, rawConfig)
 	if err != nil {
 		o.logger.Debug("Failed to parse post-sync config for caller's cache",
 			"endpoint", o.client.Endpoint.URL, "error", err)

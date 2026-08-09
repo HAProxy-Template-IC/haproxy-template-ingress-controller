@@ -74,12 +74,46 @@ type parsedConfigCache struct {
 	maxSize   int
 	hitCount  atomic.Int64
 	missCount atomic.Int64
+
+	// Per-source tallies. The aggregate rate says the cache is missing; only
+	// the breakdown says which call site is responsible, which is what #139
+	// cost two rounds of guessing to establish. Keyed by the caller's source
+	// label, so a new call site shows up here without touching this file.
+	srcMu   sync.Mutex
+	srcHits map[string]int64
+	srcMiss map[string]int64
 }
 
 var configCache = &parsedConfigCache{
 	entries: make(map[string]*cacheSlot, ParsedConfigCacheSize),
 	order:   make([]string, 0, ParsedConfigCacheSize),
 	maxSize: ParsedConfigCacheSize,
+	srcHits: map[string]int64{},
+	srcMiss: map[string]int64{},
+}
+
+// recordHit and recordMiss allocate the per-source maps on first use rather
+// than relying on the constructor: a cache built without them would compile and
+// then panic on the first parse, which is the failure mode a zero-value map
+// always has.
+func (c *parsedConfigCache) recordHit(source string) {
+	c.hitCount.Add(1)
+	c.srcMu.Lock()
+	defer c.srcMu.Unlock()
+	if c.srcHits == nil {
+		c.srcHits = map[string]int64{}
+	}
+	c.srcHits[source]++
+}
+
+func (c *parsedConfigCache) recordMiss(source string) {
+	c.missCount.Add(1)
+	c.srcMu.Lock()
+	defer c.srcMu.Unlock()
+	if c.srcMiss == nil {
+		c.srcMiss = map[string]int64{}
+	}
+	c.srcMiss[source]++
 }
 
 // get returns a cached parsed config if the hash exists, nil otherwise.
@@ -93,9 +127,9 @@ func (c *parsedConfigCache) get(hash string) *StructuredConfig {
 		return nil
 	}
 
-	// Move to end of order (most recently used)
+	// Move to end of order (most recently used). The hit is recorded by the
+	// caller, which knows the source label.
 	c.moveToEnd(hash)
-	c.hitCount.Add(1)
 	return entry.config
 }
 
@@ -135,6 +169,36 @@ func (c *parsedConfigCache) set(hash string, config *StructuredConfig) {
 	// Add new entry
 	c.entries[hash] = &cacheSlot{hash: hash, config: config}
 	c.order = append(c.order, hash)
+}
+
+// Source labels for ParseFromStringFor. Each names a distinct call site so a
+// miss can be attributed without re-deriving the call graph.
+const (
+	SourceUnlabelled       = "unlabelled"
+	SourceDesired          = "desired"          // the rendered config being deployed — the one parse with reuse across replicas
+	SourceReadBack         = "readback"         // post-reload read-back from HAProxy; carries _version, unique per push
+	SourceCurrent          = "current"          // current config read from HAProxy; same, unique per push
+	SourcePostSync         = "postsync"         // post-sync fetch for the caller's cache; same, unique per push
+	SourceCurrentCR        = "currentcr"        // HAProxyCfg CR content, hash-guarded by currentconfigstore
+	SourceValidation       = "validation"       // validationTest fixtures at load; unique per test, never reparsed
+	SourceRenderValidation = "rendervalidation" // pre-deploy validation of the rendered config; warms the desired parse
+)
+
+// CacheStatsBySource returns per-source hit/miss tallies. The aggregate rate
+// cannot tell a too-small cache from one flushed by single-use content; this
+// can.
+func CacheStatsBySource() (hits, misses map[string]int64) {
+	configCache.srcMu.Lock()
+	defer configCache.srcMu.Unlock()
+	hits = make(map[string]int64, len(configCache.srcHits))
+	misses = make(map[string]int64, len(configCache.srcMiss))
+	for k, v := range configCache.srcHits {
+		hits[k] = v
+	}
+	for k, v := range configCache.srcMiss {
+		misses[k] = v
+	}
+	return hits, misses
 }
 
 // CacheStats returns the current cache hit/miss statistics.
@@ -199,7 +263,15 @@ func New() (*Parser, error) {
 //	p, _ := parser.New()
 //	structured, err := p.ParseFromString(config)
 func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
-	return p.parse(config, true)
+	return p.parse(config, SourceUnlabelled, true)
+}
+
+// ParseFromStringFor is ParseFromString with a source label, so a miss is
+// attributable to the call site that caused it. Prefer it over
+// ParseFromString: the aggregate hit rate cannot distinguish a cache that is
+// too small from one being flushed by single-use content (#139).
+func (p *Parser) ParseFromStringFor(source, config string) (*StructuredConfig, error) {
+	return p.parse(config, source, true)
 }
 
 // ParseFromStringUncached parses without reading or writing the cache.
@@ -210,10 +282,17 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 // cache kept the four slots full of single-use entries and evicted the desired
 // config, the one parse with reuse value (#139).
 func (p *Parser) ParseFromStringUncached(config string) (*StructuredConfig, error) {
-	return p.parse(config, false)
+	return p.parse(config, SourceUnlabelled, false)
 }
 
-func (p *Parser) parse(config string, useCache bool) (*StructuredConfig, error) {
+// ParseFromStringUncachedFor is ParseFromStringUncached with a source label.
+// Uncached parses record nothing — they are neither hits nor misses — but the
+// label keeps call sites uniform and documents the intent at the call site.
+func (p *Parser) ParseFromStringUncachedFor(source, config string) (*StructuredConfig, error) {
+	return p.parse(config, source, false)
+}
+
+func (p *Parser) parse(config, source string, useCache bool) (*StructuredConfig, error) {
 	if config == "" {
 		return nil, errors.New("configuration string is empty")
 	}
@@ -225,6 +304,7 @@ func (p *Parser) parse(config string, useCache bool) (*StructuredConfig, error) 
 	if useCache {
 		hash = hashConfig(config)
 		if cached := configCache.get(hash); cached != nil {
+			configCache.recordHit(source)
 			return cached, nil
 		}
 	}
@@ -237,6 +317,7 @@ func (p *Parser) parse(config string, useCache bool) (*StructuredConfig, error) 
 	// Double-check cache after acquiring lock (another goroutine may have parsed)
 	if useCache {
 		if cached := configCache.get(hash); cached != nil {
+			configCache.recordHit(source)
 			return cached, nil
 		}
 	}
@@ -278,7 +359,7 @@ func (p *Parser) parse(config string, useCache bool) (*StructuredConfig, error) 
 	// Cache the result for future requests with the same config
 	if useCache {
 		configCache.set(hash, conf)
-		configCache.missCount.Add(1)
+		configCache.recordMiss(source)
 	}
 
 	return conf, nil

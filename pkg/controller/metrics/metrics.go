@@ -408,6 +408,11 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 	// entire Unix epoch.
 	m.LastFullSyncTimestamp.Set(float64(time.Now().Unix()))
 
+	// Per-source parser-cache tallies. Registered as a collector because
+	// Prometheus has no labelled CounterFunc and the parser package owns the
+	// counters (see parser_cache_collector.go).
+	registry.MustRegister(newParserCacheBySource())
+
 	return m
 }
 

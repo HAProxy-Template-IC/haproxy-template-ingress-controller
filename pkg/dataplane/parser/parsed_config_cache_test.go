@@ -98,7 +98,20 @@ func TestParsedConfigCache_GetHitMovesToEnd(t *testing.T) {
 			"cold entries stayed in cache, tanking the hit rate for "+
 			"steady-state reconciliation")
 
-	assert.Equal(t, int64(1), c.hitCount.Load(), "hitCount must increment on hit")
+	// Counting moved out of get() to the caller, which knows the source label:
+	// the aggregate rate could not say WHICH call site was missing, which is
+	// what made #139 take two rounds to diagnose. get() must therefore not
+	// count on its own, and recordHit must tally both the aggregate and the
+	// per-source total.
+	assert.Equal(t, int64(0), c.hitCount.Load(),
+		"get() must not count: the caller records so the miss is attributable")
+
+	c.recordHit("desired")
+	assert.Equal(t, int64(1), c.hitCount.Load(), "recordHit must increment the aggregate")
+	c.srcMu.Lock()
+	bySource := c.srcHits["desired"]
+	c.srcMu.Unlock()
+	assert.Equal(t, int64(1), bySource, "recordHit must tally per source")
 }
 
 func TestParsedConfigCache_SetEvictsLeastRecentlyUsed(t *testing.T) {
