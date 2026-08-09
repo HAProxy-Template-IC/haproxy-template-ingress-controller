@@ -515,7 +515,7 @@ backend {{ svcMeta["namespace"] }}-{{ svcMeta["name"] }}
 	require.Len(t, results.TestResults, 1)
 	testResult := results.TestResults[0]
 	assert.True(t, testResult.Passed)
-	assert.Len(t, testResult.Assertions, 2)
+	assert.Len(t, declaredAssertions(t, &testResult), 2)
 	for _, assertion := range testResult.Assertions {
 		assert.True(t, assertion.Passed, "assertion %s should pass: %s", assertion.Type, assertion.Error)
 	}
@@ -591,7 +591,7 @@ func TestRunner_RenderError(t *testing.T) {
 	assert.NotEmpty(t, testResult.RenderError, "render error should be populated")
 
 	// Verify rendering failure is added as assertion, plus the original assertion also failed
-	assert.Len(t, testResult.Assertions, 2)
+	assert.Len(t, declaredAssertions(t, &testResult), 2)
 	assert.Equal(t, "rendering", testResult.Assertions[0].Type)
 	assert.False(t, testResult.Assertions[0].Passed)
 	assert.Equal(t, "contains", testResult.Assertions[1].Type)
@@ -755,7 +755,7 @@ func TestRunner_RunTests_WithHTTPFixtures(t *testing.T) {
 	require.Len(t, results.TestResults, 1)
 	testResult := results.TestResults[0]
 	assert.True(t, testResult.Passed, "test should pass")
-	assert.Len(t, testResult.Assertions, 3, "should have 3 assertions")
+	assert.Len(t, declaredAssertions(t, &testResult), 3, "should have 3 assertions")
 	for _, assertion := range testResult.Assertions {
 		assert.True(t, assertion.Passed, "assertion should pass: %s", assertion.Description)
 	}
@@ -1041,4 +1041,21 @@ func TestRunner_RunTests_WithoutCurrentConfig(t *testing.T) {
 	require.Len(t, results.TestResults, 1)
 	testResult := results.TestResults[0]
 	assert.True(t, testResult.Passed, "test should pass: %s", testResult.RenderError)
+}
+
+// declaredAssertions drops the determinism check the runner appends to every
+// rendering test, so a count in a test means "the assertions this test
+// declared" and does not move when the runner adds an automatic one. A test
+// whose render failed has no such entry — there is nothing to render twice.
+func declaredAssertions(t *testing.T, result *TestResult) []AssertionResult {
+	t.Helper()
+	var declared []AssertionResult
+	for _, a := range result.Assertions {
+		if a.Type == "deterministic" {
+			assert.True(t, a.Passed, "automatic determinism check must pass: %s", a.Error)
+			continue
+		}
+		declared = append(declared, a)
+	}
+	return declared
 }

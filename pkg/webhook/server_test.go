@@ -684,7 +684,7 @@ func TestServer_NewServer_InvalidCertificate(t *testing.T) {
 	server, err := NewServer(&ServerConfig{
 		CertPEM: []byte("invalid cert"),
 		KeyPEM:  []byte("invalid key"),
-		Port:    19443,
+		Port:    0, // ephemeral: a fixed port collides with whatever already holds it
 	})
 
 	require.Error(t, err)
@@ -699,7 +699,7 @@ func TestServer_Start_ContextCancellation(t *testing.T) {
 	server, err := NewServer(&ServerConfig{
 		CertPEM: certPEM,
 		KeyPEM:  keyPEM,
-		Port:    29443, // Use unique port to avoid conflicts
+		Port:    0, // ephemeral: see above
 		// Loopback, not the 0.0.0.0 default: binding all interfaces makes
 		// Windows Firewall prompt to whitelist every freshly built test
 		// binary. Tests must only ever listen on loopback.
@@ -715,7 +715,16 @@ func TestServer_Start_ContextCancellation(t *testing.T) {
 	}()
 
 	// Wait until the server is actually listening, rather than a fixed sleep.
-	<-server.Listening()
+	// Select on done too: if Start fails to bind, nothing ever closes
+	// Listening(), and waiting on it alone hangs until the test binary's
+	// timeout with the real error sitting unread in done.
+	select {
+	case <-server.Listening():
+	case err := <-done:
+		t.Fatalf("server exited before listening: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("server neither started listening nor exited")
+	}
 
 	// Cancel context to trigger shutdown
 	cancel()
@@ -737,7 +746,7 @@ func TestServer_Start_Integration(t *testing.T) {
 	server, err := NewServer(&ServerConfig{
 		CertPEM:     certPEM,
 		KeyPEM:      keyPEM,
-		Port:        39443, // Use unique port to avoid conflicts
+		Port:        0, // ephemeral: see above
 		BindAddress: "127.0.0.1",
 	})
 	require.NoError(t, err)
@@ -756,7 +765,16 @@ func TestServer_Start_Integration(t *testing.T) {
 	}()
 
 	// Wait until the server is actually listening, rather than a fixed sleep.
-	<-server.Listening()
+	// Select on done too: if Start fails to bind, nothing ever closes
+	// Listening(), and waiting on it alone hangs until the test binary's
+	// timeout with the real error sitting unread in done.
+	select {
+	case <-server.Listening():
+	case err := <-done:
+		t.Fatalf("server exited before listening: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("server neither started listening nor exited")
+	}
 
 	// Create TLS client that trusts our self-signed cert
 	certPool := x509.NewCertPool()
@@ -771,7 +789,7 @@ func TestServer_Start_Integration(t *testing.T) {
 	}
 
 	// Test healthz endpoint
-	healthResp, err := client.Get("https://127.0.0.1:39443/healthz")
+	healthResp, err := client.Get("https://" + server.Addr() + "/healthz")
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, healthResp.StatusCode)
 	healthResp.Body.Close()
@@ -799,7 +817,7 @@ func TestServer_Start_Integration(t *testing.T) {
 	reviewBytes, err := json.Marshal(review)
 	require.NoError(t, err)
 
-	validateResp, err := client.Post("https://127.0.0.1:39443/validate", "application/json", bytes.NewReader(reviewBytes))
+	validateResp, err := client.Post("https://"+server.Addr()+"/validate", "application/json", bytes.NewReader(reviewBytes))
 	require.NoError(t, err)
 	defer validateResp.Body.Close()
 

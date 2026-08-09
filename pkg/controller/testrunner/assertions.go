@@ -65,14 +65,21 @@ func (r *Runner) assertDeterministic(
 		return result
 	}
 
-	// Render a second time
+	// The second render sees the first one's files, which is what the
+	// controller does on every reconcile after the first. Without that, a
+	// template that MUST mint state on first sight of an empty input — the
+	// TLS session-ticket keys are the case — looks nondeterministic while
+	// being exactly right: production hands it the deployed file and it
+	// preserves what is already there. The property worth asserting is that
+	// a render fed its own output does not churn, because churn is a
+	// spurious sync and reload.
 	second, err := r.renderWithStores(
 		deps.Engine,
 		deps.Stores,
 		deps.ValidationPaths,
 		deps.HTTPStore,
 		deps.CurrentConfig,
-		deps.CurrentFiles,
+		mergeRenderedFiles(deps.CurrentFiles, firstAuxFiles),
 		deps.ExtraContext,
 	)
 	if err != nil {
@@ -98,6 +105,25 @@ func (r *Runner) assertDeterministic(
 	}
 
 	return result
+}
+
+// mergeRenderedFiles overlays a render's own general files onto the test's
+// declared currentFiles, keyed the way templates read them back
+// (currentFiles["tls-ticket-keys"]). The test's own entries lose to the
+// rendered ones: a test that declares a file is describing what was deployed
+// BEFORE this render, and the second render's "before" is the first render's
+// output.
+func mergeRenderedFiles(declared map[string]string, rendered *dataplane.AuxiliaryFiles) map[string]string {
+	merged := make(map[string]string, len(declared))
+	for k, v := range declared {
+		merged[k] = v
+	}
+	if rendered != nil {
+		for _, f := range rendered.GeneralFiles {
+			merged[f.Filename] = f.Content
+		}
+	}
+	return merged
 }
 
 // generateUnifiedDiff generates a line-by-line diff between two strings.
@@ -241,6 +267,47 @@ func (r *Runner) executeAssertions(
 			result.Passed = false
 		}
 	}
+
+	if determinism := r.checkDeterminism(test, haproxyConfig, auxiliaryFiles, result, renderDeps); determinism != nil {
+		result.Assertions = append(result.Assertions, *determinism)
+		if !determinism.Passed {
+			result.Passed = false
+		}
+	}
+}
+
+// checkDeterminism renders every test a second time and compares, so a
+// template whose output depends on map-iteration order fails the suite that
+// covers it rather than the one test whose author thought to ask.
+//
+// It was an opt-in assertion and 6 of 722 tests opted in, which is how two
+// route host-map builders shipped ranging a map[string]bool unsorted: every
+// assertion about them passed, because assertions match entries and the bug
+// is in their order. A reordered map file is a changed file to the
+// controller, so it costs a sync and a reload on a config nobody edited.
+//
+// Returns nil when there is nothing to compare (a render-error test, or a
+// test that already declares the assertion and has just run it).
+func (r *Runner) checkDeterminism(
+	test *config.ValidationTest,
+	haproxyConfig string,
+	auxiliaryFiles *dataplane.AuxiliaryFiles,
+	result *TestResult,
+	renderDeps *RenderDependencies,
+) *AssertionResult {
+	if renderDeps == nil || result.RenderError != "" || hasRenderingErrorAssertions(test.Assertions) {
+		return nil
+	}
+	for i := range test.Assertions {
+		if test.Assertions[i].Type == "deterministic" {
+			return nil
+		}
+	}
+	if haproxyConfig == "" && auxiliaryFiles == nil {
+		return nil
+	}
+	check := r.assertDeterministic(&config.ValidationAssertion{Type: "deterministic"}, haproxyConfig, auxiliaryFiles, renderDeps)
+	return &check
 }
 
 // hasRenderingErrorAssertions checks if the test has any assertions targeting rendering_error.

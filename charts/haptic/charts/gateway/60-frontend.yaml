@@ -39,23 +39,27 @@ templateSnippets:
             {%- end %}
           {%- end %}
         {%- end %}
-        {%- _ = render "util-listenersets-contrib" default "" -%}
-        {%- var lsSeamRaw = shared.Get("listenersetsUntyped") %}
-        {%- var lsSeamAll = []any{} %}
-        {%- if lsSeamRaw != nil %}
-          {%- var lsSeamList, lsSeamOk = lsSeamRaw.(map[string]any)["all"].([]any) %}
-          {%- if lsSeamOk %}{%- lsSeamAll = lsSeamList %}{%- end %}
-        {%- end %}
-        {%- for _, ls := range lsSeamAll %}
-          {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
-            {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
-              {%- var protocol = dig_string(listener, "", "protocol") %}
-              {%- if protocol == "" %}{%- protocol = "HTTP" %}{%- end %}
-              {%- if protocol == "HTTPS" || protocol == "TLS" %}
-                {%- var lh = dig_string(listener, "", "hostname") %}
-                {%- if classifyHostname(lh) %}
-                  {%- gwHasCatchall = true %}
-                {%- end %}
+        {%- _ = render "util-listenerset-candidates" default "" -%}
+        {%%
+            // Admission is decided once, by util-listenerset-candidates, which
+            // reads the resource typed behind its own CRD gate.
+            var lsCands = []any{}
+            var published = shared.Get("listenerSetCandidates")
+            if published != nil {
+              var part = published.(map[string]any)[gwNs + "/" + gwName]
+              if part != nil {
+                lsCands = part.(map[string]any)["candidates"].([]any)
+              }
+            }
+        %%}
+        {%- for _, cAny := range lsCands %}
+          {%- var c = cAny.(map[string]any) %}
+          {%- if c["_accepted"].(bool) %}
+            {%- var protocol = tostring(c["protocol"]) %}
+            {%- if protocol == "" %}{%- protocol = "HTTP" %}{%- end %}
+            {%- if protocol == "HTTPS" || protocol == "TLS" %}
+              {%- if classifyHostname(tostring(c["hostname"])) %}
+                {%- gwHasCatchall = true %}
               {%- end %}
             {%- end %}
           {%- end %}

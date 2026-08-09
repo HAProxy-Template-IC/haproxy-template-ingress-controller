@@ -145,26 +145,23 @@ templateSnippets:
               // for the listener-attach evaluation, but emit the
               // status entry with kind=ListenerSet so conformance
               // readers see the route as attached to the LS.
-              var lsResolvedGw *resources.gateways.T = nil
+              // Which Gateway a ListenerSet hangs off is resolved once, by
+              // util-listenerset-candidates; the index is empty when the CRD is
+              // not served, so the parentRef then stays unresolved as before.
+              var lsResolvedGwKey = ""
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "ListenerSet" {
-                // Untyped via the listensets seam (nil when the CRD
-                // is not served — the parentRef then stays unresolved).
-                var lsSeamRaw = shared.Get("listenersetsUntyped")
-                var lsObj any = nil
-                if lsSeamRaw != nil {
-                  lsObj = dig(lsSeamRaw.(map[string]any)["byKey"], gwNamespace + "/" + gwName)
-                }
-                if lsObj != nil {
-                  var pName = dig_string(lsObj, "", "spec", "parentRef", "name")
-                  var pNs = dig_string(lsObj, "", "spec", "parentRef", "namespace")
-                  if pNs == "" { pNs = gwNamespace }
-                  lsResolvedGw = resources.gateways.GetSingle(pNs, pName)
+                var byLSAny = shared.Get("listenerSetCandidatesByLS")
+                if byLSAny != nil {
+                  var lsEntry = byLSAny.(map[string]any)[gwNamespace + "/" + gwName]
+                  if lsEntry != nil {
+                    lsResolvedGwKey = tostring(lsEntry.(map[string]any)["gwKey"])
+                  }
                 }
               }
-              if gwGroup == "gateway.networking.k8s.io" && (gwKind == "Gateway" || (gwKind == "ListenerSet" && lsResolvedGw != nil)) {
+              if gwGroup == "gateway.networking.k8s.io" && (gwKind == "Gateway" || (gwKind == "ListenerSet" && lsResolvedGwKey != "")) {
                 var gwKey = gwNamespace + "/" + gwName
                 if gwKind == "ListenerSet" {
-                  gwKey = lsResolvedGw.Metadata.Namespace + "/" + lsResolvedGw.Metadata.Name
+                  gwKey = lsResolvedGwKey
                 }
                 if ourGateways[gwKey] {
                   var parentRefStatus = map[string]any{
@@ -424,26 +421,23 @@ templateSnippets:
               if gwNamespace == "" { gwNamespace = nsStr }
               var gwName = parentRef.Name
 
-              var lsResolvedGw *resources.gateways.T = nil
+              // Which Gateway a ListenerSet hangs off is resolved once, by
+              // util-listenerset-candidates; the index is empty when the CRD is
+              // not served, so the parentRef then stays unresolved as before.
+              var lsResolvedGwKey = ""
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "ListenerSet" {
-                // Untyped via the listensets seam (nil when the CRD
-                // is not served — the parentRef then stays unresolved).
-                var lsSeamRaw = shared.Get("listenersetsUntyped")
-                var lsObj any = nil
-                if lsSeamRaw != nil {
-                  lsObj = dig(lsSeamRaw.(map[string]any)["byKey"], gwNamespace + "/" + gwName)
-                }
-                if lsObj != nil {
-                  var pName = dig_string(lsObj, "", "spec", "parentRef", "name")
-                  var pNs = dig_string(lsObj, "", "spec", "parentRef", "namespace")
-                  if pNs == "" { pNs = gwNamespace }
-                  lsResolvedGw = resources.gateways.GetSingle(pNs, pName)
+                var byLSAny = shared.Get("listenerSetCandidatesByLS")
+                if byLSAny != nil {
+                  var lsEntry = byLSAny.(map[string]any)[gwNamespace + "/" + gwName]
+                  if lsEntry != nil {
+                    lsResolvedGwKey = tostring(lsEntry.(map[string]any)["gwKey"])
+                  }
                 }
               }
-              if gwGroup == "gateway.networking.k8s.io" && (gwKind == "Gateway" || (gwKind == "ListenerSet" && lsResolvedGw != nil)) {
+              if gwGroup == "gateway.networking.k8s.io" && (gwKind == "Gateway" || (gwKind == "ListenerSet" && lsResolvedGwKey != "")) {
                 var gwKey = gwNamespace + "/" + gwName
                 if gwKind == "ListenerSet" {
-                  gwKey = lsResolvedGw.Metadata.Namespace + "/" + lsResolvedGw.Metadata.Name
+                  gwKey = lsResolvedGwKey
                 }
                 if ourGateways[gwKey] {
                   var parentRefStatus = map[string]any{

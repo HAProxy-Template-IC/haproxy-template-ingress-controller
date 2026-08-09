@@ -47,34 +47,34 @@ templateSnippets:
             var lsName = parentRef.Name
             var section = parentRef.SectionName
             var prPort = toint(parentRef.Port)
-            // Untyped via the listensets seam (rendered by callers of
-            // this util; ComputeIfAbsent makes re-render a no-op).
-            var lsSeamRaw = shared.Get("listenersetsUntyped")
-            var ls any = nil
-            if lsSeamRaw != nil {
-              ls = dig(lsSeamRaw.(map[string]any)["byKey"], lsNs + "/" + lsName)
+            // Resolved through util-listenerset-candidates, which decided
+            // attachment and admission once, reading the resource typed behind
+            // its own CRD gate. An absent entry means this ListenerSet attached
+            // to no Gateway.
+            var lsEntry any = nil
+            var byLSAny = shared.Get("listenerSetCandidatesByLS")
+            if byLSAny != nil {
+              lsEntry = byLSAny.(map[string]any)[lsNs + "/" + lsName]
             }
-            if ls == nil {
+            if lsEntry == nil {
               continue
             }
-            var gwName = dig_string(ls, "", "spec", "parentRef", "name")
-            var gwNs = dig_string(ls, "", "spec", "parentRef", "namespace")
-            if gwNs == "" { gwNs = lsNs }
-            var gw = resources.gateways.GetSingle(gwNs, gwName)
-            if gw == nil || !hasPrefix(IsListenerSetAdmitted(gw, ls), "true") {
+            var lsInfo = lsEntry.(map[string]any)
+            if !lsInfo["accepted"].(bool) {
               continue
             }
             resolvedGwCount = resolvedGwCount + 1
-            for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
-              var listenerName = dig_string(listener, "", "name")
+            for _, cAny := range lsInfo["candidates"].([]any) {
+              var listener = cAny.(map[string]any)
+              var listenerName = tostring(listener["name"])
               if section != "" && section != listenerName {
                 continue
               }
-              var listenerPort = toint(dig(listener, "port") | fallback(0))
+              var listenerPort = toint(listener["port"])
               if prPort != 0 && prPort != listenerPort {
                 continue
               }
-              var listenerProto = dig_string(listener, "", "protocol")
+              var listenerProto = tostring(listener["protocol"])
               if listenerProto == "" { listenerProto = "HTTP" }
               var portSuffix = ""
               if listenerPort > 0 {
@@ -192,10 +192,11 @@ templateSnippets:
             }
           }
         }
-        var hostnames = []string{}
-        for h, _ := range effectiveHosts {
-          hostnames = append(hostnames, h)
-        }
+        // keys(), not a bare range: Go randomises map iteration, and an
+        // unordered host.map is a different file on every render — a spurious
+        // sync and reload for a config that did not change. Same rationale as
+        // util-host-keyed-map and the ssl.yaml crt-list.
+        var hostnames = keys(effectiveHosts)
       %%}
       {%- if len(hostnames) > 0 %}
       # HTTPRoute: {{ route.Metadata.Namespace }}/{{ route.Metadata.Name }} ({{ len(hostnames) }} hosts)
@@ -246,34 +247,34 @@ templateSnippets:
             var lsName = parentRef.Name
             var section = parentRef.SectionName
             var prPort = toint(parentRef.Port)
-            // Untyped via the listensets seam (rendered by callers of
-            // this util; ComputeIfAbsent makes re-render a no-op).
-            var lsSeamRaw = shared.Get("listenersetsUntyped")
-            var ls any = nil
-            if lsSeamRaw != nil {
-              ls = dig(lsSeamRaw.(map[string]any)["byKey"], lsNs + "/" + lsName)
+            // Resolved through util-listenerset-candidates, which decided
+            // attachment and admission once, reading the resource typed behind
+            // its own CRD gate. An absent entry means this ListenerSet attached
+            // to no Gateway.
+            var lsEntry any = nil
+            var byLSAny = shared.Get("listenerSetCandidatesByLS")
+            if byLSAny != nil {
+              lsEntry = byLSAny.(map[string]any)[lsNs + "/" + lsName]
             }
-            if ls == nil {
+            if lsEntry == nil {
               continue
             }
-            var gwName = dig_string(ls, "", "spec", "parentRef", "name")
-            var gwNs = dig_string(ls, "", "spec", "parentRef", "namespace")
-            if gwNs == "" { gwNs = lsNs }
-            var gw = resources.gateways.GetSingle(gwNs, gwName)
-            if gw == nil || !hasPrefix(IsListenerSetAdmitted(gw, ls), "true") {
+            var lsInfo = lsEntry.(map[string]any)
+            if !lsInfo["accepted"].(bool) {
               continue
             }
             resolvedGwCount = resolvedGwCount + 1
-            for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
-              var listenerName = dig_string(listener, "", "name")
+            for _, cAny := range lsInfo["candidates"].([]any) {
+              var listener = cAny.(map[string]any)
+              var listenerName = tostring(listener["name"])
               if section != "" && section != listenerName {
                 continue
               }
-              var listenerPort = toint(dig(listener, "port") | fallback(0))
+              var listenerPort = toint(listener["port"])
               if prPort != 0 && prPort != listenerPort {
                 continue
               }
-              var listenerProto = dig_string(listener, "", "protocol")
+              var listenerProto = tostring(listener["protocol"])
               if listenerProto == "" { listenerProto = "HTTP" }
               var portSuffix = ""
               if listenerPort > 0 {
@@ -386,10 +387,11 @@ templateSnippets:
             }
           }
         }
-        var hostnames = []string{}
-        for h, _ := range effectiveHosts {
-          hostnames = append(hostnames, h)
-        }
+        // keys(), not a bare range: Go randomises map iteration, and an
+        // unordered host.map is a different file on every render — a spurious
+        // sync and reload for a config that did not change. Same rationale as
+        // util-host-keyed-map and the ssl.yaml crt-list.
+        var hostnames = keys(effectiveHosts)
       %%}
       {%- if len(hostnames) > 0 %}
       # GRPCRoute: {{ route.Metadata.Namespace }}/{{ route.Metadata.Name }} ({{ len(hostnames) }} hosts)
