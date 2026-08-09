@@ -106,7 +106,8 @@ pkg/templating/
 ├── filter_names.go             # Constants for every filter name (one source of truth)
 ├── filters.go                  # Filter registration entry point
 ├── filters_scriggo.go          # Scriggo-specific filter wiring + custom-filter dispatch
-├── filters_collection.go       # sort_by / glob_match / shard_slice / first_seen / append_any
+├── filters_collection.go       # glob_match / shard_slice / first_seen / append_any
+├── filters_pipeline.go         # filter / reject / flat_map / unique / unique_by / group_by / sort_by
 ├── filters_navigation.go       # dig / fallback / coalesce / merge / keys
 ├── filters_string.go           # toLower / replace / split / trim / hasPrefix / hasSuffix / strip / b64decode / debug / indent
 ├── filters_type.go             # tostring / toint / tofloat / toSlice
@@ -252,9 +253,48 @@ The vendored Scriggo fork carries three language-level extensions that the typed
 
 - **Selector-chain-as-type** (`x.T` resolves to its value's static type in type-expression position; MR !91 in the scriggo fork). Multi-level chains supported, so `resources.gateways.T` works.
 - **Type-switch case-clause selector chain** (`case *resources.<X>.T`; MR !96). Lets a single `switch r := v.(type)` dispatch across multiple typegen-built types, with `r` statically typed inside each case branch.
-- **AdaptiveFunc native declarations.** Per-call-site return type from a closure on the argument types — used by `shard_slice` and any future filter that needs to be type-preserving.
+- **AdaptiveFunc native declarations.** Per-call-site return type from a closure on the argument types — used by `shard_slice`, `sort_by`, and the whole collection-pipeline family.
 
-If a future template needs a new type-preserving filter, follow `scriggoShardSliceAdaptive`'s shape in `pkg/templating/filters_collection.go`.
+If a future template needs a new type-preserving filter, follow `scriggoShardSliceAdaptive`'s shape in `pkg/templating/filters_collection.go`, or the pipeline helpers below.
+
+### Collection pipelines (ADR-0018)
+
+`filters_pipeline.go` holds `filter`, `reject`, `flat_map`, `unique`,
+`unique_by`, `group_by` and `sort_by`. All are `AdaptiveFunc`s so a chain over a
+typed watched resource keeps its element type at every stage rather than
+degrading to `[]any`-with-`dig()`.
+
+Predicates and key functions are **closures, not JSONPath strings**. That is the
+whole point: field access inside them is checked at engine compile time, where
+the string form fails silently — `selectattr(eps, "targetRef.name", "ne", "")`
+matches nothing today because the dotted path reaches `dig` as one key. Trading
+that check away for idiom-consistency is a RULE #2 violation.
+
+Return-type rules, all computable from argument types alone:
+
+| Helper | Return type |
+|---|---|
+| `filter` / `reject` / `unique` / `unique_by` / `sort_by` | `argTypes[0]` |
+| `flat_map` | the closure's `Out(0)` (already a slice) |
+| `group_by` | `map[string][]T` |
+
+Four things to know before touching this file:
+
+- **`unique_by` and `group_by` supersede `scriggo/builtin`'s versions** of the same
+  names, which the chart already calls (`group_by(allRoutes, "pathKey")`). They
+  accept a key closure *or* an attribute path, and preserve the element type
+  where the builtins widen to `[]any`. `registerScriggoBuiltins` must not
+  re-register them — it runs last and would silently shadow them.
+- **`sort_by`'s debug override in `engine_scriggo.go` must stay an
+  `AdaptiveFunc`.** A plain func there shadows the declaration and drops both the
+  comparator call shape and type preservation, with no error.
+- **A non-slice or nil input passes through as empty, never fails.** Chart code
+  reaches optional typed fields that are nil; a guard at every stage would defeat
+  the point.
+- **`map` is only declarable because of a fork parser change.** `map` followed
+  by anything other than `[` used to be an unconditional syntax error; the
+  parser now resolves it as an identifier there (scriggo !115). Nothing else in
+  the engine may assume `map` is a keyword.
 
 ### PathResolver and HAProxy Paths
 

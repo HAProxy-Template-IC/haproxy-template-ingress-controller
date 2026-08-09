@@ -217,11 +217,21 @@ func BuildPerResourceStoreType(elemType reflect.Type) reflect.Type {
 	// different candidate.
 	apiVersionFunc := reflect.FuncOf(nil, []reflect.Type{reflect.TypeOf("")}, false)
 
-	return reflect.StructOf([]reflect.StructField{
-		{Name: "T", Type: tFieldType},
-		{Name: "List", Type: listFunc},
-		{Name: "Fetch", Type: keysVariadic},
-		{Name: "GetSingle", Type: getSingleVariadic},
-		{Name: "APIVersion", Type: apiVersionFunc},
-	})
+	own := []reflect.StructField{
+		{Name: storeFieldT, Type: tFieldType},
+		{Name: storeFieldList, Type: listFunc},
+		{Name: storeFieldFetch, Type: keysVariadic},
+		{Name: storeFieldGetSingle, Type: getSingleVariadic},
+		{Name: storeFieldAPIVersion, Type: apiVersionFunc},
+	}
+	nested := nestedTypeFields(elemType)
+	fields := make([]reflect.StructField, 0, len(own)+len(nested))
+	fields = append(fields, own...)
+	// Nested shapes get their own type-carrying fields so a pipeline closure
+	// can declare its parameter and result types (ADR-0018). Without them
+	// the types typegen builds are unnameable and only `any` + dig() works
+	// below the resource's top level.
+	fields = append(fields, nested...)
+
+	return reflect.StructOf(fields)
 }

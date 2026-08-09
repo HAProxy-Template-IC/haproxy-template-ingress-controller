@@ -709,6 +709,41 @@ Without a schema (for example, `haptic-controller validate` without `--schema-di
 
 The type-switch case-clause form is the canonical pattern for chart code that crosses a polymorphic `any` boundary — the chart's `gateway` library uses it inside `60-frontend.yaml` to dispatch on HTTPRoute / GRPCRoute / TLSRoute. `shard_slice` is type-preserving: when its input is a typed slice, the result is the same typed slice (not `[]any`), so the downstream loop variable stays statically typed.
 
+Nested shapes have names too, derived from the field path, so you can write the type of a value found *inside* a resource:
+
+```scriggo
+{% type Listener = resources.gateways.SpecListeners %}
+{% type EP = resources.endpoints.Endpoints %}
+```
+
+### Collection pipelines
+
+When you're filtering, flattening, or deduplicating watched resources, chain type-preserving helpers instead of nesting loops around a `map[string]bool{}` you maintain yourself:
+
+```scriggo
+{%%
+  type EP = resources.endpoints.Endpoints
+  var addresses = resources.endpoints.List() |
+    flat_map(func(s *resources.endpoints.T) []EP { return s.Endpoints }) |
+    reject(func(e EP) bool { return e.TargetRef.Name == "" }) |
+    flat_map(func(e EP) []string { return e.Addresses }) |
+    unique()
+%%}
+```
+
+The helpers are `map`, `filter`, `reject`, `flat_map`, `unique`, `unique_by`, `group_by` and `sort_by`. Each preserves the element type, so `e.TargetRef.Name` still resolves after four stages — and a typo in a field name fails the config load rather than rendering an empty file.
+
+Predicates are closures, not strings. That's deliberate: `dig`-style string paths return nothing when a field name is wrong, and nothing errors. `unique_by` and `group_by` additionally accept an attribute path (`unique_by("host")`) for data that reaches you as `any`.
+
+Four rules the compiler enforces:
+
+- Put the pipe at the **end** of a line, not the start — Go's semicolon insertion ends the statement otherwise.
+- Write chains inside `{%% %%}`, not `{{ }}`; a `{{ }}` expression can't span lines.
+- `sort_by` returns a value *and* an error, so it can't be the last stage of a pipe. Call it separately.
+- `map` keeps one output per input. Reach for `flat_map` when the closure returns a slice you want flattened in.
+
+Reach for a `{%% %%}` loop instead of a pipeline when the body has side effects — `fail()`, registering a file, recording an Event — or needs `break`.
+
 **Field name convention:** Go-PascalCase of the JSON tag, with NO acronym preservation. This matters because chart authors are used to upstream Go-style names (`APIVersion`, `IPBlock`) — those don't apply here. (Where the JSON tag already has an uppercase acronym, like `loadBalancerIP`, the typed field keeps it — `LoadBalancerIP` — which happens to match upstream; only rune 0 is ever changed.)
 
 | JSON tag (source YAML)   | Typed field          |
