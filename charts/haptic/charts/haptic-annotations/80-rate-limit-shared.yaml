@@ -180,15 +180,17 @@ k8sResources:
       {%- var sharedEnabled = extraContext | dig("rateLimit", "shared", "enabled") | fallback("false") | tostring() %}
       {%- var enabled = extraContext | dig("rateLimit", "shared", "managedStore", "enabled") | fallback("false") | tostring() %}
       {%- if sharedEnabled == "true" && enabled == "true" %}
-      {%- var base = extraContext | dig("rateLimit", "shared", "managedStore", "serviceName") | fallback("haptic-rate-limit-store") | tostring() %}
-      {%- var sentinelSvc = base + "-sentinel" %}
-      {%- var ns = extraContext | dig("rateLimit", "shared", "managedStore", "namespace") | fallback("default") | tostring() %}
-      {%- var port = extraContext | dig("rateLimit", "shared", "managedStore", "port") | fallback("6379") | tostring() %}
-      {%- var sentinelPort = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "port") | fallback("26379") | tostring() %}
-      {%- var sentinelMaster = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "masterName") | fallback("haptic-rate-limit") | tostring() %}
-      {%- var replicas = extraContext | dig("rateLimit", "shared", "managedStore", "replicas") | fallback("3") | tostring() %}
-      {%- var quorum = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "quorum") | fallback("2") | tostring() %}
-      {%- var downAfterMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "downAfterMilliseconds") | fallback("5000") | tostring() %}
+      {%%
+        var base = extraContext | dig("rateLimit", "shared", "managedStore", "serviceName") | fallback("haptic-rate-limit-store") | tostring()
+        var sentinelSvc = base + "-sentinel"
+        var ns = extraContext | dig("rateLimit", "shared", "managedStore", "namespace") | fallback("default") | tostring()
+        var port = extraContext | dig("rateLimit", "shared", "managedStore", "port") | fallback("6379") | tostring()
+        var sentinelPort = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "port") | fallback("26379") | tostring()
+        var sentinelMaster = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "masterName") | fallback("haptic-rate-limit") | tostring()
+        var replicas = extraContext | dig("rateLimit", "shared", "managedStore", "replicas") | fallback("3") | tostring()
+        var quorum = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "quorum") | fallback("2") | tostring()
+        var downAfterMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "downAfterMilliseconds") | fallback("5000") | tostring()
+      %%}
       {#- Sentinel resolves the monitored primary by hostname on its single event
           loop. When that pod's DNS record disappears, the blocking lookup stalls
           the loop past the 2s TILT trigger and Sentinel goes blind for a fixed
@@ -207,18 +209,20 @@ k8sResources:
       {%- var failoverTimeoutMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "failoverTimeoutMilliseconds") | fallback("10000") | tostring() %}
       {%- var parallelSyncs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "parallelSyncs") | fallback("1") | tostring() %}
       {#- renovate: datasource=docker depName=valkey/valkey #}
-      {%- var img = extraContext | dig("rateLimit", "shared", "managedStore", "image") | fallback("valkey/valkey:9.1.1-alpine") | tostring() %}
-      {%- var imagePullPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "imagePullPolicy") | fallback("IfNotPresent") | tostring() %}
-      {%- var maxMemory = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemory") | fallback("96mb") | tostring() %}
-      {%- var maxMemoryPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemoryPolicy") | fallback("volatile-ttl") | tostring() %}
-      {%- var cpuReq = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "requests", "cpu") | fallback("50m") | tostring() %}
-      {%- var memReq = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "requests", "memory") | fallback("128Mi") | tostring() %}
-      {%- var memLim = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "limits", "memory") | fallback("128Mi") | tostring() %}
-      {%- var sentinelCpuReq = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "requests", "cpu") | fallback("25m") | tostring() %}
-      {%- var sentinelMemReq = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "requests", "memory") | fallback("64Mi") | tostring() %}
-      {%- var sentinelMemLim = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "limits", "memory") | fallback("64Mi") | tostring() %}
-      {%- var pdbEnabled = extraContext | dig("rateLimit", "shared", "managedStore", "podDisruptionBudget", "enabled") | fallback("true") | tostring() %}
-      {%- var pdbMaxUnavailable = extraContext | dig("rateLimit", "shared", "managedStore", "podDisruptionBudget", "maxUnavailable") | fallback("1") | tostring() %}
+      {%%
+        var img = extraContext | dig("rateLimit", "shared", "managedStore", "image") | fallback("valkey/valkey:9.1.1-alpine") | tostring()
+        var imagePullPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "imagePullPolicy") | fallback("IfNotPresent") | tostring()
+        var maxMemory = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemory") | fallback("96mb") | tostring()
+        var maxMemoryPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemoryPolicy") | fallback("volatile-ttl") | tostring()
+        var cpuReq = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "requests", "cpu") | fallback("50m") | tostring()
+        var memReq = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "requests", "memory") | fallback("128Mi") | tostring()
+        var memLim = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "limits", "memory") | fallback("128Mi") | tostring()
+        var sentinelCpuReq = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "requests", "cpu") | fallback("25m") | tostring()
+        var sentinelMemReq = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "requests", "memory") | fallback("64Mi") | tostring()
+        var sentinelMemLim = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "limits", "memory") | fallback("64Mi") | tostring()
+        var pdbEnabled = extraContext | dig("rateLimit", "shared", "managedStore", "podDisruptionBudget", "enabled") | fallback("true") | tostring()
+        var pdbMaxUnavailable = extraContext | dig("rateLimit", "shared", "managedStore", "podDisruptionBudget", "maxUnavailable") | fallback("1") | tostring()
+      %%}
       apiVersion: v1
       kind: Service
       metadata:

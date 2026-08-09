@@ -35,14 +35,16 @@ files:
     # HAProxy never opens this file — vector's own --watch-config applies it.
     reloadOnPush: false
     template: |
-      {%- var vec = extraContext | dig("vector") | fallback(map[string]any{}) -%}
-      {%- var socketPath = vec | dig_string("/run/vector/haproxy.sock", "socketPath") -%}
-      {%- var metricsPort = vec | dig("metricsPort") | fallback(9598) -%}
-      {%- var scrapeSecs = vec | dig("scrapeIntervalSecs") | fallback(15) -%}
-      {%- var statsPort = vec | dig("haproxyStatsPort") | fallback(0) -%}
-      {%- var hubPort = vec | dig("spoaHubMetricsPort") | fallback(0) -%}
-      {%- var dataDir = vec | dig_string("/var/lib/vector", "dataDir") -%}
-      {%- var excludes = vec | dig("excludeMetrics") | fallback([]any{}) | toSlice() -%}
+      {%%
+        var vec = extraContext | dig("vector") | fallback(map[string]any{})
+        var socketPath = vec | dig_string("/run/vector/haproxy.sock", "socketPath")
+        var metricsPort = vec | dig("metricsPort") | fallback(9598)
+        var scrapeSecs = vec | dig("scrapeIntervalSecs") | fallback(15)
+        var statsPort = vec | dig("haproxyStatsPort") | fallback(0)
+        var hubPort = vec | dig("spoaHubMetricsPort") | fallback(0)
+        var dataDir = vec | dig_string("/var/lib/vector", "dataDir")
+        var excludes = vec | dig("excludeMetrics") | fallback([]any{}) | toSlice()
+      %%}
       {#- Source-side twin of `excludes`: never parsed, so it cuts the scrape
           burst, not just retention. See values.yaml vector.excludeMetrics. -#}
       {%- var excludeFams = vec | dig("excludeMetricFamilies") | fallback([]any{}) | toSlice() -%}
@@ -127,15 +129,17 @@ files:
           otherwise all report service.name=haptic. Chart-derived, except the
           cluster name — Kubernetes exposes none to a pod. Each is omitted when
           empty rather than sent blank. -#}
-      {%- var resAttrs = []string{} -%}
-      {%- var addRes = func(k string, v string) { if v != "" { resAttrs = append(resAttrs, "{\"key\":\"" + k + "\",\"value\":{\"stringValue\":\"" + v + "\"}}") } } -%}
-      {%- addRes("service.name", otlpService) -%}
-      {%- addRes("service.namespace", tostring(extraContext | dig_string("", "tracing", "otlp", "serviceNamespace"))) -%}
-      {%- addRes("service.version", tostring(extraContext | dig_string("", "tracing", "otlp", "serviceVersion"))) -%}
-      {%- addRes("k8s.namespace.name", tostring(extraContext | dig_string("", "tracing", "otlp", "serviceNamespace"))) -%}
-      {%- addRes("k8s.deployment.name", tostring(extraContext | dig_string("", "tracing", "otlp", "deploymentName"))) -%}
-      {%- addRes("k8s.cluster.name", tostring(extraContext | dig_string("", "tracing", "otlp", "clusterName"))) -%}
-      {%- var resJSON = join(resAttrs, ",") -%}
+      {%%
+        var resAttrs = []string{}
+        var addRes = func(k string, v string) { if v != "" { resAttrs = append(resAttrs, "{\"key\":\"" + k + "\",\"value\":{\"stringValue\":\"" + v + "\"}}") } }
+        addRes("service.name", otlpService)
+        addRes("service.namespace", tostring(extraContext | dig_string("", "tracing", "otlp", "serviceNamespace")))
+        addRes("service.version", tostring(extraContext | dig_string("", "tracing", "otlp", "serviceVersion")))
+        addRes("k8s.namespace.name", tostring(extraContext | dig_string("", "tracing", "otlp", "serviceNamespace")))
+        addRes("k8s.deployment.name", tostring(extraContext | dig_string("", "tracing", "otlp", "deploymentName")))
+        addRes("k8s.cluster.name", tostring(extraContext | dig_string("", "tracing", "otlp", "clusterName")))
+        var resJSON = join(resAttrs, ",")
+      %%}
       {#- Scriggo's `if` treats any non-empty string as truthy, so a CR with the
           string "false" would ENABLE this. No isbool(); fallback() is nil-only. -#}
       {%- var omitEmptyRaw = vec | dig("omitEmptyLogFields") -%}
@@ -319,12 +323,14 @@ files:
         # Metrics projected from access-log fields, for components that expose no
         # scrape endpoint of their own.
       {%- for _, key := range keys(logMetrics) %}
-        {%- var m = logMetrics[key].(map[string]any) %}
-        {%- var field = m | dig_string("", "field") %}
-        {%- var kind = m | dig_string("enum", "kind") %}
-        {%- var metricName = m | dig_string("", "metric") %}
-        {%- var tagName = m | dig_string("value", "tag") %}
-        {%- var vals = m | dig("values") | fallback([]any{}) | toSlice() %}
+        {%%
+          var m = logMetrics[key].(map[string]any)
+          var field = m | dig_string("", "field")
+          var kind = m | dig_string("enum", "kind")
+          var metricName = m | dig_string("", "metric")
+          var tagName = m | dig_string("value", "tag")
+          var vals = m | dig("values") | fallback([]any{}) | toSlice()
+        %%}
         {#- Field and metric names are embedded in a VRL regex and a metric name;
             an unvalidated one would break vector's config load and crash-loop the
             sidecar, exactly as excludeMetrics guards against. -#}
@@ -335,7 +341,7 @@ files:
         {%- if kind == "enum" && len(vals) == 0 %}{{ fail("extraContext.vector.logMetrics." + key + " is kind \"enum\" and must list its accepted `values`, or the label would be unbounded.") }}{%- end %}
         {%- var pattern = "[0-9]+" %}
         {%- if kind == "enum" %}
-          {%- var esc = []any{} %}
+          {%- var esc = []string{} %}
           {%- for _, val := range vals %}
             {%- if !regex_search(tostring(val), "^[A-Za-z0-9_.:-]+$") %}{{ fail("extraContext.vector.logMetrics." + key + ".values entry '" + tostring(val) + "' may only contain letters, digits, and _.:- — it is embedded in a VRL regex.") }}{%- end %}
             {#- Escape before embedding: '.' passes the charset check but is a
@@ -343,7 +349,7 @@ files:
                 "125" — widening the very set `values` exists to bound. -#}
             {%- esc = append(esc, sanitize_regex(tostring(val))) %}
           {%- end %}
-          {%- pattern = esc | toStringSlice() | join("|") %}
+          {%- pattern = join(esc, "|") %}
         {%- end %}
 
         {{ key }}_extract:

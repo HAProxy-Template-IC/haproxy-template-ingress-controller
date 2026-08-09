@@ -45,7 +45,7 @@ templateSnippets:
               {%- if keysData == "" %}
                 {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'haproxy-haptic.org/api-key-secret' on Ingress '" + key + "' has an empty or missing 'keys' data key.") -}}
               {%- end %}
-              {%- var lines = []any{} %}
+              {%- var lines = []string{} %}
               {%- for _, rawLine := range split(keysData, "\n") %}
                 {%- var l = strip(rawLine) %}
                 {%- if l == "" %}{%- continue %}{%- end %}
@@ -63,7 +63,7 @@ templateSnippets:
                 {%- end %}
                 {%- lines = append(lines, apikey + " " + consumer) %}
               {%- end %}
-              {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+              {%- var mapContent = join(lines, "\n") + "\n" %}
               {%- var _, regErr = fileRegistry.Register("map", mapName, mapContent) %}
               {%- if regErr != nil %}{{ fail("failed to register API-key map " + mapName + ": " + tostring(regErr)) }}{%- end %}
             {%- end %}

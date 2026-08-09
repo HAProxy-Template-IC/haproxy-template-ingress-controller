@@ -119,6 +119,39 @@ func identityReturnType(argTypes []reflect.Type) (reflect.Type, error) {
 	return argTypes[0], nil
 }
 
+// predicateReturnType is filter and reject's ReturnType hook: the same identity
+// type as the input, once the predicate is known to return bool.
+//
+// Checking it here rather than in Impl turns "predicate must return bool" from
+// a panic mid-render into a compile error naming the template.
+func predicateReturnType(name string) func([]reflect.Type) (reflect.Type, error) {
+	return func(argTypes []reflect.Type) (reflect.Type, error) {
+		if len(argTypes) > 1 && argTypes[1] != nil && argTypes[1].Kind() == reflect.Func {
+			if argTypes[1].NumOut() != 1 || argTypes[1].Out(0).Kind() != reflect.Bool {
+				return nil, fmt.Errorf("%s: predicate must return bool, got %s", name, argTypes[1])
+			}
+		}
+		return identityReturnType(argTypes)
+	}
+}
+
+// elementLambdaParams is the LambdaParams hook for helpers whose closure runs
+// once per element: `items | filter(e => e.Ready)` types e from items.
+//
+// Returning nil leaves the lambda uninferable, which the engine reports at the
+// lambda. That is the right answer for a call whose input type is not a slice —
+// including the untyped `any` an unschema'd resource yields, where there is no
+// element type to give.
+func elementLambdaParams(argIndex int, resolved []reflect.Type) []reflect.Type {
+	if argIndex != 1 || len(resolved) == 0 || resolved[0] == nil {
+		return nil
+	}
+	if resolved[0].Kind() != reflect.Slice {
+		return nil
+	}
+	return []reflect.Type{resolved[0].Elem()}
+}
+
 // selectMatching returns the elements for which pred equals keep.
 func selectMatching(name string, slice, pred any, keep bool) any {
 	rv, ok := sliceOf(slice)
@@ -143,8 +176,9 @@ func selectMatching(name string, slice, pred any, keep bool) any {
 //
 //	items | filter(func(e EP) bool { return e.Ready })
 var scriggoFilterAdaptive = native.AdaptiveFunc{
-	Impl:       func(slice, pred any) any { return selectMatching(FuncFilter, slice, pred, true) },
-	ReturnType: identityReturnType,
+	Impl:         func(slice, pred any) any { return selectMatching(FuncFilter, slice, pred, true) },
+	ReturnType:   predicateReturnType(FuncFilter),
+	LambdaParams: elementLambdaParams,
 }
 
 // scriggoRejectAdaptive drops the elements a predicate accepts. It exists so
@@ -152,8 +186,9 @@ var scriggoFilterAdaptive = native.AdaptiveFunc{
 //
 //	items | reject(func(e EP) bool { return e.TargetRef.Name == "" })
 var scriggoRejectAdaptive = native.AdaptiveFunc{
-	Impl:       func(slice, pred any) any { return selectMatching(FuncReject, slice, pred, false) },
-	ReturnType: identityReturnType,
+	Impl:         func(slice, pred any) any { return selectMatching(FuncReject, slice, pred, false) },
+	ReturnType:   predicateReturnType(FuncReject),
+	LambdaParams: elementLambdaParams,
 }
 
 // scriggoFlatMapAdaptive maps each element to a slice and concatenates the
@@ -194,6 +229,7 @@ var scriggoFlatMapAdaptive = native.AdaptiveFunc{
 		}
 		return argTypes[1].Out(0), nil
 	},
+	LambdaParams: elementLambdaParams,
 }
 
 // sortByAdaptive builds the sort_by declaration. Two call shapes share the
@@ -324,6 +360,7 @@ var scriggoMapAdaptive = native.AdaptiveFunc{
 		}
 		return reflect.SliceOf(argTypes[1].Out(0)), nil
 	},
+	LambdaParams: elementLambdaParams,
 }
 
 // keyFunc turns unique_by / group_by's second argument into an element→key
@@ -391,8 +428,9 @@ var scriggoUniqueAdaptive = native.AdaptiveFunc{
 //
 //	pairs | unique_by(func(p Pair) string { return p.Addr })
 var scriggoUniqueByAdaptive = native.AdaptiveFunc{
-	Impl:       func(slice, key any) any { return dedupe(FuncUniqueBy, slice, key) },
-	ReturnType: identityReturnType,
+	Impl:         func(slice, key any) any { return dedupe(FuncUniqueBy, slice, key) },
+	ReturnType:   identityReturnType,
+	LambdaParams: elementLambdaParams,
 }
 
 // scriggoGroupByAdaptive buckets elements by a string key, preserving input
@@ -424,4 +462,5 @@ var scriggoGroupByAdaptive = native.AdaptiveFunc{
 		}
 		return reflect.MapOf(reflect.TypeOf(""), elem), nil
 	},
+	LambdaParams: elementLambdaParams,
 }

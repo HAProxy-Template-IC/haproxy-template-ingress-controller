@@ -357,13 +357,15 @@ templateSnippets:
           {%- end %}
           {%- var dynamic = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-dynamic"] %}
           {%- if dynamic == "" %}{%- dynamic = "true" %}{%- end %}
-          {%- var keywords = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-keywords"] %}
-          {%- var preserve = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-preserve"] %}
-          {%- var domain = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-domain"] %}
-          {%- var cookiePath = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-path"] %}
-          {%- var cookieSecure = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-secure"] %}
-          {%- var sameSite = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-samesite"] %}
-          {%- var maxAge = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-max-age"] %}
+          {%%
+            var keywords = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-keywords"]
+            var preserve = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-preserve"]
+            var domain = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-domain"]
+            var cookiePath = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-path"]
+            var cookieSecure = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-secure"]
+            var sameSite = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-samesite"]
+            var maxAge = ingress.Metadata.Annotations["haproxy-haptic.org/session-cookie-max-age"]
+          %%}
 
           {#- Build the cookie directive. -#}
           {%- var cookieDir = "cookie " + ValidateConfigValue(cookieName, "haproxy-haptic.org/session-cookie-name", key, false) + " " + strategy %}

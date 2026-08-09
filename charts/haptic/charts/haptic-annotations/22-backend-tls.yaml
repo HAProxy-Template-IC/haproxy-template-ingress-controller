@@ -93,15 +93,17 @@ templateSnippets:
 
         {#- Read the SSL-only annotations up front (also pins the literal keys
             for the read-set lint). -#}
-        {%- var verifyRaw = ingress.Metadata.Annotations["haproxy-haptic.org/backend-verify"] %}
-        {%- var caSec = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ca-secret"] %}
-        {%- var crtSec = ingress.Metadata.Annotations["haproxy-haptic.org/backend-crt-secret"] %}
-        {%- var sni = ingress.Metadata.Annotations["haproxy-haptic.org/backend-sni"] %}
-        {%- var verifyHost = ingress.Metadata.Annotations["haproxy-haptic.org/backend-verify-host"] %}
-        {%- var ciphers = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ciphers"] %}
-        {%- var ciphersuites = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ciphersuites"] %}
-        {%- var sslProtocols = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ssl-protocols"] %}
-        {%- var hasSslOnly = verifyRaw != "" || caSec != "" || crtSec != "" || sni != "" || verifyHost != "" || ciphers != "" || ciphersuites != "" || sslProtocols != "" %}
+        {%%
+          var verifyRaw = ingress.Metadata.Annotations["haproxy-haptic.org/backend-verify"]
+          var caSec = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ca-secret"]
+          var crtSec = ingress.Metadata.Annotations["haproxy-haptic.org/backend-crt-secret"]
+          var sni = ingress.Metadata.Annotations["haproxy-haptic.org/backend-sni"]
+          var verifyHost = ingress.Metadata.Annotations["haproxy-haptic.org/backend-verify-host"]
+          var ciphers = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ciphers"]
+          var ciphersuites = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ciphersuites"]
+          var sslProtocols = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ssl-protocols"]
+          var hasSslOnly = verifyRaw != "" || caSec != "" || crtSec != "" || sni != "" || verifyHost != "" || ciphers != "" || ciphersuites != "" || sslProtocols != ""
+        %%}
 
         {%- if sslEnabled %}
           {#- CA bundle → ca-file. Resolve FIRST: HAProxy rejects `verify

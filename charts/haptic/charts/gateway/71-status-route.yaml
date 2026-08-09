@@ -753,19 +753,14 @@ templateSnippets:
                   var gw = resources.gateways.GetSingle(gwNamespace, gwName)
                   // Pre-compute mixed-mode map so we can flag listeners
                   // that ProtocolConflict applies to.
-                  var portModes = map[int]map[string]bool{}
+                  // One entry per (port, mode): a port with more than one is a
+                  // port whose listeners disagree. Mode defaults to Terminate.
+                  var tlsModesByPort = map[string][]resources.gateways.SpecListeners{}
                   if gw != nil {
-                    for _, l := range gw.Spec.Listeners {
-                      if l.Protocol == "TLS" {
-                        var lPort = toint(l.Port)
-                        var lMode = l.Tls.Mode
-                        if lMode == "" { lMode = "Terminate" }
-                        if portModes[lPort] == nil {
-                          portModes[lPort] = map[string]bool{}
-                        }
-                        portModes[lPort][lMode] = true
-                      }
-                    }
+                    tlsModesByPort = gw.Spec.Listeners |
+                      filter(l => l.Protocol == "TLS") |
+                      unique_by(l => tostring(toint(l.Port)) + "/" + tostring(dig(l, "tls", "mode") | fallback("Terminate"))) |
+                      group_by(l => tostring(toint(l.Port)))
                   }
 
                   var acceptedStatus = "False"
@@ -810,8 +805,7 @@ templateSnippets:
                       // sibling on the same port carries the other
                       // mode is itself unaccepted; routes parented to
                       // it must not be accepted either.
-                      var pm = portModes[listenerPort]
-                      if pm != nil && pm["Passthrough"] && pm["Terminate"] {
+                      if len(tlsModesByPort[tostring(listenerPort)]) > 1 {
                         sawKindNs = true
                         continue
                       }

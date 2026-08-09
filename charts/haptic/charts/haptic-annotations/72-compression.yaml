@@ -71,7 +71,7 @@ templateSnippets:
           {%- end %}
           {%- var typesRaw = ingress.Metadata.Annotations["haproxy-haptic.org/compress-types"] %}
           {%- if typesRaw == "" %}{%- typesRaw = "text/html,text/plain,text/css,text/javascript,application/javascript,application/json,application/xml,image/svg+xml" %}{%- end %}
-          {%- var types = []any{} %}
+          {%- var types = []string{} %}
           {%- for _, tok := range split(typesRaw, ",") %}
             {%- var ct = strip(tok) %}
             {%- if ct != "" %}
@@ -84,7 +84,7 @@ templateSnippets:
           {%- if len(types) > 0 %}
       # haptic/compression ({{ key }})
       compression algo {{ alg }}
-      compression type {{ types | toStringSlice() | join(" ") }}
+      compression type {{ join(types, " ") }}
           {%- end %}
         {%- end %}
       {%- end -%}

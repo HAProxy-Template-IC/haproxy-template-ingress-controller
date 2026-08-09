@@ -685,8 +685,8 @@ templateSnippets:
         // cannot carry until template-local struct types survive the native
         // boundary; the flatten and the filter are the parts that do chain.
         for _, ep := range resources.endpoints.List() |
-            flat_map(func(s *resources.endpoints.T) []EP { return s.Endpoints }) |
-            reject(func(e EP) bool { return e.TargetRef.Name == "" }) {
+            flat_map(s => s.Endpoints) |
+            reject(e => e.TargetRef.Name == "") {
           for _, addr := range ep.Addresses {
             if seen[addr] { continue }
             seen[addr] = true
@@ -1607,31 +1607,23 @@ templateSnippets:
       }) -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%%
-        var addresses []any
-        var seen = map[string]bool{}
-        for _, svc := range resources.controller_services.List() {
-          // Extract only ip/hostname to avoid SSA schema errors from
-          // fields like ipMode that may not exist in target resource schemas
-          for _, entry := range svc.Status.LoadBalancer.Ingress {
+        // Only ip/hostname reach the status: a field such as ipMode may not
+        // exist in the target resource's schema and would fail the apply.
+        type LBIngress = resources.controller_services.StatusLoadBalancerIngress
+        var addresses = resources.controller_services.List() |
+          flat_map(s => s.Status.LoadBalancer.Ingress) |
+          reject(e => e.Ip == "" && e.Hostname == "") |
+          unique_by(e => e.Ip + "/" + e.Hostname) |
+          map(func(e LBIngress) map[string]any {
             var clean = map[string]any{}
-            var ip = entry.Ip
-            var hostname = entry.Hostname
-            if ip != "" {
-              clean["ip"] = ip
+            if e.Ip != "" {
+              clean["ip"] = e.Ip
             }
-            if hostname != "" {
-              clean["hostname"] = hostname
+            if e.Hostname != "" {
+              clean["hostname"] = e.Hostname
             }
-            if len(clean) > 0 {
-              // Deduplicate by ip or hostname across services
-              var key = ip + "/" + hostname
-              if !seen[key] {
-                seen[key] = true
-                addresses = append(addresses, clean)
-              }
-            }
-          }
-        }
+            return clean
+          })
 
         // Cluster-IP fallback: when no LoadBalancer ingress is
         // available (NodePort / ClusterIP service types, bare-metal
@@ -1641,18 +1633,12 @@ templateSnippets:
         // don't want to mix LB-external IPs with cluster-internal
         // IPs in the same status block.
         if len(addresses) == 0 {
-          for _, svc := range resources.controller_services.List() {
-            for _, ipStr := range svc.Spec.ClusterIPs {
-              // "None" is a sentinel for headless services and is
-              // never a routable IP. Skip empty values too.
-              if ipStr != "" && ipStr != "None" {
-                if !seen[ipStr+"/"] {
-                  seen[ipStr+"/"] = true
-                  addresses = append(addresses, map[string]any{"ip": ipStr})
-                }
-              }
-            }
-          }
+          // "None" is the headless-service sentinel and is never routable.
+          addresses = resources.controller_services.List() |
+            flat_map(s => s.Spec.ClusterIPs) |
+            reject(ip => ip == "" || ip == "None") |
+            unique() |
+            map(ip => map[string]any{"ip": ip})
         }
         var statusPatchesEnabled bool = extraContext | dig("statusPatches", "enabled") | fallback(true)
         if statusPatchesEnabled {
@@ -2042,38 +2028,24 @@ templateSnippets:
         present (even one whose hosts were all claimed by another code), so the
         rule's per-code map reference always resolves.
       #}
-      {%- var gf = shared.Get("globalFeatures") -%}
-      {%- var redirectHosts []any = coalesce(gf["redirectHosts"], []any{}) -%}
-      {%- var locByCode = map[string]map[string]string{} -%}
-      {%- var seenHost = map[string]bool{} -%}
-      {%- for _, entry := range redirectHosts -%}
-        {%- var e any = entry -%}
-        {%- var code = tostring(e | dig("code")) -%}
-        {%- var host = tostring(e | dig("host")) -%}
-        {%- if locByCode[code] == nil -%}{%- locByCode[code] = map[string]string{} -%}{%- end -%}
-        {%- if host != "" && !seenHost[host] -%}
-          {%- seenHost[host] = true -%}
-          {%- locByCode[code][host] = tostring(e | dig("location")) -%}
-        {%- end -%}
-      {%- end -%}
-      {#- Sort hosts before emitting lines so the map file is byte-deterministic
-          across renders. Scriggo/Go map iteration order is not stable, and a
-          reordered map file looks like a change to the controller — triggering a
-          spurious HAProxy sync/reload that would undermine the reload-free goal.
-          Same rationale as features-160-ssl-redirect-map and the ssl.yaml crt-list. -#}
-      {%- for code, hostLoc := range locByCode -%}
-        {%- var hostKeys = []any{} -%}
-        {%- for host := range hostLoc -%}
-          {%- hostKeys = append(hostKeys, host) -%}
-        {%- end -%}
-        {%- var sortedHosts = sort_strings(hostKeys) -%}
-        {%- var lines = []any{} -%}
-        {%- for _, host := range sortedHosts -%}
-          {%- lines = append(lines, tostring(host) + " " + hostLoc[tostring(host)]) -%}
-        {%- end -%}
-        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" -%}
-        {%- var _, mapErr = fileRegistry.Register("map", "redirect-loc-" + code + ".map", mapContent) -%}
-        {%- if mapErr != nil -%}{{ fail("failed to register redirect-location map: " + tostring(mapErr)) }}{%- end -%}
+      {%- import "util-host-keyed-map" for HostKeyedMapFile -%}
+      {%%
+        var gf = shared.Get("globalFeatures")
+        var redirectHosts []any = coalesce(gf["redirectHosts"], []any{})
+        // Every code present gets a map, including one whose hosts were all
+        // claimed by an earlier code — the rule's per-code map reference has
+        // to resolve either way. So the codes come from the full list, not
+        // from the grouped survivors.
+        var codes = redirectHosts |
+          map(e => tostring(e | dig("code"))) |
+          unique()
+        var byCode = redirectHosts |
+          reject(e => tostring(e | dig("host")) == "") |
+          unique_by("host") |
+          group_by("code")
+      %%}
+      {%- for _, code := range codes -%}
+        {{- HostKeyedMapFile(byCode[code], "location", "redirect-loc-" + code + ".map") -}}
       {%- end -%}
 
   util-host-keyed-map:
@@ -2094,7 +2066,7 @@ templateSnippets:
         // sort_by is a separate call, not a pipe stage: it returns (value,
         // error) and a pipe carries only one value.
         var hosts = entries |
-          reject(func(e any) bool { return tostring(e | dig("host")) == "" }) |
+          reject(e => tostring(e | dig("host")) == "") |
           unique_by("host")
         var rows, sortErr = sort_by(hosts, []string{"$.host"})
         if sortErr != nil {
@@ -2658,7 +2630,10 @@ k8sResources:
         // render path. Absent value (no contributors) → toSlice
         // returns []any{}, the loop is a no-op, base.yaml stays
         // at Level 0 of the library hierarchy.
-        var extraPorts = shared.Get("extraServicePorts") | toSlice()
+        // A holder map, not a list: several libraries contribute, and a
+        // library whose resource's CRD is absent must be able to drop out
+        // without the others losing their entries.
+        var extraPorts = shared.Get("extraServicePorts") | dig("ports") | toSlice()
       %%}
       {%- for _, extraPort := range extraPorts %}
       {%%

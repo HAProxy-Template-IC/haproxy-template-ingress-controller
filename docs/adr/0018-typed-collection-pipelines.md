@@ -88,19 +88,20 @@ and make nested resource types nameable so closures can be written with explicit
 types.
 
 ```scriggo
-{% type EP = resources.endpoints.Endpoints %}
 {%%
   var lines = resources.endpoints.List() |
-    flat_map(func(s *resources.endpoints.T) []EP { return s.Endpoints }) |
-    reject(func(e EP) bool { return e.TargetRef.Name == "" }) |
-    flat_map(func(e EP) []string { return e.Addresses }) |
+    flat_map(s => s.Endpoints) |
+    reject(e => e.TargetRef.Name == "") |
+    flat_map(e => e.Addresses) |
     unique()
 %%}
 ```
 
 Closures, not string paths. Every field access is checked at engine compile
 time against the generated type, so a typo or a CRD field rename is a chart
-load failure, not a silently empty map file.
+load failure, not a silently empty map file. The types are inferred, not
+absent: `e` is the stage's element type, and `reject(e => e.Adresses)` fails
+the load.
 
 ### Helpers
 
@@ -182,15 +183,29 @@ label→loop mapping in the emitter, which is a feature, not a robustness patch.
 Chart code contains 101 `break`s and none of them are labelled, so this is
 tracked separately rather than bundled here.
 
-**Phase 3 — the ergonomics payoff.** `=>` lambda syntax with contextual
-parameter typing, so `flat_map(s => s.Endpoints)` replaces
+**Phase 3 — the ergonomics payoff (shipped).** `=>` lambda syntax, so
+`flat_map(s => s.Endpoints)` replaces
 `flat_map(func(s *resources.endpoints.T) []EP { return s.Endpoints })`.
 
-Phase 3 is deliberately last and deliberately optional. With explicit types the
-chain is verbose enough that it is closer to a wash against a well-written
-`{%% %%}` block; `=>` is what makes it decisively better. Putting it last means
-the compiler work lands on machinery already proven in production rather than
-being a prerequisite for any of it.
+Phase 3 was last and was treated as optional, which turned out to be wrong: with
+explicit types the chain is a wash against a well-written `{%% %%}` block, and
+the first conversion sweep landed net-neutral on line count. `=>` is what makes
+the chain decisively shorter, and it costs nothing at runtime — a lambda is an
+ordinary function literal by the time lowering sees it, so an arrow chain fuses
+into the same loop and benchmarks identically (6.71 ms vs 6.77 ms at 5000
+endpoints, allocation counts equal).
+
+Two inference sources, in that order: a **declared** function parameter states
+the types outright (`Where(pods, p => p.Ready)` reads them from `Where`'s
+signature), and a `native.AdaptiveFunc` supplies them per call site via a
+`LambdaParams` hook for the helpers whose Go signature says `any`. Compile-time
+lowering hoists each stage closure into a variable, which severs the link to the
+call, so the lowering records the stage's input and the checker follows it. A
+lambda with no such context is rejected at the lambda.
+
+The result type is never supplied — it is whatever the expression returns.
+That is a small type-safety gain over the long form, which can silently widen a
+stage to `any`; an arrow cannot.
 
 ### Where pipelines do not apply
 
@@ -386,6 +401,10 @@ at line end, and trailing-pipe already works. No payoff once closures are short.
 - **Renaming `map` to `mapped`/`transform` to dodge the parser.** The one-token
   lookahead fix is correct and only accepts programs that do not compile today.
 - **Leading-pipe continuation.** See Alternative 5.
+- **Writing out closure parameter types "for clarity" in a pipeline.** The type
+  is the stage's element type by construction; spelling it adds width and lets a
+  stage widen to `any` by accident. Use the long form only for a multi-statement
+  body.
 - **Deleting `sort_by`'s criteria form** in favour of comparators. It expresses
   multi-key ordering that comparators do not, and every existing call site uses
   it.
@@ -399,6 +418,11 @@ at line end, and trailing-pipe already works. No payoff once closures are short.
 - `sort_by` tests covering both call shapes and the debug-override path.
 - `./scripts/test-templates.sh` full suite green on every profile after each
   chart snippet is converted.
+- Lambda tests covering both inference sources, the multi-stage lowered chain
+  (each stage typed from the one before), and that an uninferable lambda is
+  rejected at the lambda.
+- `BenchmarkPipelineVsLoop/*/pipeline-arrow` at loop parity, pinning that the
+  concise spelling still lowers.
 
 ## Related
 

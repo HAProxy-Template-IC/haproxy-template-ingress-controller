@@ -22,14 +22,14 @@ templateSnippets:
       {%- import "util-resource-helpers" for ResourceNamespace, ListenerProtocolOr -%}
       {% macro GenerateGatewayStatusPatches(gateways []*resources.gateways.T) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-        {%- var rawAddresses = gf["addresses"].([]any) %}
+        {%- var rawAddresses = gf["addresses"].([]map[string]any) %}
 
         {#- Convert LoadBalancer addresses to Gateway API format -#}
         {%- var gatewayAddresses = []any{} %}
         {%- for _, addr := range rawAddresses %}
           {%%
-            var ip = dig(addr, "ip")
-            var hostname = dig(addr, "hostname")
+            var ip = addr["ip"]
+            var hostname = addr["hostname"]
             if ip != nil {
               gatewayAddresses = append(gatewayAddresses, map[string]any{
                 "type": "IPAddress",
@@ -120,9 +120,7 @@ templateSnippets:
           // resources.tlsroutes reference here would fail to COMPILE on
           // clusters where the CRD is not served.
           var tlsEntries, _ = shared.Get("tlsrouteCountEntries").([]any)
-          for _, e := range tlsEntries {
-            allRoutesForCount = append(allRoutesForCount, e)
-          }
+          allRoutesForCount = append(allRoutesForCount, tlsEntries...)
           // TCPRoute counts toward TCP listeners only (needsTCPProtocol gate
           // below). Without this, a Gateway's TCP listener reported
           // attachedRoutes=0 because the count only walked HTTP/GRPC/TLS routes
@@ -131,9 +129,7 @@ templateSnippets:
           // util-gateway-tcproute-count-contrib seam rendered above — empty
           // when the TCPRoute feature is stripped.
           var tcpEntries, _ = shared.Get("tcprouteCountEntries").([]any)
-          for _, e := range tcpEntries {
-            allRoutesForCount = append(allRoutesForCount, e)
-          }
+          allRoutesForCount = append(allRoutesForCount, tcpEntries...)
 
           for _, entry := range allRoutesForCount {
             var em = entry.(map[string]any)
@@ -742,18 +738,12 @@ templateSnippets:
             // test tlsroute-listener-mixed-termination-not-supported).
             // SupportTLSRouteModeMixed is experimental and not
             // declared by the chart, so this guard always fires.
-            var tlsPortModes = map[int]map[string]bool{}
-            for _, l := range gateway.Spec.Listeners {
-              if l.Protocol == "TLS" {
-                var lPort = toint(l.Port)
-                var lMode = l.Tls.Mode
-                if lMode == "" { lMode = "Terminate" }
-                if tlsPortModes[lPort] == nil {
-                  tlsPortModes[lPort] = map[string]bool{}
-                }
-                tlsPortModes[lPort][lMode] = true
-              }
-            }
+            // One entry per (port, mode), so a port with more than one entry
+            // is a port whose listeners disagree. Mode defaults to Terminate.
+            var tlsModesByPort = gateway.Spec.Listeners |
+              filter(l => l.Protocol == "TLS") |
+              unique_by(l => tostring(toint(l.Port)) + "/" + tostring(dig(l, "tls", "mode") | fallback("Terminate"))) |
+              group_by(l => tostring(toint(l.Port)))
             var listenerData = []any{}
             for _, listener := range gateway.Spec.Listeners {
               var listenerName = listener.Name
@@ -1091,8 +1081,7 @@ templateSnippets:
               // reporting [TLSRoute] would be misleading.
               if protocol == "TLS" {
                 var listenerPort = toint(listener.Port)
-                var pm = tlsPortModes[listenerPort]
-                if pm != nil && pm["Passthrough"] && pm["Terminate"] {
+                if len(tlsModesByPort[tostring(listenerPort)]) > 1 {
                   listenerAcceptedStatus = "False"
                   listenerAcceptedReason = "ProtocolConflict"
                   listenerAcceptedMessage = "TLS listener mixes Passthrough and Terminate modes on the same port"
