@@ -674,23 +674,27 @@ templateSnippets:
   map-pod-names-500-endpoints:
     requires: [endpoints]
     template: |
-      {%- var seenAddr = map[string]bool{} %}
-      {%- for _, slice := range resources.endpoints.List() %}
-      {%- for _, ep := range slice.Endpoints %}
-      {%- var pod = ep.TargetRef.Name %}
-      {%- if pod != "" %}
-      {%- for _, addr := range ep.Addresses %}
-      {%- if !seenAddr[addr] %}
-      {%- seenAddr[addr] = true %}
-      {# A pod in several Services appears once per EndpointSlice. map() returns
-         the first match, so repeats are inert here — but the runtime API rejects
-         a duplicate `add`, so a repeated key can only be rebuilt by a reload. #}
-      {{ addr }} {{ pod }}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
+      {%%
+        // A pod in several Services appears once per EndpointSlice. map() returns
+        // the first match, so repeats are inert here — but the runtime API rejects
+        // a duplicate `add`, so a repeated key can only be rebuilt by a reload.
+        type EP = resources.endpoints.Endpoints
+        var seen = map[string]bool{}
+        var lines []string
+        // The address→pod pairing needs both values at once, which a pipeline
+        // cannot carry until template-local struct types survive the native
+        // boundary; the flatten and the filter are the parts that do chain.
+        for _, ep := range resources.endpoints.List() |
+            flat_map(func(s *resources.endpoints.T) []EP { return s.Endpoints }) |
+            reject(func(e EP) bool { return e.TargetRef.Name == "" }) {
+          for _, addr := range ep.Addresses {
+            if seen[addr] { continue }
+            seen[addr] = true
+            lines = append(lines, addr + " " + ep.TargetRef.Name)
+          }
+        }
+      %%}
+      {{- join(lines, "\n") }}
 
   log-fields-106-service:
     template: |-
@@ -2072,6 +2076,41 @@ templateSnippets:
         {%- if mapErr != nil -%}{{ fail("failed to register redirect-location map: " + tostring(mapErr)) }}{%- end -%}
       {%- end -%}
 
+  util-host-keyed-map:
+    template: |-
+      {#
+        HostKeyedMapFile — writes a `<host> <value>` map file from a gf list of
+        {host, <valueKey>} entries.
+
+        First-writer-wins per host, hosts sorted. The sort is not cosmetic: Go
+        map order is unstable, and a reordered map file reads as a change to the
+        controller, costing a spurious sync/reload. Same rationale as
+        features-160-ssl-redirect-map and the ssl.yaml crt-list.
+
+        Resource-agnostic (RULE #1) — it sees a list of maps, never a kind.
+      #}
+      {% macro HostKeyedMapFile(entries []any, valueKey string, mapName string) %}
+      {%%
+        // sort_by is a separate call, not a pipe stage: it returns (value,
+        // error) and a pipe carries only one value.
+        var hosts = entries |
+          reject(func(e any) bool { return tostring(e | dig("host")) == "" }) |
+          unique_by("host")
+        var rows, sortErr = sort_by(hosts, []string{"$.host"})
+        if sortErr != nil {
+          fail("failed to sort " + mapName + " hosts: " + tostring(sortErr))
+        }
+        var lines []string
+        for _, e := range rows {
+          lines = append(lines, tostring(e | dig("host")) + " " + tostring(e | dig(valueKey)))
+        }
+        var _, mapErr = fileRegistry.Register("map", mapName, join(lines, "\n") + "\n")
+        if mapErr != nil {
+          fail("failed to register " + mapName + ": " + tostring(mapErr))
+        }
+      %%}
+      {% end macro %}
+
   features-175-app-root-map:
     template: |
       {#
@@ -2079,31 +2118,12 @@ templateSnippets:
         Resource libraries (haproxy-ingress / nginx app-root) register {host, path}
         entries in the features phase; frontend-filters-065-app-root emits the gated
         rule, so adding/changing an app-root is a map-only, reload-free update.
-        First-writer-wins per host; hosts sorted for byte-deterministic output (no
-        spurious reload). Resource-agnostic: operates only on the generic gf list.
       #}
+      {%- import "util-host-keyed-map" for HostKeyedMapFile -%}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var appRootHosts []any = coalesce(gf["appRootHosts"], []any{}) -%}
       {%- if len(appRootHosts) > 0 -%}
-        {%- var pathByHost = map[string]string{} -%}
-        {%- var seen = map[string]bool{} -%}
-        {%- var hostKeys = []any{} -%}
-        {%- for _, entry := range appRootHosts -%}
-          {%- var host = tostring(entry | dig("host")) -%}
-          {%- if host != "" && !seen[host] -%}
-            {%- seen[host] = true -%}
-            {%- pathByHost[host] = tostring(entry | dig("path")) -%}
-            {%- hostKeys = append(hostKeys, host) -%}
-          {%- end -%}
-        {%- end -%}
-        {%- var sortedHosts = sort_strings(hostKeys) -%}
-        {%- var lines = []any{} -%}
-        {%- for _, host := range sortedHosts -%}
-          {%- lines = append(lines, tostring(host) + " " + pathByHost[tostring(host)]) -%}
-        {%- end -%}
-        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" -%}
-        {%- var _, mapErr = fileRegistry.Register("map", "app-root.map", mapContent) -%}
-        {%- if mapErr != nil -%}{{ fail("failed to register app-root map: " + tostring(mapErr)) }}{%- end -%}
+        {{- HostKeyedMapFile(appRootHosts, "path", "app-root.map") -}}
       {%- end -%}
 
   features-185-mtls-error-map:
@@ -2114,30 +2134,12 @@ templateSnippets:
         auth-tls-error-page) register {host, location} entries in the features phase;
         frontend-filters-075-mtls-error emits the gated rule. The per-vendor
         cert-passthrough set-header directives stay in their own vendor snippets.
-        First-writer-wins per host; hosts sorted for deterministic output.
       #}
+      {%- import "util-host-keyed-map" for HostKeyedMapFile -%}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var mtlsErrorHosts []any = coalesce(gf["mtlsErrorHosts"], []any{}) -%}
       {%- if len(mtlsErrorHosts) > 0 -%}
-        {%- var locByHost = map[string]string{} -%}
-        {%- var seen = map[string]bool{} -%}
-        {%- var hostKeys = []any{} -%}
-        {%- for _, entry := range mtlsErrorHosts -%}
-          {%- var host = tostring(entry | dig("host")) -%}
-          {%- if host != "" && !seen[host] -%}
-            {%- seen[host] = true -%}
-            {%- locByHost[host] = tostring(entry | dig("location")) -%}
-            {%- hostKeys = append(hostKeys, host) -%}
-          {%- end -%}
-        {%- end -%}
-        {%- var sortedHosts = sort_strings(hostKeys) -%}
-        {%- var lines = []any{} -%}
-        {%- for _, host := range sortedHosts -%}
-          {%- lines = append(lines, tostring(host) + " " + locByHost[tostring(host)]) -%}
-        {%- end -%}
-        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" -%}
-        {%- var _, mapErr = fileRegistry.Register("map", "mtls-error.map", mapContent) -%}
-        {%- if mapErr != nil -%}{{ fail("failed to register mtls-error map: " + tostring(mapErr)) }}{%- end -%}
+        {{- HostKeyedMapFile(mtlsErrorHosts, "location", "mtls-error.map") -}}
       {%- end -%}
 
   features-190-hsts-map:
@@ -2147,30 +2149,13 @@ templateSnippets:
         gf["hstsHosts"]. Resource libraries register {host, value} entries in the
         features phase; frontend-filters-080-hsts emits the single shared
         response-header rule, so changing an HSTS value is a map-only, reload-free
-        update. First-writer-wins per host; hosts sorted for deterministic output.
+        update.
       #}
+      {%- import "util-host-keyed-map" for HostKeyedMapFile -%}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var hstsHosts []any = coalesce(gf["hstsHosts"], []any{}) -%}
       {%- if len(hstsHosts) > 0 -%}
-        {%- var valByHost = map[string]string{} -%}
-        {%- var seen = map[string]bool{} -%}
-        {%- var hostKeys = []any{} -%}
-        {%- for _, entry := range hstsHosts -%}
-          {%- var host = tostring(entry | dig("host")) -%}
-          {%- if host != "" && !seen[host] -%}
-            {%- seen[host] = true -%}
-            {%- valByHost[host] = tostring(entry | dig("value")) -%}
-            {%- hostKeys = append(hostKeys, host) -%}
-          {%- end -%}
-        {%- end -%}
-        {%- var sortedHosts = sort_strings(hostKeys) -%}
-        {%- var lines = []any{} -%}
-        {%- for _, host := range sortedHosts -%}
-          {%- lines = append(lines, tostring(host) + " " + valByHost[tostring(host)]) -%}
-        {%- end -%}
-        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" -%}
-        {%- var _, mapErr = fileRegistry.Register("map", "hsts.map", mapContent) -%}
-        {%- if mapErr != nil -%}{{ fail("failed to register hsts map: " + tostring(mapErr)) }}{%- end -%}
+        {{- HostKeyedMapFile(hstsHosts, "value", "hsts.map") -}}
       {%- end -%}
 
   frontend-filters-060-redirect-location:

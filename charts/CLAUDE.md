@@ -1736,7 +1736,12 @@ Scriggo supports both function call syntax and pipe syntax:
 | `resource(name)` | Per-render items of a watched resource named **dynamically** (`[]any` of boxed `*T`), sharing the same memoized objects as `resources.<name>.List()` so a `jsonpathSet` write is observed downstream. Governance layer only | `resource("ingresses")` |
 | `jsonpathGet(item, path)` | Read a **concrete** JSONPath out of any watched-resource item (dotted keys, `['bracket']` keys, `[n]` indices). Returns nil if absent | `jsonpathGet(ing, "metadata.annotations['x']")` |
 | `jsonpathSet(item, path, value)` | Write a concrete JSONPath into a resource item **in place** (annotations via a reflect fast path, other fields via a JSON round-trip); returns bool. Filtered/wildcard paths are rejected (validate-only) | `jsonpathSet(ing, "metadata.annotations['x']", "100")` |
-| `sort_by(slice, criteria)` | Sort by JSONPath | See sorting section |
+| `map(slice, fn)` | Apply a function to every element; length preserved, result type from the closure | `eps \| map(func(e EP) string { return e.TargetRef.Name })` |
+| `filter(slice, pred)` / `reject(slice, pred)` | Keep / drop elements a closure accepts. Type-preserving | `eps \| reject(func(e EP) bool { return e.Ready })` |
+| `flat_map(slice, fn)` | Map each element to a slice and concatenate, flattening ONE level | `resources.endpoints.List() \| flat_map(func(s *resources.endpoints.T) []EP { return s.Endpoints })` |
+| `unique(slice)` / `unique_by(slice, key)` | First occurrence per element / per key, input order preserved. `key` is a closure or an attribute path | `pairs \| unique_by("host")` |
+| `group_by(slice, key)` | Bucket into `map[string][]T`; iterate via `keys()` for deterministic output | `routes \| group_by(func(r R) string { return r.Host })` |
+| `sort_by(slice, criteria)` | Sort by JSONPath criteria **or** a `func(a, b T) int` comparator | See sorting section |
 | `sort_ints(slice)` | Sort `[]any` of ints numerically (non-ints coerced via `toint`, sort to front) — use for ports/IDs where `sort_strings` would misorder (`"10"` before `"2"`) | `sort_ints(ports)` |
 | `glob_match(names, pattern)` | Filter by glob | `glob_match(templates, "backend-*")` |
 | `selectattr(items, attr[, op, v])` | Jinja2-style filter: items where `attr` is truthy, or where `op` ∈ {`eq`,`ne`,`in`} matches `v` | `selectattr(rules, "host", "eq", h)` |
@@ -2139,6 +2144,61 @@ Sort slices using JSONPath criteria:
 - `:desc` - Descending order (default is ascending)
 - `:exists` - Sort by field existence (exists first)
 - `| length` - Sort by length of value
+
+`sort_by` also takes a comparator, for orderings the criteria language can't
+state. The sort is stable either way, and both forms preserve the element type:
+
+```scriggo
+{%- var byName = eps | sort_by(func(a EP, b EP) int {
+  if a.TargetRef.Name < b.TargetRef.Name { return -1 }
+  return 1
+}) %}
+```
+
+Prefer criteria for multi-key ordering — `[]string{"$.priority:desc", "$.name"}`
+is one line where the equivalent comparator is six.
+
+### Collection pipelines (ADR-0018)
+
+For the pure resource→text paths, chain type-preserving helpers instead of
+nesting loops around a hand-rolled `map[string]bool{}`:
+
+```scriggo
+{%%
+  type EP = resources.endpoints.Endpoints
+  var ready = resources.endpoints.List() |
+    flat_map(func(s *resources.endpoints.T) []EP { return s.Endpoints }) |
+    reject(func(e EP) bool { return e.TargetRef.Name == "" }) |
+    unique_by(func(e EP) string { return e.TargetRef.Name })
+%%}
+```
+
+Every field access is checked at engine compile time, so a typo or a renamed
+CRD field fails the load gate instead of rendering an empty map file.
+
+**Nested types are nameable.** Alongside `resources.<name>.T`, each nested shape
+is declared under its field path — `resources.endpoints.Endpoints`,
+`resources.gateways.SpecListeners`. Alias it once per snippet (`type EP = …`)
+rather than spelling the path at every stage. Resources without a loaded schema
+get no nested types, same as they get no typed `T`.
+
+**Rules that bite:**
+
+- **Trailing pipes, not leading.** Go's semicolon insertion ends the statement
+  otherwise: a line may end with `|`, but may not begin with one.
+- **Chains live in `{%% %%}`**, not `{{ }}` — a show expression cannot span
+  lines.
+- **A multi-return function cannot end a pipe.** A pipe carries one value, so
+  `sort_by` (which returns `(value, error)`) is a separate call.
+- **`map` preserves length; `flat_map` concatenates.** Use `flat_map` when the
+  closure returns a slice whose elements should be flattened in.
+
+**When NOT to chain.** Anything with side effects — `fail()`, `gf[…] =`,
+`fileRegistry.Register`, `WebhookRejectOrWarn`, `recordEvent`, `statusPatch` —
+or that needs `break`. Those stay `{%% %%}` blocks with typed accumulators.
+Chains longer than ~5 stages should also drop to a block. `map-pod-names-500-endpoints`
+in `base/library.yaml` is the worked hybrid: pipeline for the flatten and
+filter, loop for the part that needs two values at once.
 
 ### Whitespace Control
 

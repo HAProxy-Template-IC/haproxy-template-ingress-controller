@@ -84,7 +84,20 @@ Always check with `errors.As`; the wrapped `.Cause` carries the underlying Scrig
 
 ### Filters (pipe syntax, `{{ v | filter(args) }}`)
 
-`b64decode`, `glob_match`, `group_by`, `indent`, `sort_by` (supports `:desc`, `:exists`, `| length` modifiers), `debug`, `toJSON`, `strip`/`trim`, `to_str_map` (normalises any string-keyed map — typed `map[string]string`, untyped `map[string]any`, or generic `map[string]<T>` — into `map[string]string` for uniform iteration over labels / matchLabels / annotations).
+`b64decode`, `glob_match`, `indent`, `sort_by` (JSONPath criteria with `:desc`, `:exists`, `| length` modifiers, **or** a `func(a, b T) int` comparator), `debug`, `toJSON`, `strip`/`trim`, `to_str_map` (normalises any string-keyed map — typed `map[string]string`, untyped `map[string]any`, or generic `map[string]<T>` — into `map[string]string` for uniform iteration over labels / matchLabels / annotations).
+
+Collection pipeline (ADR-0018), all type-preserving: `map`, `filter`, `reject`, `flat_map`, `unique`, `unique_by`, `group_by`. Predicates and key functions are closures, so field access inside them is checked at engine compile time; `unique_by` and `group_by` also accept an attribute path for `any`-shaped data. A chain over a typed watched resource keeps typed field access at every stage:
+
+```scriggo
+{%%
+  type EP = resources.endpoints.Endpoints
+  var ready = resources.endpoints.List() |
+    flat_map(func(s *resources.endpoints.T) []EP { return s.Endpoints }) |
+    reject(func(e EP) bool { return e.TargetRef.Name == "" })
+%%}
+```
+
+Trailing pipes only (Go's semicolon insertion), chains live in `{%% %%}` rather than `{{ }}`, and a multi-return function such as `sort_by` cannot end a pipe.
 
 ### Functions (call syntax, `{{ fn(args) }}`)
 

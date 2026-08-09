@@ -287,6 +287,48 @@ const (
 	// Syntax: jsonpathSet(item, path, value) bool.
 	FuncJSONPathSet = "jsonpathSet"
 
+	// Collection pipeline helpers (ADR-0018). Each preserves its input's
+	// element type, so a chain over a typed watched resource keeps typed
+	// field access at every stage. Predicates are closures rather than
+	// JSONPath strings so field names are checked at engine compile time.
+	//
+	// FuncMap applies a function to every element, preserving length.
+	// Syntax: items | map(func(e T) U { ... }) returns []U.
+	// The name is available because the fork's parser resolves `map` as an
+	// identifier when it is not followed by `[`.
+	FuncMap = "map"
+
+	// FuncFilter keeps the elements a predicate accepts.
+	// Syntax: items | filter(func(e T) bool { ... }) returns []T.
+	FuncFilter = "filter"
+
+	// FuncReject drops the elements a predicate accepts, so a call site
+	// reads as a positive statement instead of a negated one.
+	// Syntax: items | reject(func(e T) bool { ... }) returns []T.
+	FuncReject = "reject"
+
+	// FuncFlatMap maps each element to a slice and concatenates the
+	// results, flattening exactly one level (not recursively).
+	// Syntax: items | flat_map(func(e T) []U { ... }) returns []U.
+	FuncFlatMap = "flat_map"
+
+	// FuncUnique keeps the first occurrence of each distinct element,
+	// preserving input order.
+	// Syntax: items | unique() returns []T.
+	FuncUnique = "unique"
+
+	// FuncUniqueBy keeps the first element per key, preserving input order.
+	// Replaces the hand-rolled map[string]bool{} dedup sets.
+	// Syntax: items | unique_by(func(e T) K { ... }) returns []T.
+	FuncUniqueBy = "unique_by"
+
+	// FuncGroupBy buckets elements by a string key, preserving input order
+	// within each bucket. Iterate the result via keys() — Go map order is
+	// not stable, and a reordered render reads as a change to the
+	// controller.
+	// Syntax: items | group_by(func(e T) string { ... }) returns map[string][]T.
+	FuncGroupBy = "group_by"
+
 	// FuncUntarGz expands a gzip-compressed tar archive into entry path →
 	// entry content. Syntax: untar_gz(archive) (map[string]string, error).
 	// Reports failure through the error return rather than panicking, so a

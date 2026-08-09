@@ -129,7 +129,10 @@ func registerScriggoRuntimeVars(decl native.Declarations) {
 // registerScriggoCustomFunctions registers all custom functions for Scriggo templates.
 func registerScriggoCustomFunctions(decl native.Declarations) {
 	// Custom filters as functions
-	decl[FilterSortBy] = scriggoSortBy
+	// Non-debug default; the engine constructor replaces it with a variant
+	// that reads the filter-debug flag. Both are AdaptiveFuncs so the call
+	// shapes and the static return type are identical either way.
+	decl[FilterSortBy] = sortByAdaptive(func() bool { return false })
 	decl[FilterGlobMatch] = scriggoGlobMatch
 	decl[FilterStrip] = scriggoStrip
 	decl[FilterTrim] = scriggoTrim
@@ -202,6 +205,8 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	// shard, instead of degrading every consumer to []any-with-dig().
 	decl[FuncShardSlice] = scriggoShardSliceAdaptive
 
+	registerScriggoPipelineFunctions(decl)
+
 	// Path utility functions
 	decl[FuncBasename] = scriggoBasename
 
@@ -219,6 +224,28 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 // helpers (statusPatch/condition/transitionTime/toJSON) and the recordEvent
 // Kubernetes-Event function. Split out of registerScriggoCustomFunctions to
 // keep that function within the statement-count limit.
+// registerScriggoPipelineFunctions registers the collection pipeline helpers.
+// All are AdaptiveFuncs, so a chain over a typed watched resource keeps its
+// element type at every stage instead of degrading to []any (ADR-0018).
+//
+// group_by and unique_by deliberately supersede scriggo/builtin's versions of
+// the same names: these accept a key closure as well as an attribute path, and
+// they preserve the input's element type. registerScriggoBuiltins must not
+// re-register them — it runs last and would shadow these.
+//
+// `map` is declarable at all because the fork's parser resolves it as an
+// identifier when the next token is not `[`. A map type always requires one,
+// so that position was previously an unconditional syntax error.
+func registerScriggoPipelineFunctions(decl native.Declarations) {
+	decl[FuncMap] = scriggoMapAdaptive
+	decl[FuncFilter] = scriggoFilterAdaptive
+	decl[FuncReject] = scriggoRejectAdaptive
+	decl[FuncFlatMap] = scriggoFlatMapAdaptive
+	decl[FuncUnique] = scriggoUniqueAdaptive
+	decl[FuncUniqueBy] = scriggoUniqueByAdaptive
+	decl[FuncGroupBy] = scriggoGroupByAdaptive
+}
+
 func registerStatusAndEventFunctions(decl native.Declarations) {
 	decl[FuncStatusPatch] = scriggoStatusPatch
 	decl[FuncCondition] = scriggoCondition
@@ -275,10 +302,13 @@ func registerScriggoBuiltinCore(decl native.Declarations) {
 	decl["reverse"] = builtin.Reverse
 
 	// slice operations (batch processing for performance)
-	decl["group_by"] = builtin.GroupBy
+	// group_by and unique_by are deliberately absent here: the pipeline
+	// helpers supersede builtin.GroupBy/UniqueBy with overloads that accept
+	// either an attribute path or a key closure, and that preserve the
+	// input's element type instead of widening to []any. Registering the
+	// builtins here would shadow them — this block runs last.
 	decl["count_by"] = builtin.CountBy
 	decl["index_by"] = builtin.IndexBy
-	decl["unique_by"] = builtin.UniqueBy
 	decl["map_extract"] = builtin.MapExtract
 
 	// strconv

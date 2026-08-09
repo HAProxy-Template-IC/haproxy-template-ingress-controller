@@ -132,9 +132,11 @@ func newScriggoEngine(templates map[string]string, entryPoints []string, customF
 	// (the `validate --debug-filters` flag) is active, it logs each comparison.
 	// The flag is read dynamically so a post-construction toggle (the testrunner
 	// builds worker engines and enables debug afterwards) is honored.
-	engine.globals[FilterSortBy] = func(items []any, criteria []string) ([]any, error) {
-		return sortByItems(items, criteria, engine.IsFilterDebugEnabled())
-	}
+	//
+	// This must stay an AdaptiveFunc to match the declaration
+	// registerScriggoCustomFunctions installs — a plain func here would shadow
+	// it and silently drop both the comparator call shape and type preservation.
+	engine.globals[FilterSortBy] = sortByAdaptive(engine.IsFilterDebugEnabled)
 
 	// Store raw templates (all templates, not just entry points)
 	maps.Copy(engine.rawTemplates, templates)
