@@ -26,7 +26,7 @@ svc := validation.NewValidationService(&validation.ValidationServiceConfig{
     Logger:            logger,
     Version:           &dataplane.Version{Major: 3, Minor: 2}, // schema selector; nil = v3.0
     SkipDNSValidation: false,                                  // true for runtime, false for webhook
-    SkipSemanticValidation: false,                             // true skips `haproxy -c` (fast reconcile pipeline)
+    SkipSemanticValidation: false,                             // true skips `haproxy -c`
     BaseDir:           "/etc/haproxy",                         // production default-path origin
     MapsDir:           "maps",                                 // relative names match RenderService
     SSLCertsDir:       "ssl",
@@ -42,7 +42,7 @@ result = svc.ValidateWithChecksum(ctx, haproxyConfig, auxFiles, checksum)
 // result.Valid, result.Phase, result.Error, result.ParsedConfig (for downstream Sync)
 ```
 
-Two fields' right values depend on the caller. `SkipDNSValidation`: the leader pipeline runs in **permissive** mode (true) so a temporarily-unresolvable backend hostname doesn't cause cascading reconciliation failures; the webhook runs in **strict** mode (false) so admission catches typos in service names before they reach production. `SkipSemanticValidation`: the leader-side reconcile pipeline sets it true to skip the `haproxy -c` phase after the iteration's first render, because that render already ran it and the Dataplane API runs its own `haproxy -c` before accepting a `/raw` push; the admission webhook and HTTP-store promotion paths keep it false.
+`SkipDNSValidation` is true in the shared controller pipeline so a temporarily unresolvable backend hostname doesn't cause cascading reconciliation failures. `SkipSemanticValidation` exists for offline callers with a stronger replacement gate; the controller pipeline leaves it false and runs `haproxy -c` for every changed render. Content-checksum caching makes identical drift-prevention renders return without repeating any phase.
 
 ## Caching Semantics
 
@@ -58,8 +58,8 @@ The cache lives on the `*ValidationService` instance. Constructing a new service
 
 - [`pkg/dataplane`](../../dataplane/) — `client-native` parser + the underlying three-phase validation primitives this service composes
 - [`pkg/controller/pipeline`](../pipeline/) — the only consumer; threads the content checksum from the renderer through to here
-- [`pkg/controller/proposalvalidator`](../proposalvalidator/) — webhook caller (strict mode)
-- [`pkg/controller/reconciler`](../reconciler/) — leader caller (permissive mode)
+- [`pkg/controller/proposalvalidator`](../proposalvalidator/) — webhook and HTTP-store caller
+- [`pkg/controller/reconciler`](../reconciler/) — leader caller
 
 ## License
 

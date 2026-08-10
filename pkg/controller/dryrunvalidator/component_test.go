@@ -473,22 +473,7 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 	assert.Contains(t, reason, "unsupported resource type")
 }
 
-// TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails verifies
-// the baseline-check semantics added to proposalvalidator.ValidateSync: when
-// the proposed render fails AND the baseline render (live stores without the
-// overlay) ALSO fails for the same reason, the new resource isn't the cause
-// of the failure and admission is allowed.
-//
-// The fixture uses a template of `{{ fail("invalid config") }}` — it
-// produces a render error regardless of overlay content, so both the
-// proposed and baseline runs fail identically. Pre-existing broken state in
-// production manifests this way (e.g., an Ingress whose Secret has been
-// deleted causes every render to fail until the Ingress or Secret is fixed).
-// Under the previous "deny on any failure" policy, every webhook admission
-// would be denied in that situation, blocking unrelated work. The
-// baseline-check policy admits unrelated proposals so they aren't gated on
-// an operator fixing the pre-existing failure first.
-func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *testing.T) {
+func TestValidateDirect_AlwaysFailingTemplate_Denies(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	failingEngine, err := templating.New(map[string]string{"haproxy.cfg": `{{ fail("invalid config") }}`}, nil)
@@ -539,14 +524,8 @@ func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *test
 		"CREATE",
 	)
 
-	assert.True(t, allowed,
-		"baseline-also-fails MUST admit the proposal — the alternative is "+
-			"denying every unrelated admission whenever the cluster has any "+
-			"broken pre-existing state, which is the production reliability "+
-			"bug the baseline check fixes")
-	assert.Empty(t, reason,
-		"on admit no denial reason should be surfaced — the proposed-render "+
-			"failure is logged at warn but not propagated as a denial message")
+	assert.False(t, allowed)
+	assert.Contains(t, reason, "invalid config")
 }
 
 // createMockProposalValidator creates a minimal ProposalValidator for testing.

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -42,8 +43,28 @@ func ValidateStructure(cfg *Config) error {
 		return fmt.Errorf("watched_resources: %w", err)
 	}
 
+	if err := validateValidators(cfg.Validators); err != nil {
+		return fmt.Errorf("validators: %w", err)
+	}
+
 	// Validate requires references (snippets/tests → watched resources)
 	return validateRequires(cfg)
+}
+
+func validateValidators(validators []ValidatorConfig) error {
+	for _, validator := range validators {
+		for _, pattern := range validator.Files {
+			if _, err := filepath.Match(pattern, ""); err != nil {
+				return fmt.Errorf("%s.files: invalid glob %q: %w", validator.Name, pattern, err)
+			}
+		}
+		for _, pattern := range validator.DataFiles {
+			if _, err := filepath.Match(pattern, ""); err != nil {
+				return fmt.Errorf("%s.data_files: invalid glob %q: %w", validator.Name, pattern, err)
+			}
+		}
+	}
+	return nil
 }
 
 // ValidateMergedCompleteness checks the requirements the CRD schema can no

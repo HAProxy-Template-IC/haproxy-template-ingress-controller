@@ -693,8 +693,7 @@ type ValidatorConfig struct {
 
 	// Files is the list of glob patterns matched against rendered
 	// file paths to decide which files to send to this validator.
-	// Globs follow Go's `path/filepath.Match` rules; absolute paths
-	// only.
+	// Globs follow Go's `path/filepath.Match` rules.
 	Files []string `yaml:"files"`
 
 	// DataFiles is the list of glob patterns for files this validator needs

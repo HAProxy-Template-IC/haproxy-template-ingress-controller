@@ -116,6 +116,14 @@ type PipelineResult struct {
 	// May be nil if validation cache was used.
 	// When non-nil, can be passed to downstream sync operations to avoid re-parsing.
 	ParsedConfig *parser.StructuredConfig
+
+	// ValidationWarnings contains non-fatal diagnostics produced after render.
+	ValidationWarnings []string
+}
+
+// RenderedOutputValidator validates the complete rendered file set.
+type RenderedOutputValidator interface {
+	ValidateRenderedOutput(ctx context.Context, result *PipelineResult) (warnings []string, err error)
 }
 
 // Pipeline composes render and validate services into a single workflow.
@@ -129,9 +137,10 @@ type PipelineResult struct {
 // - ReconciliationCoordinator for normal reconciliation flow
 // - ProposalValidator for validation-only requests.
 type Pipeline struct {
-	renderer  *renderer.RenderService
-	validator *validation.ValidationService
-	logger    *slog.Logger
+	renderer        *renderer.RenderService
+	validator       *validation.ValidationService
+	outputValidator RenderedOutputValidator
+	logger          *slog.Logger
 }
 
 // PipelineConfig contains configuration for creating a Pipeline.
@@ -141,6 +150,9 @@ type PipelineConfig struct {
 
 	// Validator is the validation service for checking configuration.
 	Validator *validation.ValidationService
+
+	// OutputValidator optionally validates rendered auxiliary formats.
+	OutputValidator RenderedOutputValidator
 
 	// Logger is the structured logger for logging.
 	Logger *slog.Logger
@@ -165,9 +177,10 @@ func New(cfg *PipelineConfig) *Pipeline {
 	}
 
 	return &Pipeline{
-		renderer:  cfg.Renderer,
-		validator: cfg.Validator,
-		logger:    logger,
+		renderer:        cfg.Renderer,
+		validator:       cfg.Validator,
+		outputValidator: cfg.OutputValidator,
+		logger:          logger,
 	}
 }
 
@@ -255,6 +268,25 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 		TotalDurationMs:    time.Since(startTime).Milliseconds(),
 		ValidationPhase:    validationResult.Phase,
 		ParsedConfig:       validationResult.ParsedConfig,
+	}
+
+	if validationResult.Valid && p.outputValidator != nil {
+		validationStart := time.Now()
+		warnings, outputErr := p.outputValidator.ValidateRenderedOutput(ctx, result)
+		result.ValidationWarnings = warnings
+		result.ValidateDurationMs += time.Since(validationStart).Milliseconds()
+		result.TotalDurationMs = time.Since(startTime).Milliseconds()
+
+		combined := *validationResult
+		combined.Warnings = warnings
+		combined.DurationMs = result.ValidateDurationMs
+		if outputErr != nil {
+			combined.Valid = false
+			combined.Phase = "external"
+			combined.Error = outputErr
+		}
+		validationResult = &combined
+		result.ValidationPhase = validationResult.Phase
 	}
 
 	return result, validationResult, nil

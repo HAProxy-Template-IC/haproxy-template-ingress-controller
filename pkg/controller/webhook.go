@@ -32,7 +32,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
@@ -133,7 +132,7 @@ func setupWebhook(
 			Path:                     webhook.DefaultWebhookPath,
 			Rules:                    rules,
 			CertDir:                  webhookCertDir,
-			DryRunValidator:          dryrunValidator, // Direct validation, nil = fail-open
+			DryRunValidator:          dryrunValidator,
 			ResourceAdmissionTimeout: admissionTimeouts.Resource,
 			Server:                   sharedServer,
 		},
@@ -189,7 +188,7 @@ func createDryRunValidator(
 	bus *busevents.EventBus,
 	storeProvider stores.StoreProvider,
 	wiring *reconciliationWiring,
-	pluggableValidator *pluggablevalidator.Manager,
+	outputValidator pipeline.RenderedOutputValidator,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, error) {
 	rules := webhook.ExtractWebhookRules(cfg)
@@ -259,7 +258,7 @@ func createDryRunValidator(
 		GeneralDir:        dirConfig.GeneralDir,
 	})
 
-	return buildDryRunValidator(bus, renderService, validationService, storeProvider, pluggableValidator, wiring.gvrMapper, logger), nil
+	return buildDryRunValidator(bus, renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, logger), nil
 }
 
 // buildDryRunValidator constructs the watched-resource admission validator.
@@ -273,14 +272,15 @@ func buildDryRunValidator(
 	renderService *renderer.RenderService,
 	validationService *validation.ValidationService,
 	baseStoreProvider stores.StoreProvider,
-	pluggableValidator *pluggablevalidator.Manager,
+	outputValidator pipeline.RenderedOutputValidator,
 	gvrMapper meta.RESTMapper,
 	logger *slog.Logger,
 ) *dryrunvalidator.Component {
 	pipelineInstance := pipeline.New(&pipeline.PipelineConfig{
-		Renderer:  renderService,
-		Validator: validationService,
-		Logger:    logger,
+		Renderer:        renderService,
+		Validator:       validationService,
+		OutputValidator: outputValidator,
+		Logger:          logger,
 	})
 
 	// ProposalValidator in sync-only mode (only ValidateSync() is used for
@@ -301,10 +301,9 @@ func buildDryRunValidator(
 	// run here — they are chart-author scenarios with their own fixtures,
 	// executed in CI via `haptic-controller validate` / `make test-templates`.
 	return dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
-		ProposalValidator:  proposalValidatorInstance,
-		RESTMapper:         gvrMapper,
-		Logger:             logger,
-		PluggableValidator: pluggableValidator,
+		ProposalValidator: proposalValidatorInstance,
+		RESTMapper:        gvrMapper,
+		Logger:            logger,
 	})
 }
 
@@ -330,9 +329,10 @@ func setupReconciliation(
 	currentConfigStore *currentconfigstore.Store,
 	currentAuxFiles func() map[string]string,
 	storeProvider stores.StoreProvider,
+	outputValidator pipeline.RenderedOutputValidator,
 	logger *slog.Logger,
 ) (*reconciliationWiring, error) {
-	wiring, err := createReconciliationComponents(setup, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, currentAuxFiles, storeProvider, logger)
+	wiring, err := createReconciliationComponents(setup, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, currentAuxFiles, storeProvider, outputValidator, logger)
 	if err != nil {
 		return nil, err
 	}

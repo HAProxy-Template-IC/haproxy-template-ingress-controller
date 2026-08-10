@@ -198,11 +198,8 @@ func (m *mockMetricsRecorder) RecordWebhookValidation(gvk, result string) {
 	m.validationLabels = append(m.validationLabels, [2]string{gvk, result})
 }
 
-// An AdmissionReview for a kind no validator backs is admitted unchecked, so
-// the only defence is that it is reported. The gvk is read off the wire and the
-// listener does not require client certificates, so it must never reach a
-// Prometheus label: a label value keeps its series forever, and anything able
-// to reach the Service could mint an unbounded set of them.
+// The GVK is read off the wire and must not reach a Prometheus label because
+// an arbitrary caller could create unbounded metric cardinality.
 func TestComponent_reportUnregisteredGVK(t *testing.T) {
 	tests := []struct {
 		name string
@@ -370,8 +367,9 @@ func TestComponent_registerValidators(t *testing.T) {
 		}
 
 		config := &Config{
-			CertPEM: certPEM,
-			KeyPEM:  keyPEM,
+			CertPEM:         certPEM,
+			KeyPEM:          keyPEM,
+			DryRunValidator: &mockDryRunValidator{allowed: true},
 			Rules: []WebhookRule{
 				{
 					APIGroup:   "networking.k8s.io",
@@ -396,22 +394,19 @@ func TestComponent_registerValidators(t *testing.T) {
 			KeyPEM:  config.KeyPEM,
 		})
 
-		// This should not panic and should register validators
-		component.registerValidators()
-
-		// We can't directly verify registered validators without more mocking,
-		// but at least we verify it doesn't error
+		require.NoError(t, component.registerValidators())
 	})
 
-	t.Run("skips rules with RESTMapper errors", func(t *testing.T) {
+	t.Run("rejects a table with RESTMapper errors", func(t *testing.T) {
 		// Empty mapper that will return errors for all lookups
 		mapper := &mockRESTMapper{
 			kindForResults: map[string]string{},
 		}
 
 		config := &Config{
-			CertPEM: certPEM,
-			KeyPEM:  keyPEM,
+			CertPEM:         certPEM,
+			KeyPEM:          keyPEM,
+			DryRunValidator: &mockDryRunValidator{allowed: true},
 			Rules: []WebhookRule{
 				{
 					APIGroup:   "unknown.group",
@@ -431,8 +426,9 @@ func TestComponent_registerValidators(t *testing.T) {
 			KeyPEM:  config.KeyPEM,
 		})
 
-		// This should log error but not panic
-		component.registerValidators()
+		err := component.registerValidators()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown.group/v1/unknowns")
 	})
 
 	t.Run("handles empty rules", func(t *testing.T) {
@@ -456,9 +452,42 @@ func TestComponent_registerValidators(t *testing.T) {
 			KeyPEM:  config.KeyPEM,
 		})
 
-		// Should handle empty rules gracefully
-		component.registerValidators()
+		require.NoError(t, component.registerValidators())
 	})
+}
+
+func TestComponent_registerValidators_RequiresDryRunValidator(t *testing.T) {
+	certPEM, keyPEM := generateTestCertPEM(t)
+	component := New(testutil.NewTestLogger(), &Config{
+		CertPEM: certPEM,
+		KeyPEM:  keyPEM,
+		Rules: []WebhookRule{{
+			APIVersion: "v1",
+			Resource:   "configmaps",
+		}},
+	}, &mockRESTMapper{kindForResults: map[string]string{"/v1/configmaps": "ConfigMap"}}, nil)
+	component.server, _ = webhook.NewServer(&webhook.ServerConfig{
+		CertPEM: certPEM,
+		KeyPEM:  keyPEM,
+	})
+
+	err := component.registerValidators()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "without a dry-run validator")
+}
+
+func TestComponent_createResourceValidator_MissingDryRunValidatorDenies(t *testing.T) {
+	component := New(testutil.NewTestLogger(), &Config{}, nil, nil)
+	validator := component.createResourceValidator("v1.ConfigMap")
+	obj := &unstructured.Unstructured{}
+	obj.SetName("test")
+
+	allowed, reason, _, err := validator(&webhook.ValidationContext{Object: obj})
+
+	assert.False(t, allowed)
+	assert.Contains(t, reason, "validation is unavailable")
+	assert.NoError(t, err)
 }
 
 // mockDryRunValidator is a mock implementation of DryRunValidator.
@@ -489,34 +518,6 @@ func TestComponent_createResourceValidator_ReturnsFunction(t *testing.T) {
 	validator := component.createResourceValidator("v1.ConfigMap")
 
 	require.NotNil(t, validator)
-}
-
-func TestComponent_createResourceValidator_NilDryRunValidator(t *testing.T) {
-	config := &Config{
-		CertPEM: []byte("test-cert"),
-		KeyPEM:  []byte("test-key"),
-		// DryRunValidator is nil - fail-open behavior
-	}
-	component := New(testutil.NewTestLogger(), config, nil, nil)
-	validator := component.createResourceValidator("v1.ConfigMap")
-
-	// Create a valid unstructured object
-	obj := &unstructured.Unstructured{}
-	obj.SetName("test-config")
-
-	valCtx := &webhook.ValidationContext{
-		Operation: "CREATE",
-		Namespace: "default",
-		Name:      "test",
-		Object:    obj,
-	}
-
-	allowed, reason, _, err := validator(valCtx)
-
-	// Should allow (fail-open) when no DryRunValidator configured
-	assert.True(t, allowed)
-	assert.Empty(t, reason)
-	assert.NoError(t, err)
 }
 
 func TestComponent_createResourceValidator_BasicValidationFails(t *testing.T) {

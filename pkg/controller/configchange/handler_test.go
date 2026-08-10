@@ -714,13 +714,12 @@ func TestConfigChangeHandler_NegativeDebounceInterval(t *testing.T) {
 		"negative debounce interval should use default")
 }
 
-func TestConfigChangeHandler_EventsSkippedDuringBootstrap(t *testing.T) {
-	// This test verifies that ALL ConfigValidatedEvents are skipped during bootstrap
-	// (before EnableReinitialization is called), preventing the infinite reinitialization loop.
+func TestConfigChangeHandler_QueuesLatestChangeDuringBootstrap(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+	handler.SetInitialConfigVersion("v1")
 
 	bus.Start()
 
@@ -729,37 +728,27 @@ func TestConfigChangeHandler_EventsSkippedDuringBootstrap(t *testing.T) {
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish multiple ConfigValidatedEvents during bootstrap
-	// All should be skipped since EnableReinitialization hasn't been called
-	for i := 1; i <= 3; i++ {
-		testConfig := &coreconfig.Config{}
-		bus.Publish(events.NewConfigValidatedEvent(testConfig, nil, fmt.Sprintf("v%d", i), ""))
-		time.Sleep(testDebounceInterval + 50*time.Millisecond)
-
-		select {
-		case <-configCh:
-			t.Fatalf("unexpected config signal for bootstrap event %d", i)
-		case <-time.After(testutil.NoEventTimeout):
-			// Expected - all events skipped during bootstrap
-		}
-	}
-
-	// Enable reinitialization (simulating startup complete)
-	handler.EnableReinitialization()
-
-	// Publish a new ConfigValidatedEvent
-	testConfig := &coreconfig.Config{}
-	bus.Publish(events.NewConfigValidatedEvent(testConfig, nil, "v4", "sv4"))
-
-	// Wait for debounce
+	initialConfig := &coreconfig.Config{}
+	queuedConfig := &coreconfig.Config{}
+	latestConfig := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(initialConfig, nil, "v1", ""))
+	bus.Publish(events.NewConfigValidatedEvent(queuedConfig, nil, "v2", ""))
+	bus.Publish(events.NewConfigValidatedEvent(latestConfig, nil, "v3", ""))
 	time.Sleep(testDebounceInterval + 50*time.Millisecond)
 
-	// Should signal controller now that reinitialization is enabled
+	select {
+	case <-configCh:
+		t.Fatal("startup change signaled before reinitialization was enabled")
+	case <-time.After(testutil.NoEventTimeout):
+	}
+
+	handler.EnableReinitialization()
+
 	select {
 	case cfg := <-configCh:
-		assert.Equal(t, testConfig, cfg)
+		assert.Same(t, latestConfig, cfg)
 	case <-time.After(testutil.LongTimeout):
-		t.Fatal("timeout waiting for config signal after EnableReinitialization")
+		t.Fatal("timeout waiting for queued startup change")
 	}
 }
 
@@ -773,6 +762,7 @@ func TestConfigChangeHandler_BootstrapEventOrderingSyntheticThenReal(t *testing.
 	configCh := make(chan *coreconfig.Config, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+	handler.SetInitialConfigVersion("4026")
 
 	bus.Start()
 
@@ -793,7 +783,7 @@ func TestConfigChangeHandler_BootstrapEventOrderingSyntheticThenReal(t *testing.
 		// Expected - synthetic event skipped
 	}
 
-	// Step 2: Watcher bootstrap event (during startup)
+	// Step 2: Watcher bootstrap event matches the fetched version.
 	testConfig2 := &coreconfig.Config{}
 	bus.Publish(events.NewConfigValidatedEvent(testConfig2, nil, "4026", "sv1"))
 	time.Sleep(testDebounceInterval + 50*time.Millisecond)
@@ -828,6 +818,7 @@ func TestConfigChangeHandler_HandleCredentialsUpdated_SignalsRotation(t *testing
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+	handler.SetInitialConfigVersion("v1")
 
 	bus.Start()
 	go handler.Start(t.Context())
@@ -862,6 +853,38 @@ func TestConfigChangeHandler_HandleCredentialsUpdated_SignalsRotation(t *testing
 	}
 }
 
+func TestConfigChangeHandler_QueuesCredentialsRotationDuringBootstrap(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 1)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+	handler.SetInitialConfigVersion("config-bootstrap")
+	handler.SetInitialCredentialsVersion("credentials-bootstrap")
+
+	bus.Start()
+	go handler.Start(t.Context())
+	time.Sleep(testutil.StartupDelay)
+
+	cachedConfig := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(cachedConfig, nil, "config-bootstrap", ""))
+	bus.Publish(events.NewCredentialsUpdatedEvent(nil, "credentials-rotated"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+
+	select {
+	case <-configCh:
+		t.Fatal("credentials rotation signaled before startup completed")
+	case <-time.After(testutil.NoEventTimeout):
+	}
+
+	handler.EnableReinitialization()
+
+	select {
+	case cfg := <-configCh:
+		assert.Same(t, cachedConfig, cfg)
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("timeout waiting for queued credentials rotation")
+	}
+}
+
 // TestConfigChangeHandler_HandleSecretRotation_SkipsSyntheticInitialEvent
 // pins the regression that caused issue #46: webhook.go publishes a
 // synthetic CredentialsUpdatedEvent("initial") during iteration startup
@@ -881,6 +904,7 @@ func TestConfigChangeHandler_HandleSecretRotation_SkipsSyntheticInitialEvent(t *
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+	handler.SetInitialConfigVersion("v1")
 
 	bus.Start()
 	go handler.Start(t.Context())

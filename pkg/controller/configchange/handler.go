@@ -111,6 +111,7 @@ type ConfigChangeHandler struct {
 	validationInFlight bool
 	queuedParsed       *events.ConfigParsedEvent
 	validationDone     chan struct{}
+	startupReplay      chan busevents.Event
 
 	// Mutex for initialConfigVersion and reinitializationEnabled
 	mu sync.RWMutex
@@ -141,14 +142,13 @@ type ConfigChangeHandler struct {
 	// re-observes the same Secret.
 	initialCredentialsVersion string
 
-	// reinitializationEnabled controls whether ConfigValidatedEvents trigger reinitialization.
-	// During startup, multiple ConfigValidatedEvents can occur:
-	// 1. Synthetic event (version="initial") - always skipped
-	// 2. Watcher event from OnSyncComplete - skipped during bootstrap
-	// All events are skipped until EnableReinitialization() is called after startup completes.
-	// Note: CRDWatcher uses generation-based filtering, so status-only updates don't
-	// trigger ConfigValidatedEvents in the first place.
+	// reinitializationEnabled separates bootstrap echoes from concurrent updates.
+	// Exact startup versions are ignored; newer versions are queued for replay.
 	reinitializationEnabled bool
+
+	// Changes newer than the fetched startup versions are replayed after startup.
+	pendingStartupConfig      *events.ConfigValidatedEvent
+	pendingStartupCredentials *events.CredentialsUpdatedEvent
 }
 
 // NewConfigChangeHandler creates a new ConfigChangeHandler.
@@ -199,6 +199,7 @@ func NewConfigChangeHandler(
 		// Capacity 1 suffices: single-flight means at most one validation
 		// goroutine has a completion to signal, so the send never blocks.
 		validationDone: make(chan struct{}, 1),
+		startupReplay:  make(chan busevents.Event, 2),
 	}
 }
 
@@ -253,9 +254,20 @@ func (h *ConfigChangeHandler) SetEffectiveResolver(resolve func(*coreconfig.Conf
 // don't increment generation) never trigger ConfigValidatedEvents in the first place.
 func (h *ConfigChangeHandler) EnableReinitialization() {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.reinitializationEnabled = true
+	pendingConfig := h.pendingStartupConfig
+	pendingCredentials := h.pendingStartupCredentials
+	h.pendingStartupConfig = nil
+	h.pendingStartupCredentials = nil
+	h.mu.Unlock()
+
 	h.logger.Debug("Reinitialization signaling enabled (startup complete)")
+	if pendingConfig != nil {
+		h.startupReplay <- pendingConfig
+	}
+	if pendingCredentials != nil {
+		h.startupReplay <- pendingCredentials
+	}
 }
 
 // Start begins processing events from the EventBus.
@@ -298,6 +310,8 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 				// version.
 				h.startOrQueueValidation(ctx, h.coalesceToLatestParsed(next))
 			}
+		case event := <-h.startupReplay:
+			h.dispatchSideEvent(event)
 		case event := <-h.eventChan:
 			// ConfigParsedEvent is coalesced against anything newer already
 			// queued, then validated asynchronously (single-flight) so this
@@ -507,7 +521,7 @@ func (h *ConfigChangeHandler) dispatchSideEvent(event busevents.Event) {
 	case *events.BecameLeaderEvent:
 		h.handleBecameLeader(e)
 	case *events.CredentialsUpdatedEvent:
-		h.handleSecretRotation("credentials", e.SecretVersion, &h.initialCredentialsVersion)
+		h.handleSecretRotation("credentials", e, &h.initialCredentialsVersion)
 	default:
 		h.logger.Warn("ConfigChangeHandler received an unhandled event type; dropping",
 			"type", fmt.Sprintf("%T", event))
@@ -545,28 +559,23 @@ func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidate
 		return
 	}
 
-	// Read reinitialization state
-	h.mu.RLock()
+	h.mu.Lock()
 	reinitEnabled := h.reinitializationEnabled
 	initialVersion := h.initialConfigVersion
-	h.mu.RUnlock()
-
-	// During startup (before EnableReinitialization is called), skip all events.
-	// Multiple events occur during startup (watcher sync) that should not trigger
-	// reinitialization. Note: CRDWatcher uses generation-based filtering, so status-only
-	// updates never trigger ConfigValidatedEvents in the first place.
-	if !reinitEnabled {
-		h.logger.Debug("Ignoring ConfigValidatedEvent (reinitialization disabled during startup)",
-			"version", event.Version)
-		return
-	}
-
-	// Version-based check as safety fallback (e.g., if SetInitialConfigVersion was called)
 	if initialVersion != "" && event.Version == initialVersion {
+		h.mu.Unlock()
 		h.logger.Debug("Ignoring ConfigValidatedEvent (matches initial config version)",
 			"version", event.Version)
 		return
 	}
+	if !reinitEnabled {
+		h.pendingStartupConfig = event
+		h.mu.Unlock()
+		h.logger.Debug("Queued ConfigValidatedEvent received during startup",
+			"version", event.Version)
+		return
+	}
+	h.mu.Unlock()
 
 	// Extract the config
 	cfg, ok := event.Config.(*coreconfig.Config)
@@ -598,7 +607,8 @@ func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidate
 // any component (notably the webhook server) starts up — there's no
 // hot-rotation in any individual component. This mirrors how CRD changes
 // flow through the same channel.
-func (h *ConfigChangeHandler) handleSecretRotation(kind, version string, initialVersion *string) {
+func (h *ConfigChangeHandler) handleSecretRotation(kind string, event *events.CredentialsUpdatedEvent, initialVersion *string) {
+	version := event.SecretVersion
 	// Skip synthetic bootstrap events (version="initial"). webhook.go
 	// publishes a placeholder CredentialsUpdatedEvent("initial") during
 	// iteration startup so components subscribing to credentials state
@@ -625,21 +635,25 @@ func (h *ConfigChangeHandler) handleSecretRotation(kind, version string, initial
 		return
 	}
 
-	h.mu.RLock()
+	h.mu.Lock()
 	reinitEnabled := h.reinitializationEnabled
 	bootstrap := *initialVersion
-	h.mu.RUnlock()
-
-	if !reinitEnabled {
-		h.logger.Debug("Ignoring "+kind+" Secret rotation (reinitialization disabled during startup)",
-			"version", version)
-		return
-	}
 	if bootstrap != "" && version == bootstrap {
+		h.mu.Unlock()
 		h.logger.Debug("Ignoring "+kind+" Secret bootstrap event (matches initial version)",
 			"version", version)
 		return
 	}
+	if !reinitEnabled {
+		if kind == "credentials" {
+			h.pendingStartupCredentials = event
+		}
+		h.mu.Unlock()
+		h.logger.Debug("Queued "+kind+" Secret rotation received during startup",
+			"version", version)
+		return
+	}
+	h.mu.Unlock()
 
 	cfg, ok := h.configReplayer.Get()
 	if !ok || cfg == nil {

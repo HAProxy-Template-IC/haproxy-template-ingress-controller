@@ -187,10 +187,7 @@ type ServerConfig struct {
 	IdleTimeout time.Duration
 
 	// OnUnregisteredGVK, when set, is called for an AdmissionReview whose GVK
-	// has no registered validator. Such a request is still admitted — nothing
-	// is registered that could judge it — but it means the API server is
-	// routing a rule that no validator backs, so the gate is open for that
-	// kind. Reporting is the caller's (a logger and a counter live there);
-	// what matters here is that the path is never silent.
+	// has no registered validator. The request is denied because the API server
+	// routed it to this validation endpoint without a matching validator.
 	OnUnregisteredGVK func(gvk string)
 }

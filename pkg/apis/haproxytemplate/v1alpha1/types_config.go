@@ -122,13 +122,13 @@ type HAProxyTemplateConfigSpec struct {
 	WatchedResources map[string]WatchedResource `json:"watchedResources,omitempty"`
 
 	// Validators declares pluggable validator sidecars consulted by the
-	// admission webhook before admitting changes that affect plugin
-	// configuration. See `docs/site/docs/operations/pluggable-validators.md`
+	// controller before publishing rendered configuration. See
+	// `docs/site/docs/operations/pluggable-validators.md`
 	// for setup; the wire protocol is at
 	// `docs/development/validator-protocol.md`.
 	//
 	// An empty list (the default) disables pluggable validation — the
-	// webhook keeps performing template + HAProxy syntax dry-run only.
+	// controller keeps performing its built-in validation only.
 	// +optional
 	// +listType=map
 	// +listMapKey=name

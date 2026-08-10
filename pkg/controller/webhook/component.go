@@ -148,7 +148,7 @@ type Config struct {
 	Rules []WebhookRule
 
 	// DryRunValidator performs dry-run validation of resources.
-	// If nil, validation is skipped (fail-open).
+	// Required when Rules is non-empty.
 	DryRunValidator DryRunValidator
 
 	// ResourceAdmissionTimeout bounds watched-resource dry-run validation.
@@ -266,7 +266,9 @@ func (c *Component) Start(ctx context.Context) error {
 	}
 	c.server = server
 
-	c.registerValidators()
+	if err := c.registerValidators(); err != nil {
+		return err
+	}
 
 	// Create server context
 	c.serverCtx, c.serverCancel = context.WithCancel(ctx)
@@ -329,7 +331,9 @@ func (c *Component) startAdopted(ctx context.Context) error {
 	// The server outlives the recorder that was current when it was built.
 	c.server.SetOnUnregisteredGVK(c.reportUnregisteredGVK)
 
-	c.registerValidators()
+	if err := c.registerValidators(); err != nil {
+		return err
+	}
 
 	// The caller bound the listener before handing it over, so readiness is
 	// already satisfied — the sequencer must not block waiting for a bind that
@@ -398,10 +402,12 @@ func (c *Component) resolveKind(apiGroup, apiVersion, resource string) (string, 
 // The table is built in full and installed in ONE SetValidators call rather
 // than registered kind by kind. Incremental registration can only ever add, so
 // it cannot express "this kind is no longer validated" — and it would leave the
-// server serving a half-built table for the duration of the loop, during which
-// a request for a not-yet-registered kind is admitted unchecked.
-func (c *Component) registerValidators() {
+// server serving a half-built table for the duration of the loop.
+func (c *Component) registerValidators() error {
 	c.logger.Info("Registering validators")
+	if len(c.config.Rules) > 0 && c.dryRunValidator == nil {
+		return errors.New("webhook rules configured without a dry-run validator")
+	}
 	validators := make(map[string]webhook.ValidationFunc)
 
 	// For each webhook rule, register a validator
@@ -416,12 +422,8 @@ func (c *Component) registerValidators() {
 			rule.Resource,
 		)
 		if err != nil {
-			c.logger.Error("Failed to resolve kind, skipping validator registration",
-				"error", err,
-				"api_group", rule.APIGroup,
-				"api_version", rule.APIVersion,
-				"resource", rule.Resource)
-			continue
+			return fmt.Errorf("registering validator for %s/%s/%s: %w",
+				rule.APIGroup, rule.APIVersion, rule.Resource, err)
 		}
 
 		gvk := c.buildGVK(rule.APIGroup, rule.APIVersion, kind)
@@ -435,6 +437,7 @@ func (c *Component) registerValidators() {
 	}
 
 	c.server.SetValidators(validators)
+	return nil
 }
 
 // buildGVK constructs a GVK string from API group, version, and kind.
@@ -480,19 +483,18 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 
 		// Dry-run validation (synchronous call into dryrunvalidator.ValidateDirect).
 		if c.dryRunValidator == nil {
-			// Fail-open if no validator configured
-			c.logger.Warn("No dry-run validator configured, allowing resource",
+			c.logger.Error("No dry-run validator configured; denying resource",
 				"gvk", gvk,
 				"namespace", valCtx.Namespace,
 				"name", valCtx.Name)
 
 			duration := time.Since(start).Seconds()
 			if c.metrics != nil {
-				c.metrics.RecordWebhookRequest(gvk, "allowed", duration)
-				c.metrics.RecordWebhookValidation(gvk, "allowed")
+				c.metrics.RecordWebhookRequest(gvk, "denied", duration)
+				c.metrics.RecordWebhookValidation(gvk, "denied")
 			}
 
-			return true, "", nil, nil
+			return false, "validation is unavailable; retry after controller initialization", nil, nil
 		}
 
 		// Derive from c.serverCtx (set in Start()) so iteration shutdown
@@ -570,14 +572,10 @@ func (c *Component) validateBasicStructure(object any) error {
 	return nil
 }
 
-// reportUnregisteredGVK records an AdmissionReview the API server routed here
-// for a kind no validator backs. It is admitted unchecked — nothing registered
-// can judge it — so the only defence is that it is loud: a rule in the
-// ValidatingWebhookConfiguration whose validator failed to register (a
-// RESTMapper miss, a kind dropped from watchedResources) leaves the gate open
-// for that kind, and silence would make it indistinguishable from a clean pass.
+// reportUnregisteredGVK records a routed AdmissionReview that was denied
+// because its kind has no validator.
 func (c *Component) reportUnregisteredGVK(gvk string) {
-	c.logger.Warn("Admission request for a kind with no registered validator; admitted unchecked",
+	c.logger.Error("Admission request denied because its kind has no registered validator",
 		"gvk", gvk)
 	if c.metrics != nil {
 		// The gvk is read off the AdmissionReview, and the listener does not

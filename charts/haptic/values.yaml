@@ -429,16 +429,15 @@ controller:
       enabled: false
   # Pluggable validator sidecar
   # Runs a second instance of the haproxy-spoa-hub binary alongside the
-  # controller pod, in --validate-socket mode. The admission webhook
-  # consults it on every Ingress / HTTPRoute change to reject manifests
-  # whose plugin TOML (e.g. coraza modsecurity-snippet) is broken before
-  # they reach the data plane. Loads the same plugins and config.toml as
+  # controller pod, in --validate-socket mode. Every render pipeline
+  # consults it to reject plugin TOML (e.g. coraza modsecurity-snippet)
+  # that would be broken on the data plane. Loads the same plugins and config.toml as
   # the HAProxy-side sidecar (so the validator and runtime see identical
   # plugin behavior). Communicates via a Unix socket on a shared emptyDir.
   validators:
     # Master enable. Leave as null to auto-derive from the spoa-hub
     # sidecar's own enable (the typical case — plugins that need
-    # admission-time validation are the same plugins that run on the
+    # rendered-output validation are the same plugins that run on the
     # data plane). Set to false to force the validator sidecar off.
     # Set to true to render it even when spoaHub is off (useful for
     # bench/test setups validating template fragments without a
@@ -452,7 +451,7 @@ controller:
     # entries below.
     socketName: spoa-hub.sock
     # Resource requests/limits for the validator sidecar. Validation is
-    # bursty (admission webhooks are infrequent) so this is sized small.
+    # content-cached and typically bursty, so this is sized small.
     resources:
       requests:
         cpu: 25m

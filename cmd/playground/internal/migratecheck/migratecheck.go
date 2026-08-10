@@ -15,7 +15,7 @@
 // Package migratecheck classifies Ingress annotations against the
 // migration-coverage data the template libraries declare in
 // spec.migrationCoverage, producing the report behind the
-// `haptic-controller migrate-check` CLI.
+// browser playground's migration report.
 //
 // The package is a pure component: it never touches Kubernetes, Helm, or
 // the template engine. Callers hand it the coverage data, the audited
@@ -23,10 +23,8 @@
 // verdict), and get back a Report with per-source, per-Ingress findings
 // and the process exit code.
 //
-// Everything here is data-driven from the coverage entries — no source
-// controller or vendor annotation name appears in this package (RULE #1).
-// The Ingress kind itself is this tool's fixed operational domain
-// (migrations away from Ingress controllers), not a template input.
+// Source-controller detection remains data-driven from the coverage entries;
+// the package is private to the Ingress migration tool that consumes it.
 package migratecheck
 
 import (

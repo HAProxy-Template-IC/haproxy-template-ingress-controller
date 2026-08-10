@@ -72,6 +72,9 @@ type ValidationResult struct {
 	// May be nil if validation failed or validation cache was used.
 	// When non-nil, can be passed to downstream sync operations to avoid re-parsing.
 	ParsedConfig *parser.StructuredConfig
+
+	// Warnings contains non-fatal diagnostics from additional validation stages.
+	Warnings []string
 }
 
 // ErrorMessage returns a user-friendly error message.

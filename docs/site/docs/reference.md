@@ -409,14 +409,14 @@ For HAProxy behind a layer-4 load balancer. See [PROXY protocol](haproxy-deploym
 
 ## Pluggable Validators
 
-The validator sidecar runs a second `haproxy-spoa-hub` instance in `--validate-socket` mode next to the controller; the admission webhook consults it on every change to a webhook-validated resource so manifests with broken plugin TOML (for example a bad `modsecurity-snippet`) are rejected before they reach the data plane. See [Pluggable validators](./operations/pluggable-validators.md).
+The validator sidecar runs a second `haproxy-spoa-hub` instance in `--validate-socket` mode next to the controller. The shared render pipeline consults it before publishing or deploying output, so broken plugin TOML (for example a bad `modsecurity-snippet`) is rejected regardless of whether a watched resource, config, HTTP refresh, or drift check triggered the render. See [Pluggable validators](./operations/pluggable-validators.md).
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.validators.enabled` | bool/null | `null` | Master enable for the validator sidecar. `null` auto-derives from the SPOA hub sidecar's own enable (plugins needing admission-time validation are the ones running on the data plane); `true` renders it even when `spoaHub` is off; `false` forces it off |
+| `controller.validators.enabled` | bool/null | `null` | Master enable for the validator sidecar. `null` auto-derives from the SPOA hub sidecar's own enable; `true` renders it even when `spoaHub` is off; `false` forces it off |
 | `controller.validators.socketDir` | string | `/var/run/haptic-validators` | Directory for the validator Unix socket — a shared emptyDir mounted into both the controller container and the validator sidecar |
 | `controller.validators.socketName` | string | `spoa-hub.sock` | Socket filename. The controller dials `<socketDir>/<socketName>`, and the chart writes that path into the auto-wired `spec.validators` entry |
-| `controller.validators.resources.requests.cpu` | string | `25m` | Validator sidecar CPU request (validation is bursty — admission calls are infrequent — so it's sized small) |
+| `controller.validators.resources.requests.cpu` | string | `25m` | Validator sidecar CPU request; content caching avoids repeat validation for identical renders |
 | `controller.validators.resources.requests.memory` | string | `64Mi` | Validator sidecar memory request |
 | `controller.validators.resources.limits.memory` | string | `128Mi` | Validator sidecar memory limit |
 | `controller.validators.securityContext` | map | See values.yaml | Container security context for the validator sidecar. Default runs user and group 65532 (matching the controller's nonroot user) so the Unix socket is readable and writable by the controller without extra `fsGroup` plumbing; read-only root filesystem, no privilege escalation, all capabilities dropped |

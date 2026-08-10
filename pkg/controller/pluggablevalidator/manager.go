@@ -21,8 +21,11 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 )
 
 // DefaultMaxParallelDispatch caps the number of concurrent
@@ -35,10 +38,8 @@ import (
 const DefaultMaxParallelDispatch = 16
 
 // ManagerConfig captures one entry from `spec.validators` on
-// HAProxyTemplateConfig. Validation of these values (RFC 1123 name,
-// absolute socket path, valid globs, positive timeout) is performed
-// by the CRD's OpenAPI schema before this struct is built; the
-// Manager treats the fields as already-clean.
+// HAProxyTemplateConfig. The API schema validates fields it can express;
+// core config validation and this constructor also reject malformed globs.
 type ManagerConfig struct {
 	// Name is the operator-facing validator identifier.
 	Name string
@@ -47,8 +48,7 @@ type ManagerConfig struct {
 	SocketPath string
 	// Files is the list of glob patterns matched against rendered
 	// file paths to decide which files to send to this validator.
-	// Patterns follow Go's `path/filepath.Match` rules; absolute
-	// paths only.
+	// Patterns follow Go's `path/filepath.Match` rules.
 	Files []string
 	// DataFiles is the list of glob patterns for files this validator needs
 	// in order to check the ones it validates, but must not validate on
@@ -73,19 +73,16 @@ type ManagerConfig struct {
 // a shared content-hash result cache. Concurrent calls are safe;
 // per-validator pools handle in-process parallelism.
 //
-// Routing model: the webhook hands the Manager every rendered file
-// produced by the dry-run. For each (file, validator) pair where
+// Routing model: the pipeline hands the Manager every rendered file.
+// For each (file, validator) pair where
 // the validator's globs match the file's path, the Manager either
 // returns the cached Response or sends a single-file request frame
 // over the socket. All resulting diagnostics are concatenated and
-// returned as one slice. The webhook surfaces the warnings via
-// `AdmissionResponse.Warnings` (kubectl prints them as soft
-// warnings) and the errors as the admission denial reason.
+// returned as one slice. Errors fail every pipeline caller; admission also
+// surfaces warnings through `AdmissionResponse.Warnings`.
 //
-// Construction validates that validator names are unique. Configs
-// with duplicate names cause New to fail; the CRD's OpenAPI schema
-// enforces uniqueness too, so this is a defensive check rather than
-// a primary validation surface.
+// Construction validates every invariant needed for safe dispatch. A failure
+// aborts controller iteration construction.
 type Manager struct {
 	logger  *slog.Logger
 	clients map[string]*Client
@@ -186,9 +183,8 @@ func (m *Manager) Names() []string {
 
 // ValidationOutcome bundles the warnings + errors collected across
 // all (file, validator) round-trips for one ValidateAll call. The
-// caller maps these to the admission webhook's response shape:
-// warnings → `AdmissionResponse.Warnings`, errors → admission
-// denial reason. A non-nil ValidationOutcome with zero entries in
+// caller maps these to the shared pipeline result. A non-nil
+// ValidationOutcome with zero entries in
 // both lists is the equivalent of `result: "valid"`.
 type ValidationOutcome struct {
 	Warnings []Diagnostic
@@ -321,6 +317,71 @@ wait:
 	out.Warnings = warnings
 	out.Errors = errs
 	return out
+}
+
+// ValidateRenderedOutput implements pipeline.RenderedOutputValidator.
+func (m *Manager) ValidateRenderedOutput(ctx context.Context, result *pipeline.PipelineResult) ([]string, error) {
+	outcome := m.ValidateAll(ctx, buildFiles(result))
+	warnings := formatDiagnostics(outcome.Warnings)
+	if len(outcome.Errors) == 0 {
+		return warnings, nil
+	}
+	return warnings, errors.New(formatErrorReason(outcome.Errors))
+}
+
+func buildFiles(result *pipeline.PipelineResult) []File {
+	files := []File{{Path: "/etc/haproxy/haproxy.cfg", Content: result.HAProxyConfig}}
+	if result.AuxiliaryFiles == nil {
+		return files
+	}
+	for _, file := range result.AuxiliaryFiles.GeneralFiles {
+		files = append(files, File{Path: file.Path, Content: file.Content})
+	}
+	for _, file := range result.AuxiliaryFiles.SSLCertificates {
+		files = append(files, File{Path: file.Path, Content: file.Content})
+	}
+	for _, file := range result.AuxiliaryFiles.SSLCaFiles {
+		files = append(files, File{Path: file.Path, Content: file.Content})
+	}
+	for _, file := range result.AuxiliaryFiles.MapFiles {
+		files = append(files, File{Path: file.Path, Content: file.Content})
+	}
+	for _, file := range result.AuxiliaryFiles.CRTListFiles {
+		files = append(files, File{Path: file.Path, Content: file.Content})
+	}
+	return files
+}
+
+func formatDiagnostics(diags []Diagnostic) []string {
+	if len(diags) == 0 {
+		return nil
+	}
+	formatted := make([]string, 0, len(diags))
+	for _, diagnostic := range diags {
+		formatted = append(formatted, formatDiagnostic(diagnostic))
+	}
+	return formatted
+}
+
+func formatErrorReason(diags []Diagnostic) string {
+	formatted := make([]string, 0, len(diags))
+	for _, diagnostic := range diags {
+		formatted = append(formatted, formatDiagnostic(diagnostic))
+	}
+	return strings.Join(formatted, "\n")
+}
+
+func formatDiagnostic(diagnostic Diagnostic) string {
+	if diagnostic.Path == "" {
+		return diagnostic.Message
+	}
+	if diagnostic.Line == 0 {
+		return fmt.Sprintf("%s: %s", diagnostic.Path, diagnostic.Message)
+	}
+	if diagnostic.Column == 0 {
+		return fmt.Sprintf("%s:%d: %s", diagnostic.Path, diagnostic.Line, diagnostic.Message)
+	}
+	return fmt.Sprintf("%s:%d:%d: %s", diagnostic.Path, diagnostic.Line, diagnostic.Column, diagnostic.Message)
 }
 
 // sortDiagnostics sorts in place by (path, line, column, message)

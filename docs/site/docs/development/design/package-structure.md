@@ -16,6 +16,7 @@ haptic/
 │   ├── controller/          # Entry point (main.go)
 │   ├── gen-validators/      # Generator for the zero-alloc OpenAPI validators in pkg/generated
 │   └── playground/          # WASM browser template playground (drives the production RenderService)
+│       └── internal/migratecheck/ # Ingress migration report classifier
 ├── pkg/
 │   ├── apis/                # CRD type definitions (HAProxyTemplateConfig, HAProxyCfg, ...)
 │   ├── compression/         # zstd helpers used by CRD content compression
@@ -84,7 +85,6 @@ haptic/
 │       ├── leadership/      # Gating utilities for leader-only components
 │       ├── metrics/         # Controller-domain metrics adapter (reconciliation,
 │       │                    #   deployment, validation, event-bus counters)
-│       ├── migratecheck/    # Classifies Ingress annotations against migrationCoverage data
 │       ├── names/           # Well-known string constants shared across the controller
 │       ├── pipeline/        # Chains stages into a composable reconciliation pipeline
 │       ├── pluggablevalidator/ # Client for the pluggable-validator-sidecar wire protocol

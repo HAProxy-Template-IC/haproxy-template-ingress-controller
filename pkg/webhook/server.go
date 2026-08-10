@@ -343,17 +343,13 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 	s.mu.RUnlock()
 
 	if !exists {
-		// Nothing registered can judge this object, so it is admitted. But the
-		// API server only sends what its rules route here, so arriving with no
-		// validator means the rules and the registrations have diverged — the
-		// gate is open for this kind. Report it; never admit unchecked in
-		// silence.
 		if onUnregistered != nil {
 			onUnregistered(gvk)
 		}
-		return &admissionv1.AdmissionResponse{
-			Allowed: true,
-		}
+		return deniedResponse(
+			fmt.Sprintf("no validator registered for %s; retry after controller initialization", gvk),
+			http.StatusServiceUnavailable,
+		)
 	}
 
 	// Parse new object as unstructured (same type as stores use)

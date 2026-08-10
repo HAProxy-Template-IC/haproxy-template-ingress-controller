@@ -11,7 +11,10 @@ mechanism here — N `HAProxyTemplateConfig` objects marked `spec.partial`, merg
 in `CRD_NAME` order — is replaced by one config referencing
 `HAProxyTemplateLibrary` objects through `spec.libraryRefs`. Everything else
 stands, including the removal of the `haproxytemplateconfigs` admission webhook
-and its replacement by strict-on-leader validation plus the startup load gate.
+and its replacement by leader validation plus the startup load gate. The
+strict-first/fast-later implementation was superseded by
+[ADR-0020](0020-authoritative-render-validation-pipeline.md): every changed
+render now passes the complete pipeline.
 `spec.partial` never reached a release, so only snapshot consumers of `main`
 were affected.
 
