@@ -19,6 +19,8 @@ import (
 	"log/slog"
 	"testing"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -124,22 +126,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestPipeline_Execute_ValidConfig(t *testing.T) {
-	template := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
+	template := testutil.MinimalHAProxyConfig
 
 	pipeline := createTestPipeline(t, template)
 	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
@@ -180,22 +167,7 @@ defaults
 }
 
 func TestPipeline_ExecuteWithResult_ValidConfig(t *testing.T) {
-	template := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
+	template := testutil.MinimalHAProxyConfig
 
 	pipeline := createTestPipeline(t, template)
 	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}

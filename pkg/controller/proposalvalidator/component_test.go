@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -75,22 +77,7 @@ func createTestPipeline(t *testing.T, template string) *pipeline.Pipeline {
 }
 
 func TestNew(t *testing.T) {
-	template := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
+	template := testutil.MinimalHAProxyConfig
 
 	bus := busevents.NewEventBus(100)
 	testPipeline := createTestPipeline(t, template)
@@ -111,22 +98,7 @@ backend http_back
 }
 
 func TestComponent_ValidateSync_ValidConfig(t *testing.T) {
-	template := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
+	template := testutil.MinimalHAProxyConfig
 
 	bus := busevents.NewEventBus(100)
 	pipelineInstance := createTestPipeline(t, template)
@@ -372,22 +344,7 @@ func TestComponent_Start_AsyncPath_DeniesOnFailure(t *testing.T) {
 }
 
 func TestComponent_Start_ProcessesEvents(t *testing.T) {
-	template := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
+	template := testutil.MinimalHAProxyConfig
 
 	bus := busevents.NewEventBus(100)
 	pipelineInstance := createTestPipeline(t, template)
