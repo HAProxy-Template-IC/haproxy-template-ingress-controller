@@ -177,6 +177,10 @@ type CacheEntry struct {
 	// ValidationState tracks the current state of this entry.
 	ValidationState ValidationState
 
+	// ValidationStartedAt is when ValidationState last became StateValidating.
+	// Only StateValidating leaves it meaningful; see HTTPStore.validationStuckAfter.
+	ValidationStartedAt time.Time
+
 	// HTTP caching headers for conditional requests
 	ETag         string
 	LastModified string

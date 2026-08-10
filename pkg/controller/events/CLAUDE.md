@@ -50,7 +50,6 @@ Events are organized into separate files by category:
 | `correlation.go` | Correlation ID helpers for tracing events |
 | `timestamped.go` | Embedded `timestamped` mixin used by all events |
 | `internal_copy.go` | Internal helpers for defensive slice/map copying |
-| `runtime_fast_path.go` | Runtime fast-path result events |
 
 ## Event Categories
 
@@ -326,7 +325,7 @@ fan-out for any other subscriber that wants the raw render output;
 4. **Implement EventType() method** with pointer receiver
 5. **Create constructor** with defensive copying
 6. **Document contract** (when published, who consumes)
-7. **Update commentator** to log the event
+7. **Decide the commentator's treatment**: Give the commentator an insight case OR a level arm, unless the publisher already logs the payload — the fallback then records only that the event happened
 8. **Add to README.md** event catalog
 
 ### Example

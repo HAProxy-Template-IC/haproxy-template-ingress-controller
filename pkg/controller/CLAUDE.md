@@ -286,7 +286,7 @@ func (e ConfigParsedEvent) EventType() string { return "config.parsed" }
 1. Define struct with event data
 2. Implement EventType() method
 3. Document when event is published
-4. Update commentator to log it
+4. Decide the commentator's treatment (insight case, level arm, or the generic fallback)
 5. Add to relevant component tests
 
 ### commentator/ - Event Observability
@@ -743,7 +743,7 @@ func (c *EventCommentator) Start(ctx context.Context) error {
 2. **Define events**: What events trigger this component? What events does it publish?
 3. **Create event adapter**: Wrap pure component in controller package
 4. **Add to startup**: Integrate into staged startup sequence
-5. **Update commentator**: Add logging for new events
+5. **Decide the commentator's treatment**: an insight case, a level arm, or the generic fallback
 6. **Write tests**: Test event adapter behavior
 7. **Update README.md**: Document new component
 

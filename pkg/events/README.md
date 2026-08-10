@@ -50,7 +50,7 @@ Forgetting step 3 is a common footgun: publishes succeed silently (buffered) but
 
 Filter pattern on top of the base `Subscribe`:
 
-- **`SubscribeTypes(name, bufferSize, types...)`** — filters at the bus, only delivers events whose `EventType()` is in the list. Cheapest when you only care about a handful of types. Variants: `SubscribeTypesLeaderOnly` (for components that subscribe after leader election) and `SubscribeTypesLossy` (silent drops, for observability consumers).
+- **`SubscribeTypes(name, bufferSize, types...)`** — filters at the bus, only delivers events whose `EventType()` is in the list. Cheapest when you only care about a handful of types. Variant: `SubscribeTypesLeaderOnly`, for components that subscribe after leader election. Typed subscriptions are always critical — lossy is universal-only.
 
 The commentator and anything logging "everything" should use plain `Subscribe` — filtering there would just hide events.
 
@@ -81,7 +81,7 @@ Don't nest `Request()` calls on the same path without spawning a goroutine for t
 Publish is non-blocking. If a subscriber's buffer is full, the event is **dropped for that subscriber** (others still receive it). The drop accounting splits into two paths (see `recordDrop` in `bus.go`):
 
 - **Non-lossy ("critical") subscribers** — the default `Subscribe` / `SubscribeTypes`. Drops bump `DroppedEventsCritical` *and* fire the registered `DropCallback` (used by `pkg/controller/metrics` to emit `haptic_events_dropped_critical_total` and `haptic_events_dropped_by_subscriber_total`).
-- **Lossy subscribers** — opt-in via `SubscribeLossy` / `SubscribeTypesLossy`. Drops bump `DroppedEventsObservability` only; the `DropCallback` is **not** invoked. Use this for observability subscribers (commentator, debug ring buffer) where occasional drops on a burst are acceptable and shouldn't trip the per-subscriber alert metric.
+- **Lossy subscribers** — opt-in via `SubscribeLossy` (universal subscriptions only). Drops bump `DroppedEventsObservability` only; the `DropCallback` is **not** invoked. Use this for observability subscribers (commentator, debug ring buffer) where occasional drops on a burst are acceptable and shouldn't trip the per-subscriber alert metric.
 
 Slow consumers are your problem — hand work off to a goroutine or raise the subscriber buffer.
 

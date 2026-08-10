@@ -10,7 +10,7 @@ This package provides two presets covering every controller subscription:
 | Constant | Size | Use for |
 |----------|------|---------|
 | `buffers.Critical` | 100 | Business-critical paths where drops would mean missed reconciliation work (reconciler, deployer, validator) |
-| `buffers.Observability` | 200 | Lossy paths where occasional drops are acceptable (commentator, metrics, debug ring buffer) |
+| `buffers.Observability` | 200 | Lossy paths where occasional drops are acceptable (commentator, debug ring buffer) |
 
 ## Quick Start
 

@@ -41,7 +41,19 @@ type HTTPStore struct {
 	httpClient *http.Client
 	logger     *slog.Logger
 	maxAge     time.Duration // Maximum time an entry can remain unused before eviction (0 = disabled)
+
+	// validationStuckAfter bounds how long an entry may sit in StateValidating.
+	// Only PromotePending/RejectPending leave that state, and both are driven by
+	// a ProposalValidationCompletedEvent — so a lost event, or a panic in the
+	// validator, would otherwise freeze the URL at its accepted content for the
+	// process lifetime. Overridden in tests.
+	validationStuckAfter time.Duration
 }
+
+// DefaultValidationStuckAfter bounds a pending validation. Render plus
+// three-phase HAProxy validation takes seconds; an entry still validating
+// minutes later is waiting for a verdict that is never coming.
+const DefaultValidationStuckAfter = 5 * time.Minute
 
 // New creates a new HTTPStore with the given logger and maximum cache age.
 //
@@ -64,8 +76,9 @@ func New(logger *slog.Logger, maxAge time.Duration) *HTTPStore {
 				return nil
 			},
 		},
-		logger: logger.With("component", "httpstore"),
-		maxAge: maxAge,
+		logger:               logger.With("component", "httpstore"),
+		maxAge:               maxAge,
+		validationStuckAfter: DefaultValidationStuckAfter,
 	}
 }
 
@@ -186,6 +199,29 @@ func (s *HTTPStore) GetForValidation(url string) (string, bool) {
 	return "", false
 }
 
+// abandonStuckValidation reports whether the caller should proceed with a
+// refresh over an entry that is still validating. It returns false while the
+// verdict may legitimately still arrive; past the deadline it discards the
+// pending content and returns true.
+//
+// Without this the entry never leaves StateValidating: only a verdict clears
+// that state, every later refresh short-circuits on it, and eviction skips
+// entries with pending content — so one lost verdict freezes the URL at its
+// accepted content for the process lifetime.
+func (s *HTTPStore) abandonStuckValidation(url string, stuckFor time.Duration) bool {
+	if stuckFor <= s.validationStuckAfter {
+		s.logger.Log(context.Background(), levelTrace, "skipping refresh, validation in progress", "url", url)
+		return false
+	}
+
+	s.logger.Warn("Abandoning stuck HTTP content validation, no verdict arrived",
+		"url", url,
+		"stuck_for", stuckFor.Round(time.Second),
+		"timeout", s.validationStuckAfter)
+	s.RejectPending(url)
+	return true
+}
+
 // RefreshURL fetches fresh content for a URL and stores it as pending.
 //
 // This does NOT replace accepted content immediately. The caller must:
@@ -205,11 +241,21 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 		return false, fmt.Errorf("URL not in cache: %s", url)
 	}
 
-	// Skip if already validating
+	// Skip if already validating — unless the verdict is never coming.
 	if entry.ValidationState == StateValidating {
+		stuckFor := time.Since(entry.ValidationStartedAt)
 		s.mu.RUnlock()
-		s.logger.Log(context.Background(), levelTrace, "skipping refresh, validation in progress", "url", url)
-		return false, nil
+
+		if !s.abandonStuckValidation(url, stuckFor) {
+			return false, nil
+		}
+
+		s.mu.RLock()
+		entry, exists = s.cache[url]
+		if !exists {
+			s.mu.RUnlock()
+			return false, fmt.Errorf("URL not in cache: %s", url)
+		}
 	}
 
 	opts := entry.Options
@@ -262,6 +308,7 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 		e.PendingChecksum = newChecksum
 		e.HasPending = true
 		e.ValidationState = StateValidating
+		e.ValidationStartedAt = time.Now()
 		e.ETag = newEtag
 		e.LastModified = newLastModified
 	}

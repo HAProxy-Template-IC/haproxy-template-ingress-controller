@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
@@ -65,16 +66,16 @@ func New(metrics *Metrics, eventBus *busevents.EventBus) *Component {
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
 	// Use typed subscription to only receive events we handle (reduces buffer pressure)
-	eventChan := eventBus.SubscribeTypes(ComponentName, 200,
+	// Critical, not lossy, despite being an observability consumer: the resource
+	// gauges accumulate deltas against a once-per-iteration baseline, so a
+	// silently dropped event corrupts them until the next restart.
+	eventChan := eventBus.SubscribeTypes(ComponentName, buffers.Observability,
 		events.EventTypeReconciliationCompleted,
 		events.EventTypeReconciliationFailed,
 		events.EventTypeReconciliationTriggered,
 		events.EventTypeReconciliationStarted,
 		events.EventTypeDeploymentCompleted,
 		events.EventTypeInstanceDeploymentFailed,
-		events.EventTypeRuntimeFastPathResult,
-		events.EventTypeDeployRuntimeDivergence,
-		events.EventTypeRuntimeMapDivergence,
 		events.EventTypeValidationCompleted,
 		events.EventTypeValidationFailed,
 		events.EventTypeIndexSynchronized,
@@ -156,12 +157,6 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.metrics.SetFleetConvergence(e.Total, e.Succeeded, e.Failed)
 	case *events.InstanceDeploymentFailedEvent:
 		c.metrics.RecordDeployment(0, false)
-	case *events.RuntimeFastPathResultEvent:
-		c.metrics.RecordRuntimeFastPath(e.ServerUpdates, e.Failed)
-	case *events.DeployRuntimeDivergenceEvent:
-		c.metrics.RecordDeployRuntimeDivergence()
-	case *events.RuntimeMapDivergenceEvent:
-		c.metrics.RecordRuntimeMapDivergence(e.MapName)
 	case *events.ValidationCompletedEvent:
 		c.metrics.RecordValidation(true)
 	case *events.ValidationFailedEvent:

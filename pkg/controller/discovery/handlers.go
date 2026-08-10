@@ -250,6 +250,28 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 	c.discoveredReplayer.Replay()
 }
 
+// handleDriftPrevention re-runs discovery from the pod store on every drift tick.
+//
+// Discovery is the only writer of the deployer's endpoint set and every other
+// path into it is an edge: a dropped haproxy-pods ResourceIndexUpdatedEvent has
+// no successor, so without this the new pod never receives config until an
+// unrelated pod, config, or leadership change happens. Re-reading the store is a
+// level read, so it repairs any missed edge — the same backstop the render path
+// already gets from this event.
+func (c *Component) handleDriftPrevention(_ *events.DriftPreventionTriggeredEvent) {
+	c.mu.RLock()
+	podStore := c.podStore
+	credentials := c.credentials
+	ready := c.hasCredentials && c.hasDataplanePort && c.initialDiscoveryDone
+	c.mu.RUnlock()
+
+	if !ready || podStore == nil {
+		return
+	}
+
+	c.triggerDiscovery(podStore, *credentials, "drift_prevention")
+}
+
 // SetPodStore sets the pod store reference.
 //
 // This is called by the controller after creating the haproxy-pods resource watcher.

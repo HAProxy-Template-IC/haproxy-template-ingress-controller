@@ -50,7 +50,7 @@ type runtimeSyncer interface {
 // fast-track apply of a pending render's runtime subset at either deploy-loop
 // wait point (applyRuntimeSubset, `partial=true`). The `partial` flag suppresses
 // the deploy-owning publishes (DeployedConfigPublishRequest /
-// ConfigAppliedToPodEvent) — only the RuntimeFastPathResultEvent metric still
+// ConfigAppliedToPodEvent) — only the fast-path counter still
 // fires — because whoever owns the deploy (the eventual authoritative dispatch,
 // or an in-flight/just-completed structural deploy) publishes the CR/status.
 //
@@ -73,7 +73,12 @@ type runtimeSyncer interface {
 type runtimeBypass struct {
 	logger    *slog.Logger
 	newSyncer func(ctx context.Context, ep *dataplane.Endpoint) (runtimeSyncer, error)
-	eventBus  *busevents.EventBus // publishes RuntimeFastPathResultEvent always, and ConfigAppliedToPodEvent for a complete (pure runtime-raw lane) apply; nil in tests
+	eventBus  *busevents.EventBus // publishes ConfigAppliedToPodEvent for a complete (pure runtime-raw lane) apply; nil in tests
+
+	// recordFastPath reports one fast-path fire to the metrics registry. A
+	// direct call rather than an event: the only subscriber was the metrics
+	// component, and it only incremented a counter (ADR-0001). Nil in tests.
+	recordFastPath func(serverUpdates int, failed bool)
 
 	// recordActivation reports what an apply proved about the endpoint's running
 	// config: the checksum on success, "" to clear the proof. Clearing on
@@ -300,11 +305,11 @@ func (b *runtimeBypass) publishDeployedConfig(dep *scheduledDeployment) {
 	))
 }
 
-// publishResult emits a RuntimeFastPathResultEvent so the metrics component can
-// track the fire-vs-apply distinction. No-op when eventBus is nil (tests).
+// publishResult records the fire-vs-apply distinction. No-op when the recorder
+// is nil (tests).
 func (b *runtimeBypass) publishResult(serverUpdates int, failed bool) {
-	if b.eventBus != nil {
-		b.eventBus.Publish(events.NewRuntimeFastPathResultEvent(serverUpdates, failed))
+	if b.recordFastPath != nil {
+		b.recordFastPath(serverUpdates, failed)
 	}
 }
 

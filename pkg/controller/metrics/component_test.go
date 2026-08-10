@@ -553,19 +553,20 @@ func TestComponent_InitialSyncSkipped(t *testing.T) {
 	assert.Equal(t, 10.0, testutil.ToFloat64(ingresses))
 }
 
-// TestComponent_RuntimeMapDivergence pins the counter that makes the
+// TestMetrics_RuntimeMapDivergence pins the counter that makes the
 // reload-free lane's degradation visible. Without it, a runtime map failing
 // its read-back — and so costing every endpoint change a HAProxy reload —
 // shows up only as a WARN log line, which is how it went unnoticed in
 // production.
-func TestComponent_RuntimeMapDivergence(t *testing.T) {
-	metrics, eventBus := startTestComponent(t)
+//
+// The deployer records this directly rather than over the bus (ADR-0001: its
+// only subscriber was this counter), so the recorder is what needs pinning.
+func TestMetrics_RuntimeMapDivergence(t *testing.T) {
+	metrics := NewMetrics(prometheus.NewRegistry())
 
-	eventBus.Publish(events.NewRuntimeMapDivergenceEvent("haproxy-0", "pod-names.map"))
-	eventBus.Publish(events.NewRuntimeMapDivergenceEvent("haproxy-1", "pod-names.map"))
-	eventBus.Publish(events.NewRuntimeMapDivergenceEvent("haproxy-0", "host.map"))
-
-	time.Sleep(100 * time.Millisecond)
+	metrics.RecordRuntimeMapDivergence("pod-names.map")
+	metrics.RecordRuntimeMapDivergence("pod-names.map")
+	metrics.RecordRuntimeMapDivergence("host.map")
 
 	// Labelled by map: which map degrades is what an operator acts on, and
 	// the pod is deliberately not a label (one per HAProxy replica would

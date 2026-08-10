@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -176,14 +177,13 @@ func TestHandleEndpointFailure_NoAppliedEventWhenRuntimeConfigEmpty(t *testing.T
 		t, eventChan, testutil.NoEventTimeout)
 }
 
-// TestHandleEndpointFailure_DivergencePublishesDivergenceEvent pins the
+// TestHandleEndpointFailure_DivergenceCountsSeparately pins the
 // issue #84 observability contract: a CONFIRMED post-reload read-back
 // divergence — the on-disk config structurally diverged from the pushed body
-// after a verified reload — publishes DeployRuntimeDivergenceEvent (counted
-// as haptic_deploy_runtime_divergence_total) IN ADDITION to the ordinary
-// failure events. Any other failure must NOT publish it, or the counter
-// degrades into a second deployment_errors_total.
-func TestHandleEndpointFailure_DivergencePublishesDivergenceEvent(t *testing.T) {
+// after a verified reload — increments haptic_deploy_runtime_divergence_total
+// IN ADDITION to the ordinary failure events. Any other failure must NOT
+// increment it, or the counter degrades into a second deployment_errors_total.
+func TestHandleEndpointFailure_DivergenceCountsSeparately(t *testing.T) {
 	tests := []struct {
 		name          string
 		err           error
@@ -232,15 +232,14 @@ func TestHandleEndpointFailure_DivergencePublishesDivergenceEvent(t *testing.T) 
 					t, eventChan, testutil.LongTimeout),
 				"the ordinary failure event always fires")
 
+			want := 0.0
 			if tt.wantDivergent {
-				div := testutil.WaitForEvent[*events.DeployRuntimeDivergenceEvent](
-					t, eventChan, testutil.LongTimeout)
-				require.NotNil(t, div)
-				assert.Equal(t, "haproxy-pod-1", div.PodName)
-			} else {
-				testutil.AssertNoEvent[*events.DeployRuntimeDivergenceEvent](
-					t, eventChan, testutil.NoEventTimeout)
+				want = 1.0
 			}
+			assert.Equal(t, want, promtestutil.ToFloat64(c.metrics.DeployRuntimeDivergence),
+				"only a confirmed post-reload divergence may increment this counter; "+
+					"widening it to any sync failure makes it a duplicate of "+
+					"deployment_errors_total and the #84 alert meaningless")
 		})
 	}
 }

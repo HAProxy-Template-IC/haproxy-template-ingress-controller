@@ -310,8 +310,8 @@ func (c *Component) handleEndpointFailure(
 	// transient sync failures, it means a concurrent writer clobbered the
 	// on-disk config a reload had just activated — a defect signal to alert
 	// on, even though the fast retry self-heals the pod.
-	if dataplane.IsPostReloadDivergence(err) {
-		c.EventBus().Publish(events.NewDeployRuntimeDivergenceEvent(ep.PodName))
+	if dataplane.IsPostReloadDivergence(err) && c.metrics != nil {
+		c.metrics.RecordDeployRuntimeDivergence()
 	}
 
 	// Publish ConfigAppliedToPodEvent with error info (for status tracking)
@@ -364,8 +364,10 @@ func (c *Component) handleEndpointSuccess(
 	// lane. The sync still SUCCEEDED (the reload fallback is convergent), so
 	// this rides the success path — without it the degradation is a WARN line
 	// nothing alerts on.
-	for _, mapName := range syncResult.DivergedRuntimeMaps {
-		c.EventBus().Publish(events.NewRuntimeMapDivergenceEvent(ep.PodName, mapName))
+	if c.metrics != nil {
+		for _, mapName := range syncResult.DivergedRuntimeMaps {
+			c.metrics.RecordRuntimeMapDivergence(mapName)
+		}
 	}
 
 	// Publish ConfigAppliedToPodEvent unconditionally, regardless of

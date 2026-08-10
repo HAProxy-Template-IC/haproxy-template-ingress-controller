@@ -17,16 +17,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// replayEventToSubscribers is the inner event-fanout primitive that
+// fanOut is the inner event-fanout primitive that
 // powers both the Start()-time pre-start buffer flush AND the every-day
 // hot path of Publish. It has FIVE distinct branches and zero direct
 // test coverage:
 //
 //   1. Universal subscriber, channel has space → event sent
-//   2. Universal subscriber, channel full       → event dropped + recordDrop
+//   2. Universal subscriber, channel full       → event dropped + reported
 //   3. Typed subscriber, filter accepts event   → event sent
 //   4. Typed subscriber, filter rejects event   → event silently SKIPPED
-//   5. Typed subscriber, channel full           → event dropped + recordDrop
+//   5. Typed subscriber, channel full           → event dropped + reported
 //
 // Three branches are particularly load-bearing:
 //
@@ -42,7 +42,7 @@ import (
 //     the whole purpose of typed subscriptions and overwhelm filtered
 //     subscribers' buffers.
 //
-// (b)/(e) The recordDrop callback distinguishes lossy (silent) drops
+// (b)/(e) Drop accounting distinguishes lossy (silent) drops
 //     from critical (callback-triggering) drops. The lossy flag must
 //     be honored on the per-subscriber level — a regression that
 //     ignored the flag would either spam onDrop callbacks for
@@ -56,13 +56,24 @@ type replayEvent struct{ value string }
 func (e replayEvent) EventType() string    { return "replay-test" }
 func (e replayEvent) Timestamp() time.Time { return time.Time{} }
 
-func TestReplayEventToSubscribers_UniversalSubscriberReceivesEvent(t *testing.T) {
+// fanOutAndReport installs subs on the bus and runs the exact fan-out plus
+// drop-reporting sequence Publish and the Start()-time replay both use.
+func fanOutAndReport(b *EventBus, event Event, subs []subscriber, typed []*typedSubscription) {
+	b.subscribers = subs
+	b.typedSubscribers = typed
+
+	_, drops := b.fanOut(event)
+
+	b.reportDrops(drops)
+}
+
+func TestFanOut_UniversalSubscriberReceivesEvent(t *testing.T) {
 	bus := NewEventBus(0) // pre-start buffer size irrelevant
 	subs := []subscriber{
 		{ch: make(chan Event, 1), name: "test-sub", bufferSize: 1, lossy: false},
 	}
 
-	bus.replayEventToSubscribers(replayEvent{value: "v1"}, subs, nil)
+	fanOutAndReport(bus, replayEvent{value: "v1"}, subs, nil)
 
 	select {
 	case got := <-subs[0].ch:
@@ -73,7 +84,7 @@ func TestReplayEventToSubscribers_UniversalSubscriberReceivesEvent(t *testing.T)
 	}
 }
 
-func TestReplayEventToSubscribers_FullChannelDropsAndCallsOnDrop(t *testing.T) {
+func TestFanOut_FullChannelDropsAndCallsOnDrop(t *testing.T) {
 	bus := NewEventBus(0)
 
 	// Set up the drop callback to capture invocations. A regression
@@ -92,7 +103,7 @@ func TestReplayEventToSubscribers_FullChannelDropsAndCallsOnDrop(t *testing.T) {
 	}
 	subs[0].ch <- replayEvent{value: "first"} // fills buffer
 
-	bus.replayEventToSubscribers(replayEvent{value: "second"}, subs, nil)
+	fanOutAndReport(bus, replayEvent{value: "second"}, subs, nil)
 
 	// (1) Critical drop counter incremented exactly once.
 	assert.Equal(t, uint64(1), bus.DroppedEventsCritical(),
@@ -116,7 +127,7 @@ func TestReplayEventToSubscribers_FullChannelDropsAndCallsOnDrop(t *testing.T) {
 			"which component is the slow consumer")
 }
 
-func TestReplayEventToSubscribers_LossySubscriberDropsAreSilent(t *testing.T) {
+func TestFanOut_LossySubscriberDropsAreSilent(t *testing.T) {
 	// Lossy subscribers are observability-style consumers (commentator,
 	// metrics) where occasional drops are expected. Their drops must
 	// count toward DroppedEventsObservability and NOT trigger the
@@ -135,7 +146,7 @@ func TestReplayEventToSubscribers_LossySubscriberDropsAreSilent(t *testing.T) {
 	}
 	subs[0].ch <- replayEvent{value: "first"} // fill buffer
 
-	bus.replayEventToSubscribers(replayEvent{value: "second"}, subs, nil)
+	fanOutAndReport(bus, replayEvent{value: "second"}, subs, nil)
 
 	assert.Equal(t, uint64(1), bus.DroppedEventsObservability(),
 		"lossy subscriber drop must increment DroppedEventsObservability")
@@ -148,7 +159,7 @@ func TestReplayEventToSubscribers_LossySubscriberDropsAreSilent(t *testing.T) {
 			"for critical drops to avoid alert-fatigue")
 }
 
-func TestReplayEventToSubscribers_TypedSubscriberFiltersByFunc(t *testing.T) {
+func TestFanOut_TypedSubscriberFiltersByFunc(t *testing.T) {
 	bus := NewEventBus(0)
 
 	// Two typed subscribers: one accepts replayEvent, the other
@@ -169,7 +180,7 @@ func TestReplayEventToSubscribers_TypedSubscriberFiltersByFunc(t *testing.T) {
 		bufferSize:    1,
 	}
 
-	bus.replayEventToSubscribers(replayEvent{value: "v"}, nil, []*typedSubscription{accepting, rejecting})
+	fanOutAndReport(bus, replayEvent{value: "v"}, nil, []*typedSubscription{accepting, rejecting})
 
 	// Accepting subscriber receives the event.
 	select {
@@ -194,7 +205,7 @@ func TestReplayEventToSubscribers_TypedSubscriberFiltersByFunc(t *testing.T) {
 	}
 }
 
-func TestReplayEventToSubscribers_TypedSubscriberFullChannelDropsAndRecords(t *testing.T) {
+func TestFanOut_TypedSubscriberFullChannelDropsAndRecords(t *testing.T) {
 	bus := NewEventBus(0)
 
 	var dropCallbackCalled atomic.Int32
@@ -210,11 +221,10 @@ func TestReplayEventToSubscribers_TypedSubscriberFullChannelDropsAndRecords(t *t
 		filterFunc:    func(_ Event) bool { return true },
 		name:          "slow-typed-sub",
 		bufferSize:    1,
-		lossy:         false,
 	}
 	typedSub.outputChan <- replayEvent{value: "first"} // fill buffer
 
-	bus.replayEventToSubscribers(replayEvent{value: "second"}, nil, []*typedSubscription{typedSub})
+	fanOutAndReport(bus, replayEvent{value: "second"}, nil, []*typedSubscription{typedSub})
 
 	assert.Equal(t, uint64(1), bus.DroppedEventsCritical(),
 		"typed subscriber drop must count as critical")

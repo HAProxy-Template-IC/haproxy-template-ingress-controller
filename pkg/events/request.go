@@ -96,8 +96,8 @@ func executeRequest(ctx context.Context, bus *EventBus, request Request, opts Re
 	//
 	// Parameters:
 	// - Suppress late warning: scatter-gather always subscribes after Start()
-	// - Not lossy: we need to receive all responses reliably
-	responseChan := bus.subscribeTypesInternal("scatter-gather", 100, responseEventTypes, true, false)
+	// Typed subscriptions are never lossy: we need to receive all responses reliably.
+	responseChan := bus.subscribeTypesInternal("scatter-gather", 100, responseEventTypes, true)
 	defer bus.UnsubscribeTyped(responseChan)
 
 	// Start response listener in background

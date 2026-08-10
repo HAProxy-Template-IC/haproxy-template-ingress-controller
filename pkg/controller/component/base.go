@@ -68,6 +68,33 @@ type PanicHandler interface {
 // including non-coalescible ones and the final event of a burst, whose loss
 // leaves stale state until the next external trigger.
 //
+// WHEN A COMPONENT MUST RUN IN MAILBOX MODE. Declare a type when BOTH hold:
+//
+//  1. The handler can block — a Kubernetes API round-trip, a Dataplane API
+//     call, any network I/O — for longer than the gap between two events.
+//  2. At least one subscribed type can arrive faster than the handler drains
+//     it: published per render, per pod, per resource change, or by a watcher
+//     the chart runs undebounced.
+//
+// One without the other does not qualify: a blocking handler on a
+// per-config-change stream cannot outrun its input, and a fast handler on a
+// firehose keeps up. Every adopter so far was retrofitted after a measured
+// incident; the point of stating the rule is to identify the next one first.
+//
+// If a component meets both but must NOT collapse — because its event type
+// string is shared across sources it has to see individually, as
+// resource.index.updated is across every watched kind — it needs a
+// level-triggered re-read instead, not this. Coalescing collapses by event
+// TYPE, so declaring such a type discards the sources the run did not end on.
+//
+// Two gates hold this together:
+//   - pkg/controller/subscriber_inventory_test.go records the mailbox decision
+//     for every non-lossy subscriber and fails when a new one appears without one.
+//   - pkg/controller/events/coalescible_inventory_test.go records why each type
+//     that implements CoalescibleEvent is safe to collapse. Declaring a type
+//     that is not armed is inert, so arming a type is the change that can start
+//     losing events — that is the one gated.
+//
 // Declaring a type is a per-component statement that ONLY the latest queued
 // event of that type matters to THIS component. Never declare a type whose
 // every instance carries per-event bookkeeping for the component (e.g. the

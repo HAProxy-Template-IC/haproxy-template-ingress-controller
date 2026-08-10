@@ -27,7 +27,6 @@ type typedSubscription struct {
 	filterFunc    func(Event) bool
 	name          string // Subscriber name for debugging (e.g., "renderer", "deployer")
 	bufferSize    int    // Original buffer size for debugging
-	lossy         bool   // If true, drops are silent (no onDrop callback)
 }
 
 // SubscribeTypes creates a subscription that only receives events of the specified types.
@@ -58,7 +57,7 @@ type typedSubscription struct {
 //	    // Only receives the specified event types
 //	}
 func (b *EventBus) SubscribeTypes(name string, bufferSize int, eventTypes ...string) <-chan Event {
-	return b.subscribeTypesInternal(name, bufferSize, eventTypes, false, false)
+	return b.subscribeTypesInternal(name, bufferSize, eventTypes, false)
 }
 
 // SubscribeTypesLeaderOnly creates a typed subscription for leader-only components.
@@ -90,7 +89,7 @@ func (b *EventBus) SubscribeTypes(name string, bufferSize int, eventTypes ...str
 //	    events.EventTypeLostLeadership)
 //	defer bus.UnsubscribeTyped(eventChan)
 func (b *EventBus) SubscribeTypesLeaderOnly(name string, bufferSize int, eventTypes ...string) <-chan Event {
-	return b.subscribeTypesInternal(name, bufferSize, eventTypes, true, false)
+	return b.subscribeTypesInternal(name, bufferSize, eventTypes, true)
 }
 
 // subscribeTypesInternal creates a typed subscription with event type filtering.
@@ -100,8 +99,7 @@ func (b *EventBus) SubscribeTypesLeaderOnly(name string, bufferSize int, eventTy
 //   - bufferSize: Size of the output channel buffer
 //   - eventTypes: Event type strings to filter for
 //   - suppressLateWarning: If true, suppresses warning when subscribing after Start()
-//   - lossy: If true, drops are silent (no onDrop callback, counted separately)
-func (b *EventBus) subscribeTypesInternal(name string, bufferSize int, eventTypes []string, suppressLateWarning, lossy bool) <-chan Event {
+func (b *EventBus) subscribeTypesInternal(name string, bufferSize int, eventTypes []string, suppressLateWarning bool) <-chan Event {
 	// Check if subscribing after Start() - may miss buffered events
 	b.startMu.Lock()
 	started := b.started
@@ -142,7 +140,6 @@ func (b *EventBus) subscribeTypesInternal(name string, bufferSize int, eventType
 		filterFunc:    filterFunc,
 		name:          name,
 		bufferSize:    bufferSize,
-		lossy:         lossy,
 	}
 
 	// Register typed subscription

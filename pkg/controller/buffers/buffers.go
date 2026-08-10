@@ -21,7 +21,8 @@ const (
 	Critical = 100
 
 	// Observability is the buffer size for lossy observability components that
-	// can tolerate larger buffers and occasional drops (commentator, metrics,
-	// debug ring buffer).
+	// can tolerate larger buffers and occasional drops (commentator, debug ring
+	// buffer). Metrics is NOT one of them: it accumulates deltas with no resync,
+	// so a silent drop permanently corrupts gauges that back critical alerts.
 	Observability = 200
 )

@@ -146,6 +146,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) 
 			events.EventTypeResourceIndexUpdated,
 			events.EventTypeResourceSyncComplete,
 			events.EventTypeBecameLeader,
+			events.EventTypeDriftPreventionTriggered,
 		},
 	})
 
@@ -204,5 +205,8 @@ func (c *Component) HandleEvent(event busevents.Event) {
 
 	case *events.BecameLeaderEvent:
 		c.handleBecameLeader(e)
+
+	case *events.DriftPreventionTriggeredEvent:
+		c.handleDriftPrevention(e)
 	}
 }

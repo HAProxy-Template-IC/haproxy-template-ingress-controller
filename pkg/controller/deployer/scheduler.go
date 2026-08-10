@@ -149,6 +149,7 @@ type DeploymentScheduler struct {
 	lastRenderedConfig           string                    // Last rendered HAProxy config (before validation)
 	lastAuxiliaryFiles           *dataplane.AuxiliaryFiles // Last rendered auxiliary files
 	lastContentChecksum          string                    // Pre-computed content checksum from pipeline
+	lastRenderedEventID          string                    // EventID of the render that wrote the four fields above — see handleValidationCompleted
 	lastValidatedStatusPatches   []templating.StatusPatch  // Patches from the last successful render — forwarded to deploy events for StatusApplier
 	lastValidatedConfig          string                    // Last validated HAProxy config
 	lastValidatedAux             *dataplane.AuxiliaryFiles // Last validated auxiliary files
@@ -283,13 +284,6 @@ func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 		healthTracker:         lifecycle.NewProcessingTracker(SchedulerComponentName, lifecycle.DefaultProcessingTimeout),
 		runtimeBypass:         newRuntimeBypass(logger, eventBus),
 	}
-}
-
-// SetActivationRecorder points the runtime-bypass path at the deployer's
-// per-endpoint activation state. Without it the bypass applies silently and the
-// structural sync keeps an activation proof the bypass has since invalidated.
-func (s *DeploymentScheduler) SetActivationRecorder(fn func(endpointURL, proof string)) {
-	s.runtimeBypass.recordActivation = fn
 }
 
 // Name returns the unique identifier for this component.

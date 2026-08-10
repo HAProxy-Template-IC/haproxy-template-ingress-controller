@@ -50,6 +50,7 @@ func (s *DeploymentScheduler) handleTemplateRendered(event *events.TemplateRende
 	s.lastRenderedConfig = event.HAProxyConfig
 	s.lastAuxiliaryFiles = event.AuxiliaryFiles
 	s.lastContentChecksum = event.ContentChecksum
+	s.lastRenderedEventID = event.EventID()
 	s.lastValidatedStatusPatches = event.StatusPatches
 
 	s.logger.Debug("Cached rendered config for deployment after validation",
@@ -79,6 +80,40 @@ func (s *DeploymentScheduler) handleConfigValidated(event *events.ConfigValidate
 		"template_config_namespace", tc.Namespace)
 }
 
+// rendererMatchesValidation reports whether the cached render is the one this
+// validation verdict describes.
+//
+// The Coordinator publishes TemplateRenderedEvent and ValidationCompletedEvent as
+// two separate Publish calls and the bus drops per subscriber, so losing only the
+// first leaves this cache holding the PREVIOUS render while the verdict describes
+// the current one. Deploying that pair sends render N-1's bytes together with
+// render N's ParsedConfig, so lane classification and the runtime-server diff are
+// computed against a config that is not the one being pushed.
+//
+// The verdict's causation ID is the render event's ID (the Coordinator propagates
+// it), which makes the pairing checkable. A mismatch discards the verdict instead
+// of deploying it; the next reconcile or the drift backstop redeploys from a
+// matching pair.
+//
+// An empty cached ID means no render has been received at all, and is a mismatch
+// rather than a match — otherwise a verdict carrying no causation would pair with
+// the empty cache and the guard would depend on how the verdict was constructed.
+func (s *DeploymentScheduler) rendererMatchesValidation(event *events.ValidationCompletedEvent) bool {
+	s.mu.RLock()
+	renderedEventID := s.lastRenderedEventID
+	s.mu.RUnlock()
+
+	if renderedEventID != "" && event.CausationID() == renderedEventID {
+		return true
+	}
+
+	s.logger.Warn("Discarding validation verdict for a render this scheduler never received",
+		"validated_render", event.CausationID(),
+		"cached_render", renderedEventID,
+		"correlation_id", event.CorrelationID())
+	return false
+}
+
 // handleValidationCompleted handles successful configuration validation.
 //
 // This caches the validated configuration and schedules deployment to current endpoints.
@@ -94,6 +129,10 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	// Log warnings if any
 	for _, warning := range event.Warnings {
 		s.logger.Warn("Validation warning", "warning", warning)
+	}
+
+	if !s.rendererMatchesValidation(event) {
+		return
 	}
 
 	// Get current state and cache validated config BEFORE scheduling

@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -227,9 +228,8 @@ func TestHandleEndpointSuccess_BackendDiffFieldsCapturedOnceFirstWriterWins(t *t
 // post-apply read-back costs the sync its runtime lane, but the sync still
 // SUCCEEDS (the reload fallback converges), so the report has to ride the
 // success path — publishing it only on failure would never fire.
-func TestHandleEndpointSuccess_PublishesRuntimeMapDivergence(t *testing.T) {
+func TestHandleEndpointSuccess_CountsRuntimeMapDivergence(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 	c := createTestDeployer(bus)
 
@@ -250,19 +250,15 @@ func TestHandleEndpointSuccess_PublishesRuntimeMapDivergence(t *testing.T) {
 		"rt-cfg-1", "haptic", "corr-1", state,
 	)
 
-	div := testutil.WaitForEvent[*events.RuntimeMapDivergenceEvent](
-		t, eventChan, testutil.LongTimeout)
-	require.NotNil(t, div,
-		"RuntimeMapDivergenceEvent MUST be published — it is the only signal "+
-			"that endpoint churn has started reloading HAProxy")
-	assert.Equal(t, "pod-names.map", div.MapName)
-	assert.Equal(t, "haproxy-pod-1", div.PodName)
+	assert.Equal(t, 1.0,
+		promtestutil.ToFloat64(c.metrics.RuntimeMapDivergence.WithLabelValues("pod-names.map")),
+		"haptic_runtime_map_divergence_total MUST be incremented, labelled by map — "+
+			"it is the only signal that endpoint churn has started reloading HAProxy")
 }
 
 // A healthy sync must stay silent, or the counter measures nothing.
-func TestHandleEndpointSuccess_NoDivergenceEventWhenConverged(t *testing.T) {
+func TestHandleEndpointSuccess_NoDivergenceCountWhenConverged(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 	c := createTestDeployer(bus)
 
@@ -279,7 +275,7 @@ func TestHandleEndpointSuccess_NoDivergenceEventWhenConverged(t *testing.T) {
 		"rt-cfg-1", "haptic", "corr-1", state,
 	)
 
-	// A converged sync must publish nothing, or the counter measures noise.
-	testutil.AssertNoEvent[*events.RuntimeMapDivergenceEvent](
-		t, eventChan, testutil.NoEventTimeout)
+	// A converged sync must count nothing, or the counter measures noise.
+	assert.Equal(t, 0.0,
+		promtestutil.ToFloat64(c.metrics.RuntimeMapDivergence.WithLabelValues("pod-names.map")))
 }

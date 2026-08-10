@@ -69,6 +69,7 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		}
 	}
 
-	// Fallback for unknown event types
+	// Types with no insight case: the publisher already logs their payload, so
+	// this line only records that the event happened.
 	return fmt.Sprintf("Event: %s", eventType), attrs
 }

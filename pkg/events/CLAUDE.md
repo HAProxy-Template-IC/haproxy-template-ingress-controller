@@ -85,8 +85,9 @@ Filter events at the bus level for improved performance.
 
 **Pattern:** **SubscribeTypes()** filters by event type strings at the bus level
 (variants: `SubscribeTypesLeaderOnly` for components subscribing after leader
-election). For observability consumers where silent drops are acceptable, use
-the untyped `SubscribeLossy`.
+election). Typed subscriptions are always critical; lossy delivery is
+universal-only, via `SubscribeLossy`, for observability consumers where silent
+drops are acceptable.
 
 **When to Use:**
 
@@ -226,7 +227,7 @@ resourceChan := bus.Subscribe("resources", 200)  // Larger buffer
 bus := NewEventBus(100)  // Based on expected init events
 ```
 
-**Rule of Thumb:**
+**Rule of Thumb** (see `pkg/controller/buffers` for the two controller-side tiers):
 
 - Control events: 10-50
 - Resource events: 100-200

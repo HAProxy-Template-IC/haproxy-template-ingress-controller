@@ -201,22 +201,12 @@ func createReconciliationComponents(
 		Logger:            logger,
 	})
 
-	// Create Deployer with the configured per-sync Dataplane options.
-	deployerComponent := deployer.New(setup.Bus, logger,
-		cfg.Dataplane.GetReloadVerificationTimeout(),
-		cfg.Dataplane.GetSyncTimeout())
-
-	// Create DeploymentScheduler with rate limiting and timeout
-	minDeploymentInterval := cfg.Dataplane.GetMinDeploymentInterval()
-	deploymentTimeout := cfg.Dataplane.GetDeploymentTimeout()
-	deploymentSchedulerComponent := deployer.NewDeploymentScheduler(setup.Bus, logger, minDeploymentInterval, deploymentTimeout)
-	// The bypass writes to the same pods the deployer syncs, so both must share
-	// one view of what each pod is proven to be running.
-	deploymentSchedulerComponent.SetActivationRecorder(deployerComponent.RecordActivation)
-
-	// Create DriftPreventionMonitor
-	driftPreventionInterval := cfg.Dataplane.GetDriftPreventionInterval()
-	driftMonitorComponent := deployer.NewDriftPreventionMonitor(setup.Bus, logger, driftPreventionInterval)
+	// One constructor, wired inside the deployer package: the connections
+	// between these three used to be optional setters a caller could forget.
+	deployStack := deployer.NewDeployStack(setup.Bus, cfg, logger, setup.MetricsComponent.Metrics())
+	deployerComponent := deployStack.Deployer
+	deploymentSchedulerComponent := deployStack.Scheduler
+	driftMonitorComponent := deployStack.DriftMonitor
 
 	// Create Discovery component and set pod store
 	// This detects the local HAProxy version (fatal if fails - controller cannot start

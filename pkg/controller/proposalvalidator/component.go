@@ -147,6 +147,24 @@ func (c *Component) HandleEvent(event busevents.Event) {
 	}
 }
 
+// HandlePanic implements component.PanicHandler. Every other exit from
+// handleValidationRequest publishes a verdict; without this one a panic would
+// publish nothing, and the HTTP store's entry — which only leaves
+// StateValidating on a verdict — would stay pending until its stuck-validation
+// deadline. The outer recover in component.Base keeps the event loop alive.
+func (c *Component) HandlePanic(recovered any, event busevents.Event) {
+	req, ok := event.(*events.ProposalValidationRequestedEvent)
+	if !ok {
+		return
+	}
+	c.EventBus().Publish(events.NewProposalValidationFailedEvent(
+		req.ID,
+		"panic",
+		fmt.Errorf("proposal validator panicked: %v", recovered),
+		0,
+	))
+}
+
 // handleValidationRequest processes a proposal validation request.
 //
 // This path is used by HTTPStore to ask "is the HAProxy config valid if I
