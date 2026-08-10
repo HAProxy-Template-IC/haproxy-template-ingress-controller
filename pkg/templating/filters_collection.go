@@ -26,29 +26,16 @@ import (
 	"gitlab.com/haproxy-haptic/scriggo/native"
 )
 
-// scriggoSortBy sorts a slice of items by multiple criteria.
-// Criteria are JSONPath expressions with optional modifiers:
-//   - ":desc" for descending order
-//   - ":exists" to sort by existence of field
-//   - "| length" to sort by length
-//
-// Example:
-//
-//	sort_by(items, []string{"$.priority:desc", "$.name"})
-func scriggoSortBy(items []any, criteria []string) ([]any, error) {
-	return sortByItems(items, criteria, false)
-}
-
-// sortByItems is scriggoSortBy with an explicit filter-debug flag. When debug
-// is true, each comparison is logged via slog (criterion, both values + Go
-// types, result) — wired to the engine's EnableFilterDebug() / the
+// sortByItems sorts a copy of items by JSONPath criteria. When debug is true,
+// each comparison is logged via slog (criterion, both values + Go types,
+// result) — wired to the engine's EnableFilterDebug() / the
 // `validate --debug-filters` CLI flag through the engine.globals override.
-func sortByItems(items []any, criteria []string, debug bool) ([]any, error) {
+func sortByItems(items []any, criteria []string, debug bool) []any {
 	if len(items) == 0 || len(criteria) == 0 {
 		// Return a copy for consistency with normal path (avoids modifying original slice)
 		result := make([]any, len(items))
 		copy(result, items)
-		return result, nil
+		return result
 	}
 
 	// Make a copy to avoid modifying the original
@@ -66,7 +53,7 @@ func sortByItems(items []any, criteria []string, debug bool) ([]any, error) {
 	sortable.precomputeKeys()
 	sort.Stable(sortable)
 
-	return sortable.items, nil
+	return sortable.items
 }
 
 // scriggoGlobMatch filters items that match a glob pattern.

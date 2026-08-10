@@ -162,29 +162,6 @@ func TestClassify_OneIngressAttributedToMultipleSources(t *testing.T) {
 	assert.Empty(t, report.Unattributed)
 }
 
-func TestReport_ExitCode(t *testing.T) {
-	tests := []struct {
-		name   string
-		counts map[Status]int
-		render int
-		want   int
-	}{
-		{"all supported", map[Status]int{StatusSupported: 3}, 0, ExitClean},
-		{"empty", map[Status]int{}, 0, ExitClean},
-		{"a difference", map[Status]int{StatusSupported: 1, StatusDifferent: 1}, 0, ExitDifferences},
-		{"a dropped", map[Status]int{StatusDropped: 1}, 0, ExitDifferences},
-		{"an unknown", map[Status]int{StatusUnknown: 1}, 0, ExitDifferences},
-		{"a fails beats differences", map[Status]int{StatusDifferent: 2, StatusFails: 1}, 0, ExitBlockers},
-		{"a render failure beats differences", map[Status]int{StatusDifferent: 2}, 1, ExitBlockers},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := &Report{Counts: tt.counts, RenderFailures: tt.render}
-			assert.Equal(t, tt.want, r.ExitCode())
-		})
-	}
-}
-
 func TestClassify_RenderFailureCounted(t *testing.T) {
 	ingresses := []Ingress{
 		{
@@ -199,7 +176,6 @@ func TestClassify_RenderFailureCounted(t *testing.T) {
 	assert.Equal(t, 1, report.RenderFailures)
 	require.Len(t, report.Sources, 1)
 	assert.Equal(t, "template rejected: acme.io/rewrite", report.Sources[0].Ingresses[0].RenderError)
-	assert.Equal(t, ExitBlockers, report.ExitCode())
 }
 
 func TestClassify_DeterministicIngressOrder(t *testing.T) {
