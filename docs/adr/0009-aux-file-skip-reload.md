@@ -46,7 +46,7 @@ Two changes in `pkg/dataplane/client/`, both on the controller side:
    `TestUpdateGeneralFile_SendsSkipReload` (and equivalents) so a
    regression that forgets the flag fails at unit-test time.
 
-2. **`executeFineGrainedSync` gains a post-`PhaseConfig` reload guard**:
+2. **The sync path (`orchestrator.sync` → `applyChanges`, `pkg/dataplane/orchestrator.go`) gains a post-`PhaseConfig` reload guard**:
    if any auxiliary file had a create-or-update in this sync AND
    `PhaseConfig` did NOT trigger a reload of its own (empty
    `haproxy.cfg` diff, or every config op was runtime-eligible), the
@@ -102,7 +102,7 @@ a reload.
   fires only when aux files changed AND `PhaseConfig` produced no
   reload. Runtime API changes (server enable/disable, weight, address)
   apply via the runtime API regardless and don't need a reload.
-- **Desired config must reach `executeFineGrainedSync`.** The guard's
+- **Desired config must reach `orchestrator.applyChanges`.** The guard's
   fallback `PushRawConfiguration` call needs the rendered
   `haproxy.cfg`. Code paths that bypass `sync()` (none today) would
   need to thread the desired config through to the same point or

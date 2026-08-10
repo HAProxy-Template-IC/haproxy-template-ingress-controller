@@ -44,7 +44,7 @@ By default, only Ingresses with `spec.ingressClassName: haptic` are processed. T
 
 ## Extension points
 
-The Ingress library hooks into these extension points from base.yaml. Snippet names match what's emitted in `libraries/ingress.yaml`.
+The Ingress library hooks into these extension points from base.yaml. Snippet names match what's emitted in `charts/haptic/charts/ingress/library.yaml`.
 
 | Extension Point | Snippet | What It Generates |
 |-----------------|---------|-------------------|
@@ -55,6 +55,8 @@ The Ingress library hooks into these extension points from base.yaml. Snippet na
 | `map-path-exact-*` | `map-path-exact-500-ingress` | Entries for `pathType: Exact` paths |
 | `map-pfxexact-*` | `map-pfxexact-500-ingress` | Prefix-exact entries emitted when `pathType: Prefix` paths need to match their exact boundary |
 | `map-path-prefix-*` | `map-path-prefix-500-ingress` | Prefix entries for `pathType: Prefix` paths |
+| `features-*` | `features-105-ingress-ssl-redirect` | Registers each HTTPS-served host in `gf["sslRedirectHosts"]` when `extraContext.ingressDefaultSSLRedirect` is on — see [Redirect HTTP to HTTPS](#redirect-http-to-https) |
+| `map-path-prefix-*` | `map-path-prefix-501-ingress-default` | The catch-all prefix entry for an Ingress rule with no explicit path |
 | `status-patches-*` | `status-patches-200-ingress` | Patches the LoadBalancer status on each matched Ingress |
 
 Regex-path matching isn't emitted by this library directly — it comes from the default-enabled [haptic-annotations](haptic-annotations.md) library, whose `map-path-regex-800-haptic-path-type` snippet handles `haproxy-haptic.org/path-type: regex`. The opt-in `haproxy-ingress` library provides the equivalent `haproxy-ingress.github.io/path-type: regex`.
@@ -312,7 +314,7 @@ Two `extraContext` settings control the default HTTPS bind:
 | Key | Default | Effect |
 |-----|---------|--------|
 | `ingressDefaultHTTPS` | `true` | Bind the https port for every Ingress using the default certificate. Set `false` to serve Ingress over plain HTTP only until a host opts in with `spec.tls`. |
-| `default_ssl_cert_name` / `default_ssl_cert_namespace` | chart-set | The Secret backing the default certificate. When the default certificate is disabled (`defaultSSLCertificate.enabled=false`), there is no cert to bind, so the https port stays closed regardless of `ingressDefaultHTTPS`. |
+| `tls.defaultCertificate.name` / `tls.defaultCertificate.namespace` | chart-set | The Secret backing the default certificate. When the default certificate is disabled (`defaultSSLCertificate.enabled=false`), there is no cert to bind, so the https port stays closed regardless of `ingressDefaultHTTPS`. |
 
 To serve Ingress over plain HTTP only, disable the default bind through the chart:
 

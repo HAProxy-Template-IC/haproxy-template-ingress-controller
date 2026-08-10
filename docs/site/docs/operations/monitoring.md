@@ -218,6 +218,13 @@ The runtime fast path applies runtime-eligible server changes (weight, address, 
 | `haptic_runtime_fast_path_failures_total` | Counter | Fast-path attempts that errored (best-effort; the scheduled deploy converges) |
 | `haptic_runtime_fast_path_server_updates_total` | Counter | Total runtime-eligible server updates applied via the fast path |
 
+Two more counters record when the reload-free lane was *lost* — each increment is a sync that fell back to a reload or needed a retry:
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `haptic_runtime_map_divergence_total` | Counter | `map` | Runtime maps whose post-apply read-back disagreed with the desired content, forcing a reload fallback. The `map` label names the file, so a single map dominating the rate points at the template that builds it. |
+| `haptic_deploy_runtime_divergence_total` | Counter | — | Endpoints whose post-reload read-back found the on-disk config structurally diverged from the pushed body — a concurrent writer clobbered a just-activated config. The fast deploy retry self-heals it; sustained growth means something outside HAPTIC is writing to the same HAProxy. |
+
 **Key queries:**
 
 ```promql
@@ -227,6 +234,9 @@ rate(haptic_runtime_fast_path_fires_total[5m])
 
 # Runtime server updates applied without a reload
 rate(haptic_runtime_fast_path_server_updates_total[5m])
+
+# Maps that lost the reload-free lane, worst first
+topk(5, sum by (map) (rate(haptic_runtime_map_divergence_total[5m])))
 ```
 
 ### Validation metrics
@@ -283,7 +293,7 @@ sum by (validator) (rate(haptic_config_rejected_total[5m]))
 | Metric | Type | Description |
 |--------|------|-------------|
 | `haptic_event_subscribers` | Gauge | Active event subscribers |
-| `haptic_events_published_total` | Counter | Total events published |
+| `haptic_events_published_total` | Counter | Events seen by the metrics component. It subscribes with a typed filter (17 event types), so this isn't the bus-wide publish count — event types outside that filter are never counted |
 
 **Key queries:**
 
@@ -331,7 +341,7 @@ Exposed when the validating admission webhook is enabled (`controller.webhook.en
 |--------|------|--------|-------------|
 | `haptic_webhook_requests_total` | Counter | `gvk`, `result` | Total admission requests by GroupVersionKind and result |
 | `haptic_webhook_request_duration_seconds` | Histogram | — | Time spent processing webhook requests |
-| `haptic_webhook_validation_total` | Counter | `gvk`, `result` | Validation outcomes (`allowed` / `denied`) per GVK |
+| `haptic_webhook_validation_total` | Counter | `gvk`, `result` | Validation outcomes per GVK. `result` is `allowed`, `denied`, or `unregistered` — the last meaning the API server sent an AdmissionReview for a kind no validator backs, which is then admitted **unchecked**. Those series carry the fixed sentinel `<unregistered>` as `gvk` to bound cardinality; any growth means a webhook rule is scoped wider than the registered validators |
 
 **Key queries:**
 
@@ -351,10 +361,21 @@ histogram_quantile(0.95, rate(haptic_webhook_request_duration_seconds_bucket[5m]
 | `haptic_parser_cache_hits_total` | Counter | Parser cache hits — the controller caches parsed HAProxy configs so repeated reconciliations don't re-parse unchanged input |
 | `haptic_parser_cache_misses_total` | Counter | Parser cache misses |
 
+The same hits and misses are also broken down by the call site that asked for the parse. The aggregate ratio can't tell an undersized cache from one being flushed by content that never repeats — the `source` label can:
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `haptic_parser_cache_hits_by_source_total` | Counter | `source` | Parser cache hits, by the call site that requested the parse |
+| `haptic_parser_cache_misses_by_source_total` | Counter | `source` | Parser cache misses, by call site. A source that only ever misses parses content that never repeats, and should bypass the cache instead. |
+
 ```promql
 # Parser cache hit ratio
 rate(haptic_parser_cache_hits_total[5m]) /
 (rate(haptic_parser_cache_hits_total[5m]) + rate(haptic_parser_cache_misses_total[5m]))
+
+# Sources that never hit the cache
+sum by (source) (rate(haptic_parser_cache_misses_by_source_total[5m]))
+  unless sum by (source) (rate(haptic_parser_cache_hits_by_source_total[5m]) > 0)
 ```
 
 ### Event bus backpressure
@@ -363,7 +384,7 @@ These complement `haptic_events_published_total` / `haptic_event_subscribers` fr
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `haptic_events_dropped_total` | Counter | — | Total events dropped because a subscriber's buffer was full |
+| `haptic_events_dropped_total` | Counter | — | Drops from **critical** subscribers, because only those fire the bus's drop callback. It therefore tracks `haptic_events_dropped_critical_total` exactly and doesn't include observability drops |
 | `haptic_events_dropped_critical_total` | Counter | — | Drops from critical subscribers (alert if > 0 — indicates lost reconciliation work) |
 | `haptic_events_dropped_observability_total` | Gauge | — | Drops from observability-only subscribers (expected under load, non-alerting) |
 | `haptic_events_dropped_by_subscriber_total` | Counter | `subscriber`, `event_type` | Per-subscriber drop counts for diagnosing which component is falling behind |
@@ -559,11 +580,11 @@ A route that receives no requests for over a minute drops out of the exposition 
 
 ## Alerting rules
 
-If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `controller.monitoring.prometheusRule.enabled`) covering the nine controller alerts in [Shipped alerts](#shipped-alerts) below. The [Recommended alerts](#recommended-alerts) further down are a separate, broader example set you copy and adapt for any Prometheus setup — they're **not** what the chart deploys, and most use distinct `HAProxyIC*` names so you can run them alongside the shipped rules (`HAProxyFleetDiverged` is the one alert both sets define).
+If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `controller.monitoring.prometheusRule.enabled`) covering the ten alerts in [Shipped alerts](#shipped-alerts) below — nine on controller `haptic_*` metrics plus one on HAProxy's own access-log drop counter. The [Recommended alerts](#recommended-alerts) further down are a separate, broader example set you copy and adapt for any Prometheus setup — they're **not** what the chart deploys, and most use distinct `HAProxyIC*` names so you can run them alongside the shipped rules (`HAProxyFleetDiverged` is the one alert both sets define).
 
 ### Shipped alerts
 
-The chart's `PrometheusRule` deploys these nine alerts when `controller.monitoring.prometheusRule.enabled: true`. Each is toggled by its own `controller.monitoring.prometheusRule.defaultRules.<key>` flag (all default to `true`):
+The chart's `PrometheusRule` deploys these ten alerts when `controller.monitoring.prometheusRule.enabled: true`. Each is toggled by its own `controller.monitoring.prometheusRule.defaultRules.<key>` flag (all default to `true`):
 
 | Alert | Toggle key (`defaultRules.<key>`) | Fires when |
 |-------|-----------------------------------|------------|
@@ -576,6 +597,7 @@ The chart's `PrometheusRule` deploys these nine alerts when `controller.monitori
 | `HAProxyControllerHAProxyPodsRejected` | `haproxyPodsRejected` | `increase(haptic_haproxy_pods_rejected_total[5m]) > 0` for 5m |
 | `HAProxyControllerNoHAProxyPods` | `noHAProxyPods` | `haptic_resource_count{type="haproxy-pods"} < 1` for 5m |
 | `HAProxyControllerCriticalEventsDropped` | `criticalEventsDropped` | `increase(haptic_events_dropped_critical_total[5m]) > 0` |
+| `HAProxyAccessLogRecordsDropped` | `accessLogDropped` | `increase(haproxy_process_dropped_logs_total[5m]) > 0` |
 
 Turn one rule off, or replace the whole set with your own:
 
@@ -586,7 +608,7 @@ controller:
     prometheusRule:
       enabled: true
       defaultRules:
-        highQueueDepth: false   # drop a single shipped rule; the other eight stay
+        highQueueDepth: false   # drop a single shipped rule; the other nine stay
       # Or set `rules:` to a non-empty list to replace ALL default rules with your own:
       # rules:
       #   - alert: MyCustomAlert

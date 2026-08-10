@@ -6,6 +6,15 @@ Accepted 2026-08-05. Prerequisites shipped earlier (!1541, !1542, !1543);
 Decisions 1–6 are implemented in a single MR — see Sequencing for why one
 release is safe.
 
+**Partly superseded by [ADR-0017](0017-template-library-kind.md)**: the input
+mechanism here — N `HAProxyTemplateConfig` objects marked `spec.partial`, merged
+in `CRD_NAME` order — is replaced by one config referencing
+`HAProxyTemplateLibrary` objects through `spec.libraryRefs`. Everything else
+stands, including the removal of the `haproxytemplateconfigs` admission webhook
+and its replacement by strict-on-leader validation plus the startup load gate.
+`spec.partial` never reached a release, so only snapshot consumers of `main`
+were affected.
+
 Revised four times. The first draft argued from the wrong rationale; the second
 understated the stripper's cost; the third re-measured every figure after four
 MRs landed and refuted five of them. This fourth revision corrects three

@@ -562,7 +562,7 @@ Located in `tests/` directory. Require kind cluster:
 make test-integration
 
 # Run specific integration test
-KEEP_CLUSTER=true go test ./tests/... -run TestSyncFrontendAdd -v
+KEEP_CLUSTER=true go test -tags=integration ./tests/integration -run TestSyncFrontends -v
 ```
 
 Tests use real Kubernetes clusters (kind) and HAProxy pods. The `KEEP_CLUSTER=true` environment variable prevents cluster cleanup for debugging.
@@ -716,13 +716,13 @@ The source hash is calculated from all `.go` files in `pkg/` and `cmd/`. It chan
 
 - `versions.env` defines supported versions (`HAPROXY_VERSIONS="3.0 3.1 3.2 3.3 3.4"`)
 - `Dockerfile` uses `DEFAULT_HAPROXY` for local builds
-- CI builds controller images for each version: `0.1.0-haproxy3.0`, `0.1.0-haproxy3.1`, `0.1.0-haproxy3.2`, `0.1.0-haproxy3.3`, `0.1.0-haproxy3.4`
+- CI builds one controller image per version: `<version>-haproxy3.0` … `<version>-haproxy3.4` (for example `0.2.0-alpha.1-haproxy3.4`)
 
 **Deploy-time** (what the chart uses):
 
 - `haproxyVersion` in `values.yaml` selects the version (must be one CI builds)
 - This single value drives both:
-    - Controller image tag: `registry.gitlab.com/.../haptic:0.1.0-haproxy3.4`
+    - Controller image tag: `registry.gitlab.com/.../haptic:0.2.0-alpha.1-haproxy3.4`
     - HAProxy image tag: `haproxytech/haproxy-debian:3.4`
 - This guarantees the controller and HAProxy pod always use matching versions
 
@@ -1081,7 +1081,14 @@ For detailed development context on specific packages, see:
 - `pkg/dataplane/CLAUDE.md` - HAProxy integration
 - `pkg/templating/CLAUDE.md` - Template engine
 - `pkg/core/CLAUDE.md` - Core functionality
+- `pkg/httpstore/CLAUDE.md` - Pure HTTP resource store
+- `pkg/introspection/CLAUDE.md` - Debug HTTP server infrastructure (`/debug/vars`)
+- `pkg/lifecycle/CLAUDE.md` - Component lifecycle registry and leader gating
+- `pkg/metrics/CLAUDE.md` - Prometheus registry and server primitives
+- `pkg/webhook/CLAUDE.md` - Pure admission-webhook HTTPS server
 - `cmd/controller/CLAUDE.md` - Entry point and startup
+- `charts/CLAUDE.md` - Helm chart and template libraries
+- `tests/CLAUDE.md` - Test suites (integration, e2e, acceptance)
 
 ## Agent skills
 

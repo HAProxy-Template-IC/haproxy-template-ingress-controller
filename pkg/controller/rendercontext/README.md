@@ -44,6 +44,7 @@ The context map produced by `Build()` carries the keys templates rely on:
 | `pathResolver` | `*templating.PathResolver` | required |
 | `dataplane` | `config.DataplaneConfig` | from `cfg.Dataplane` |
 | `shared` | `*templating.SharedContext` | always present (per-render cache) |
+| `capabilities` | `map[string]any` | always present — `CapabilitiesToMap` of the `WithCapabilities` value, or an all-false map when the option is omitted, so validation and production expose the identical key |
 | `runtimeEnvironment` | `*templating.RuntimeEnvironment` | always present (`GOMAXPROCS` and friends) |
 | `currentConfig` | `*parserconfig.StructuredConfig` | `WithCurrentConfig` (optional; omitted when nil to dodge a Scriggo nil-pointer-initializer panic) |
 | `http` | `templating.HTTPFetcher` | `WithHTTPFetcher` (optional) |

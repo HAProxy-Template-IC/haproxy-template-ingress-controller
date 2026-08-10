@@ -20,13 +20,13 @@ import (
 applier := statusapplier.New(&statusapplier.Config{
     EventBus:      bus,
     DynamicClient: dynamicClient,
-    GVRResolver:   statusapplier.NewRestMapperResolver(),
+    GVRResolver:   statusapplier.NewRestMapperResolver(restMapper),
     Logger:        logger,
 })
 go applier.Start(ctx)
 ```
 
-`GVRResolver` is an interface so tests can supply a fake. `NewRestMapperResolver()` (the default) takes no arguments and resolves `apiVersion + kind` → `GroupVersionResource` via static lowercase-pluralisation, which covers the well-known Kubernetes and Gateway-API kinds (Ingress → ingresses, HTTPRoute → httproutes, etc.). Custom resources with non-standard pluralisation need a custom `GVRResolver` implementation.
+`GVRResolver` is an interface so tests can supply a fake. `NewRestMapperResolver(mapper)` (the default) takes the controller's `meta.RESTMapper` and resolves `apiVersion + kind` → `GroupVersionResource` from the cluster's discovery data — including each CRD's own `spec.names.plural`, so irregular plurals work without any Go-side pluralisation table, which covers the well-known Kubernetes and Gateway-API kinds (Ingress → ingresses, HTTPRoute → httproutes, etc.). Custom resources with non-standard pluralisation need a custom `GVRResolver` implementation.
 
 ## Event Flow
 

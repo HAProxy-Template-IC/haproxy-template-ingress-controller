@@ -13,7 +13,7 @@ Find your symptom in the quick reference below, then follow its diagnosis and fi
 | "no kind HAProxyTemplateConfig is registered" | [CRD Not Found](#crd-not-found) |
 | No DNS or API connectivity on a kind cluster | [NetworkPolicy Issues in kind](#networkpolicy-issues-in-kind) |
 | Pod in CrashLoopBackOff | [Controller Not Starting](#controller-not-starting) |
-| Pod stuck Running but not Ready (0/1, 1/2, 2/3) | [Pods stuck not Ready](#pods-stuck-not-ready) |
+| Pod stuck Running but not Ready (for example `1/2` or `3/4`) | [Pods stuck not Ready](#pods-stuck-not-ready) |
 | Pods running, no reconciliation activity | [Controller Running But Not Processing](#controller-running-but-not-processing) |
 | "template rendering failed" in logs | [Invalid Template Syntax](#invalid-template-syntax) |
 | "validation failed" / HAProxy errors | [Configuration Validation Failures](#configuration-validation-failures) |
@@ -100,13 +100,13 @@ kubectl describe pod -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.i
 
 | Cause | Check | Solution |
 |-------|-------|----------|
-| Missing HAProxyTemplateConfig | `kubectl get haproxytemplateconfig` — a Helm install creates one per enabled template library plus your own config; the controller waits for **all the** names in the Deployment's `CRD_NAME` before it starts | Reinstall Helm chart |
+| Missing HAProxyTemplateConfig | `kubectl get haproxytemplateconfig,haproxytemplatelibrary -n haptic` — a Helm install creates one `HAProxyTemplateLibrary` per enabled template library plus a single `HAProxyTemplateConfig` (the name in the Deployment's `CRD_NAME`); the controller waits for that config **and every library its `spec.libraryRefs` names, at the revision it names**, before it starts | Reinstall Helm chart |
 | Invalid credentials Secret | `kubectl get secret -n haptic haptic-credentials -o jsonpath='{.data}'` (Helm names it `<release>-credentials`) | Recreate secret with correct keys |
 | RBAC permissions | `kubectl auth can-i list ingresses --all-namespaces --as=system:serviceaccount:<ns>:<sa>` | Verify ClusterRole/ClusterRoleBinding |
 
 ### Pods stuck not ready
 
-**Symptoms**: A pod shows `0/1`, `1/2`, or `2/3` in the `READY` column and never reaches full readiness, but it isn't in `CrashLoopBackOff` or `ImagePullBackOff`.
+**Symptoms**: A pod shows fewer ready containers than it has (a default install expects `2/2` for the controller and `4/4` for HAProxy) and never reaches full readiness, but it isn't in `CrashLoopBackOff` or `ImagePullBackOff`.
 
 First branch on the pod's actual state — "not Ready" is a readiness-probe outcome, not a single cause:
 
@@ -117,8 +117,8 @@ kubectl describe pod -n haptic <pod>   # read the Events and per-container State
 
 - **A container is in `Waiting` with `CrashLoopBackOff` or `ImagePullBackOff`**: the pod never starts, so it can't be Ready. Follow [Controller not starting](#controller-not-starting) for crashes, or [Image pull errors](#image-pull-errors) for pull failures.
 - **Every container is `Running` but the pod stays not Ready**: a readiness probe is failing. Branch by which pod:
-    - **Controller pod** (`0/1`): the readiness probe hits `/healthz` on `controller.ports.healthz` (`8080` by default), which returns ready only once the controller has loaded a valid `HAProxyTemplateConfig` and rendered its first config. A render or config-load failure keeps it not Ready — check `kubectl logs -n haptic <pod>` for template or validation errors and follow [Invalid template syntax](#invalid-template-syntax). `/healthz` shares the `/debug/*` listener and is required by the probe (see [Debugging](./operations/debugging.md)).
-    - **HAProxy pod** (`1/2` or `2/3`, depending on sidecars): the HAProxy or Dataplane API container is up but not passing its probe. The controller also can't converge config onto an unreachable Dataplane API — follow [Can't connect to Dataplane API](#cannot-connect-to-dataplane-api).
+    - **Controller pod** (`1/2`): the readiness probe hits `/healthz` on `controller.ports.healthz` (`8080` by default), which returns ready only once the controller has loaded a valid `HAProxyTemplateConfig` and rendered its first config. A render or config-load failure keeps it not Ready — check `kubectl logs -n haptic <pod>` for template or validation errors and follow [Invalid template syntax](#invalid-template-syntax). `/healthz` shares the `/debug/*` listener and is required by the probe (see [Debugging](./operations/debugging.md)).
+    - **HAProxy pod** (`3/4` on a default install, fewer with sidecars disabled): the HAProxy or Dataplane API container is up but not passing its probe. The controller also can't converge config onto an unreachable Dataplane API — follow [Can't connect to Dataplane API](#cannot-connect-to-dataplane-api).
 
 ### Controller running but not processing
 
@@ -216,10 +216,10 @@ Fix the reported line in the template or resource, then re-apply. To reproduce a
 haptic-controller validate -f config.yaml --verbose
 ```
 
-Two webhooks with different failure behavior sit behind this:
+Two different gates sit behind this, depending on what you applied:
 
-- **Watched resources** (Ingress, Gateway, and every other `watchedResources` entry with `enableValidationWebhook: true`) use `failurePolicy: Fail` — a render-breaking apply is rejected, and if the webhook itself is unreachable the apply is blocked.
-- **The `HAProxyTemplateConfig` CRD** uses `failurePolicy: Ignore` — a render-breaking config is still rejected while the webhook is up, but an unreachable webhook lets the apply through so you can push a fix while the controller is degraded. The daemon's load gate then rejects a bad config and keeps serving the last-good one (`haptic_config_rejected_total` increments — see [Monitoring](./operations/monitoring.md#alerting-rules)).
+- **Watched resources** (Ingress, Gateway, and every other `watchedResources` entry with `enableValidationWebhook: true`) go through the admission webhook, which uses `failurePolicy: Fail` — a render-breaking apply is rejected, and if the webhook itself is unreachable the apply is blocked.
+- **The `HAProxyTemplateConfig` itself** has no admission webhook, so a bad config is *accepted* by the apiserver and caught afterwards: the controller refuses to load it, keeps serving the last-good one, and increments `haptic_config_rejected_total` (see [Monitoring](./operations/monitoring.md#alerting-rules)). The reason lands on the object — `kubectl describe htplcfg <name>` shows the `Validated` condition with reason `ConfigInvalid`. On a fresh or upgraded pod the same failure is fatal: the pod crash-loops with reason `LoadGateFailed` rather than serving untested config, which leaves the old pods running. Catch it before the apply with [`haptic-controller preflight`](./operations/validate-before-deploy.md).
 
 ## HAProxy Pod Issues
 
@@ -472,7 +472,7 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 
 # Configuration — every object, plus the merged result the controller assembles
 kubectl get haproxytemplateconfig -n haptic -o yaml > config-objects.yaml
-haptic-controller config view --input -n haptic > config-merged.yaml
+haptic-controller config view --input --namespace haptic > config-merged.yaml
 
 # HAProxy config (sanitize sensitive data!)
 kubectl exec -n haptic $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg > haproxy.cfg

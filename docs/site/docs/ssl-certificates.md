@@ -268,7 +268,7 @@ metadata:
   name: app
   namespace: my-app
 spec:
-  ingressClassName: haproxy
+  ingressClassName: haptic
   tls:
     - hosts: ["app.example.com"]
       secretName: app-tls-ecdsa
@@ -300,7 +300,7 @@ metadata:
   name: app
   namespace: my-app
 spec:
-  gatewayClassName: haproxy
+  gatewayClassName: haptic
   listeners:
     - name: https
       protocol: HTTPS

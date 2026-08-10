@@ -85,8 +85,8 @@ Filter events at the bus level for improved performance.
 
 **Pattern:** **SubscribeTypes()** filters by event type strings at the bus level
 (variants: `SubscribeTypesLeaderOnly` for components subscribing after leader
-election, `SubscribeTypesLossy` for observability consumers where silent drops
-are acceptable).
+election). For observability consumers where silent drops are acceptable, use
+the untyped `SubscribeLossy`.
 
 **When to Use:**
 

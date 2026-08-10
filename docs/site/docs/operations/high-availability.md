@@ -387,7 +387,7 @@ controller:
 
 ### Monitoring and alerts
 
-The leader-election alerts (no leader, split-brain, frequent transitions) are part of the recommended alert set in [Monitoring — Alerting Rules](./monitoring.md#alerting-rules). The Helm chart ships them as a built-in `PrometheusRule` — enable it with `controller.monitoring.prometheusRule.enabled`.
+The leader-election alerts (no leader, split-brain, frequent transitions) are part of the recommended alert set in [Monitoring — Alerting Rules](./monitoring.md#alerting-rules). Of those three, the chart's built-in `PrometheusRule` ships only the no-leader alert (`HAProxyControllerNoLeader`, toggled by `controller.monitoring.prometheusRule.defaultRules.leaderElectionLost`) — enable it with `controller.monitoring.prometheusRule.enabled`. Copy the split-brain and transition-rate rules from the recommended set if you want them.
 
 ## Migration from single-replica
 

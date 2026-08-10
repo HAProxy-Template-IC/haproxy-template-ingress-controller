@@ -23,3 +23,5 @@ Do not introduce a registry at this time. Four keys, no recorded incident of a t
 ## Do not re-suggest
 
 A future architecture review may notice the untyped map and propose a typed registry "for safety and documentation." **Do not — yet.** The trigger conditions for revisiting are concrete: `globalFeatures` grows to roughly 6–8 keys, **or** a typo-induced silent failure is observed in production or tests. Without one of those, the registry is a module that adds machinery for risks that have not materialised. If you propose this change, the proposal must cite the trigger.
+
+**Update:** the first trigger has fired — the bundled libraries now use 28 distinct `gf["…"]` keys, roughly four times the stated ceiling. A revisit is therefore in scope; this ADR no longer argues against one on key-count grounds. The second trigger (an observed typo-induced silent failure) has not been reported.

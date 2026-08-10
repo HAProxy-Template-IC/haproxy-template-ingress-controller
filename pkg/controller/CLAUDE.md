@@ -140,8 +140,9 @@ func (c *Component) Start(ctx context.Context) error {
 
 ## Validation Tests Ride the Config Objects
 
-A configuration's `validationTests` live inline on the `HAProxyTemplateConfig`
-objects of the merged set — one per chart library plus the operator's — and
+A configuration's `validationTests` live inline on the objects of the merged
+set — one `HAProxyTemplateLibrary` per chart library plus the operator's own
+`HAProxyTemplateConfig` — and
 `conversion.MergeSpecs` unions them per source: a non-`_global` test name
 defined by two objects is an error naming both, and the reserved `_global`
 baseline accumulates. (The `HAProxyValidationTests` companion kind, its
@@ -481,11 +482,13 @@ func runIteration(ctx context.Context, k8sClient *client.Client, ...) error {
     go handler.Start(iterCtx)
 
     // Stage 2: synchronously fetch + validate the CRDs/Secret before continuing.
-    // --crd-name is an ordered LIST: every named HAProxyTemplateConfig is
-    // fetched in parallel, merged later-wins by conversion.MergeSpecs, and the
+    // --crd-name is ONE name. The named HAProxyTemplateConfig is fetched, its
+    // ordered spec.libraryRefs are resolved into HAProxyTemplateLibrary
+    // objects, and the set is merged later-wins by conversion.MergeSpecs. The
     // whole pipeline below (ValidateStructure, effective-config resolution, the
-    // load gate) runs on the merged result. Startup waits for ALL of them —
-    // a partial set is as unusable as none. See ADR-0014.
+    // load gate) runs on the merged result. Startup waits for the config AND
+    // every referenced library at the revision it names — a partial set is as
+    // unusable as none. See ADR-0017.
     cfg, creds := fetchAndValidate(ctx, k8sClient, ...)
 
     // Stage 3: watch each spec.watchedResources entry; wait for initial sync.

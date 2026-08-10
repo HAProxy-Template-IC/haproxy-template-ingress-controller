@@ -12,7 +12,10 @@ This split keeps the libraries reusable and independently testable; all event ch
 
 ```
 haptic/
-├── cmd/controller/          # Entry point (main.go)
+├── cmd/
+│   ├── controller/          # Entry point (main.go)
+│   ├── gen-validators/      # Generator for the zero-alloc OpenAPI validators in pkg/generated
+│   └── playground/          # WASM browser template playground (drives the production RenderService)
 ├── pkg/
 │   ├── apis/                # CRD type definitions (HAProxyTemplateConfig, HAProxyCfg, ...)
 │   ├── compression/         # zstd helpers used by CRD content compression
@@ -70,8 +73,9 @@ haptic/
 │       ├── deployer/        # Scheduler + per-instance deployer + drift-prevention monitor
 │       ├── discovery/       # HAProxy pod discovery
 │       ├── dryrunvalidator/ # Webhook dry-run validator
+│       ├── eventemitter/    # Emits template-requested Kubernetes Events (recordEvent) via EventRecorder
 │       ├── events/          # Domain event type catalog
-│       ├── helpers/         # Template engine factories (NewEngineFromConfig +
+│       ├── helpers/         # Template engine factories (NewEngineFromConfigWithOptions +
 │       │                    #   ExtractTemplatesFromConfig) shared by renderer / dryrun /
 │       │                    #   testrunner / cmd validate
 │       ├── httpstore/       # HTTP resource fetcher + watcher
@@ -108,7 +112,7 @@ haptic/
     └── eventimmutability/   # Custom golangci-lint analyzer (enforces pointer receivers on Event)
 ```
 
-Each package has its own `README.md` (user-facing API) and `CLAUDE.md` (developer context). Prefer those as the authoritative reference — this file only orients new contributors.
+Most packages carry a `README.md` (user-facing API) and a `CLAUDE.md` (developer context); prefer those as the authoritative reference where they exist. Smaller packages — `pkg/controller/eventemitter`, `pkg/controller/crdwatch`, `pkg/controller/throttle`, `pkg/k8s/typegen` — document themselves in package doc comments instead. This file only orients new contributors.
 
 ## Dependency rules
 

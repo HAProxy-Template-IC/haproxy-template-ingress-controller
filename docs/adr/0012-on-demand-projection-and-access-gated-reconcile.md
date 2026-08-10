@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed, after three adversarial reviews + source verification (workflow
+Partially implemented. **Mechanism 1 (informer-body projection) has shipped** — `pkg/k8s/watcher/projection.go` installs the transform via `SharedIndexInformer.SetTransform` for CachedStore-backed kinds. **Mechanism 2 (access-gated reconcile) remains deferred and unimplemented.**
+
+Originally proposed, after three adversarial reviews + source verification (workflow
 `wf_ef74052e-50c`, 2026-06-04, branch `feat/feature-gap-implementation`).
 Improves the **existing** on-demand watcher (`store: on-demand` → `CachedStore`);
 introduces **no** new store type.

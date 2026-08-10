@@ -26,7 +26,7 @@ pl := pipeline.New(&pipeline.PipelineConfig{
     Logger:    logger,
 })
 
-result, err := pl.Execute(ctx, storeProvider)
+result, err := pl.Execute(ctx, storeProvider, rendercontext.RenderModeReconcile)
 ```
 
 The `*PipelineResult` carries everything downstream consumers need without
@@ -46,8 +46,8 @@ re-running render or validate:
 
 | Method | Use case |
 |--------|----------|
-| `Execute(ctx, provider) (*PipelineResult, error)` | Standard reconciliation / proposal validation. Render + validate. |
-| `ExecuteWithResult(ctx, provider) (*PipelineResult, *validation.ValidationResult, error)` | Same render+validate flow but also returns the raw `*validation.ValidationResult` so callers can inspect warnings / phase details without parsing the wrapped error. Used by the proposal validator's webhook path. |
+| `Execute(ctx, provider, mode, extraOpts...) (*PipelineResult, error)` | Standard reconciliation / proposal validation. Render + validate. |
+| `ExecuteWithResult(ctx, provider, mode, extraOpts...) (*PipelineResult, *validation.ValidationResult, error)` | Same render+validate flow but also returns the raw `*validation.ValidationResult` so callers can inspect warnings / phase details without parsing the wrapped error. Used by the proposal validator's webhook path. |
 
 ## What `Execute` Does
 

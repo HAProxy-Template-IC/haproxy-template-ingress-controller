@@ -323,7 +323,7 @@ Empty / invalid strings fall back to the `2s` default silently — the validatin
 | `.Fetch(ns, name)` returns empty for a resource that exists | `indexBy` doesn't match what you passed, or `labelSelector` / `fieldSelector` is filtering it out |
 | OOMKilled on controller | Switch large resources (TLS Secrets, big ConfigMaps) to `store: on-demand`; add `watchedResourcesIgnoreFields` entries |
 | Template rendering slow, many API logs | You're calling `.List()` on an `on-demand` store, or `.Fetch()` consistently missing the cache — profile with `/debug/pprof/profile`, consider `store: full` if the total size is modest |
-| `kubectl apply` on CRD rejected with `watchedResources must be non-empty` | The CRD schema requires at least one entry; see [CRD Reference](./crd-reference.md) |
+| `kubectl apply` rejected with `a HAProxyTemplateConfig needs podSelector, at least one watchedResources entry, and haproxyConfig …` | The CRD's validation rule requires `podSelector`, at least one `watchedResources` entry, and a `haproxyConfig` — inline or from a `spec.libraryRefs` entry; see [CRD Reference](./crd-reference.md) |
 
 ## See also
 

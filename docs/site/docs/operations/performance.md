@@ -61,7 +61,7 @@ INFO HAPTIC starting ... gomaxprocs=8 gomemlimit="483183820 bytes (460.80 MiB)"
 
 `gomemlimit` is 90% of the 512Mi memory limit (≈460.8 MiB). Because the chart omits a CPU limit, `gomaxprocs` matches the node's core count (8 here) rather than a container CPU limit — you only see `gomaxprocs=1` when you set a 1-CPU limit.
 
-The `AUTOMEMLIMIT` environment variable adjusts the memory limit ratio (default: 0.9; valid range `0.0 < AUTOMEMLIMIT <= 1.0`). Set it via the chart's `controller.extraEnv` list, which is injected into the controller container:
+The `AUTOMEMLIMIT` environment variable adjusts the memory limit ratio (default: 0.9; valid range `0.0 < AUTOMEMLIMIT <= 1.0`). Set `AUTOMEMLIMIT=off` to skip the automatic detection entirely; setting `GOMEMLIMIT` yourself also takes precedence, and the controller then leaves it alone. Set it via the chart's `controller.extraEnv` list, which is injected into the controller container:
 
 ```yaml
 controller:
@@ -265,7 +265,7 @@ There is no `Set` method on the shared cache — this is deliberate and prevents
 
 ### Template debugging
 
-Profile template rendering with the `validate` subcommand's tracing flags (output goes to stderr):
+Profile template rendering with the `validate` subcommand's tracing flags (the trace and include profile print to stdout; log lines go to stderr):
 
 ```bash
 # Top-level render order with per-template timing
@@ -277,6 +277,31 @@ Profile template rendering with the `validate` subcommand's tracing flags (outpu
 # Combine with --verbose and --dump-rendered for end-to-end diagnosis
 ./bin/haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-templates
 ```
+
+### Measuring render time (`benchmark`)
+
+`--trace-templates` tells you where a single render spends its time. The `benchmark` subcommand tells you whether a change made rendering faster or slower, by rendering the same validation test repeatedly and timing each pass. It separates template *compilation* from *rendering*, so a cold first render doesn't hide a warm-path regression:
+
+```bash
+# Every validation test in the config, 2 iterations each (the default)
+./bin/haptic-controller benchmark -f config.yaml
+
+# One test, more iterations for a tighter median
+./bin/haptic-controller benchmark -f config.yaml --test benchmark-ingress-100 --iterations 10
+
+# Rank the 20 slowest template includes
+./bin/haptic-controller benchmark -f config.yaml --profile-includes
+```
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `-f`, `--file` | — (required) | `HAProxyTemplateConfig` YAML to benchmark |
+| `--test` | all tests | Validation test name to benchmark; repeatable |
+| `--iterations` | `2` | Render passes per test |
+| `--profile-includes` | `false` | Show include timing statistics (top 20 slowest) |
+| `--schema-dir` | `$HAPTIC_SCHEMA_DIR` | Schemas for typed resource access. Without it, typed access falls back to untyped `resources["name"].List()`, which benchmarks a different code path than production |
+
+Render the chart first so you benchmark what the controller actually assembles — see [Validate before deploying](./validate-before-deploy.md).
 
 ## HAProxy optimization
 

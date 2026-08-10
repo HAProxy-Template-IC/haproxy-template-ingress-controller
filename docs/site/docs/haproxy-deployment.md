@@ -206,9 +206,15 @@ The string is processed through Helm's `tpl`, so chart helpers and `.Values` ref
 
 ## Access logging
 
-HAProxy writes its access logs to the container's stdout, so `kubectl logs` shows them directly:
+By default the access log goes to the Vector sidecar, which prints it to its own
+stdout — so `kubectl logs` shows it on the `vector` container. With
+`vector.enabled=false` the records go to the `haproxy` container's stdout instead:
 
 ```bash
+# Default install (vector.enabled=true)
+kubectl logs -n haptic -l app.kubernetes.io/component=loadbalancer -c vector
+
+# With vector.enabled=false
 kubectl logs -n haptic -l app.kubernetes.io/component=loadbalancer -c haproxy
 ```
 
@@ -219,7 +225,9 @@ TCP-mode frontends), using HAProxy's native JSON log encoding:
 {"ts":"2026-07-25T19:05:19.615Z","req_id":"019f9ae9-3a61-7814-8601-774735249ecd","trace_id":"","client_ip":"10.244.0.1","frontend":"https","backend":"default_echo_echo_80","server":"SRV_1","method":"GET","host":"echo.example.com","listener_port":"443","path":"/api/v1","http_version":"HTTP/1.1","status":200,"bytes":73,"request_time_ms":0,"queue_time_ms":0,"connect_time_ms":1,"response_time_ms":3,"total_time_ms":4,"retries":0,"term":"----","resource":"default/echo","denied_by":"","tls_version":"TLSv1.3","tls_sni":"echo.example.com"}
 ```
 
-The log target is `log stdout len 16384 format raw local0 info`. `format raw`
+The log target is `log /run/vector/haproxy.sock len 16384 format raw local0 info`
+by default, and `log stdout len 16384 format raw local0 info` with
+`vector.enabled=false`. `format raw`
 means records carry no syslog prefix, so a collector parses lines directly; each
 record carries its own `ts` instead.
 
@@ -250,6 +258,7 @@ render.
 | `term` | HAProxy's 4-character termination state — separates a client abort from a server abort, a timeout, and a response HAProxy generated itself |
 | `resource` | `<namespace>/<name>` of the Ingress, HTTPRoute or custom resource that owns the matched route — the join key back to Kubernetes |
 | `denied_by` | Which gate blocked the request; empty when the backend answered |
+| `rate_limit_degraded`, `waf_degraded` | The counterpart to `denied_by`: where that names the control which **refused** a request, these name a control that couldn't be consulted and so **allowed** it. Emitted on every record; empty when nothing was degraded |
 | `route` | The matched route **key** — the path template an operator wrote, host included, with a prefix match marked `*` (`echo.example.com/api/*`). Unlike `path` it's bounded by the number of rules, which is what makes it usable as a metric label. Present when tracing is on, or when [request metrics](operations/monitoring.md#request-metrics) use it for their `path` label; it costs a four-step map-lookup cascade per request, so it's absent when neither wants it |
 | `bytes_in` | Request **body** bytes from the client (`%U`) — no request line or headers, which HAProxy doesn't count. Present only when the `request_size` request metric is enabled, since nothing else reads it |
 

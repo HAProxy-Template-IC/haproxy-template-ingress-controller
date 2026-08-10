@@ -1,6 +1,6 @@
 # `ingress-annotations-compat` library
 
-This library is a set of shared internal macros consumed by the three vendor annotation libraries ([haproxytech](haproxytech.md), [haproxy-ingress](haproxy-ingress.md), [nginx-ingress](nginx-ingress.md)) — it emits nothing on its own, and there is nothing in it to configure. Leave it enabled: the vendor libraries `import` its macros, so disabling it while any of them is enabled breaks their template compilation.
+This library is a set of shared internal macros consumed by HAPTIC's native [haptic-annotations](haptic-annotations.md) library — its heaviest consumer, and the only annotation library on by default — and by the three vendor annotation libraries ([haproxytech](haproxytech.md), [haproxy-ingress](haproxy-ingress.md), [nginx-ingress](nginx-ingress.md)) — it emits nothing on its own, and there is nothing in it to configure. Leave it enabled: the vendor libraries `import` its macros, so disabling it while any of them is enabled breaks their template compilation.
 
 ## Overview
 
@@ -16,10 +16,10 @@ The scaffold exists to concentrate behaviour that would otherwise be duplicated 
 controller:
   templateLibraries:
     ingressAnnotationsCompat:
-      enabled: true  # Default; required by haproxytech, haproxy-ingress, and nginx-ingress
+      enabled: true  # Default; required by haptic-annotations (on by default) and by haproxytech, haproxy-ingress, and nginx-ingress
 ```
 
-Disabling the scaffold while any of the three vendor annotation libraries stays enabled produces an invalid configuration: their snippets `import` macros defined here, and the controller's template validation rejects the merged config when those imports don't resolve. Disable it only together with all three vendor libraries.
+Disabling the scaffold while `haptic-annotations` or any of the three vendor annotation libraries stays enabled produces an invalid configuration: their snippets `import` macros defined here, and the controller's template validation rejects the merged config when those imports don't resolve. Disable it only together with all three vendor libraries.
 
 ## Hierarchy
 
@@ -28,10 +28,10 @@ Level 0:   base
 Level 1:   ssl
 Level 2:   ingress, gateway
 Level 2.5: ingress-annotations-compat   <-- this library
-Level 3:   haproxytech, haproxy-ingress, nginx-ingress
+Level 3:   haptic-annotations, haproxytech, haproxy-ingress, nginx-ingress
 ```
 
-The vendor libraries import macros from this scaffold; the scaffold knows about Ingress but not about any specific vendor.
+The level-3 libraries import macros from this scaffold; the scaffold knows about Ingress but not about any specific annotation vocabulary.
 
 ## Available macros
 
@@ -71,6 +71,7 @@ The service fields (`svcName`, `svcPort`, `svcPortName`) are captured at scan ti
 - `haproxytech/` → `util-haproxytech-ssl-passthrough` (annotation: `haproxy.org/ssl-passthrough`)
 - `haproxy-ingress/` → `util-haproxy-ingress-ssl-passthrough` (annotation: `haproxy-ingress.github.io/ssl-passthrough`)
 - `nginx-ingress/` → `util-nginx-ingress-ssl-passthrough` (annotation: `nginx.ingress.kubernetes.io/ssl-passthrough`)
+- `haptic-annotations/` → `util-haptic-ssl-passthrough` (annotation: `haproxy-haptic.org/ssl-passthrough`)
 
 The vendor library still owns the per-library `ComputeIfAbsent` cache key, so the data slots stay distinct.
 
@@ -96,14 +97,28 @@ EmitAnnotationAccessControl(
 - `haproxytech/` → `frontend-filters-200-haproxytech-access-control`
 - `haproxy-ingress/` → `frontend-filters-610-haproxy-ingress-access-control`
 - `nginx-ingress/` → `frontend-filters-700-nginx-ingress-access-control`
+- `haptic-annotations/` → `frontend-filters-810-haptic-access-control` (`aclPrefix: "haptic"`)
 
-Validation tests assert on the names of the generated ACLs (`ni_allowlist_*`, `hi_allowlist_*`, `haproxytech_allowlist_*`), so each library passes its distinct `aclPrefix`.
+Validation tests assert on the names of the generated ACLs (`ni_allowlist_*`, `hi_allowlist_*`, `haproxytech_allowlist_*`, `haptic_allowlist_*`), so each library passes its distinct `aclPrefix`.
 
 ### `WebhookRejectOrWarn`
 
 `WebhookRejectOrWarn(resource, reason, message)` (from the `util-webhook-reject-or-warn` snippet) is the shared way to reject a misconfigured watched resource. It branches on the `renderMode` global: under the admission webhook it `fail()`s (so the API server denies the proposed resource), and on a live reconcile or the daemon load gate it records a `Warning` Event against `resource` and returns, so one already-present bad resource can't abort the whole render. The vendor libraries **and** the native [`haptic-annotations`](haptic-annotations.md) library import it for per-resource routing/presentation validation.
 
 Callers must skip the offending resource's output in the warn path (`{% continue %}` in the Ingress loop). Use it only where skipping the feature is safe to serve without — routing/presentation guards — and keep a plain `fail()` for security features (skipping those would be fail-open) and for guards where a clean skip isn't possible. The full decision rule lives in the chart development guide (`charts/CLAUDE.md`).
+
+### Other exported macros
+
+The scaffold exports six more macros, all imported the same way:
+
+| Macro | Signature | What it does |
+|-------|-----------|--------------|
+| `RenderAnnotationSSLPassthroughBackends` | `(cacheKey, firstSeenKey, commentLabel string)` | Emits the `mode tcp` backends for the entries a matching `BuildAnnotationSSLPassthrough` scan cached under `cacheKey` — the emission half of the passthrough pair |
+| `RegisterAnnotationHSTS` | `(ingress *resources.ingresses.T, enabledAnn, maxAgeAnn, subdomainsAnn, preloadAnn, defaultMaxAge string)` | Registers per-host HSTS settings for the SSL library's global HSTS snippet to emit |
+| `EmitAnnotationCORS` | `(ingress *resources.ingresses.T, prefix, enabledAnn, defaultMaxAge, commentLabel string)` | Emits the CORS response headers and preflight handling for one Ingress (the ingress-nginx model) |
+| `ValidateCidrList` | `(rawList, annotation, key string)` | Rejects a malformed CIDR list before it reaches the config, naming the annotation and the resource |
+| `ValidateConfigValue` | `(value, annotation, key string, allowSpaces bool)` | Rejects annotation values carrying characters that would break out of the rendered directive |
+| `WafGovernance` | `(gov map[string]any)` | Applies the shared Web Application Firewall governance rules to an annotation-derived policy selection |
 
 ## Design rationale
 

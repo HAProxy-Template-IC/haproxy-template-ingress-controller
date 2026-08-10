@@ -10,13 +10,14 @@ HAPTIC uses a library-based architecture where each library is a YAML configurat
 - **Extensibility**: Add custom configuration via extension points
 - **Customization**: Override or extend library behavior through values.yaml
 
-The chart renders each enabled library as its own `HAProxyTemplateConfig`, plus
-one for your own `controller.config`. The controller merges them at startup in a
-fixed order, and later libraries win over earlier ones for the same key, so your
-config always wins over every library. To see the merged result:
+The chart renders each enabled library as its own `HAProxyTemplateLibrary`, plus
+a single `HAProxyTemplateConfig` for your own `controller.config` that lists them
+in merge order via `spec.libraryRefs`. The controller merges the set at startup,
+later libraries winning over earlier ones for the same key and your config
+winning over all of them. To see the merged result:
 
 ```bash
-haptic-controller config view --input -n haptic
+haptic-controller config view --input --namespace haptic
 ```
 
 Splitting the configuration this way keeps each object well clear of the ~1.5 MiB
@@ -47,10 +48,12 @@ The Ingress library's `map-host-500-ingress` snippet emits one `host host` line 
 | [Ingress](libraries/ingress.md) | Enabled | Kubernetes Ingress resource support |
 | [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTP, gRPC, TLS and TCP routes) support |
 | [ingress-annotations-compat](libraries/ingress-annotations-compat.md) | Enabled | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
+| [governance](operations/governance.md) | Enabled | Declarative constraints over any watched resource. Inert until you define `controller.config.templatingSettings.extraContext.governance.rules` |
 | [haptic-annotations](libraries/haptic-annotations.md) | Enabled | `haproxy-haptic.org/*` — HAPTIC's native vocabulary; a best-of-breed superset of the three vendor libraries. The only annotation library on by default |
 | [haproxytech](libraries/haproxytech.md) | Disabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) — opt-in migration aid |
 | [haproxy-ingress](libraries/haproxy-ingress.md) | Disabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) — opt-in migration aid |
 | [nginx-ingress](libraries/nginx-ingress.md) | Disabled | `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat) — opt-in migration aid |
+| vector | Loaded with `vector.enabled` (default on) | Renders the Vector sidecar's own config file. Loaded last, because it reads the port and feature decisions every earlier library made, and nothing depends on it |
 | [spoa-hub](operations/spoa-hub.md) | Auto | HAProxy-side wiring for the Stream Processing Offload Agent (SPOA) hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
 
 ## Enabling and disabling libraries
@@ -99,17 +102,19 @@ The chart swaps in the `frontend-routing-logic-regex-last` variant of the snippe
 Libraries are merged in a specific order, with later libraries overriding earlier ones:
 
 ```
-1. base.yaml             (lowest priority)
-2. ssl.yaml
-3. ingress.yaml
-4. gateway/
-5. ingress-annotations-compat.yaml  (level 2.5 - Ingress-only shared scaffold)
-6. haptic-annotations/   (native haproxy-haptic.org/* superset)
-7. haproxytech.yaml
-8. haproxy-ingress/
-9. nginx-ingress/
-10. spoa-hub/            (auto-loaded when SPOA hub sidecar is enabled)
-11. controller.config.*  (highest priority - your values.yaml overrides for templateSnippets / maps / files / sslCertificates / haproxyConfig / validationTests / watchedResources)
+ 1. base/                 (lowest priority)
+ 2. ssl/
+ 3. ingress/
+ 4. gateway/
+ 5. ingress-annotations-compat/  (level 2.5 - Ingress-only shared scaffold)
+ 6. governance/
+ 7. haptic-annotations/   (native haproxy-haptic.org/* superset)
+ 8. haproxytech/
+ 9. haproxy-ingress/
+10. nginx-ingress/
+11. spoa-hub/            (auto-loaded when SPOA hub sidecar is enabled)
+12. vector/              (loaded with vector.enabled; contributes only the sidecar's config file)
+13. controller.config.*  (highest priority - your values.yaml overrides for templateSnippets / maps / files / sslCertificates / haproxyConfig / validationTests / watchedResources)
 ```
 
 Your custom configuration in `controller.config` always takes precedence.
@@ -123,7 +128,7 @@ Extension points are **hook points** the base library defines, where other libra
 The base library uses `render_glob "prefix-*"` to automatically include all template snippets matching a glob pattern:
 
 ```scriggo
-{# In base.yaml #}
+{# In the base library #}
 {{ render_glob "backends-*" }}
 ```
 
@@ -269,7 +274,7 @@ To override a built-in snippet, use the **same key name**; values-file entries t
 | Library | Extension Points Used |
 |---------|----------------------|
 | Base | Defines all extension points; provides `global-settings-*`, `defaults-settings-*` snippets |
-| SSL | `features-*`, `frontends-*`, `backends-*`, `global-top-*` |
+| SSL | `global-settings-*`, `features-*`, `frontends-*`, `backends-*`, `frontend-filters-*`, `log-fields-*`, `https-bind-extra-*`, `ssl-tcp-bind-extra-*` |
 | Ingress | `features-*`, `backends-*`, `map-host-*`, `map-path-*`, `status-patches-*` |
 | Gateway | `features-*`, `backends-*`, `map-*`, `frontend-matchers-advanced-*`, `frontend-filters-*`, `status-patches-*` |
 | haptic-annotations | `map-path-*`, `map-pfxexact-*`, `map-host-*`, `map-hostregex-*`, `backend-directives-*`, `frontend-filters-*`, `features-*`, `backends-*`, `global-*`, `defaults-settings-*`, `frontend-extra-*` |

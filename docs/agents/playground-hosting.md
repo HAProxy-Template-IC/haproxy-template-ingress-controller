@@ -29,8 +29,14 @@ The `build-playground-wasm` job (`.gitlab-ci.yml`, `build` stage) runs
     playground.wasm        (+ .br + .gz siblings)   # ~58 MB raw / ~7 MB br / ~12 MB gz
     schemas.json           (+ .br + .gz)            # typed-resource schema bundle
     vendor/codemirror.js   (+ .br + .gz)            # committed CM6 bundle (no CDN)
+    highlight/config-highlight.bundle.js (+ .br + .gz)  # committed Lezer highlight bundle
+    tryout.js  tryout-template.sh                   # "try it" copy-out helpers
     starter.config.yaml  starter.resources.yaml     # from-scratch starter preset
-    presets/*.config.yaml  presets/*.resources.yaml # 7 presets (ingress, extend, gateway, vendors, all)
+    crd.config.yaml  crd.resources.yaml             # custom-resource preset
+    presets/*.config.yaml  presets/*.resources.yaml # 8 presets (ingress, extend, gateway,
+                                                    #   haproxytech, haproxy-ingress,
+                                                    #   nginx-ingress, haptic-annotations, all)
+    release-identity.json                           # lineage marker, written by CI
   ```
 
 The bundle is fully self-contained and has **no runtime third-party requests** — it renders
@@ -57,11 +63,25 @@ On each triggered pipeline, add a playground publish step:
 
    (The `pages-preview` job already fetches the Pages artifact this same way — reuse the pattern.)
 
-3. **Place it in the site** so it serves at `/playground/<version>/`. Copy
+3. **Verify the lineage marker before publishing.** The bundle carries
+   `release-identity.json` at its root:
+
+   ```json
+   {"version":"0.2.0-alpha.1","commit":"<sha>","pipeline":"<id>","job":"<id>"}
+   ```
+
+   `deploy-docs.sh`'s `identity_matches()` compares all four fields against the
+   `HAPTIC_RELEASE_COMMIT_SHA` / `HAPTIC_RELEASE_PIPELINE_ID` /
+   `HAPTIC_RELEASE_PLAYGROUND_JOB_NAME` variables the trigger passed, so a bundle can
+   only be published as the commit, pipeline and job that built it. The field names are
+   a fixed contract — renaming one on either side silently stops matching, and the
+   deploy fails closed.
+
+4. **Place it in the site** so it serves at `/playground/<version>/`. Copy
    `public/playground/<version>/` into the site's `public/playground/<version>/`.
    Immutable release dirs must never be re-touched once published; only `dev/` is overwritten.
 
-4. **Update the shared `public/playground/versions.json`** (a sibling of every version
+5. **Update the shared `public/playground/versions.json`** (a sibling of every version
    directory — the shell fetches it as `../versions.json`, so it is written **once**, not
    into each version dir). Add/refresh this version's entry and set `current` to the newest
    **stable** release:
@@ -84,7 +104,7 @@ On each triggered pipeline, add a playground publish step:
    A pre-release counts as non-stable (`-alpha`/`-beta`/`-rc`). `dev` is optional but
    recommended so users can reach the latest main build; keep it non-stable and never `current`.
 
-5. **Keep the compressed siblings.** GitLab Pages negotiates `Content-Encoding` and serves
+6. **Keep the compressed siblings.** GitLab Pages negotiates `Content-Encoding` and serves
    `foo.wasm.br` / `foo.wasm.gz` automatically when the sibling exists next to `foo.wasm`, so
    just publish all three (raw + `.br` + `.gz`). Do not strip them.
 

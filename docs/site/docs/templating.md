@@ -680,6 +680,7 @@ A typed field resolves by **either** its Go-PascalCase name **or** its lowercase
 | `resources.<name>.List()` | `[]*resources.<name>.T` |
 | `resources.<name>.Fetch(keys...)` | `[]*resources.<name>.T` |
 | `resources.<name>.GetSingle(keys...)` | `*resources.<name>.T` (nil if not found) |
+| `resources.<name>.APIVersion()` | `string`, with or without a schema — the group/version this resource is actually watched at — the candidate the effective config resolved to. Pass it to `statusPatch()` instead of hardcoding a version literal |
 
 Without a schema (for example, `haptic-controller validate` without `--schema-dir`), the same calls fall back to `[]any` / `map[string]any` exactly as before. The chart's `dig()`-based snippets work in either mode.
 
@@ -774,7 +775,7 @@ Four rules the compiler enforces:
 
 - Put the pipe at the **end** of a line, not the start — Go's semicolon insertion ends the statement otherwise.
 - Write chains inside `{%% %%}`, not `{{ }}`; a `{{ }}` expression can't span lines.
-- `sort_by` returns a value *and* an error, so it can't be the last stage of a pipe. Call it separately.
+- `sort_by` returns a value *and* an error. As a pipe stage that's fine — the pipe keeps only the first result, so `x | sort_by(…)` assigns to one variable. A *direct* call can't sit in single-value context: write `var rows, sortErr = sort_by(items, criteria)` and check `sortErr`.
 - `map` keeps one output per input. Reach for `flat_map` when the closure returns a slice you want flattened in.
 
 Reach for a `{%% %%}` loop instead of a pipeline when the body has side effects — `fail()`, registering a file, recording an Event — or needs `break`.

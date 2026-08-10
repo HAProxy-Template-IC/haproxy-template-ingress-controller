@@ -57,7 +57,7 @@ Authoritative list is `defaults.go`. Ones operators commonly look up:
 - `dataplane.driftPreventionInterval`: 60s
 - `dataplane.deploymentTimeout`: 30s
 - `dataplane.{mapsDir,sslCertsDir,generalStorageDir,configFile}`: `/etc/haproxy/...`
-- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, 15s, 10s, 2s (matches Kubernetes' recommended fast-failover triplet — defaults.go:54-60)
+- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, 30s, 20s, 5s — deliberately 2x the client-go / kube-controller-manager convention of 15s/10s/2s, to ride out apiserver stalls (see the rationale comment above `DefaultLeaderElectionLeaseDuration` in defaults.go)
 - `controller.configPublishing.compressionThreshold`: 1 MiB
 - `templatingSettings.engine`: `scriggo`
 

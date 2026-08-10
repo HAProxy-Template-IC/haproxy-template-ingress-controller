@@ -56,7 +56,7 @@ Generate HAProxy configurations using Scriggo templates with access to any Kuber
 Monitor any Kubernetes resource types (Ingress, Service, ConfigMap, custom CRDs) you specify. Resources are indexed using JSONPath expressions for fast template lookups.
 
 **Validation-First Deployment**
-All generated configurations pass three validation phases before they can reach production, split across two gates: the admission webhook runs all three (client-native syntax parse, version-specific OpenAPI schema check, and the `haproxy -c` semantic check), so invalid input never lands in etcd; the leader's reconcile pipeline then re-runs syntax + schema on every render, and the Dataplane API re-validates server-side on push.
+All generated configurations pass three validation phases before they can reach production, split across several gates. The **watched-resource** admission webhook runs all three (client-native syntax parse, version-specific OpenAPI schema check, and the `haproxy -c` semantic check), so a bad Ingress or HTTPRoute never lands in etcd. The `HAProxyTemplateConfig` itself has no webhook (ADR-0016) — its semantic check runs on the leader instead, on the first render of every controller iteration, and again in the startup load gate and the chart's pre-rollout `preflight` hook. Steady-state renders re-run syntax + schema only, and the Dataplane API re-validates server-side on push.
 
 **Zero-Reload Optimization**
 Configuration changes that only modify server weight, address, port, or maintenance state are applied through HAProxy's runtime API without process reloads. This maintains existing connections and minimizes service disruption. Changes requiring structural modifications trigger a reload.

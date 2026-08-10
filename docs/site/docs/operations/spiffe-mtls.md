@@ -416,7 +416,7 @@ extraDeploy:
 ```
 
 !!! note
-    The `extraVolumes` and `extraVolumeMounts` at the top level (not under `haproxy:`) apply to the **controller** pod. The HAProxy pod's volumes are configured under `haproxy.extraVolumes`.
+    The `extraVolumes` and `extraVolumeMounts` under `controller:` (as in the snippet above) apply to the **controller** pod. The HAProxy pod's volumes are configured under `haproxy.extraVolumes`.
 
 ## Verification
 

@@ -15,8 +15,8 @@ The Gateway API library implements the [Kubernetes Gateway API](https://gateway-
 
 This library is **enabled by default**. For a runnable end-to-end walkthrough (a Gateway with an HTTP listener, an HTTPRoute, and a backend Service), see [Expose a Service through a Gateway](../gateway-class.md#expose-a-service-through-a-gateway).
 
-!!! warning "Gateway API CRDs Required"
-    The Gateway API library requires Gateway API CRDs to be installed in your cluster. Without them, the library isn't merged into the configuration.
+!!! note "Gateway API CRDs are resolved at runtime"
+    The library is merged whenever it's enabled — there's no Helm capability gate. Gateway API availability is a runtime question: kinds whose CRD the cluster doesn't serve are dropped from the effective config, and every snippet and `validationTests` entry that `requires` them is stripped with them. Install the CRDs later and the controller picks them up without a redeploy.
 
 Watch an HTTPRoute compile down to HAProxy config live:
 
@@ -432,6 +432,7 @@ Under `# Advanced route matching`, the rule's provenance comment changes from `-
 | `RequestRedirect` | Core | ✅ Supported | HTTP redirects with scheme/hostname/port/path/statusCode |
 | `URLRewrite` | Extended | ✅ Supported | Path and hostname rewriting |
 | `RequestMirror` | Extended | ✅ Supported | Per-route request mirroring via the bundled spoa-hub `mirror` plugin (enable `spoaHub.plugins.mirror`); supports percent/fraction sampling and multiple mirrors per rule |
+| `CORS` | Extended (GEP-1767) | ✅ Supported | HTTPRoute only, via `frontend-filters-450-gateway-cors`. Honours `allowOrigins` (exact values, a bare `*`, and `*.`-prefixed wildcards compiled to a regex against the request `Origin`), `allowMethods`, `allowHeaders`, `exposeHeaders`, `allowCredentials`, and `maxAge` |
 | `ExtensionRef` | Implementation-specific | ⚠️ Partial | Only `kind: SSLPassthrough` is honored (flags the HTTPRoute for TLS passthrough); other kinds planned as the Gateway API equivalent of Ingress annotations |
 
 #### `RequestHeaderModifier` filter
@@ -1118,7 +1119,9 @@ controller:
   config:
     templatingSettings:
       extraContext:
-        debug: true
+        diagnostics:
+          routingHeaders:
+            enabled: true
 ```
 
 **Response Headers:**
@@ -1204,7 +1207,7 @@ Once MetalLB (or your cloud load balancer) allocates the IP, it appears in the G
 
 ## Status reporting
 
-The Gateway API library automatically updates the `.status` of Gateway, HTTPRoute, GRPCRoute, TLSRoute, and TCPRoute resources to reflect their processing state. Status is applied via Server-Side Apply with field manager `haptic`. TLSRoute and TCPRoute conditions are listed in their sections above; this section covers the rest.
+The Gateway API library automatically updates the `.status` of GatewayClass, Gateway, ListenerSet, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, and BackendTLSPolicy resources to reflect their processing state. Status is applied via Server-Side Apply with field manager `haptic`. TLSRoute and TCPRoute conditions are listed in their sections above; this section covers the rest.
 
 ### Gateway status
 

@@ -4,7 +4,8 @@
 
 Accepted. Phase 1 and the `map`-identifier half of Phase 2 implemented in
 `feat(templating): type-preserving collection pipelines`; the parser change
-shipped as scriggo !115.
+shipped as scriggo !115. Phase 3 (`=>` lambda syntax) and the compile-time
+pipeline lowering have since shipped too; parts of Phase 2 remain open.
 
 ## Context
 

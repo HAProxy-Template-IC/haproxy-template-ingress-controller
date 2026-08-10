@@ -1,14 +1,22 @@
 # Linting and code quality
 
-Three checkers run against every commit:
+`make lint` is the umbrella check, and it's much more than the Go linters. It runs, in order:
+
+1. **Repo-consistency guards** — the `scripts/check-*.sh` set: test inventory, template libraries parsing as YAML, comment fusion, migration-coverage drift, vendor annotation docs coverage and status, generated `migrating.md` tables, chart values docs coverage, `denied_by` metric values, image-pin agreement, webhook-routed kinds, the Gateway API version source, storage-path literals, and the playground highlight bundle. Each one fails the build on its own; most exist because a specific drift shipped once.
+2. **Format and prose linters** — `yamllint`, `jq` on `renovate.json`, `markdownlint-cli2` over every Markdown file, and `vale` over `docs/site/docs`.
+3. **Go checkers** — the table below.
+4. **`make verify-generate`** — fails if generated code (CRDs, DeepCopy, clientset, validators) is out of date.
 
 | Tool | Config | Invoked by |
 |------|--------|------------|
 | `golangci-lint` | `.golangci.yml` | `make lint` |
 | `arch-go` | `arch-go.yml` | `make lint` (auto-installs if missing) |
 | `govulncheck` | — | `make audit` |
+| `ct lint` + `helm-unittest` + `kubeconform` | `charts/haptic/.ct/ct.yaml` | `make lint-chart` (Docker) / `make lint-chart-ci` (CI job `chart-test`) |
 
-`make check-all` runs all three plus the full test suite — the same set of checks CI runs on every MR. `make lint-fix` applies golangci-lint's auto-fixes where possible.
+Chart linting also runs four rendered-object gates: `cr-spec-conformance-check` (no rendered spec field its own CRD doesn't declare), `cr-size-check` (each object against etcd's per-object limit), `chart-size-check` (the Helm release Secret against the 1 MiB limit), and `vector-config-check` (the rendered `vector.yaml` actually loads).
+
+`make check-all` runs lint, audit, and the full test suite — the same set CI runs on every MR. `make lint-fix` applies golangci-lint's auto-fixes where possible.
 
 ## `golangci-lint`
 
@@ -36,7 +44,7 @@ Plus one project-local analyzer built in `tools/linters/eventimmutability` that 
 - **`revive`** caps function length at 50 lines and cognitive complexity at 20. `exported` and `package-comments` rules are off for internal packages.
 - **`gocyclo`** rejects cyclomatic complexity > 20.
 - **`gosec`** allowlists G114 (HTTP timeout — set at infra level), G204 (the only `exec` binary name is the hardcoded `"haproxy"` resolved via `LookPath`), and G404 (non-crypto random-number generation — not used for secrets). G304, G118, and G108 are allowlisted on specific file paths/messages, not globally.
-- Generated code (`zz_generated.*.go`, `codegen/**/*.gen.go`, `pkg/generated/**`) and test files run with relaxed rules; see the per-path overrides at the bottom of `.golangci.yml`.
+- `vendor/`, `third_party/`, `charts/`, and `pkg/generated/` are excluded outright, and `zz_generated.*.go` files have their own rule; test files run with a relaxed subset. See the `exclusions` block at the bottom of `.golangci.yml`.
 
 Never add a global ignore rule to silence findings, and don't suppress them with `nolint` directives on individual lines — fix the code, or add a scoped per-path exclusion in `.golangci.yml` if the rule is genuinely wrong for that file.
 
@@ -44,7 +52,7 @@ Never add a global ignore rule to silence findings, and don't suppress them with
 
 The DAG rules in `arch-go.yml` prevent the coordination layer from leaking into pure libraries. The high-level shape:
 
-- **`pkg/controller/**`** may import anything under `pkg/` plus `codegen/`.
+- **`pkg/controller/**`** may import anything under `pkg/`.
 - **`pkg/core/**`** may not import `controller`, `dataplane`, `k8s`, `templating`, `httpstore`, `introspection`, `webhook`.
 - **`pkg/events/**`** must not import any other `pkg/**` package.
 - **`pkg/stores/**`** is isolated from `pkg/k8s/**`; the two declare structurally identical `Store` interfaces and `pkg/stores.TypesStoreAdapter` bridges them.
@@ -84,7 +92,9 @@ pre-commit run --all-files
 
 ## Tooling
 
-Linter versions are pinned via Go's `tool` directive in `go.mod`; `make install-tools` rebuilds the local cache. The Go version is pinned in `.tool-versions` (asdf) — see `tests/README.md` for the `env -u GOROOT` note if you invoke Go commands directly.
+Go linter versions are pinned by Go's `tool` directive in `go.mod`; `make install-tools` rebuilds the local cache. The Go version is pinned in `.tool-versions` (asdf) — see `tests/README.md` for the `env -u GOROOT` note if you invoke Go commands directly.
+
+`make lint` also needs four tools that `make install-tools` doesn't install, and hard-fails without them: `vale`, `yamllint`, `markdownlint-cli2`, and `node` (for the highlight-bundle check). Install them from your distribution or their own installers — the `vale` step prints an install hint when it's missing.
 
 ## References
 

@@ -215,13 +215,13 @@ resourceApplierComponent := resourceapplier.New(&resourceapplier.Config{
     EventBus:               bus,
     DynamicClient:          k8sClient.DynamicClient(),
     DiscoveryClient:        k8sClient.Clientset().Discovery(),
-    GVRResolver:            statusapplier.NewRestMapperResolver(),
+    GVRResolver:            statusapplier.NewRestMapperResolver(gvrMapper),
     Logger:                 logger,
     OwnNamespace:           ownNamespace,
     RestrictToOwnNamespace: false,
     OwnerRef:               ownerRef,
 })
-registry.Build().AllReplica(..., resourceApplierComponent).LeaderOnly(...).Done()
+reg.Register(resourceApplierComponent, false) // all-replica subscriber; applies are gated on the internal leader flag
 ```
 
 `OwnNamespace` is read from the `POD_NAMESPACE` env var (set by the
