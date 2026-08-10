@@ -9,7 +9,7 @@ The Helm chart is the supported way to install HAPTIC. A default install deploys
 ## Prerequisites
 
 - Kubernetes 1.21+ (the default `PodDisruptionBudget` uses `policy/v1` and the controller watches `discovery.k8s.io/v1` EndpointSlices)
-- Helm 3.0+
+- Helm 3.8+ (the `oci://` chart reference needs OCI registry support, generally available since Helm 3.8)
 
 !!! note
     The `haproxyVersion` value controls both the controller image tag and the HAProxy image tag, ensuring version compatibility between the two. Supported versions start at HAProxy 3.0 — the template libraries require 3.0+ for their SSL/TLS features. See the [Chart Values Reference](./reference.md) for details.
@@ -34,12 +34,15 @@ The chart deploys:
 
 - **Controller Deployment** -- the controller that watches resources and generates configurations
 - **HAProxy Deployment** (optional, on by default) -- the load balancers that serve your traffic, with Dataplane API sidecars
-- **CRDs** -- five resource types under the `haproxy-haptic.org` API group: `HAProxyTemplateConfig` (input — templates, watched resources, settings) plus `HAProxyCfg`, `HAProxyGeneralFile`, `HAProxyCRTListFile`, and `HAProxyMapFile` (outputs the controller publishes for observability). Installed from `charts/haptic/crds/`; preserved across `helm uninstall` (delete them explicitly — see [Uninstalling](#uninstalling))
-- **`HAProxyTemplateConfig` custom resource** -- the merged template-library configuration that drives config rendering (created from the enabled `controller.templateLibraries.*` at render time)
+- **CRDs** -- six resource types under the `haproxy-haptic.org` API group: `HAProxyTemplateConfig` (input — the operator's own templates, watched resources, settings) and `HAProxyTemplateLibrary` (one object per enabled template library, referenced from the config), plus `HAProxyCfg`, `HAProxyGeneralFile`, `HAProxyCRTListFile`, and `HAProxyMapFile` (outputs the controller publishes for observability). Installed from `charts/haptic/crds/`; preserved across `helm uninstall` (delete them explicitly — see [Uninstalling](#uninstalling))
+- **`HAProxyTemplateConfig` custom resource** -- built from `controller.config`, listing the enabled libraries in merge order via `spec.libraryRefs`
+- **`HAProxyTemplateLibrary` custom resources** -- one per enabled `controller.templateLibraries.*` entry, each carrying that library's snippets, templating settings, maps, files, and tests
 - **IngressClass** and **GatewayClass** -- routing API integration for Ingress and Gateway API resources
 - **RBAC**, **NetworkPolicy**, and **ServiceAccount** -- permissions and network security
+- **Vector sidecar** (on by default) -- receives the HAProxy access log over a Unix datagram socket and re-exports HAProxy's, the SPOA hub's, and its own Prometheus metrics on one port
+- **Pre-rollout validation hook** and **CRD upgrade hook** (both on by default) -- `pre-install`/`pre-upgrade` Jobs that run `haptic-controller preflight` against your values and server-side apply the bundled CRDs, so a bad configuration or a stale CRD schema fails the release instead of the running fleet
 - Optional **ServiceMonitor** -- Prometheus integration for metrics scraping
-- Optional **admission webhook** -- configuration validation before deployment
+- Optional **admission webhook** -- validates watched resources (Ingress, HTTPRoute, …) before they're admitted
 
 New to HAPTIC? [Getting Started](getting-started.md) walks through a first install and a sample app, end to end.
 
@@ -113,7 +116,7 @@ helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
 ```
 
 !!! warning "The chart owns the `HAProxyTemplateConfig`"
-    The chart renders the single `HAProxyTemplateConfig` from `controller.config`, so it owns that resource. Every `helm upgrade` re-applies the values-derived spec and reverts any change you made with `kubectl edit htplcfg` or `kubectl patch`. A manual edit is live and drives the controller immediately, but it only lasts until the next helm operation. To make a change durable, put it under `controller.config` in your values file instead of editing the CRD directly.
+    The chart renders the `HAProxyTemplateConfig` from `controller.config` plus one `HAProxyTemplateLibrary` per enabled template library, so it owns all of those resources. Every `helm upgrade` re-applies the values-derived spec and reverts any change you made with `kubectl edit htplcfg` or `kubectl patch`. A manual edit is live and drives the controller immediately, but it only lasts until the next helm operation. To make a change durable, put it under `controller.config` in your values file instead of editing the CRD directly.
 
 ## Uninstalling
 
@@ -126,6 +129,7 @@ Replace `my-controller` with whatever release name you used at install time. `he
 ```bash
 kubectl delete crd \
   haproxytemplateconfigs.haproxy-haptic.org \
+  haproxytemplatelibraries.haproxy-haptic.org \
   haproxycfgs.haproxy-haptic.org \
   haproxygeneralfiles.haproxy-haptic.org \
   haproxycrtlistfiles.haproxy-haptic.org \

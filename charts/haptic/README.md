@@ -1,13 +1,13 @@
 # HAPTIC Helm Chart
 
-HAPTIC (HAProxy Template Ingress Controller) ships as a single Helm chart that installs the controller, an `HAProxyTemplateConfig` CRD, and (optionally) the HAProxy pods it manages. The controller watches Ingress / Gateway API / CRD resources, renders [Scriggo](https://scriggo.com/) templates to HAProxy configuration, and pushes the result to HAProxy via the [Dataplane API](https://github.com/haproxytech/dataplaneapi).
+HAPTIC (HAProxy Template Ingress Controller) ships as a single Helm chart that installs the controller, its CRDs, an `HAProxyTemplateConfig` resource, and (optionally) the HAProxy pods it manages. The controller watches Ingress / Gateway API / CRD resources, renders [Scriggo](https://scriggo.com/) templates to HAProxy configuration, and pushes the result to HAProxy via the [Dataplane API](https://github.com/haproxytech/dataplaneapi).
 
 Full documentation: [haproxy-haptic.org/docs](https://haproxy-haptic.org/docs/dev/) (this chart's pages live under *Deploying with Helm*).
 
 ## Prerequisites
 
 - Kubernetes **1.21+** (default `PodDisruptionBudget` is `policy/v1`; watches `discovery.k8s.io/v1` EndpointSlices)
-- Helm **3.0+**
+- Helm **3.8+** — the `oci://` chart reference needs OCI registry support, generally available since Helm 3.8
 - **HAProxy 3.0+** — the chart deploys HAProxy by default and the SSL library requires 3.0+. Pin a specific series via `haproxyVersion`.
 - **cert-manager** (optional but recommended for production) — with its API present, the default HTTPS certificate is issued by [cert-manager](https://cert-manager.io/docs/installation/). Without it, the chart creates a long-lived self-signed development certificate; production users should provide a trusted certificate — see [SSL Certificates](https://haproxy-haptic.org/docs/dev/ssl-certificates/).
 
@@ -68,10 +68,11 @@ Templates are merged at Helm render time in a fixed priority order (later librar
 | `gateway` | on | Gateway API `HTTPRoute` / `GRPCRoute` / `TLSRoute` (requires Gateway CRDs installed) |
 | `ingressAnnotationsCompat` | on | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
 | `governance` | on | Declarative constraints over any watched resource; inert until you define `controller.config.templatingSettings.extraContext.governance.rules` |
+| `hapticAnnotations` | on | `haproxy-haptic.org/*` — HAPTIC's own annotation vocabulary, and the only annotation library on by default. A superset of the three vendor libraries below |
 | `haproxytech` | off | `haproxy.org/*` annotation compatibility ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress)) |
 | `haproxy-ingress` | off | `haproxy-ingress.github.io/*` annotation compatibility ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/)) |
 | `nginx-ingress` | off | `nginx.ingress.kubernetes.io/*` annotation compatibility |
-| `spoaHub` | auto | HAProxy-side wiring for the SPOA hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
+| `spoaHub` | off, auto-loads | HAProxy-side wiring for the SPOA hub sidecar. Loads automatically when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy; set `controller.templateLibraries.spoaHub.enabled: true` only to force-load it with no plugins on |
 
 Each library contributes entries under `watchedResources`, `templateSnippets`, `maps`, `files`, `sslCertificates`, `haproxyConfig`, and `validationTests` — user-provided values in `controller.config` override library defaults. See [Template Libraries](https://haproxy-haptic.org/docs/dev/template-libraries/) for the library-merging design, extension points, and snippet priority ranges.
 
@@ -94,7 +95,9 @@ helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
   --version 0.2.0-alpha.1 -f my-values.yaml
 ```
 
-CRDs are not upgraded by `helm upgrade`. When the CRD schema changed between versions, apply the packaged CRDs first:
+Helm itself never upgrades CRDs it installed from a chart's `crds/` directory. The chart closes that gap with a `pre-install`/`pre-upgrade` hook Job that server-side applies the bundled CRDs, enabled by default (`crds.upgradeJob.enabled`), so the command above is all you need.
+
+If you manage CRDs out-of-band and set `crds.upgradeJob.enabled: false`, apply them yourself before upgrading:
 
 ```bash
 helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \

@@ -62,7 +62,7 @@ Authoritative list lives in `pkg/core/config/defaults.go`. Commonly surprising o
 - `dataplane.driftPreventionInterval`: `60s`
 - `dataplane.deploymentTimeout`: `30s`
 - `dataplane.{mapsDir,sslCertsDir,generalStorageDir,configFile}`: the standard `/etc/haproxy/...` paths
-- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, `15s`, `10s`, `2s` (matches the kube-controller-manager / kube-scheduler defaults; the Helm chart leaves the timings alone but rewrites `leaseName` to the release fullname — see [High Availability](../../docs/site/docs/operations/high-availability.md))
+- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, `30s`, `20s`, `5s` (deliberately 2x the kube-controller-manager / kube-scheduler convention, for starvation headroom; the Helm chart leaves the timings alone but rewrites `leaseName` to the release fullname — see [High Availability](../../docs/site/docs/operations/high-availability.md))
 - `controller.configPublishing.compressionThreshold`: `1048576` (1 MiB)
 - `templatingSettings.engine`: `scriggo`
 

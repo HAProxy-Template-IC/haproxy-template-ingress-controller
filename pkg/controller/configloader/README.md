@@ -15,7 +15,7 @@ import (
 )
 
 bus := events.NewEventBus(100)
-loader := configloader.NewConfigLoaderComponent(bus, logger)
+loader := configloader.NewConfigLoaderComponent(bus, crdName, logger)
 
 bus.Start()              // release buffered events to subscribers
 go loader.Start(ctx)     // then run the event loop
@@ -40,6 +40,16 @@ type ConfigResourceChangedEvent struct {
 ```
 
 The `resourceVersion` is read off the unstructured resource by the loader itself; there's no `Version` field on the event.
+
+**In — second input**
+
+```go
+type LibrarySetChangedEvent struct {
+    Snippets []any  // whole-set snapshot of the HAProxyTemplateLibrary objects
+}
+```
+
+The loader keeps the latest snapshot alongside the config and merges the libraries the config's `spec.libraryRefs` names into what it publishes. It's a whole-set snapshot, not a delta, so a torn apply is visible as a revision mismatch rather than being merged half-applied. A config that references no libraries is unaffected.
 
 **Out — on successful parse**
 

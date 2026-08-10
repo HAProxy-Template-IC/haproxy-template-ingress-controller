@@ -11,7 +11,7 @@ The encoder/decoder are global because compression is always sequential in the c
 ## API
 
 ```go
-func Compress(data string) (string, error)    // → zstd-compressed bytes, base64-encoded
+func Compress(data string) string             // → zstd-compressed bytes, base64-encoded (cannot fail)
 func Decompress(data string) (string, error)  // ← base64 → zstd → original string
 ```
 

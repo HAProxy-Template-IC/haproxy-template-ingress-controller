@@ -47,29 +47,36 @@ their upgrade path was dropped two releases ago.
 
 The chart uses a library-based architecture where multiple YAML files become one
 effective configuration. **The chart no longer merges them.** It renders one
-`HAProxyTemplateConfig` per enabled library plus one for the operator's own
-config, and the controller merges the set at startup in `CRD_NAME` order (see
-ADR-0014). Read the `$libraryFiles` list inside `haptic.prepareLibraries`
-(`templates/_libraries.tpl`) for the canonical order:
+`HAProxyTemplateLibrary` per enabled library plus a single
+`HAProxyTemplateConfig` for the operator's own config, and the controller merges
+the set at startup in the order that config's `spec.libraryRefs` declares (see
+ADR-0017). `CRD_NAME` carries one name and no ordering. Read the `$libraryFiles`
+list inside `haptic.prepareLibraries` (`templates/_libraries.tpl`) for the
+canonical order:
 
 ```
 Merge Order (lowest to highest priority):
-1. base.yaml               - Core HAProxy template and snippets
-2. ssl.yaml                - HTTPS frontend, TLS certs, SSL passthrough infra
-3. ingress.yaml            - Kubernetes Ingress support
-4. gateway/                - Gateway API (only when GatewayClass CRD is present)
-5. ingress-annotations-compat.yaml  - Shared scaffold for Ingress vendor annotation libraries (level 2.5)
-6. haproxytech.yaml        - haproxy.org/* annotation compatibility
-7. haproxy-ingress/        - haproxy-ingress.github.io/* annotation compatibility
-8. nginx-ingress/          - nginx.ingress.kubernetes.io/* compat (disabled by default)
-9. spoa-hub/               - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
-10. vector.yaml            - Vector sidecar config (reads earlier libraries' decisions)
-11. controller.config.*    - User overrides from values.yaml (highest priority)
+ 1. base                    - Core HAProxy template and snippets
+ 2. ssl                     - HTTPS frontend, TLS certs, SSL passthrough infra
+ 3. ingress                 - Kubernetes Ingress support
+ 4. gateway                 - Gateway API (only when GatewayClass CRD is present)
+ 5. ingress-annotations-compat - Shared scaffold for Ingress vendor annotation libraries (level 2.5)
+ 6. governance              - Declarative constraints over any watched resource
+ 7. haptic-annotations      - haproxy-haptic.org/* native vocabulary
+ 8. haproxytech             - haproxy.org/* annotation compatibility
+ 9. haproxy-ingress         - haproxy-ingress.github.io/* annotation compatibility
+10. nginx-ingress           - nginx.ingress.kubernetes.io/* compat (disabled by default)
+11. spoa-hub                - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
+12. vector                  - Vector sidecar config (reads earlier libraries' decisions)
+13. controller.config.*     - User overrides from values.yaml (highest priority)
 ```
+
+Each entry is a subchart under `charts/haptic/charts/<name>/`, holding either a
+single `library.yaml` or an `_index.yaml` plus numbered fragments.
 
 Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false — a skipped library renders no object at all. The `spoa-hub` library is also auto-loaded whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 5-9 are plugin/scaffold libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up, plus parameterized macros that the annotation libraries call. `ingress-annotations-compat.yaml` (level 2.5) provides Ingress-scoped macros currently used for SSL passthrough and CIDR access-control patterns; see ADR-0003.
 
-Objects are named `<controller.configName>-<library slug>`, with the operator's own config keeping the plain `controller.configName`. The names carry **no** ordering authority — order comes from `CRD_NAME` — so inserting a library never renames an existing object.
+Library objects are named `<controller.configName>-<library slug>`, with the operator's own config keeping the plain `controller.configName`. The names carry **no** ordering authority — order comes from the `spec.libraryRefs` list on the `HAProxyTemplateConfig` — so inserting a library never renames an existing object.
 
 The frontend path-matching order is selected at base-load time by `controller.config.templatingSettings.extraContext.routing.regexMatchOrder` (`default` or `last`). When `last`, the base library's `_helm_load` swaps `templateSnippets.frontend-routing-logic` for the alternate `frontend-routing-logic-regex-last` variant defined in `base.yaml`. The alternate is unset before rendering so it never appears in the output.
 
@@ -95,11 +102,11 @@ The loader iterates a fixed ordered list of library files. The order is a system
 {{- end }}
 ```
 
-**Two helpers derive from the same list and must agree**: `haptic.prepareLibraries`
-(the objects) and `haptic.libraryConfigNames` (the `CRD_NAME` value the deployment
-passes). Helm cannot share one evaluation across template files, so the agreement
-is pinned by test instead — `library_loader_test.yaml` asserts the emitted set and
-`deployment_test.yaml` asserts the same literal list from the `CRD_NAME` side.
+**One helper drives both the objects and their order**: `haptic.prepareLibraries`
+emits the `HAProxyTemplateLibrary` objects *and* the `spec.libraryRefs` list on the
+`HAProxyTemplateConfig`, so there is no second list that could disagree with it.
+`CRD_NAME` on the Deployment is the single config name and carries no ordering.
+`library_loader_test.yaml` pins the emitted set.
 
 **Where merge semantics live now.** `pkg/controller/conversion.MergeSpecs` merges
 with `mergo.MergeWithOverwrite`, the exact call sprig's `mustMergeOverwrite` makes
@@ -144,12 +151,12 @@ _helm_load:
 
 Real examples in the source:
 
-- `libraries/ingress.yaml` — simple `enable` + one `inject` for the dynamic `ingressClassName` field selector.
-- `libraries/gateway/` — compound `enable` (values flag AND `Capabilities.APIVersions.Has`) + `inject`s for the gateway and gateway-class field selectors.
-- `libraries/base.yaml` — `enable` + the `controller_services` label-selector inject + a conditional `from:`-style inject that swaps `frontend-routing-logic` to its `-regex-last` variant when `controller.config.templatingSettings.extraContext.routing.regexMatchOrder=last`, and `unset` that always strips the alternate variant from output.
-- `libraries/spoa-hub/` — compound `enable` (explicit flag OR derived from `haptic.spoaHub.enabled` helper).
+- `charts/haptic/charts/ingress/library.yaml` — simple `enable` + one `inject` for the dynamic `ingressClassName` field selector.
+- `charts/haptic/charts/gateway/` — compound `enable` (values flag AND `Capabilities.APIVersions.Has`) + `inject`s for the gateway and gateway-class field selectors.
+- `charts/haptic/charts/base/library.yaml` — `enable` + the `controller_services` label-selector inject + a conditional `from:`-style inject that swaps `frontend-routing-logic` to its `-regex-last` variant when `controller.config.templatingSettings.extraContext.routing.regexMatchOrder=last`, and `unset` that always strips the alternate variant from output.
+- `charts/haptic/charts/spoa-hub/` — compound `enable` (explicit flag OR derived from `haptic.spoaHub.enabled` helper).
 
-Adding a new library: drop a new file under `libraries/`, give it a `_helm_load:` block, and append its path to `haptic.libraryFiles` in `_libraries.tpl`. The loader does not need a new branch, and the new library gets its own `HAProxyTemplateConfig` and its own slot in `CRD_NAME` automatically. Update the expected object count and `CRD_NAME` literal in `tests/library_loader_test.yaml` and `tests/deployment_test.yaml`.
+Adding a new library: add a subchart under `charts/haptic/charts/<name>/` with a `library.yaml` (or an `_index.yaml` plus fragments), declare it in `Chart.yaml` `dependencies` with its `condition:`, give the library a `_helm_load:` block, and append `"subchart:<name>"` to the `$libraryFiles` list inside `haptic.prepareLibraries` in `_libraries.tpl`. The loader does not need a new branch, and the new library gets its own `HAProxyTemplateLibrary` object and its own `spec.libraryRefs` entry automatically. Update the expected object count in `tests/library_loader_test.yaml`.
 
 See ADR-0002 for the rationale (centralized vs decentralized loading rules).
 
@@ -227,7 +234,7 @@ Chart-generated projections already fronted by a values.yaml keyed map (`vector.
 
 A library that has grown past comfortable one-file size may live as a directory of fragments instead of a single YAML file. The convention (see ADR-0008):
 
-- Add a directory entry like `"libraries/foo/"` (trailing slash) to `$libraryFiles` in place of `"libraries/foo.yaml"`.
+- The subchart holds an `_index.yaml` plus fragments instead of a single `library.yaml`; its `$libraryFiles` entry stays `"subchart:foo"` either way.
 - Inside the directory, `_index.yaml` is required and acts as the load-rule authority — it carries the `_helm_load` block and any small structural pieces (typically `watchedResources`).
 - All other YAML files at the top level, plus any YAML files one level deep (e.g. `tests/foo.yaml`), are fragment files. Fragments contribute entries to `templateSnippets`, `validationTests`, `k8sResources`, etc., but must NOT carry their own `_helm_load` block.
 - Fragments merge into the per-library accumulator in lexicographic order (numeric prefixes like `10-features.yaml` are the idiomatic ordering hint) before inject/unset/strip/cross-library merge runs. Each `templateSnippets` / `validationTests` / `k8sResources` entry must be declared in exactly one fragment — duplicates would have the lexicographically-later file win, silently.
@@ -273,7 +280,7 @@ This hierarchy prevents circular dependencies and ensures predictable behavior d
 
 ### Library Structure
 
-Each library file (`libraries/*.yaml`) contains:
+Each library file (`charts/haptic/charts/<name>/library.yaml`, or `_index.yaml` plus fragments) contains:
 
 ```yaml
 watchedResources:
@@ -566,7 +573,7 @@ global
     # ... other global settings
 ```
 
-The directive lives in the `global-settings-300-paths` snippet of `charts/haptic/libraries/base.yaml` (around line 863). It tells HAProxy to resolve relative paths from the explicit base directory passed as an argument, **not** from the config file's directory or HAProxy's working directory. We use `origin <baseDir>` rather than `default-path config` because the validation pipeline rewrites this single directive (replacing the production base with a per-call temp dir) instead of mutating every file path in the rendered config.
+The directive lives in the `global-settings-300-paths` snippet of `charts/haptic/charts/base/library.yaml` (around line 1769). It tells HAProxy to resolve relative paths from the explicit base directory passed as an argument, **not** from the config file's directory or HAProxy's working directory. We use `origin <baseDir>` rather than `default-path config` because the validation pipeline rewrites this single directive (replacing the production base with a per-call temp dir) instead of mutating every file path in the rendered config.
 
 ### How Path Resolution Works
 
@@ -715,7 +722,7 @@ helm template charts/haptic \
   > /tmp/gateway-config.yaml
 ```
 
-This flag is already used in CI (see `.gitlab-ci.yml`). The gateway library uses a Capabilities check in its `_helm_load.enable` predicate (`libraries/gateway/_index.yaml`) to only merge when Gateway API CRDs are detected.
+This flag is already used in CI (see `.gitlab-ci.yml`). The gateway library uses a Capabilities check in its `_helm_load.enable` predicate (`charts/haptic/charts/gateway/_index.yaml`) to only merge when Gateway API CRDs are detected.
 
 ### Testing Specific Libraries
 
@@ -895,7 +902,7 @@ Without a schema, the same calls fall back to `[]any` / `map[string]any` as befo
 
 {#- Type-switch dispatch at a polymorphic any boundary
    (this is the canonical pattern — used in
-   `libraries/gateway/60-frontend.yaml` for HTTPRoute/GRPCRoute/TLSRoute) -#}
+   `charts/haptic/charts/gateway/60-frontend.yaml` for HTTPRoute/GRPCRoute/TLSRoute) -#}
 {%- switch r := routeInfo["route"].(type) %}
 {%- case *resources.httproutes.T %}
   # r is statically *resources.httproutes.T here
@@ -1025,7 +1032,7 @@ bricks the whole fleet and can crash-loop the controller at the load gate.
 Instead decide by the render's `renderMode` (a global string: `"admission"` for a
 webhook dry-run of a proposed change, `"reconcile"` for the live config and the
 load gate). The shared macro `WebhookRejectOrWarn(resource, reason, message)` in
-`libraries/ingress-annotations-compat.yaml` encapsulates the split: it `fail()`s
+`charts/haptic/charts/ingress-annotations-compat/library.yaml` encapsulates the split: it `fail()`s
 under admission (so the API server denies the proposed resource) but records a
 `Warning` Event and returns on any other render (so the fleet keeps serving).
 
@@ -1122,7 +1129,7 @@ test with `extraContext.renderMode: admission` so it still exercises the fail.
 
 **Real Example:**
 
-See `libraries/haproxytech.yaml` for the `global-top-500-haproxytech-ingress-auth` template (around line 237) which demonstrates proper documentation including:
+See `charts/haptic/charts/haproxytech/library.yaml` for the `global-top-500-haproxytech-ingress-auth` template (around line 237) which demonstrates proper documentation including:
 
 - Link to HAProxy Ingress documentation
 - List of all annotations
@@ -1175,7 +1182,7 @@ Libraries communicate across boundaries using the `globalFeatures` map (commonly
 | `sslPassthroughBackends` | `[]any` | SSL passthrough backend definitions | ssl.yaml | gateway/, haproxytech.yaml |
 | `tlsCertificates` | `[]any` | TLS certificate references for crt-list | ssl.yaml | gateway/, ingress.yaml |
 
-This table is illustrative, not exhaustive — other genuinely cross-library keys include `sslRedirectHosts`, `clientCertVerifyHosts`, and `needHTTPSTermination`. Before introducing a new key, check it isn't an existing one under a different spelling — grep the authoritative set: `grep -rhoE '(gf|globalFeatures)\["[a-zA-Z_]+"\]' charts/haptic/libraries/ | sort -u`.
+This table is illustrative, not exhaustive — other genuinely cross-library keys include `sslRedirectHosts`, `clientCertVerifyHosts`, and `needHTTPSTermination`. Before introducing a new key, check it isn't an existing one under a different spelling — grep the authoritative set: `grep -rhoE '(gf|globalFeatures)\["[a-zA-Z_]+"\]' charts/haptic/charts/ | sort -u`.
 
 !!! warning "Map Key Consistency is Critical"
     All libraries **MUST** use the exact same map key names. The codebase uses **camelCase** for shared state keys. Using different key names (e.g., `tls_certificates` vs `tlsCertificates`) will cause silent failures where data written by one library is invisible to another.
@@ -2214,8 +2221,10 @@ macro, with any return type (`map[string][]T` included).
   otherwise: a line may end with `|`, but may not begin with one.
 - **Chains live in `{%% %%}`**, not `{{ }}` — a show expression cannot span
   lines.
-- **A multi-return function cannot end a pipe.** A pipe carries one value, so
-  `sort_by` (which returns `(value, error)`) is a separate call.
+- **A pipe carries one value, which is what makes `sort_by` pipeable.** It
+  returns `(value, error)`; the pipe keeps only the first, so
+  `x | sort_by(…)` assigns to one variable. A *direct* call returns both and
+  needs `var rows, err = sort_by(…)`.
 - **`map` preserves length; `flat_map` concatenates.** Use `flat_map` when the
   closure returns a slice whose elements should be flattened in.
 
@@ -2366,7 +2375,7 @@ haproxyConfig:
 
 ```bash
 # WRONG - library file is incomplete!
-./bin/haptic-controller validate -f charts/haptic/libraries/ingress.yaml
+./bin/haptic-controller validate -f charts/haptic/charts/ingress/library.yaml
 ```
 
 **Why Bad**: Library files are meant to be merged. Testing them individually will fail because:
@@ -2512,19 +2521,22 @@ charts/haptic/
 ├── README.md                    # User-facing chart documentation
 ├── CLAUDE.md                    # This file - development context
 │
-├── libraries/                   # Template libraries (merged at render time)
-│   ├── base.yaml               # Core HAProxy template (defines haproxyConfig)
-│   ├── ssl.yaml                # HTTPS frontend, TLS certs, SSL passthrough
-│   ├── ingress.yaml            # Kubernetes Ingress support
-│   ├── gateway/                # Gateway API support (split-library directory)
-│   ├── ingress-annotations-compat.yaml  # Shared scaffold for Ingress vendor annotation libraries
-│   ├── haproxytech.yaml        # HAProxy annotation compatibility
+├── charts/                      # Template libraries, one subchart each
+│   ├── base/library.yaml       # Core HAProxy template (defines haproxyConfig)
+│   ├── ssl/library.yaml        # HTTPS frontend, TLS certs, SSL passthrough
+│   ├── ingress/library.yaml    # Kubernetes Ingress support
+│   ├── gateway/                # Gateway API support (split library: _index.yaml + fragments)
+│   ├── ingress-annotations-compat/library.yaml  # Shared scaffold for Ingress vendor annotation libraries
+│   ├── governance/library.yaml # Declarative constraints over any watched resource
+│   ├── haptic-annotations/     # haproxy-haptic.org/* native vocabulary (split library)
+│   ├── haproxytech/library.yaml  # HAProxy annotation compatibility
 │   ├── haproxy-ingress/        # haproxy-ingress annotation compatibility
 │   ├── nginx-ingress/          # nginx-ingress annotation compatibility (disabled by default)
-│   └── spoa-hub/               # SPOA hub sidecar wiring (auto-enabled with spoaHub)
+│   ├── spoa-hub/               # SPOA hub sidecar wiring (auto-enabled with spoaHub)
+│   └── vector/library.yaml     # Vector sidecar config
 │
 ├── templates/                   # Helm templates
-│   ├── _libraries.tpl          # Library loading (haptic.prepareLibraries, haptic.libraryFiles)
+│   ├── _libraries.tpl          # Library loading (haptic.prepareLibraries, haptic.watchedResourcesUnion)
 │   ├── _naming.tpl             # Names, labels, apiGroup/apiVersion split
 │   ├── _image.tpl              # Image refs, binary paths, runAsUser
 │   ├── _credentials.tpl        # Dataplane API username/password
@@ -2539,6 +2551,7 @@ charts/haptic/
 │
 └── crds/                        # Custom Resource Definitions
     ├── haproxy-haptic.org_haproxytemplateconfigs.yaml
+    ├── haproxy-haptic.org_haproxytemplatelibraries.yaml
     ├── haproxy-haptic.org_haproxycfgs.yaml
     ├── haproxy-haptic.org_haproxymapfiles.yaml
     ├── haproxy-haptic.org_haproxygeneralfiles.yaml

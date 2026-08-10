@@ -59,6 +59,8 @@ The actual classification lives in `pkg/controller/reconciliation.go` (search fo
 - HTTPStore (`pkg/controller/httpstore`) — Periodic HTTP refresh + two-version cache for content used in templates
 - ProposalValidator (`pkg/controller/proposalvalidator`) — Speculative render+validate driven by HTTPStore (async) and DryRunValidator (sync)
 - StatusApplier (`pkg/controller/statusapplier`) — Applies template-driven status patches via Server-Side Apply (SSA) (only the leader actually writes; followers cache state to take over instantly)
+- ResourceApplier (`pkg/controller/resourceapplier`) — Reconciles `spec.k8sResources`-declared resources via Server-Side Apply with field manager `haptic` (all-replica subscriber; only the leader writes)
+- EventEmitter (`pkg/controller/eventemitter`) — Emits the Kubernetes Events templates requested through `recordEvent()`
 - Validators (`pkg/controller/validator`) — Basic / Template / JSONPath validators participating in the config-validation scatter-gather
 - DryRunValidator (`pkg/controller/dryrunvalidator`) — Bridges admission-webhook requests into the proposal validator
 - Commentator (`pkg/controller/commentator`) — Logs events for observability

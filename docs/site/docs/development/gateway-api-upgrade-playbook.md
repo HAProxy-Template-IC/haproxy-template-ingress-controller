@@ -61,17 +61,22 @@ verification. Work through the sections in order.
     ```bash
     helm template charts/haptic \
       --set controller.templateLibraries.gateway.experimentalChannel=true \
-      | yq 'select(.kind == "HAProxyTemplateConfig")' > /tmp/merged.yaml
+      | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
+      | yq ea '. as $i ireduce ({}; . * $i)' > /tmp/merged.yaml
     python3 scripts/gen-gateway-requires.py /tmp/merged.yaml
     ```
 
-5. Update the pinned default release. The conformance suite refuses to run
-    when the installed CRDs and the suite disagree on `bundle-version`, so
-    both places must match `go.mod`:
+5. Nothing to re-pin. The conformance suite refuses to run when the installed
+    CRDs and the suite disagree on `bundle-version`, so both installers derive
+    the release from `go.mod` rather than copying it:
 
-    - `defaultGatewayAPIVersion` in `tests/e2e/main_test.go`
-    - the `standard-install.yaml` URL (and the log line next to it) in
-      `scripts/start-dev-env.sh`
+    - `defaultGatewayAPIVersion` in `tests/e2e/main_test.go` is
+      `consts.BundleVersion`, taken from the module itself
+    - `scripts/start-dev-env.sh` resolves the `standard-install.yaml` URL from
+      `go list -m sigs.k8s.io/gateway-api`
+
+    `make lint` runs `scripts/check-gwapi-version-pins.sh`, which fails if a
+    version literal reappears in either place.
 
 6. Update the nightly old-release matrix. If you added a schema bundle in
     step 3, add the same release tag to the `GWAPI_RELEASE` list of the

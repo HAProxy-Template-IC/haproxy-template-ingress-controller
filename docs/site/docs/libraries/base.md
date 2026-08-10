@@ -162,15 +162,19 @@ This table is the authoritative registry of every `render_glob` extension point 
 | X-Forwarded-Prefix Map | `map-reqhdr-xfwd-prefix-*` | reqhdr-xfwd-prefix.map file | Per-backend `X-Forwarded-Prefix` header, applied by `frontend-filters-261-request-set-xfwd-prefix` |
 | Connection Header Map | `map-reqhdr-connection-*` | reqhdr-connection.map file | Per-backend `Connection` header override, applied by `frontend-filters-262-request-set-connection` |
 | Path Rewrite Map | `map-path-rewrite-*` | path-rewrite.map file | Per-backend literal full-path rewrite, applied by `frontend-filters-400-path-rewrite` (capture/regex rewrites stay in the backend) |
+| Request Buffering Map | `map-request-buffering-*` | request-buffering.map file | Per-backend request-buffering override (`on`/`off`), applied by `frontend-filters-090-request-buffering` |
+| Pod Names Map | `map-pod-names-*` | pod-names.map file | Backend pod IP → pod name, read at log time for the `server_pod` access-log field |
 | Status Patches | `status-patches-*` | After features, before backends | Resource status patch registration (side effects only) |
 | Status Extra | `status-extra-*` | Inside the status frontend | Extra status-frontend directives (Prometheus exporter, custom endpoints) |
 
 The `map-body-size-*` through `map-path-rewrite-*` family shares one design: a resource library writes a per-backend value into a map keyed by backend name, and a static base-library filter looks it up at request time. A backend with no entry is unaffected, so adding or changing one of these values is a map-only (reload-free) change.
 
-Two extension points are defined by other bundled libraries, not by `base.yaml`:
+Further extension points are defined by other bundled libraries, not by the base library:
 
 - `https-bind-extra-*` — invoked by the SSL library's HTTPS frontend for additional TLS `bind` lines; see [SSL Library](ssl.md).
-- `backend-directives-*` — invoked by `ingress.yaml`'s `backends-500-ingress` snippet (with `inherit_context`) so per-backend annotation libraries can extend each Ingress backend block; see [haproxytech library](haproxytech.md) for the producer side. Templates outside the ingress backend loop won't see it.
+- `ssl-tcp-bind-extra-*` — also SSL-defined, for the TCP-mode passthrough listener's `bind` lines.
+- `backend-directives-*` — invoked by the Ingress library's `backends-500-ingress` snippet (with `inherit_context`) so per-backend annotation libraries can extend each Ingress backend block; see [haproxytech library](haproxytech.md) for the producer side. Templates outside the ingress backend loop won't see it.
+- `spoe-agents-*`, `frontend-spoe-filters-*`, `frontend-spoe-set-pass-headers-*`, `frontend-spoe-set-fail-headers-*` — defined by the auto-loaded spoa-hub library; see [SPOA Hub](../operations/spoa-hub.md).
 
 ### How extension points work
 
@@ -394,10 +398,13 @@ The `util-backend-servers` snippet generates server lines with:
 - Health check configuration
 - Support for per-server options (`maxconn`, SSL, etc.)
 
+The snippet holds only the `BackendServers` macro, so import it and call the macro — rendering the snippet emits nothing:
+
 ```scriggo
 {%- var service_name = "my-service" %}
 {%- var port = 8080 %}
-{{ render "util-backend-servers" inherit_context }}
+{%- import "util-backend-servers" for BackendServers %}
+{{ BackendServers(service_name, 0, port, serverOpts, nil, backendName, namespace) }}
 ```
 
 ### Error pages
@@ -492,7 +499,9 @@ controller:
   config:
     templatingSettings:
       extraContext:
-        debug: true
+        diagnostics:
+          routingHeaders:
+            enabled: true
 ```
 
 Debug headers include:
@@ -514,7 +523,7 @@ When `shmStats` is enabled, the chart automatically adds a `/dev/shm` emptyDir v
 
 The base library watches controller LoadBalancer Services and discovers external addresses for status reporting. Addresses are aggregated from **all** matching services and deduplicated, then stored in `gf["addresses"]`. This supports multi-service setups where HAProxy is exposed via both internal and public LoadBalancers.
 
-Controller Services are discovered via label selector (`app.kubernetes.io/name=<name>,app.kubernetes.io/component=loadbalancer`). If no Service has LoadBalancer addresses assigned yet, `gf["addresses"]` remains nil and status patches that depend on addresses are skipped.
+Controller Services are discovered via label selector (`app.kubernetes.io/name=<name>,app.kubernetes.io/component=loadbalancer`). If no Service has LoadBalancer addresses assigned yet, the library falls back to the Services' own `spec.clusterIPs` (skipping the headless `None` sentinel), so status still carries an address on NodePort and ClusterIP installs. While status patches are enabled, `gf["addresses"]` is always set — to an empty list if nothing is discoverable — because every `status-patches-*` snippet gates on it being non-nil, and leaving it nil would suppress conditions the Gateway API requires regardless of addressing (such as `Accepted=True`).
 
 Address discovery can be disabled via `controller.config.templatingSettings.extraContext.statusPatches.enabled: false`. When disabled, `gf["addresses"]` is never set, which prevents all `status-patches-*` snippets from writing to Ingress or Gateway status. This is useful during migration from another ingress controller to avoid premature DNS cutover when tools like external-dns watch status fields.
 
@@ -580,6 +589,7 @@ The base library generates these map files for routing:
 | path-prefix.map | Prefix path matching | `map_beg()` |
 | path-regex.map | Regex path matching | `map_reg()` |
 | weighted-multi-backend.map | Weighted backend selection | `map()` |
+| pod-names.map | Backend pod IP to pod name, for the access log's `server_pod` field and the upstream span | `map()` |
 
 And these per-backend feature maps, all keyed by backend name and looked up with `map()`:
 
@@ -614,7 +624,7 @@ global
 defaults
     # defaults-settings-100-options
     mode http
-    log global
+    log stdout len 16384 format raw local0 info   # one line per extraContext.accessLog.targets entry
     option httplog          # unreachable fallback: every frontend sets its own
                             # log-format, and this keeps HAProxy from warning if
                             # one ever doesn't
@@ -645,11 +655,14 @@ frontend http-tcp
     mode tcp
     option dontlog-normal        # the inner HTTP frontend logs the request
     log-format "%{+json}o ..."   # util-log-format-tcp (every TCP frontend)
+    bind *:80                    # extraContext.httpPort — the port bind lives
+                                 # on this outer h2c demultiplexer
+    # http-bind-extra-* snippets (extra Gateway HTTP listener ports)
 
 frontend http_frontend
     mode http
     option forwardfor
-    bind *:80
+    bind unix@/etc/haproxy/http-h1-frontend.sock mode 660 accept-proxy
     # frontend-extra-* snippets (options, captures, ACLs)
     # Routing logic
     # frontend-matchers-advanced-* snippets

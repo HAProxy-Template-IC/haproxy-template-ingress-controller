@@ -49,16 +49,19 @@ E2E Framework (kubernetes-sigs/e2e-framework)
     │   └── Teardown (cleanup)
     │
     └── Test Infrastructure
-        ├── DebugClient (NodePort + HTTP client)
+        ├── DebugClient (pod port-forward + HTTP client)
         ├── Fixtures (ConfigMap, Secret, Deployment, Services)
-        └── Helpers (pod finding, waiting, NodePort access)
+        └── Helpers (pod finding, waiting, endpoint access)
 ```
 
-### Kubernetes API Server Proxy
+### Reaching the controller's endpoints
 
-Tests access controller debug and metrics endpoints via the Kubernetes API server proxy rather than port-forwarding or NodePort services. This is a deliberate design decision:
+Two different mechanisms, because the two endpoints have different access rules:
 
-**Why API Server Proxy?**
+- **Metrics** go through the Kubernetes API server proxy (`ProxyGet`), for the reasons below.
+- **Debug** endpoints are **loopback-only** in the controller, so the API server proxy would arrive from the pod network and get a 403. `DebugClient` port-forwards into ready controller pods instead and rotates across them.
+
+**Why the API server proxy for metrics?**
 
 - Port-forwarding uses SPDY protocol which breaks under parallel test execution (EOF, connection reset errors)
 - NodePort requires `extraPortMappings` in Kind configuration, which doesn't work in DinD environments
@@ -68,13 +71,15 @@ Tests access controller debug and metrics endpoints via the Kubernetes API serve
 
 **How it works:**
 
-1. Tests create ClusterIP services for debug and metrics endpoints
-2. `SetupDebugClient()` and `SetupMetricsAccess()` create clients that use `ProxyGet`
-3. Requests are routed: `client → API server → service → pod`
+1. Tests create ClusterIP services for the debug and metrics endpoints
+2. `SetupMetricsAccess()` returns a client that reads through `ProxyGet`, routed
+   `client → API server → service → pod`
+3. `SetupDebugClient()` returns a client that port-forwards to a ready controller pod,
+   routed `client → port-forward → pod`, because `/debug/*` only answers on loopback
 
 **Helper functions:**
 
-- `SetupDebugClient()` - creates debug service and returns DebugClient using API proxy
+- `SetupDebugClient()` - creates the debug service and returns a DebugClient that port-forwards to controller pods
 - `SetupMetricsAccess()` - creates metrics service and returns MetricsClient using API proxy
 - `WaitForServiceEndpoints()` - waits for service endpoints to be ready
 
@@ -110,33 +115,28 @@ func TestMain(m *testing.M) {
 
 ### DebugClient
 
-HTTP client for accessing controller debug endpoints via Kubernetes API server proxy:
+HTTP client for the controller's debug endpoints. Those are **loopback-only**, so it
+port-forwards into ready controller pods rather than going through the API server's
+service-proxy (which would arrive from the pod network and get a 403):
 
 ```go
 // debug_client.go
 type DebugClient struct {
-    clientset   kubernetes.Interface
-    namespace   string
-    serviceName string
-    port        string
+    loopback  *testutil.LoopbackPodClient
+    haptic    hapticclient.Interface
+    namespace string
 }
 
-// Create via SetupDebugClient - uses ProxyGet to access the service
-func NewDebugClient(clientset kubernetes.Interface, namespace, serviceName string, port int32) *DebugClient {
-    return &DebugClient{
-        clientset:   clientset,
-        namespace:   namespace,
-        serviceName: serviceName,
-        port:        strconv.Itoa(int(port)),
-    }
-}
+// Create via SetupDebugClient — port-forwards to ready controller pods and
+// rotates across them.
+func NewDebugClient(config *rest.Config, clientset kubernetes.Interface, namespace string, port int32) (*DebugClient, error) {
 
 func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]any, error) {
-    // Uses ProxyGet to fetch /debug/vars/config
+    // Port-forwards and fetches /debug/vars/config
 }
 
 func (dc *DebugClient) GetRenderedConfig(ctx context.Context) (string, error) {
-    // Uses ProxyGet to fetch /debug/vars/rendered
+    // Port-forwards and fetches /debug/vars/rendered
 }
 
 func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion string, timeout time.Duration) error {
@@ -146,13 +146,13 @@ func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion
 
 **Purpose**: Access controller internal state without log parsing.
 
-**Why API server proxy instead of NodePort or port-forwarding?**
+**Why port-forwarding here, when metrics use the API server proxy?**
 
-- Port-forwarding uses SPDY which breaks under parallel test execution (EOF errors)
-- NodePort requires extraPortMappings which don't work in DinD environments
-- API proxy uses existing API server connection - always works
-- Uses built-in `ProxyGet` method from client-go
-- No connection lifecycle management needed
+- `/debug/*` is loopback-only; a request through the API server proxy arrives from the
+  pod network and is refused with 403
+- `LoopbackPodClient` rotates across ready controller pods, so a restarting replica
+  doesn't fail the test
+- Metrics carry no such restriction, so they keep the simpler `ProxyGet` path
 
 **Why not logs?**
 
@@ -354,19 +354,20 @@ debugClient, _ := SetupDebugClient(ctx, client, clientset, namespace, 30*time.Se
 config, _ := debugClient.GetConfig(ctx)  // Works!
 ```
 
-### Using Old Port-Forward or NodePort Pattern
+### Hand-rolling a NodePort or per-pod client
 
-**Problem**: Old code uses port-forwarding or NodePort which are unreliable.
+**Problem**: Old code builds its own access path instead of using the helpers.
 
 ```go
-// Bad - port-forwarding breaks under load (SPDY EOF errors)
-debugClient := NewDebugClient(restConfig, pod, DebugPort)
-debugClient.Start(ctx)  // OLD PATTERN - don't use!
-defer debugClient.Stop()
-
 // Bad - NodePort doesn't work in DinD without extraPortMappings
 debugClient := NewDebugClient(nodeHost, nodePort)  // OLD PATTERN
+
+// Bad - pins one pod, so a restarting replica fails the test
+debugClient := NewDebugClient(restConfig, pod, DebugPort)
 ```
+
+Use `SetupDebugClient()` / `SetupMetricsAccess()` — they own the access path and the
+pod rotation.
 
 **Solution**: Use API proxy-based SetupDebugClient - no Start/Stop needed.
 
@@ -461,9 +462,12 @@ make test-acceptance
 # Run acceptance tests in parallel (faster, uses shared cluster)
 make test-acceptance-parallel
 
-# Run a specific test
-TEST_RUN_PATTERN="TestPartialDeploymentFailure" make test-acceptance
 ```
+
+`make test-acceptance` has no test filter — unlike `test-integration`, `test-e2e`
+and the conformance targets, its recipe passes no `-run`, so `TEST_RUN_PATTERN`
+is silently ignored and the whole suite runs. To narrow it down, add `-run` to
+the `test-acceptance` recipe temporarily.
 
 The Make targets automatically:
 

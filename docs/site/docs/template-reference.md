@@ -8,11 +8,12 @@ All templates have access to the following top-level variables:
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `resources` | map of stores | Kubernetes resources indexed per `watchedResources` config — entries are wrappers exposing `.List()` / `.Fetch(keys...)` / `.GetSingle(keys...)` |
+| `resources` | map of stores | Kubernetes resources indexed per `watchedResources` config — entries are wrappers exposing `.List()` / `.Fetch(keys...)` / `.GetSingle(keys...)` / `.APIVersion()` (the group/version this resource is actually watched at — pass it to `statusPatch()` instead of hardcoding a literal), plus the type-carrying `.T` |
 | `controller` | map of stores | Controller-managed stores; currently only `controller.haproxy_pods` for the discovered HAProxy pod set |
 | `pathResolver` | object | Resolves filenames to HAProxy paths — see [`pathResolver`](#pathresolver) |
 | `capabilities` | map (bool values) | HAProxy feature flags derived from the local HAProxy version, `snake_case` keys (for example `capabilities.supports_crt_list`). Use for `{% if capabilities.supports_crt_list %}…{% end %}` branches — a mistyped key is silently falsy, not an error. |
 | `currentConfig` | parsed config (or nil) | The previously deployed HAProxy configuration as a `*parser.StructuredConfig`. **Nil on first deployment** — guard with `{% if !isNil(currentConfig) %}`. Used for slot-preserving updates. |
+| `currentFiles` | `map[string]string` | The currently deployed general auxiliary files, keyed by base filename — a template's own previous output as an input. Always non-nil (empty on first deployment), so index it without a guard and branch on `len(currentFiles) == 0`. This is what lets the SSL library rotate TLS session-ticket keys: it reads the date marker out of the deployed key file and mints a new one only when a rotation is due. |
 | `dataplane` | `config.Dataplane` block | The CRD's `spec.dataplane` block — port, timeouts, paths |
 | `shared` | `*SharedContext` | Thread-safe compute-once cache for expensive computations (`shared.ComputeIfAbsent(key, factory)` + `shared.Get(key)`; no `Set` — prevents racy check-then-act patterns) |
 | `templateSnippets` | list | Names of all available template snippets — useful for dynamic `render_glob` patterns |
@@ -44,18 +45,71 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `replace(s, old, new)`, `split(s, sep)`, `join(slice, sep)`, `strip(s)`, `trim(s, cutset)`, `hasPrefix(s, p)`, `hasSuffix(s, p)` | String operations (`strip` trims whitespace; `trim` takes an explicit cutset) | `join(items, ", ")` |
 | `first_seen(prefix, keys...)` | Returns `true` only the first time the key tuple is seen — for deduplicating | `if first_seen("backend", svc.namespace, svc.name)` |
 | `sanitize_regex(s)` | Escape regex metacharacters in user input | `sanitize_regex(annotation)` |
+| `regex_search(s, pattern)` | True when the RE2 pattern matches anywhere in the string. Both arguments are coerced with `tostring()` first, and a pattern that doesn't compile aborts the render | `{% if regex_search(name, "ssl.*passthrough") %}` |
 | `semver_gte(version, "3.3")` | Compare a semver string (major.minor) against a target | `if semver_gte(extraContext.haproxyVersion, "3.3")` (the chart auto-populates `extraContext.haproxyVersion`; outside the chart, set it yourself via `templatingSettings.extraContext.haproxyVersion` — see [Custom Template Variables](./templating.md#custom-template-variables)) |
 | `fail(msg)` | Abort rendering with an error message (surfaces in validation tests and webhooks) | `fail("missing required annotation")` |
 | `b64decode(s)` | Decode base64 strings (Secret `.data` values) | `{{ secret.data.password \| b64decode() }}` |
 | `b64encode(s)` | Encode a value as standard base64 | `{{ configmap.data.schema \| b64encode() }}` |
 | `untar_gz(archive)` | Expand a gzip-compressed tar into a map of entry path to content. Returns `(map[string]string, error)` — a bad archive is reported through the error, never a panic, so the render survives it. All-or-nothing: on any error the map is empty. Entry paths are verbatim (a release tarball keeps its version directory); select with `keys()` + `glob_match()`. Only regular files; guarded against decompression bombs and path traversal | `{%- var files, err = untar_gz(archive) %}` |
 | `glob_match(items, pattern)` | Filter strings by glob pattern | `{{ templateSnippets \| glob_match("backend-*") }}` |
-| `group_by(items, keyPath)` | Group items by dotted key path | `{{ ingresses \| group_by("metadata.namespace") }}` |
 | `map_extract(items, keyPath)` | Pluck one field (dotted key path) from each item into a flat slice | `{{ routes \| map_extract("routeId") }}` |
 | `indent(s, n)` | Indent lines by N spaces (first and blank lines excluded) | `{{ render "snippet" \| indent(4) }}` |
-| `sort_by(items, criteria)` | Sort by JSONPath expressions — see [`sort_by` modifiers](#sort_by-modifiers) | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
 | `debug(v, label)` | Output as JSON comment | `{{ routes \| debug("routes") }}` |
 | `toJSON(v)` | Convert value to JSON string | `{{ myMap \| toJSON() }}` |
+| `basename(path)` | Filename portion of a path, like Unix `basename` | `{%- var p, _ = fileRegistry.Register("map", n, c) %}{{ basename(p) }}` |
+| `namespace(init)` | Mutable `map[string]any` for accumulating state across loop iterations | `{%- var acc = namespace(map[string]any{"n": 0}) %}` |
+| `isNil(v)` | Nil check that also catches a typed nil pointer boxed in an `any` | `{% if !isNil(currentConfig) %}` |
+| `coalesce(value, default)` | First non-nil of the two — the plain-call spelling of `fallback` | `coalesce(annotation, "default")` |
+
+### Strings and types
+
+| Function | Purpose | Example |
+|----------|---------|---------|
+| `strings_contains(s, sub)`, `strings_split(s, sep)`, `strings_splitn(s, sep, n)`, `strings_trim(s)`, `strings_lower(s)`, `strings_replace(s, old, new)` | `any`-tolerant string operations — they coerce their arguments, so they work on values read out of a `map[string]any` without a cast first. `strings_trim` trims whitespace; `strings_splitn` caps the result at `n` parts | `strings_splitn(annotation, ":", 2)` |
+| `title(s)` | Title-case a string | `title(mode)` |
+| `isdigit(s)` | True when the string is non-empty and all digits — check before `toint()` | `{% if isdigit(port) %}` |
+| `toStringSlice(items)` | Convert a `[]any` to `[]string` | `toStringSlice(hosts)` |
+| `sort_strings(items)` | Sort a `[]any` lexicographically, returning `[]string` | `sort_strings(keys(m))` |
+| `sort_ints(items)` | Sort a `[]any` numerically, returning `[]int` — use for ports and IDs, where `sort_strings` would put `"10"` before `"2"`. Non-integer entries coerce through `toint()` and sort to the front | `sort_ints(ports)` |
+| `ceil(f)` | Round a float up | `ceil(tofloat(total) / 4)` |
+| `seq(n)` | `[]int{0, 1, …, n-1}`, for fixed-count loops such as reserved server slots | `{% for _, i := range seq(slots) %}` |
+| `append(slice, item)` | Go's builtin, type-preserving; `append(dst, src...)` spreads a slice of the **same** type. Widening into `[]any` is a compile error — box per element in a loop. A slice reached through `any` is asserted at the boundary | `append(gf["hosts"].([]any), h)` |
+| `dig_string(obj, default, keys...)` | `dig` + `fallback` + `tostring` in one call, for annotation and metadata lookups | `ing \| dig_string("", "metadata", "annotations", key)` |
+| `join_key(sep, parts...)` | Join any values into one composite key string | `join_key("_", ns, name, port)` |
+| `make_guid(parts...)` | Build a value for HAProxy's `guid` directive from parts joined by `:`, auto-truncating with a hash suffix past its 127-character limit | `guid {{ make_guid("be", beKey) }}` |
+| `selectattr(items, attr[, op, value])` | Jinja2-style attribute filter. `op` is `eq`, `ne` or `in`; omitted, it keeps items whose `attr` is truthy. `attr` is one literal key — a dotted path matches nothing, so prefer `filter` with a closure | `selectattr(rules, "host", "ne", "")` |
+
+### Collection pipelines
+
+Type-preserving stages, chained with `|`. Each keeps its input's element type, so typed field access still resolves at the last stage and a misspelled field fails the config load instead of rendering an empty file. Predicates are closures — write them long-hand (`func(e T) bool { … }`) or as `x => expr` with both types inferred. See [Templating — Collection pipelines](./templating.md#collection-pipelines) for the guided version.
+
+| Function | Purpose | Example |
+|----------|---------|---------|
+| `map(items, fn)` | One output per input | `pods \| map(p => p.Metadata.Name)` |
+| `filter(items, pred)` | Keep the elements the predicate accepts | `routes \| filter(r => r.Spec.Tls)` |
+| `reject(items, pred)` | Drop them instead, so the call site reads as a positive statement | `eps \| reject(e => e.TargetRef.Name == "")` |
+| `flat_map(items, fn)` | Map to slices and concatenate, flattening exactly one level | `slices \| flat_map(s => s.Endpoints)` |
+| `unique(items)` | First occurrence of each distinct element, input order preserved | `hosts \| unique()` |
+| `unique_by(items, key)` | First element per key. `key` is a closure, or an attribute path for `any`-shaped data | `eps \| unique_by(e => e.Addr)` |
+| `group_by(items, key)` | Bucket by string key, input order preserved within each bucket. Same two key forms. Iterate the result through `keys()` — Go map order isn't stable, and a reordered render reads as a change to the controller | `ingresses \| group_by("metadata.namespace")` |
+| `sort_by(items, criteria)` | Sort by JSONPath expressions — see [`sort_by` modifiers](#sort_by-modifiers) | `routes \| sort_by([]string{"$.priority:desc"})` |
+| `sort_by(items, cmp)` | Sort with a `func(a, b T) int` comparator (Go's `cmp` convention: negative when `a` sorts first), for orderings the criteria language can't state. Stable, like the criteria form | `routes \| sort_by(func(a, b Route) int { return a.Rank - b.Rank })` |
+
+`sort_by` is the one stage that returns `(value, error)`. As a pipe stage that's invisible — the pipe keeps only the first result, so `x | sort_by(…)` assigns to one variable. A **direct** call returns both and needs two: `var rows, err = sort_by(items, criteria)`.
+
+Unlike the Scriggo builtins they replace, the attribute-path form of `unique_by` and `group_by` splits a dotted path into separate `dig` keys, so `"spec.hostname"` navigates two levels instead of looking for one key literally named `spec.hostname`.
+
+Each stage re-enters the template VM once per element. Chains of `map`/`filter`/`reject`/`flat_map` are lowered to loops at compile time and cost what the hand-written loop costs; the other stages don't lower, so over many thousands of elements a `{% for %}` loop still wins.
+
+### Governance helpers
+
+Resource-agnostic read/write access to any watched resource by JSONPath — the primitives the chart's [governance guardrails](./operations/governance.md) are built from.
+
+| Function | Purpose | Example |
+|----------|---------|---------|
+| `resource(name)` | The per-render items of a watched resource named *dynamically*, sharing the same objects as `resources.<name>.List()` — so a `jsonpathSet` write is visible downstream | `resource(extraContext.targetStore)` |
+| `jsonpathGet(item, path)` | Read a concrete JSONPath out of an item | `jsonpathGet(ing, "$.spec.ingressClassName")` |
+| `jsonpathSet(item, path, value)` | Write a concrete JSONPath into an item, in place. Returns whether the write landed | `jsonpathSet(ing, "$.metadata.annotations.x", "1")` |
 
 For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, `min`, `max`, `sprintf`, `now()`, etc.), see the [Scriggo built-ins reference](https://scriggo.com/templates/builtins).
 
@@ -68,11 +122,12 @@ For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, 
 **Example — route precedence sorting:**
 
 ```go
-{% var sorted = sort_by(routes, []string{
+{% var sorted, sortErr = sort_by(routes, []string{
     "$.match.method:exists:desc",
     "$.match.headers | length:desc",
     "$.match.path.value | length:desc",
 }) %}
+{% if sortErr != nil %}{{ fail("sorting routes: " + tostring(sortErr)) }}{% end %}
 ```
 
 ### Regex flavor

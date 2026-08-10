@@ -13,8 +13,15 @@ curl http://localhost:8080/debug/vars
 
 `/healthz` lives on the same listener. `controller.ports.healthz` is the single
 source for the process, container, Service, probes, and NetworkPolicy, so changing
-it moves every consumer together. The listener is required by the probes; restrict
-access to `/debug/*` with a NetworkPolicy instead of disabling it (see
+it moves every consumer together. The listener is required by the probes, so
+don't disable it.
+
+The `/debug/*` routes answer **only to loopback callers** — `/debug/vars`,
+`/debug/vars/`, `/debug/vars/all`, `/debug/pprof/` and any custom `/debug/`
+handler return `403` with `diagnostics are available on loopback only; use
+kubectl port-forward` for any other peer. `/health` and `/healthz` are exempt,
+since the kubelet probes them from off-pod. Reach the diagnostics with
+`kubectl port-forward` and restrict `pods/portforward` with RBAC (see
 [Security](./security.md#network-exposure)).
 
 ## Debug variables
@@ -29,10 +36,12 @@ access to `/debug/*` with a NetworkPolicy instead of disabling it (see
 | `/debug/vars/rendered` | Last rendered `haproxy.cfg`, its size, and timestamp |
 | `/debug/vars/auxfiles` | Last rendered SSL certs, map files, general files + a summary count |
 | `/debug/vars/resources` | Per-type counts for every `watchedResources` entry |
+| `/debug/vars/effectiveConfigResolution` | How each `apiVersions` candidate list resolved against what the cluster actually serves, and which optional entries were dropped — the first thing to check when a `resources.<name>` lookup is unexpectedly empty |
 | `/debug/vars/pipeline` | Per-phase status keyed `last_trigger`, `rendering`, `validation`, `deployment` (each carries its own status / timestamp / duration / error) — useful for "is reconciliation stuck?" checks. Config-parse failures don't show up here or on `/debug/vars/errors` — check the controller logs and `kubectl get htplcfg … -o yaml` status. |
 | `/debug/vars/validated` | Last successful render+validate output (`config`, `timestamp`, `config_bytes`, `validation_duration_ms`) |
 | `/debug/vars/errors` | Last error per phase, keyed by `template_render_error` / `haproxy_validation_error` / `deployment_errors`, plus `last_error_timestamp` |
 | `/debug/vars/events` | Ring buffer of the most recent controller events |
+| `/debug/vars/all` | Every registered variable in one path-keyed object — like `state`, but built from the registry, and just as large |
 | `/debug/vars/state` | Aggregate of the above — large; prefer the specific paths for scripting |
 | `/debug/vars/uptime` | Process uptime since last reinitialization |
 
@@ -117,11 +126,12 @@ kubectl exec -n haptic deployment/haptic-controller -- haptic-controller config 
 
 **What configuration is the controller actually using?**
 
-A Helm install splits the configuration across one `HAProxyTemplateConfig` per
-enabled template library plus one for your own `controller.config`, so no single
-object shows the whole picture. `--input` fetches every object named in the
-Deployment's `CRD_NAME`, follows its `spec.libraryRefs`, and prints the merged spec — the input side, as opposed
-to the rendered HAProxy output above:
+A Helm install splits the configuration across one `HAProxyTemplateLibrary` per
+enabled template library plus a single `HAProxyTemplateConfig` for your own
+`controller.config`, so no single object shows the whole picture. `--input`
+fetches the config named in the Deployment's `CRD_NAME`, follows its
+`spec.libraryRefs`, and prints the merged spec — the input side, as opposed to
+the rendered HAProxy output above:
 
 ```bash
 kubectl get haproxytemplateconfig -n haptic            # which objects exist

@@ -40,10 +40,11 @@ tests/
 │   ├── kind_cluster.go          # Kind cluster management for the integration suite
 │   ├── haproxy.go               # HAProxy deployment helpers
 │   ├── testutil.go              # Suite-internal helpers
-│   ├── sync_*_test.go           # 9 sync test files (auxiliary, backends, common, frontends,
-│   │                            # global_defaults, idempotency, observability, sections, servers)
+│   ├── sync_*_test.go           # 10 sync test files (auxiliary, backends, ca_file, common,
+│   │                            # frontends, global_defaults, idempotency, observability,
+│   │                            # sections, servers)
 │   ├── auxiliaryfiles_test.go   # Auxiliary file (maps, SSL, general) sync tests
-│   ├── enterprise_*_test.go     # 5 Enterprise-edition feature test files (WAF, Bot Mgmt, UDP LB, Keepalived, misc)
+│   ├── enterprise_botmgmt_test.go # Enterprise-edition Bot Management sync tests
 │   └── testdata/                # Test configuration files
 ├── acceptance/                   # Acceptance tests (e2e-framework)
 │   ├── main_test.go             # TestMain — Kind setup/teardown
@@ -147,7 +148,7 @@ Integration tests are tagged with `//go:build integration`:
 
 package integration
 
-func TestSyncFrontendAdd(t *testing.T) {
+func TestSyncMyFeature(t *testing.T) {
     // Integration test...
 }
 ```

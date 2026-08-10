@@ -1,10 +1,10 @@
 # GatewayClass
 
-The [HAPTIC Helm chart](deploying-with-helm.md) automatically creates a GatewayClass resource when the gateway library is enabled and Gateway API CRDs are installed.
+HAPTIC creates a GatewayClass resource automatically when the gateway library is enabled, `gatewayClass.enabled` is true, and the cluster serves the `gatewayclasses` CRD. The **controller** emits it at runtime through the gateway library's `k8sResources`, not the Helm chart — so it appears (or disappears) as the CRDs come and go, without a `helm upgrade`.
 
 ## Prerequisites
 
-For the chart to create the GatewayClass, install the Gateway API CRDs (standard channel) first:
+For the GatewayClass to appear, install the Gateway API CRDs (standard channel):
 
 ```bash
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
@@ -14,7 +14,7 @@ Check [Gateway API releases](https://github.com/kubernetes-sigs/gateway-api/rele
 
 The v1.6.0 standard channel ships every route kind HAPTIC supports — HTTPRoute, GRPCRoute, TLSRoute, and TCPRoute. On older Gateway API releases some kinds live only in the experimental channel (`experimental-install.yaml`): TLSRoute before v1.5 and TCPRoute before v1.6. See [Supported Gateway API versions and channels](./libraries/gateway.md#supported-gateway-api-versions-and-channels) for the full split.
 
-If the CRDs are absent, the chart skips the GatewayClass and installs everything else normally. Install the CRDs later and re-run `helm upgrade` to create it.
+If the CRDs are absent, nothing is emitted and the rest of the install proceeds normally. Install the CRDs later and the controller creates the GatewayClass by itself — no `helm upgrade` required.
 
 ## Expose a Service through a Gateway
 
@@ -162,13 +162,13 @@ gatewayClass:
 
 ## Creation conditions
 
-The chart creates the GatewayClass only when **all** the following are true:
+The GatewayClass exists only when **all** the following are true. Conditions 1 and 2 are chart-time; condition 3 is re-evaluated by the controller at runtime:
 
 1. `gatewayClass.enabled: true` (default)
 2. `controller.templateLibraries.gateway.enabled: true` (default)
-3. The `gateway.networking.k8s.io/v1/GatewayClass` API exists in the cluster (Gateway API CRDs are installed)
+3. The cluster serves the `gateway.networking.k8s.io` `gatewayclasses` CRD
 
-If the API is absent, the chart skips the GatewayClass without error and installs the rest normally.
+If the API is absent, nothing is emitted and the rest of the install proceeds normally. Because condition 3 is a runtime check, installing the CRDs later is enough — the controller notices and creates the GatewayClass.
 
 ## `parametersRef` - controller configuration link
 

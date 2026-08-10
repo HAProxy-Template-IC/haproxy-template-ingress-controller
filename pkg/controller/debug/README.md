@@ -60,7 +60,8 @@ go eventBuffer.Start(ctx)
 debug.RegisterVariables(registry, stateProvider, eventBuffer)
 
 server := introspection.NewServer(":8080", registry)
-go server.Start(ctx)
+server.Setup()
+go server.Serve(ctx)
 ```
 
 `EventBuffer` subscribes to the `EventBus` separately from the `commentator` so that the debug endpoint has an independent ring-buffered history for `/debug/vars/events` — the two consumers can be tuned and cleaned up in isolation.

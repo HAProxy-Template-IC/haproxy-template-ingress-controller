@@ -48,7 +48,7 @@ defaultSSLCertificate:
   namespace: haptic            # defaults to the Helm release namespace
 ```
 
-The chart wires those values into the template engine as `extraContext.default_ssl_cert_name` and `extraContext.default_ssl_cert_namespace`; the SSL library reads them and emits the corresponding `default.pem` entry in `certificate-list.txt`.
+The chart wires those values into the template engine as `extraContext.tls.defaultCertificate.name` and `extraContext.tls.defaultCertificate.namespace` (plus `.ecdsaName` for the optional ECDSA companion); the SSL library reads them and emits the corresponding `default.pem` entry in `certificate-list.txt`.
 
 The referenced Secret must be of type `kubernetes.io/tls` with `tls.crt` and `tls.key` fields. For the full configuration surface (cert-manager integration, disabling HTTPS, manual certificates) see [SSL Certificates](../ssl-certificates.md).
 
@@ -70,8 +70,11 @@ The SSL library implements these extension points from base.yaml:
 | `backends-*` | `backends-500-ssl-loopback` | Loopback backend that forwards TLS-termination traffic (still encrypted) from the TCP frontend to the HTTPS frontend, which decrypts it |
 | `log-fields-*` | `log-fields-200-tls` | `tls_version` and `tls_sni` access-log fields, when this install terminates TLS anywhere |
 | `log-fields-*` | `log-fields-205-tls-resumption` | `tls_resumed` access-log field, when `extraContext.tls.sessionTickets.enabled` is set — the resumption rate is the reason that feature exists and no metric exposes it |
+| `global-settings-*` | `global-settings-410-ssl-ciphers` | `ssl-default-bind-ciphers`, `ssl-default-bind-ciphersuites` and `ssl-default-bind-options ssl-min-ver` from `extraContext.tls.ciphers` / `ciphersuites` / `minVersion` — one TLS policy for every `bind … ssl` line |
+| `features-*` | `features-085-ssl-hsts-global` | Global HSTS registration, consumed by `frontend-filters-080-hsts` |
+| `features-*` | `features-110-ssl-ticket-keys` | Mints and rotates the TLS session-ticket key file when `extraContext.tls.sessionTickets.enabled` is set, reading the deployed key out of `currentFiles` so a rotation happens only when one is due |
 
-Snippet names reflect their real numeric-prefix values in `libraries/ssl.yaml`; lower-numbered `features-050-*` snippets run before higher-numbered `features-150-*` ones, which is how SSL initializes shared state before resource libraries populate it and before the CRT-list is emitted.
+Snippet names reflect their real numeric-prefix values in `charts/haptic/charts/ssl/library.yaml`; lower-numbered `features-050-*` snippets run before higher-numbered `features-150-*` ones, which is how SSL initializes shared state before resource libraries populate it and before the CRT-list is emitted.
 
 ### Extension points provided
 
@@ -165,7 +168,11 @@ There is no separate global OCSP configuration — the per-certificate option is
 
 ### Restricting frontend TLS versions and ciphers
 
-The client-facing HTTPS listener inherits HAProxy's default cipher list and protocol versions. To harden it, emit `ssl-default-bind-*` directives into the `global` section through a [`global-settings-*` extension point](base.md#extension-points). These directives set the defaults for every frontend `bind ... ssl` line:
+The SSL library already applies one TLS policy to every frontend `bind ... ssl` line: `global-settings-410-ssl-ciphers` emits `ssl-default-bind-ciphers`, `ssl-default-bind-ciphersuites` and `ssl-default-bind-options ssl-min-ver` from `extraContext.tls.ciphers`, `.ciphersuites` and `.minVersion`, which the library defaults to a modern list with `TLSv1.2` as the floor. Per-listener Gateway TLS options still override it per bind.
+
+To change the policy, set those three keys rather than adding your own snippet — a second `ssl-default-bind-*` in `global` would be a duplicate directive. Values are charset-checked at render time, so an injection attempt fails the config load instead of reaching HAProxy.
+
+If you do need directives the keys don't cover, emit them into the `global` section through a [`global-settings-*` extension point](base.md#extension-points):
 
 ```yaml
 controller:

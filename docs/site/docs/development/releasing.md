@@ -66,6 +66,8 @@ The script:
 - Writes `<version>` to the `VERSION` file
 - Updates `Chart.yaml` `version`, `appVersion`, and the `artifacthub.io/images` annotation (controller and spoa-hub image tags)
 - Updates the `helm install ... --version <version>` examples in the READMEs and docs, and the landing page's fallback version
+- Re-pins the controller image tag in the docs' `migrate-check` docker one-liner (`haptic:<version>-haproxy<series>`, with the series taken from `versions.env`'s `DEFAULT_HAPROXY`)
+- Rewrites hosted-docs links (`/docs/dev/` → `/docs/<version>/`) and repo-blob links (`/-/blob/main/` → `/-/blob/v<version>/`) so a released page links to the matching sources
 - Stages and commits everything as `release: haptic v<version>`
 
 The docs-site changelog page needs no release-time sync: it's generated from `CHANGELOG.md` on every mkdocs build (`docs/site/hooks/changelog.py`).
@@ -162,7 +164,7 @@ Final releases (no suffix):
 
 | Error | Solution |
 |-------|----------|
-| `Working directory is not clean` | Commit or stash changes |
+| `Warning: Working directory is not clean` — an interactive `Continue anyway? [y/N]` prompt, not a hard failure | Answer `N`, commit or stash your changes, and re-run |
 | `CHANGELOG.md has no [Unreleased] section` | Restore the `## [Unreleased]` header |
 | `Invalid version format` | Use `X.Y.Z` or `X.Y.Z-suffix.N` |
 

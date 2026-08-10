@@ -26,10 +26,10 @@ import (
     "gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-cfg, _ := config.LoadConfig(configYAML)
+cfg, _, _ := conversion.ParseCRD(unstructuredHAProxyTemplateConfig)
 config.SetDefaults(cfg)
 
-engine, _ := templating.New(buildTemplates(cfg), nil, nil, nil)
+engine, _ := templating.New(buildTemplates(cfg), nil)
 
 paths := &dataplane.ValidationPaths{
     TempDir:           tempDir,                               // created + cleaned up by the caller
@@ -40,7 +40,7 @@ paths := &dataplane.ValidationPaths{
     ConfigFile:        filepath.Join(tempDir, "haproxy.cfg"),
 }
 
-runner := testrunner.New(cfg, engine, paths, testrunner.Options{
+runner := testrunner.New(cfg, engine, paths, &testrunner.Options{
     Workers:         0,            // 0 → NumCPU
     DebugFilters:    false,        // set for `--debug-filters`
     ProfileIncludes: false,        // set for `--profile-includes`
@@ -67,7 +67,7 @@ func New(
     cfg *config.Config,
     engine templating.Engine,
     validationPaths *dataplane.ValidationPaths,
-    options Options,
+    options *Options,
 ) *Runner
 
 func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, error)

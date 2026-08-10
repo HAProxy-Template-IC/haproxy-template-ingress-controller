@@ -49,6 +49,8 @@ Leader-only gauges (only the leader deploys). Followers reset them on leadership
 | `haptic_runtime_fast_path_applies_total` | counter | — | Attempts that applied ≥1 runtime-eligible server update |
 | `haptic_runtime_fast_path_failures_total` | counter | — | Attempts that errored (best-effort; the scheduled deploy converges) |
 | `haptic_runtime_fast_path_server_updates_total` | counter | — | Runtime-eligible server updates applied via the fast path |
+| `haptic_runtime_map_divergence_total` | counter | `map` | Runtime maps whose post-apply read-back disagreed with the desired content, forcing a reload fallback |
+| `haptic_deploy_runtime_divergence_total` | counter | — | Endpoints whose post-reload read-back found the on-disk config structurally diverged from the pushed body (a concurrent writer clobbered a just-activated config; the deploy retry self-heals it) |
 
 `applies_total` flat at 0 while `fires_total` climbs means the fast path runs but finds no runtime-eligible change to apply (the deploy is keeping pods current) — the signal that separates a healthy-but-idle fast path from a broken one.
 
@@ -58,6 +60,7 @@ Leader-only gauges (only the leader deploys). Followers reset them on leadership
 |--------|------|--------|----------------|
 | `haptic_validation_total` | counter | — | Controller-side validations (`haproxy -c` + parser) |
 | `haptic_validation_errors_total` | counter | — | Controller-side validation failures |
+| `haptic_config_rejected_total` | counter | `validator` | `HAProxyTemplateConfig` loads refused by the config-validation gate, labelled by the validator that rejected it (`basic`, `template`, `jsonpath`, `validationtests`), or `coordinator` when one timed out |
 
 ### Watched resources
 
@@ -160,7 +163,7 @@ go test ./pkg/controller/metrics/... -race    # race detector
 
 ## See Also
 
-- [`pkg/metrics`](../../metrics/) — generic HTTP `/metrics` server + `NewCounter`/`NewHistogram`/`NewGauge` helpers
+- [`pkg/metrics`](../../metrics/) — generic HTTP `/metrics` server + `NewCounter`/`NewHistogramWithBuckets`/`NewGauge` helpers
 - [`pkg/controller/events`](../events/) — event catalogue; this package subscribes to nearly all of it
 - [`docs/site/docs/operations/monitoring.md`](../../../docs/site/docs/operations/monitoring.md) — user-facing queries, alerts, dashboards
 

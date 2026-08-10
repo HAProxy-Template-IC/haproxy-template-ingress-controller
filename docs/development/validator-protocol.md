@@ -6,7 +6,7 @@ HAPTIC's admission webhook consults one or more validator sidecars to check rend
 
 A validator is an **opaque program** to the controller: it speaks this protocol over a unix socket. What it does internally — whether it parses TOML, has a plugin system, dispatches files to internal handlers, talks to remote services — is its own concern and is not described here. Concrete implementations document their internals in their own repositories. Reference implementation: [`haproxy-spoa-hub --validate-socket <path>`](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub/-/blob/main/specs/004-validate-mode/spec.md).
 
-For end-user documentation about declaring validators on `HAProxyTemplateConfig` and operating the sidecar, see [`../controller/docs/operations/pluggable-validators.md`](../controller/docs/operations/pluggable-validators.md).
+For end-user documentation about declaring validators on `HAProxyTemplateConfig` and operating the sidecar, see [`../site/docs/operations/pluggable-validators.md`](../site/docs/operations/pluggable-validators.md).
 
 ## Routing model (controller-side)
 
@@ -37,7 +37,7 @@ Each frame on the socket is:
 ```
 
 - Length is an unsigned 32-bit big-endian integer.
-- Maximum frame size: 1 MiB (`1 << 20` bytes). Frames exceeding the limit MUST be rejected by the producer; an oversized response causes the client to close the connection.
+- Maximum frame size: 8 MiB (`8 << 20` bytes). Frames exceeding the limit MUST be rejected by the producer; an oversized response causes the client to close the connection.
 - The JSON payload MUST be valid UTF-8 with no BOM.
 
 ## Connections (persistent keep-alive)
@@ -74,6 +74,7 @@ The validator MUST handle multiple concurrent connections from the same controll
 | `files[].path` | string | yes | Operator-facing identifier echoed back in diagnostics. The validator MUST NOT open this path on disk; it processes `content` directly. |
 | `files[].content` | string | yes | UTF-8 file body. Format is whatever the validator expects for that path. |
 | `files[].kind` | string | no | `"config"` (default, omitted) or `"data"`. A `data` file is one the validator must NOT validate on its own — it is sent so that a `config` file referencing it can be checked. Validators that predate this field see only `config` files, since the controller omits the key unless it is `"data"`. |
+| `staged_root` | string | no | The directory the `data` files' paths are relative to, as the process that loads them sees it at runtime. A validated config references its files by runtime path (`/etc/haproxy/general/crs-*.conf`) while the request carries them under the controller's own identifiers (`general/crs-….conf`); the validator can't bridge the two on its own, and matching by path suffix would resolve a mistyped directory just as readily as the right one — so it's stated rather than guessed. Omitted when empty, so a request with no data files is byte-identical to one from before the field existed. |
 
 The controller does not interpret file contents in any way before sending; it relays the rendered bytes verbatim.
 
@@ -194,4 +195,4 @@ A new validator (whether a haproxy-cfg validator, a third-party WAF, or anything
 6. Implement validation as a **pure function** of the input: no goroutine fan-out, no network I/O, no file I/O outside what the request carries, no global state mutation. The HAPTIC-side cache assumes purity.
 7. Surface line numbers via the 1-based `line` field, columns via the 1-based `column` field, or `0` for "file-level". Self-explanatory `message` text — operators see this in `kubectl apply` denial reasons.
 
-Conforming implementations SHOULD pass the protocol-level conformance scenarios in [`openspec/changes/pluggable-validator-sidecar/specs/pluggable-validator-sidecar/spec.md`](../../openspec/changes/pluggable-validator-sidecar/specs/pluggable-validator-sidecar/spec.md).
+Conforming implementations SHOULD pass the protocol-level conformance scenarios in [`openspec/specs/pluggable-validator-sidecar/spec.md`](../../openspec/specs/pluggable-validator-sidecar/spec.md).

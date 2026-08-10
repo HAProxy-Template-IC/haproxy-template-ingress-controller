@@ -121,7 +121,7 @@ the [CRD Reference](./crd-reference.md) for every field.
 
 - Kubernetes cluster (1.21+) - kind, minikube, or cloud provider
 - kubectl configured to access your cluster
-- Helm 3.0+
+- Helm 3.8+ (the `oci://` chart reference below needs OCI registry support, generally available since Helm 3.8)
 
 !!! note "Webhook validation"
     A validating admission webhook is **enabled by default and works out of the box** — it rejects Ingress, HTTPRoute, and GRPCRoute changes that would break template rendering, using a self-signed certificate the chart issues itself (no cert-manager required). For rotation and certificate alternatives, see [Webhook certificates](./ssl-certificates.md#webhook-certificates).
@@ -142,7 +142,7 @@ The Helm chart deploys:
 - **Controller**: Watches Kubernetes resources and generates HAProxy configurations
 - **HAProxy pods**: Load balancers with Dataplane API sidecars (2 replicas by default)
 - **RBAC**: Permissions for watching Ingress, Service, and EndpointSlice resources
-- **HAProxyTemplateConfig**: CRD resource with the default template configuration, including [template libraries](template-libraries.md) for Ingress and Gateway API out of the box
+- **HAProxyTemplateConfig + HAProxyTemplateLibrary**: the CRD resource with the default template configuration, plus one `HAProxyTemplateLibrary` per enabled [template library](template-libraries.md) (Ingress and Gateway API out of the box), linked from the config's `spec.libraryRefs`
 
 The chart provisions a default HTTPS certificate out of the box — a self-signed one, or a cert-manager-issued, auto-rotated one when cert-manager is present. For production domains, GitOps caveats, and alternatives, see [SSL Certificates](./ssl-certificates.md).
 
@@ -156,7 +156,7 @@ kubectl get pods -n haptic -l app.kubernetes.io/component=controller
 kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer
 ```
 
-You should see two controller pods (the chart defaults to two replicas with leader election) and two HAProxy pods, all in `Running` state with full readiness (`2/2` and `3/3`).
+You should see two controller pods (the chart defaults to two replicas with leader election) and two HAProxy pods, all in `Running` state with full readiness (`2/2` and `4/4`). The controller pod runs the controller plus its validator sidecar; each HAProxy pod runs `haproxy`, the Dataplane API, the SPOA hub, and the Vector log/metrics sidecar.
 
 !!! note "HAProxy version"
     The chart defaults to HAProxy 3.4, the latest Long-Term Support (LTS) release. To pin a different series, set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for the full list and support status.
@@ -374,10 +374,11 @@ helm uninstall haptic -n haptic
 # Remove namespace
 kubectl delete namespace haptic
 
-# Remove CRDs (optional). The chart installs five — keep them in place if you plan
-# to reinstall, otherwise delete all five so the API group disappears cleanly.
+# Remove CRDs (optional). The chart installs six — keep them in place if you plan
+# to reinstall, otherwise delete all six so the API group disappears cleanly.
 kubectl delete crd \
   haproxytemplateconfigs.haproxy-haptic.org \
+  haproxytemplatelibraries.haproxy-haptic.org \
   haproxycfgs.haproxy-haptic.org \
   haproxygeneralfiles.haproxy-haptic.org \
   haproxycrtlistfiles.haproxy-haptic.org \

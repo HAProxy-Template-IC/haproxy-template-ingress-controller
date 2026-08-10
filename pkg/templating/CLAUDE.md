@@ -98,7 +98,8 @@ pkg/templating/
 ├── engine_scriggo.go           # Scriggo engine core: constructors, Render, RenderWithProfiling
 ├── engine_scriggo_fs.go        # Virtual filesystem for template compilation
 ├── engine_scriggo_tracing.go   # Tracing + filter-debug enable/disable plumbing
-├── globals.go                  # FailFunction — the fail() template function that aborts rendering with an error message
+├── filters_archive.go          # untar_gz filter (bounded tar.gz expansion)
+├── render_event.go             # RenderedEvent + EventCollector — the Kubernetes Events templates register during a render
 ├── func_types.go               # FilterFunc / GlobalFunc signatures
 ├── types.go                    # Type definitions (EngineType, PathResolver, ResourceStore, etc.)
 ├── errors.go                   # *CompilationError / *RenderError / *TemplateNotFoundError / *RenderTimeoutError
@@ -116,7 +117,6 @@ pkg/templating/
 ├── filters_version.go          # semver_gte and friends
 ├── filters_guid.go             # GUID generation helpers (make_guid)
 ├── postprocessor.go            # Post-processor pipeline runner
-├── postprocessor_indent.go     # Indent post-processor
 ├── postprocessor_regex.go      # regex_replace post-processor
 ├── postprocessor_template.go   # template post-processor (second Scriggo pass with `input`)
 ├── profiling.go                # IncludeStats accumulation for --profile-includes
@@ -310,7 +310,7 @@ Four things to know before touching this file:
 **CRITICAL**: For the relative paths to resolve at runtime, the rendered HAProxy
 config must contain a `default-path origin <baseDir>` directive in the global
 section. The chart's `base` library renders one (see
-`charts/haptic/libraries/base.yaml`'s `global-settings-300-paths` snippet) and
+`charts/haptic/charts/base/library.yaml`'s `global-settings-300-paths` snippet) and
 `pkg/controller/validation/service.go` rewrites the `<baseDir>` to a per-call
 temp directory at validation time:
 
@@ -1432,7 +1432,7 @@ In Scriggo templates, type assertions are needed when working with `any` (`inter
    {%- for _, ep := range resources.endpoints.Fetch(svcName) -%}
    ```
 
-   `Fetch()` returns `[]any` (see `pkg/templating/types.go:91`), a concrete slice type — you can range it without an outer assertion. Individual elements still need assertion when you index into them.
+   `Fetch()` returns `[]any` (see `pkg/templating/types.go:51`), a concrete slice type — you can range it without an outer assertion. Individual elements still need assertion when you index into them.
 
 2. **Simple variable access** - variables already have their type:
 

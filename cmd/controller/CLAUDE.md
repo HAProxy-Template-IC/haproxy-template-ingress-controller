@@ -124,14 +124,14 @@ violation. The chart wires this as a `pre-install`/`pre-upgrade` hook Job
 
 ### `config` — Inspect Live HAProxy Config (config.go)
 
-`haptic-controller config view` fetches the published `HAProxyCfg` CRD from the cluster (the rendered HAProxy configuration the controller deployed last), decompresses it if needed, and prints the raw config to stdout. It is a **live-cluster** command — it talks to the API server, not a local file. Flags: `--crd-name` (repeatable/comma-separated), `--namespace`, `--kubeconfig`, `--input` (no `-f`).
+`haptic-controller config view` fetches the published `HAProxyCfg` CRD from the cluster (the rendered HAProxy configuration the controller deployed last), decompresses it if needed, and prints the raw config to stdout. It is a **live-cluster** command — it talks to the API server, not a local file. Flags: `--crd-name`, `--namespace`, `--kubeconfig`, `--input` (no `-f`).
 
-`--input` prints the merged **input** config instead: it fetches every
-`--crd-name` and merges them. Since the chart splits the config across one object
-per template library, no single object shows the whole picture any more, and this
-is how an operator gets it back. Without `--input` the published HAProxyCfg name
-is derived from the LAST `--crd-name` — the primary. Names default via
-`--crd-name` → `CRD_NAME` env → `haproxy-config`. Useful for
+`--input` prints the merged **input** config instead: it fetches the named
+`HAProxyTemplateConfig` plus every `HAProxyTemplateLibrary` its ordered
+`spec.libraryRefs` names, and merges them the way the controller does. Since the
+chart splits the content across one library object per template library, no
+single object shows the whole picture, and this is how an operator gets it back.
+The name defaults via `--crd-name` → `CRD_NAME` env → `haproxy-config`. Useful for
 `haptic-controller config view | bat -l haproxy` style inspection on a running
 deployment.
 
@@ -298,7 +298,7 @@ Authoritative source: `cmd/controller/run.go` (`init()` registers flags) and `cm
 
 | Flag | Env var | Default | Purpose |
 |------|---------|---------|---------|
-| `--crd-name` | `CRD_NAME` | `haproxy-config` | Names of the `HAProxyTemplateConfig` objects the controller reads, **merged in the order given, later wins**. Repeatable, or comma-separated via the env var. The chart passes one per enabled template library with the operator's own config last (ADR-0014); a single name behaves exactly as before. |
+| `--crd-name` | `CRD_NAME` | `haproxy-config` | Name of the **single** `HAProxyTemplateConfig` the controller reads. Not repeatable and not a list. Template library content is pulled in through that object's ordered `spec.libraryRefs`, which the controller resolves into `HAProxyTemplateLibrary` objects and merges later-wins with the config last (ADR-0017). |
 | `--secret-name` | `SECRET_NAME` | `haproxy-credentials` | Name of the `Secret` with `dataplane_username` / `dataplane_password`. |
 | `--webhook-cert-dir` | `WEBHOOK_CERT_DIR` | `""` (disabled) | Directory holding the validating-admission-webhook server's TLS cert (`tls.crt`/`tls.key`); the chart mounts the cert Secret here and sets this to `/etc/webhook/certs`. The server reads and hot-reloads the files on rotation. Empty disables the webhook entirely. |
 | `--webhook-resource-admission-timeout` | `WEBHOOK_RESOURCE_ADMISSION_TIMEOUT` | `9s` | Controller-side deadline for watched-resource dry-run admission. Keep it below the matching `ValidatingWebhookConfiguration.timeoutSeconds`; the chart derives it automatically. |

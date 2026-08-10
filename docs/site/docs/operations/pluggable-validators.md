@@ -74,6 +74,7 @@ spec:
 | `name` | yes | RFC 1123 label, unique across the array. Surfaces in admission denial messages so operators can identify which validator rejected a change. |
 | `socketPath` | yes | Absolute path inside the controller pod to the validator's Unix domain socket. The chart-rendered shared `emptyDir` mounts at `/var/run/haptic-validators/`. |
 | `files` | yes | List of glob patterns matched against rendered file paths to decide which files to send to this validator. Patterns follow Go's `path/filepath.Match` rules; absolute paths only. At least one entry required. |
+| `dataFiles` | no | Glob patterns for files this validator needs in order to check the files it validates, but must not validate on its own. Every match is attached to **every** request sent to this validator, marked `kind: "data"`, in the same frame as the config file. A file matching both `files` and `dataFiles` is treated as data. Same glob rules as `files`. |
 | `timeoutMs` | no | Per-call deadline in milliseconds covering one (file, validator) round-trip (acquire + write + read). Defaults to 5000. Range: 1–60000. |
 | `maxConnections` | no | Cap on the controller's connection pool to this validator. Defaults to 4. Range: 1–32. The pool is adaptive: it starts small (one idle connection), grows on contention up to this cap, and shrinks back when traffic dies down. |
 

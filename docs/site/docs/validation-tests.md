@@ -9,10 +9,12 @@ Beyond running the controller (`haptic-controller run`), the controller binary p
 !!! note "Tests also run automatically before deployment"
     The same suite runs at two gates besides the CLI, so a config whose tests fail never reaches HAProxy:
 
-    - **Admission** — the validating webhook runs a `HAProxyTemplateConfig`'s `validationTests` on every CREATE and UPDATE and rejects the change if any test fails, so a failing config never lands in the cluster. The suite uses the same size-scaled budget as the load gate, capped by the time left after schema bootstrap and prospective rendering in `controller.webhook.haproxyTemplateConfig.timeoutSeconds`. This webhook is `failurePolicy: Ignore`; if the suite still can't finish before that deadline, it admits with a warning and defers to the load gate below.
-    - **Config load** — the controller re-runs the suite whenever it loads a config. A live update whose tests fail is refused and the last-good config keeps serving; at startup, a failing initial config crash-loops the pod rather than serving untested config.
+    - **Live config change** — the controller re-runs the suite whenever a config changes. A change whose tests fail is refused, `haptic_config_rejected_total{validator="validationtests"}` increments, and the last-good config keeps serving. The budget scales with suite size (a 25s floor plus ~100 ms per test), so a large suite isn't cut off mid-run.
+    - **Startup load gate** — the suite also runs on every fresh or upgraded controller pod, with a much larger budget since there is no scatter-gather deadline. A failing initial config crash-loops the pod rather than serving untested config, and the reason is stamped on `status.conditions[Validated]` with reason `LoadGateFailed`.
 
-    The `validate` CLI, the webhook, and the load gate run the identical suite through the same runner, so a passing local `validate` run predicts a clean admission and load.
+    There is **no** admission webhook for `HAProxyTemplateConfig` — a configuration is a set (the config plus its `libraryRefs` libraries), and admission sees one object at a time, so a per-object webhook would deny change sets whose end state is correct. To gate a config *before* it reaches the cluster, run [`haptic-controller preflight`](operations/validate-before-deploy.md) in your pipeline.
+
+    The `validate` CLI, `preflight`, and both in-cluster gates run the identical suite through the same runner, so a passing local `validate` run predicts a clean load.
 
 ## Quick start
 
@@ -60,7 +62,7 @@ Beyond running the controller (`haptic-controller run`), the controller binary p
 To validate the config currently deployed in your cluster instead of a local file:
 
 ```bash
-haptic-controller config view --input -n haptic > /tmp/haptic-config.yaml
+haptic-controller config view --input --namespace haptic > /tmp/haptic-config.yaml
 haptic-controller validate -f /tmp/haptic-config.yaml
 ```
 
@@ -156,8 +158,9 @@ Each test consists of:
 | **Assertions** | Checks on rendered output |
 | **HTTP fixtures** (`httpResources`) | Optional — mocked responses for `http.Fetch()` URLs (see [HTTP Fixtures](#http-fixtures)) |
 | **Min HAProxy version** (`minHAProxyVersion`) | Optional — skip the test unless the HAProxy version under test is at least this (for version-gated features) |
-| **Extra context** (`extraContext`) | Optional — per-test values deep-merged into the global `templatingSettings.extraContext`: nested maps merge key by key with per-test leaves winning, so overriding one key keeps its siblings. Pin every value your assertions depend on — a sibling you leave unset keeps its deployment-configured value |
+| **Extra context** (`extraContext`) | Optional — per-test values deep-merged into the global `templatingSettings.extraContext`: nested maps merge key by key with per-test leaves winning, so overriding one key keeps its siblings. Pin every value your assertions depend on — a sibling you leave unset keeps its deployment-configured value. To pin an exact key set instead of merging, give the nested map `__replace__: true`: it replaces the deployment's map at that key wholesale, and the sentinel is stripped from the result |
 | **Current config** (`currentConfig`) | Optional — an existing `haproxy.cfg` the render treats as the current config, exercising slot-preservation / reload-vs-runtime logic |
+| **Current files** (`currentFiles`) | Optional — filename → content of the general files already deployed, exposed to templates as `currentFiles`; use it for templates that read their own prior output, such as self-rotating TLS session-ticket keys |
 | **Requires** (`requires` / `requiresFields`) | Optional — strip the test when a watched resource or schema field is unavailable (see [Conditional Tests](#conditional-tests-requires-and-requiresfields)) |
 
 ### Fixtures
@@ -209,6 +212,14 @@ httpResources:
 
 Templates calling `http.Fetch()` for unmocked URLs fail with an error. Define shared HTTP fixtures in the `_global` test to make them available to all tests.
 
+### Fixture keys
+
+Fixture keys name `watchedResources` entries, with one reserved exception: `haproxy-pods` populates the auto-injected HAProxy pod store that templates read as `controller.haproxy_pods`. Its entries default to `apiVersion: v1` / `kind: Pod` and are indexed by namespace and name. Any other key fails the test with `resource type "<key>" in fixtures not found in watched resources`.
+
+### The reserved `_global` entry
+
+A test named `_global` is a shared baseline rather than a test. Its `fixtures`, `httpResources` and `extraContext` feed **every** test in the suite, and its own assertions are never executed — so it's the one place to put a fixture set several tests need. It's also the one test name that more than one object of a merged set may each contribute to; every other name must be unique across the merged set.
+
 ### Conditional Tests (`requires` and `requiresFields`)
 
 `requires` lists `watchedResources` keys the test depends on. When an optional
@@ -251,9 +262,10 @@ The `contains`, `not_contains`, `match_count`, `equals`, and `match_order` asser
 | `map:<name>` | A rendered map file. `<name>` matches against either the full path or the basename |
 | `file:<name>` | A rendered general file (error pages, etc.), matched by filename |
 | `cert:<name>` | A rendered SSL certificate, matched by basename |
-| `crt-list:<name>` | A rendered crt-list file, matched by basename. Requires HAProxy 3.2+ |
+| `crt-list:<name>` | A rendered crt-list file (registered by a template via `fileRegistry.Register("crt-list", …)`), matched by basename |
 | `k8s:<template-name>` | The rendered YAML of a `spec.k8sResources` template (potentially multi-doc with `---`), so you can assert on emitted Kubernetes resources |
 | `status:<ns>/<name>:<phase>` | The JSON status payload a `statusPatch()` call emitted for resource `<ns>/<name>` in the given pipeline phase (`rendered`, `deployed`, `renderFailed`, or `deployFailed`) — the way to test status-patch templates |
+| `events` | The Kubernetes Events the templates recorded via `recordEvent()`, one per line as `<Type> <Reason> <apiVersion> <Kind> <ns>/<name>: <message>` |
 | `rendering_error` | The simplified render error string, populated only when the render itself failed. Use this on negative tests where you expect rendering to be rejected |
 
 !!! warning "Unknown targets fall back to `haproxy.cfg` silently"

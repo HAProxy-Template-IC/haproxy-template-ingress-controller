@@ -2,7 +2,14 @@
 
 ## Status
 
-Accepted. Supersedes the cross-library merge step of ADR-0002 (the decentralized
+Accepted, then superseded — first by [ADR-0016](0016-one-config-kind-many-instances-pre-rollout-validation.md), then by [ADR-0017](0017-template-library-kind.md).
+This ADR's mechanism — one `HAProxyTemplateConfig` per template library, merged
+by the controller in `CRD_NAME` order — is gone: library content lives on a
+separate `HAProxyTemplateLibrary` kind that a single config references through an
+ordered `spec.libraryRefs`. Read the rest of this page as the reasoning that led
+there, not as current behaviour.
+
+It supersedes the cross-library merge step of ADR-0002 (the decentralized
 `_helm_load` loader itself is unchanged) and builds on ADR-0008 (split-library
 directories, whose fragment merge is also unchanged).
 

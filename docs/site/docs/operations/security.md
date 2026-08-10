@@ -15,7 +15,8 @@ The Helm chart provisions a `ServiceAccount`, a `ClusterRole`, and a namespace-s
 | `<watched resource>/status` | patch | Generated for watched resources with `statusPatch: true` (for example, Ingress LoadBalancer status, Gateway / HTTPRoute conditions) |
 | `leases` (`coordination.k8s.io`) | get, create, update | Leader election |
 | `customresourcedefinitions` (`apiextensions.k8s.io`) | get, list, watch | Fetch watched-resource OpenAPI schemas from their CRDs so typed template access stays full-fidelity (degrades to the public OpenAPI endpoint otherwise) |
-| `haproxytemplateconfigs.haproxy-haptic.org` | get, list, watch | Primary config CRD |
+| `haproxytemplateconfigs`, `haproxytemplatelibraries` (`haproxy-haptic.org`) | get, list, watch | The config CRD and the template libraries it references (the chart renders one per enabled library) |
+| `haproxytemplatelibraries` | patch | Stamp an `ownerReference` from the config onto each library it references, so resource-tree views show the relationship. The chart can't: an `ownerReference` needs the owner's UID, which doesn't exist until the config is applied |
 | `haproxytemplateconfigs/status` | update, patch | Report validation status back onto the CRD |
 | `haproxycfgs`, `haproxygeneralfiles`, `haproxycrtlistfiles`, `haproxymapfiles` (.haproxy-haptic.org) | get, list, watch, create, update, patch, delete | Publish rendered config + auxiliary files as observable CRDs (full read-write access because the controller owns these resources and prunes stale entries) |
 | `<above CRDs>/status` | update, patch | Report deployment status on the published artifacts |
@@ -23,7 +24,7 @@ The Helm chart provisions a `ServiceAccount`, a `ClusterRole`, and a namespace-s
 | `gatewayclasses` (`gateway.networking.k8s.io`) | create, update, patch, delete | **Gateway library only** — the GatewayClass is applied at runtime via Server-Side Apply, not by Helm (read verbs come from the watched-resource rules) |
 | `events` (core) | create, update, patch, delete | **Ingress library only** — Warning Events on Ingresses whose backend Service is missing |
 
-Anything else referenced from `watchedResources` needs matching RBAC. The Helm chart auto-generates the watched-resource rules from `controller.config.watchedResources` and the enabled libraries; if you manage RBAC yourself (`rbac.create: false`), keep it in sync. The full template is `charts/haptic/templates/clusterrole.yaml`.
+Anything else referenced from `watchedResources` needs matching RBAC. The Helm chart auto-generates the watched-resource rules from `controller.config.watchedResources` and the enabled libraries; if you manage RBAC yourself (`controller.rbac.create: false`), keep it in sync. The full template is `charts/haptic/templates/clusterrole.yaml`.
 
 Narrow the cluster-wide watch to a single namespace with `fieldSelector: "metadata.namespace=<ns>"` on each watched-resource entry — see [Watching Resources](../watching-resources.md#narrowing-the-watch). For label-based namespace filtering, see [Performance — Resource Watching Optimization](./performance.md#resource-watching-optimization).
 
@@ -35,6 +36,10 @@ A namespace-scoped `Role` (bound only in the controller's own namespace) additio
 | `haproxycfgs`, `haproxymapfiles` | get, list, watch, create, update, patch, delete | Publish rendered config + map files as observable CRDs in the controller's own namespace |
 | `haproxycfgs/status`, `haproxymapfiles/status` | get, update, patch | Status on the published artifacts |
 | `services` | get, list, watch, create, update, patch, delete | Namespace-scoped counterpart to the gateway Service grant above — Gateway StaticAddresses LoadBalancer Services emitted into the controller's own namespace |
+| `configmaps` | get, list, watch, create, update, patch, delete | **Only with `cache.varnish.enabled`** — the annotation library emits the Varnish Configuration Language (VCL) ConfigMap into the controller's namespace via Server-Side Apply |
+| `statefulsets`, `deployments` (`apps`) | get, list, watch, create, update, patch, delete | **Only with the Varnish tier or the managed rate-limit store** — those templates own a Varnish StatefulSet/Deployment and a Valkey StatefulSet |
+| `poddisruptionbudgets` (`policy`) | get, list, watch, create, update, patch, delete | **Only when one of those auxiliary workloads emits a PDB** |
+| `horizontalpodautoscalers` (`autoscaling`) | get, list, watch, create, update, patch, delete | **Only with `cache.varnish.autoscaling.enabled`** — the cache tier's HPA is applied via Server-Side Apply |
 
 The full template is `charts/haptic/templates/role.yaml`.
 

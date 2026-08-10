@@ -15,7 +15,7 @@ import "gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 
 // Default — Scriggo engine, all standard filters auto-registered, fail()
 // auto-registered, post-processors auto-extracted from cfg.
-engine, err := helpers.NewEngineFromConfig(cfg, nil, nil)
+engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, nil, helpers.EngineOptions{})
 
 // Full-featured: pass custom filters / globals / post-processor overrides,
 // add domain-specific Scriggo type declarations, enable include profiling.

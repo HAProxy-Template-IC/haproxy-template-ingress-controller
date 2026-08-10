@@ -18,7 +18,7 @@ pipeline has ever seen your values.
 Three things make this worth an explicit step:
 
 - The controller's load gate is **fail-closed**. A configuration that fails it stops the controller from starting at all.
-- The admission webhook does validate on apply, but its failure policy is deliberately permissive so a broken webhook can't block your recovery, and it defers some checks during a rolling upgrade — exactly when you deploy.
+- Nothing rejects a bad configuration at apply time. The admission webhook validates *watched resources* (Ingress, HTTPRoute, …), not the `HAProxyTemplateConfig` itself — so `kubectl apply` on a broken config succeeds and the failure only surfaces when the controller tries to load it.
 - Sidecar configuration fails **quietly**. A rejected Vector config leaves the sidecar on its bootstrap configuration with no metrics endpoint, so the pod never becomes ready and the rollout stalls with no error to read.
 
 ## Run the check
@@ -45,6 +45,12 @@ helm upgrade --install haptic <chart> -n haptic -f ./haptic-values.yaml
 The chart is embedded in the controller image, so the check renders the chart
 that image was built with. Pass `--chart` to render a different one.
 
+!!! note "The chart already runs this for you"
+    `preRolloutValidation.enabled` defaults to `true`, so `helm install` and
+    `helm upgrade` run this same `preflight` as a `pre-install`/`pre-upgrade`
+    hook Job against the release's own values. Running it yourself in a pipeline
+    moves the same failure earlier — before anything reaches the cluster.
+
 ### What it checks
 
 | Check | Catches |
@@ -68,6 +74,7 @@ gate always runs.
 | `--kubeconfig` | `$KUBECONFIG`, then in-cluster | Which cluster to read API schemas from — see [Schemas](#schemas) |
 | `--schema-dir` | `$HAPTIC_SCHEMA_DIR` | Read schemas from a directory instead of the cluster, for running fully offline |
 | `--api-versions` | — | Extra API versions your cluster serves. The Gateway API `GatewayClass` version is always declared, so the Gateway library renders the same way it does in the cluster |
+| `--expect-chart-version` | `$HAPTIC_EXPECT_CHART_VERSION` | Fail unless the chart being rendered carries exactly this version. Set it to the version you're about to install, so a drifted controller image tag fails loudly instead of validating the wrong chart |
 
 Environment overrides: `HAPTIC_CONTAINER_RUNTIME` (default: `docker`, then
 `podman`), `HAPTIC_VECTOR_IMAGE`, `HAPTIC_VARNISH_IMAGE`.

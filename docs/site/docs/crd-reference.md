@@ -2,7 +2,7 @@
 
 ## Overview
 
-One `HAProxyTemplateConfig` resource defines everything HAPTIC does: what it watches, what it renders, and the tests that gate deployment. It provides schema validation, status conditions, and embedded testing capabilities.
+One `HAProxyTemplateConfig` resource defines everything HAPTIC does: what it watches, what it renders, and the tests that gate deployment. It provides schema validation, status conditions, and embedded testing capabilities. Bulky template content can live in separate [`HAProxyTemplateLibrary`](#haproxytemplatelibrary) objects that the config pulls in through [`libraryRefs`](#libraryrefs) — the chart does this for every template library it ships.
 
 **API Group**: `haproxy-haptic.org`
 **API Version**: `v1alpha1`
@@ -55,11 +55,11 @@ spec:
 
 ## Spec fields
 
-The four required fields come first (`credentialsSecretRef`, `podSelector`, `watchedResources`, `haproxyConfig`), followed by the template entries and the operational tuning fields.
+The three fields the apiserver requires come first (`podSelector`, `watchedResources`, and a `haproxyConfig` — inline or supplied by a `libraryRefs` entry), followed by `credentialsSecretRef`, the template entries, and the operational tuning fields.
 
 ### `credentialsSecretRef`
 
-References a Secret containing Dataplane API credentials. **Required.**
+Names the Secret holding the Dataplane API credentials. **Optional** — the schema doesn't require it, and the controller never reads it: it resolves the credentials Secret by the name given in `--secret-name` / the `SECRET_NAME` environment variable, both set by the Helm chart. The field records the wiring for readers and tooling; the `namespace` sub-field has no effect.
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -99,7 +99,7 @@ Defines which Kubernetes resources to watch. Each map key is an arbitrary name t
 | `apiVersions` | `[]string` | Exactly one of `apiVersion` / `apiVersions` | — |
 | `optional` | bool | No | `false` |
 | `resources` | string | Yes | — |
-| `indexBy` | `[]string` | No | — |
+| `indexBy` | `[]string` | Optional in the schema, required in practice | — (at least one expression; `config.ValidateStructure` rejects a merged config whose watched resource declares none, so an empty list is refused at config load rather than at `kubectl apply`) |
 | `labelSelector` | string | No | `""` (equality-only, `"k=v[,k=v]"`; set-based syntax not supported) |
 | `fieldSelector` | string | No | `""` (client-side JSONPath equality, `"field.path=value"`; matches any field) |
 | `store` | string (`full` / `on-demand`) | No | `full` |
@@ -191,6 +191,27 @@ haproxyConfig:
 ```
 
 See the [Templating Guide](./templating.md) for syntax, loops, and helper functions.
+
+### `libraryRefs`
+
+Ordered list of [`HAProxyTemplateLibrary`](#haproxytemplatelibrary) objects whose content is merged into this config (optional).
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `name` | string | Yes | — (a `HAProxyTemplateLibrary` in this config's namespace) |
+| `revision` | string | Yes | — (must equal that object's `spec.revision`) |
+
+```yaml
+libraryRefs:
+  - {name: haproxy-config-base, revision: "base-43dc4467f7e88090"}
+  - {name: haproxy-config-ssl,  revision: "ssl-5da793f017afc1c5"}
+```
+
+Earlier entries are overridden by later ones, and the config's own inline content wins last — so the object you edit is always the override point, whatever the order of the list.
+
+The controller renders only when every reference resolves to an object reporting exactly that `spec.revision`. Otherwise it keeps serving the last-good configuration and logs `Holding the last-good configuration`. Libraries deliberately override one another, so a half-applied set silently *changes* behaviour rather than removing it — a config missing its WAF library would render fine and serve traffic unarmed.
+
+The revisions are compared as strings and never recomputed from content. A writer that applies the config and its libraries together stamps the same value on each, so a torn apply shows up as a mismatch; editing a snippet's body in place leaves the revision alone and takes effect immediately.
 
 ### `templateSnippets`
 
@@ -330,7 +351,7 @@ k8sResources:
           protocol: TCP
 ```
 
-Use this when the resource shape derives from observed cluster state (Ingresses, Gateways, Endpoints, …); use the chart's own static `templates/*.yaml` for fixed install-time wiring (RBAC, the dataplane Service, etc.). The chart's `libraries/base.yaml` ships a canonical example: the `haproxy-service` entry that renders the user-facing HAProxy LoadBalancer Service from listener state.
+Use this when the resource shape derives from observed cluster state (Ingresses, Gateways, Endpoints, …); use the chart's own static `templates/*.yaml` for fixed install-time wiring (RBAC, the dataplane Service, etc.). The chart's `charts/haptic/charts/base/library.yaml` ships a canonical example: the `haproxy-service` entry that renders the user-facing HAProxy LoadBalancer Service from listener state.
 
 ### `postProcessing` (all template entries)
 
@@ -355,8 +376,8 @@ haproxyConfig:
   postProcessing:
     - type: regex_replace
       params:
-        pattern: '\n{3,}'
-        replace: "\n\n"
+        pattern: '[ \t]+$'
+        replace: ""
     - type: template
       params:
         source: "{{ replace(input, \"__REGION__\", \"eu-west-1\") }}"
@@ -398,10 +419,11 @@ Embedded validation tests (optional; run by the pre-rollout validation Job, the 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `description` | string | No | — |
-| `fixtures` | `map[string][]object` | Yes | — (keys must name `watchedResources` entries) |
+| `fixtures` | `map[string][]object` | No | — (keys must name `watchedResources` entries, plus the reserved `haproxy-pods` key) |
 | `assertions` | `[]Assertion` | Yes | — |
 | `httpResources` | `[]object` | No | — (mocked responses for `http.Fetch()` calls) |
 | `currentConfig` | string | No | — (simulated live HAProxy config for runtime-context assertions) |
+| `currentFiles` | `map[string]string` | No | — (filename → content of the general files currently deployed, exposed to templates as `currentFiles`) |
 | `extraContext` | object | No | — (per-test overrides of `templatingSettings.extraContext`) |
 | `minHAProxyVersion` | string | No | — (skip the test on older HAProxy) |
 | `requires` | `[]string` | No | — (strip the test when a named optional watched resource is unavailable) |
@@ -451,8 +473,13 @@ Pluggable validator sidecars consulted by the admission webhook (optional).
 | `name` | string | Yes | — (RFC 1123 label, unique across the array) |
 | `socketPath` | string | Yes | — (absolute path to a Unix domain socket inside the controller pod) |
 | `files` | `[]string` | Yes (at least one) | — (glob patterns matched against rendered file paths) |
+| `dataFiles` | `[]string` | No | — (glob patterns for files sent as *data*, never validated on their own) |
 | `timeoutMs` | integer | No | `5000` (range 1–60000) |
 | `maxConnections` | integer | No | `4` (range 1–32) |
+
+Globs follow Go's `path/filepath.Match` rules and must be absolute: `*` and `?` don't cross `/`, and `**` isn't supported — use one entry per directory level.
+
+`dataFiles` covers files the validator needs in order to check something else but must not check on its own. Every match is attached to every request to that validator, marked as data. A validator sidecar runs in the controller pod and can't read the HAProxy pod's filesystem, so a config that `Include`s a ruleset by path is only checkable if the ruleset's content travels with the request. A file matching both `files` and `dataFiles` is treated as data.
 
 ```yaml
 validators:
@@ -460,6 +487,8 @@ validators:
     socketPath: /var/run/haptic-validators/spoa-hub.sock
     files:
       - "/etc/haproxy-spoa-hub/*.toml"
+    dataFiles:
+      - "/etc/haproxy/general/*.conf"
 ```
 
 See [Pluggable Validators](./operations/pluggable-validators.md) for the wire protocol, sidecar wiring, and routing examples.
@@ -572,7 +601,11 @@ The controller updates the status field with validation results:
 | `validationStatus` | string | `Valid`, `Invalid`, or `Unknown` — the printer column shown by `kubectl get htplcfg` |
 | `validationMessage` | string | Human-readable summary |
 | `validationErrors` | `[]string` | Populated when `Invalid`; each entry names the template and error context |
-| `conditions` | `[]Condition` | Standard `metav1.Condition` list (for example `Ready`) |
+| `conditions` | `[]Condition` | Standard `metav1.Condition` list. The controller writes exactly one type, `Validated`. |
+
+The `Validated` condition carries its own `observedGeneration`, so `kubectl wait --for=condition=Validated` answers whether the controller has processed *this* generation, rather than whether some past generation validated. Its reasons are `ValidationSucceeded`, `ConfigInvalid`, `HAProxyValidationFailed`, and `LoadGateFailed` — the last meaning the fatal startup load gate rejected the config, so the pod is in `CrashLoopBackOff` rather than merely having a rejected live reload.
+
+When a config is assembled from several objects (see [`libraryRefs`](#libraryrefs)), the same set-level result is stamped on every `HAProxyTemplateConfig` in the set, each with its own `observedGeneration`.
 
 ```yaml
 status:
@@ -583,11 +616,59 @@ status:
   validationErrors:
     - "haproxy.cfg: parse error at line 12: …"   # only when Invalid
   conditions:
-    - type: Ready
+    - type: Validated
       status: "True"
       reason: ValidationSucceeded
+      observedGeneration: 1
       lastTransitionTime: "2025-01-27T10:00:00Z"
 ```
+
+## `HAProxyTemplateLibrary`
+
+A second kind carrying template-library *content* only, referenced from a config's [`libraryRefs`](#libraryrefs). It exists because `templateSnippets` and `validationTests` are ~94% of a full configuration's bulk, which puts a single object against etcd's per-object limit.
+
+**API Group**: `haproxy-haptic.org`
+**API Version**: `v1alpha1`
+**Kind**: `HAProxyTemplateLibrary`
+**Short Name**: `htpllib`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `revision` | string | Yes | Identifies this content to the configs that reference it |
+| `templateSnippets` | map | No | Same shape as the config's [`templateSnippets`](#templatesnippets) |
+| `validationTests` | map | No | Same shape as [`validationTests`](#validationtests) |
+| `maps` | map | No | Same shape as [`maps`](#maps) |
+| `files` | map | No | Same shape as [`files`](#files) |
+| `sslCertificates` | map | No | Same shape as [`sslCertificates`](#sslcertificates) |
+| `k8sResources` | map | No | Same shape as [`k8sResources`](#k8sresources) |
+| `templatingSettings` | object | No | Template-context defaults; the config merges last, so an operator always wins |
+| `haproxyConfig` | object | No | Exactly one member of a merged set supplies it |
+| `migrationCoverage` | array | No | Same shape as [`migrationCoverage`](#migrationcoverage) |
+
+A library carries **no** `podSelector`, `watchedResources`, `dataplane`, `validators`, `controller` or `logging` — it can't redefine the controller's operational identity.
+
+You choose the `revision` value; the controller only ever compares it against the reference and never derives one from the content. That's what lets `kubectl edit` change a snippet in place and take effect immediately — the content moves, the revision doesn't, so the reference still matches. A digest of the content is the convenient source for a generator, because it changes exactly when the content does.
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateLibrary
+metadata:
+  name: haproxy-config-base
+  namespace: default
+spec:
+  revision: "base-43dc4467f7e88090"
+  templateSnippets:
+    global-section:
+      template: |
+        global
+            daemon
+```
+
+```bash
+kubectl get haproxytemplatelibrary   # or: kubectl get htpllib
+```
+
+Names must be unique across the merged set for `validationTests`. See [ADR-0017](development/adr/0017-template-library-kind.md) for the rationale, and [`haptic-controller config view --input`](./operations/debugging.md) to print the merged result.
 
 ## Command-line management
 
@@ -605,11 +686,13 @@ kubectl get htplcfg haproxy-config -o yaml
 kubectl get htplcfg -w
 ```
 
-A Helm install creates several of these: one per enabled template library, named
-`<configName>-<library>`, plus `<configName>` for your own `controller.config`.
-The controller merges them in the order listed in the `CRD_NAME` environment
-variable on the controller Deployment, and later entries win — your own config is
-last, so it overrides every library.
+A Helm install creates exactly one of these — `<configName>`, built from your own
+`controller.config`. Every enabled template library ships as a separate
+[`HAProxyTemplateLibrary`](#haproxytemplatelibrary) object named
+`<configName>-<library>`, and the config's [`libraryRefs`](#libraryrefs) declares
+which of them are pulled in and in what order: later entries win, and the
+config's own inline content wins last. `CRD_NAME` on the controller Deployment
+names that single config and nothing else.
 
 Only `<configName>` is yours to edit. The library objects are chart output and
 `helm upgrade` overwrites them; to change what a library emits, override the
@@ -618,7 +701,7 @@ snippet by name under `controller.config.templateSnippets` instead.
 To see what the controller actually assembles from the whole set:
 
 ```bash
-haptic-controller config view --input -n haptic
+haptic-controller config view --input --namespace haptic
 ```
 
 Validation status is reported on `<configName>` only — it represents the merged
@@ -626,7 +709,7 @@ set. Offline, `haptic-controller validate -f <file>` accepts the flag repeatedly
 and accepts multi-document files, so you can validate a whole rendered set:
 
 ```bash
-helm template charts/haptic | yq 'select(.kind == "HAProxyTemplateConfig")' > all.yaml
+helm template charts/haptic > all.yaml   # validate keeps the config + library docs and ignores the rest
 haptic-controller validate -f all.yaml
 haptic-controller validate -f all.yaml --dump-merged   # print the merged spec
 ```
@@ -674,9 +757,10 @@ The CRD includes OpenAPI schema validation that checks:
 
 Additional validation occurs when:
 
-1. **Admission webhook** - Runs embedded validation tests (if webhook enabled)
-2. **Controller startup** - Validates configuration before starting
-3. **CLI command** - `haptic-controller validate` runs tests locally
+1. **Pre-rollout Helm hook** - the chart's `pre-install`/`pre-upgrade` Job runs `haptic-controller preflight`, which renders the chart from your values and runs the embedded tests before any object is applied
+2. **Controller startup** - the load gate runs the embedded tests before the controller serves; a failure crash-loops the new pod instead of replacing a working one
+3. **Live config change** - the same suite re-runs on every config change; a failure is refused and the last-good config keeps serving
+4. **CLI command** - `haptic-controller validate` runs tests locally
 
 ## Best practices
 

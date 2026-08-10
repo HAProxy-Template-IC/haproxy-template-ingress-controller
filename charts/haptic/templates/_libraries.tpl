@@ -343,23 +343,6 @@ the cost of its source being stored in the release Secret.
 {{- end }}
 
 {{/*
-haptic.libraryConfigNames — the ordered CRD_NAME list: one object per enabled
-library plus the operator's own config LAST (highest merge precedence, and the
-one source the controller lets override earlier entries). Derived from the
-same haptic.prepareLibraries evaluation that emits the objects, so the two
-cannot disagree about which libraries are enabled.
-*/}}
-{{- define "haptic.libraryConfigNames" -}}
-{{- $configName := .Values.controller.configName }}
-{{- range $library := (include "haptic.prepareLibraries" . | fromYaml).libraries | default list }}
-- {{ printf "%s-%s" $configName $library.name }}
-{{- end }}
-{{- if .Values.controller.config }}
-- {{ $configName }}
-{{- end }}
-{{- end }}
-
-{{/*
 haptic.watchedResourcesUnion — the union of every enabled library's
 watchedResources plus the operator's, operator winning. For the templates that
 must reason about the whole watch set: the ClusterRole and the

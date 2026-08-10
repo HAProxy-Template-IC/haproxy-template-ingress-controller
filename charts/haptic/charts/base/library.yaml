@@ -2079,8 +2079,8 @@ templateSnippets:
       #}
       {% macro HostKeyedMapFile(entries []any, valueKey string, mapName string) %}
       {%%
-        // sort_by is a separate call, not a pipe stage: it returns (value,
-        // error) and a pipe carries only one value.
+        // sort_by is a separate call here so its error is checked; as a pipe
+        // stage the error would be dropped.
         var hosts = entries |
           reject(e => tostring(e | dig("host")) == "") |
           unique_by("host")

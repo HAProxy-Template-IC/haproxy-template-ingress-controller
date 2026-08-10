@@ -69,7 +69,7 @@ TestDataplaneHighLevelClient
 Uses [fixenv](https://github.com/rekby/fixenv) for declarative fixture management:
 
 ```go
-func TestSyncFrontendAdd(t *testing.T) {
+func TestSyncMyFeature(t *testing.T) {
     env := fixenv.New(t)
 
     // Request fixture - dependencies resolved automatically
@@ -240,7 +240,7 @@ import (
     "github.com/stretchr/testify/assert"
 )
 
-func TestSyncFrontendAdd(t *testing.T) {
+func TestSyncMyFeature(t *testing.T) {
     env := fixenv.New(t)
 
     // Get fixtures (dependencies resolved automatically)
@@ -333,10 +333,10 @@ func TestLowLevelAPI(t *testing.T) {
 
 ```bash
 # First run: creates cluster (~2 min)
-go test -tags=integration ./tests/integration -run TestSyncFrontendAdd
+go test -tags=integration ./tests/integration -run TestSyncFrontends
 
 # Subsequent runs: reuses cluster (~30 sec)
-go test -tags=integration ./tests/integration -run TestSyncFrontendAdd
+go test -tags=integration ./tests/integration -run TestSyncFrontends
 
 # Manual cleanup when needed
 kind delete cluster --name=haproxy-test
@@ -345,7 +345,7 @@ kind delete cluster --name=haproxy-test
 **Force cleanup** (slower):
 
 ```bash
-KEEP_CLUSTER=false go test -tags=integration ./tests/integration -run TestSyncFrontendAdd
+KEEP_CLUSTER=false go test -tags=integration ./tests/integration -run TestSyncFrontends
 ```
 
 ### Namespace Cleanup
@@ -613,7 +613,7 @@ func TestParallelSyncs(t *testing.T) {
 
 ```bash
 # Run test and keep all resources
-KEEP_CLUSTER=true go test -tags=integration ./tests/integration -run TestSyncFrontendAdd -v
+KEEP_CLUSTER=true go test -tags=integration ./tests/integration -run TestSyncFrontends -v
 
 # Inspect cluster
 kubectl config use-context kind-haproxy-test
@@ -700,7 +700,7 @@ KEEP_CLUSTER=true go test -tags=integration ./tests/integration -run TestSyncEnt
 - fixenv documentation: <https://github.com/rekby/fixenv>
 - Kind documentation: <https://kind.sigs.k8s.io/>
 - Test examples: `sync_*_test.go` (split by section: backends, frontends, servers, global-defaults, sections, observability, auxiliary, idempotency, common), plus `auxiliaryfiles_test.go`
-- Enterprise tests: `enterprise_waf_test.go`, `enterprise_keepalived_test.go`, etc.
+- Enterprise tests: `enterprise_botmgmt_test.go`
 - Fixture definitions: `env.go`
 - Kind cluster management: `kind_cluster.go`
 - HAProxy deployment: `haproxy.go`

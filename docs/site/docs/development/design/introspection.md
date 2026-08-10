@@ -76,10 +76,10 @@ graph TB
 
 **pkg/controller/debug** - Controller-specific debug variables:
 
-- Implements `introspection.Var` interface for controller data
-- Core state vars: `ConfigVar`, `CredentialsVar` (metadata only), `RenderedVar`, `AuxFilesVar`, `ResourcesVar`
-- Pipeline status vars (used by acceptance tests): `PipelineVar`, `ValidatedVar`, `ErrorsVar`
-- `EventsVar` for the event-buffer view, `FullStateVar` for the catch-all `/debug/vars/state` payload
+- Registers variables through `RegisterVariables` (`pkg/controller/debug/setup.go`) as `introspection.Func` closures over the `StateProvider` — there are no per-variable struct types
+- Core state vars: `config`, `credentials` (metadata only), `rendered`, `auxfiles`, `resources`
+- Pipeline status vars (used by acceptance tests): `pipeline`, `validated`, `errors`
+- `events` (an `EventsVar` over the buffer) and `state`, the catch-all `/debug/vars/state` payload
 - `EventBuffer` for independent event tracking
 - `StateProvider` interface for accessing controller state without coupling to specific event types
 
@@ -117,7 +117,7 @@ This separation allows different buffer sizes, retention policies, and use cases
 
 ## Integration with acceptance testing
 
-Acceptance tests drive the controller and assert on its state through these endpoints. `tests/acceptance/debug_client.go` provides a `*DebugClient` that talks to the controller via the Kubernetes API server's service-proxy, so tests don't need to manage `kubectl port-forward` themselves:
+Acceptance tests drive the controller and assert on its state through these endpoints. `tests/acceptance/debug_client.go` provides a `*DebugClient` that port-forwards into ready controller pods and rotates across them, because `/debug/*` is loopback-only — a request arriving through the API server's service-proxy comes from the pod network and would be rejected with 403:
 
 ```go
 import "gitlab.com/haproxy-haptic/haptic/tests/acceptance"
@@ -145,10 +145,10 @@ assert.Contains(t, rendered, "expected-content")
 
 `DebugClient` also exposes `GetConfig`, `GetPipelineStatus`, `GetErrors`, and `GetAuxiliaryFiles`. To inspect the recent-events buffer, fetch the `/debug/vars/events` endpoint directly (there is no typed `GetEvents` helper).
 
-If you need to construct the client yourself (typically only inside `EnsureDebugClientReady`), the constructor takes the clientset, the namespace, the *service* name (not a pod name), and the port:
+If you need to construct the client yourself (typically only inside `EnsureDebugClientReady`), the constructor takes the `*rest.Config`, the clientset, the namespace, and the port, and returns `(*DebugClient, error)` — no service name, since pods are selected internally by label:
 
 ```go
-client := acceptance.NewDebugClient(clientset, namespace, serviceName, acceptance.DebugPort)
+client, err := acceptance.NewDebugClient(restConfig, clientset, namespace, acceptance.DebugPort)
 ```
 
 Tests observe controller state directly — no log parsing, no timing heuristics.
@@ -158,7 +158,7 @@ Tests observe controller state directly — no log parsing, no timing heuristics
 Two design constraints matter here; everything operational about them lives elsewhere:
 
 - **Debug variables never expose secret material.** Credential variables return metadata only (`version`, `has_dataplane_creds`) — `pkg/controller/debug/setup.go` enforces this. Access control and NetworkPolicy examples: [Security — Network Exposure](../../operations/security.md#network-exposure).
-- **The server binds `0.0.0.0:<port>` deliberately**, so kubelet health probes and the Kubernetes API service-proxy (used by acceptance tests) can reach it on the pod IP; restrict access via NetworkPolicy, not bind-address filtering. Port configuration and the shared `/healthz` listener: [Debugging — Accessing the Server](../../operations/debugging.md#accessing-the-server).
+- **The server binds `0.0.0.0:<port>` deliberately**, so kubelet health probes can reach `/healthz` on the pod IP — but every `/debug/*` route is wrapped in `requireLoopback` (`pkg/introspection/http.go`) and answers 403 to anything that didn't arrive over loopback. Reach the diagnostics with `kubectl port-forward`, and restrict `pods/portforward` with RBAC. Port configuration and the shared `/healthz` listener: [Debugging — Accessing the Server](../../operations/debugging.md#accessing-the-server).
 
 For detailed implementation and API documentation, see:
 

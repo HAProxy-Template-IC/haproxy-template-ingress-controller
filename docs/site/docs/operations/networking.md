@@ -22,7 +22,7 @@ policy for that tier:
 
 - `cache.varnish.networkPolicy.enabled` admits port 6081 only from
   the same release's HAProxy pods. Varnish egress is limited to cluster DNS and
-  the same HAProxy pods' HTTP container port for cache-miss loopback requests.
+  the same HAProxy pods' dedicated backend-fetch port (`cache.varnish.loopbackPort`, default `8090`) for cache-miss origin requests — never the client-facing HTTP/HTTPS ports.
   The HAProxy policy contains the reciprocal ingress rule, including when
   `haproxy.networkPolicy.allowExternal` is false.
 - The HAProxy policy admits the metrics ports Prometheus needs without extra
