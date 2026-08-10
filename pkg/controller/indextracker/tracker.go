@@ -148,7 +148,6 @@ func (t *IndexSynchronizationTracker) handleResourceSyncComplete(event *events.R
 			"total_resources", len(t.expectedResources),
 			logging.CountsGroup("resource_counts", t.resourceCounts))
 
-		// Publish IndexSynchronizedEvent
 		t.EventBus().Publish(events.NewIndexSynchronizedEvent(t.resourceCounts))
 	}
 }

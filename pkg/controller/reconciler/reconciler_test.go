@@ -275,7 +275,6 @@ func TestReconciler_SkipHAProxyPodChanges(t *testing.T) {
 	// Give the reconciler time to start listening
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish haproxy-pods resource change
 	bus.Publish(events.NewResourceIndexUpdatedEvent("haproxy-pods", types.ChangeStats{
 		Created:       1,
 		Modified:      0,
@@ -331,17 +330,14 @@ func TestReconciler_HandleHTTPResourceChange(t *testing.T) {
 
 	reconciler := New(bus, logger)
 
-	// Subscribe to events
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx := t.Context()
 
-	// Start reconciler
 	go reconciler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish HTTP resource updated event
 	bus.Publish(events.NewHTTPResourceUpdatedEvent("http://example.com/blocklist.txt", "abc123", 1024))
 
 	// Should trigger immediately
@@ -356,17 +352,14 @@ func TestReconciler_HandleHTTPResourceAccepted(t *testing.T) {
 
 	reconciler := New(bus, logger)
 
-	// Subscribe to events
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx := t.Context()
 
-	// Start reconciler
 	go reconciler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish HTTP resource accepted event
 	bus.Publish(events.NewHTTPResourceAcceptedEvent("http://example.com/blocklist.txt", "def456", 2048))
 
 	// Should trigger immediately
@@ -383,17 +376,14 @@ func TestReconciler_HandleBecameLeader(t *testing.T) {
 
 	reconciler := New(bus, logger)
 
-	// Subscribe to events
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx := t.Context()
 
-	// Start reconciler
 	go reconciler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish BecameLeaderEvent
 	bus.Publish(events.NewBecameLeaderEvent("test-pod"))
 
 	// Should trigger immediately

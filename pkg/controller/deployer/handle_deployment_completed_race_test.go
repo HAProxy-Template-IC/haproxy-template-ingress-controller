@@ -75,7 +75,6 @@ func TestHandleDeploymentCompleted_UsesEventChecksumNotLatestRender(t *testing.T
 	scheduler.lastContentChecksum = laterRender // newer render overwrote the cache
 	scheduler.mu.Unlock()
 
-	// DeploymentCompletedEvent for the X deployment.
 	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:           1,
 		Succeeded:       1,

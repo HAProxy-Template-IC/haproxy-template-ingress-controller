@@ -11,10 +11,7 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: ls-host-gw
-            namespace: default
-            generation: 1
+          metadata: {name: ls-host-gw, namespace: default, generation: 1}
           spec:
             gatewayClassName: haproxy
             listeners:
@@ -22,58 +19,34 @@ validationTests:
                 port: 80
                 protocol: HTTP
                 hostname: "gateway-listener.com"
-                allowedRoutes:
-                  namespaces:
-                    from: All
-            allowedListeners:
-              namespaces:
-                from: All
+                allowedRoutes: {namespaces: {from: All}}
+            allowedListeners: {namespaces: {from: All}}
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: ls-set
-            namespace: default
-            generation: 1
+          metadata: {name: ls-set, namespace: default, generation: 1}
           spec:
-            parentRef:
-              kind: Gateway
-              group: gateway.networking.k8s.io
-              name: ls-host-gw
-              namespace: default
+            parentRef: {kind: Gateway, group: gateway.networking.k8s.io, name: ls-host-gw, namespace: default}
             listeners:
               - name: listener-set-listener-allowed-routes-all
                 port: 80
                 protocol: HTTP
                 hostname: "listener-set-listener-allowed-routes-all.com"
-                allowedRoutes:
-                  namespaces:
-                    from: All
+                allowedRoutes: {namespaces: {from: All}}
               - name: listener-set-listener-allowed-routes-same
                 port: 80
                 protocol: HTTP
                 hostname: "listener-set-listener-allowed-routes-same.com"
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+                allowedRoutes: {namespaces: {from: Same}}
               - name: listener-set-listener-allowed-routes-selector
                 port: 80
                 protocol: HTTP
                 hostname: "listener-set-listener-allowed-routes-selector.com"
-                allowedRoutes:
-                  namespaces:
-                    from: Selector
-                    selector:
-                      matchLabels:
-                        allowed: ns
+                allowedRoutes: {namespaces: {from: Selector, selector: {matchLabels: {allowed: ns}}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: "status:default/ls-host-gw:rendered"
-        pattern: '"observedGeneration":1'
-      - type: contains
-        target: "status:default/ls-host-gw:rendered"
-        pattern: '"type":"Accepted"'
+      - {type: contains, target: "status:default/ls-host-gw:rendered", pattern: '"observedGeneration":1'}
+      - {type: contains, target: "status:default/ls-host-gw:rendered", pattern: '"type":"Accepted"'}
       # attachedRoutes is REQUIRED by the Gateway CRD on every ListenerStatus
       # entry (required = [attachedRoutes, conditions, name]). The deployed
       # and deployFailed variants may apply a listener entry BEFORE the
@@ -96,6 +69,4 @@ validationTests:
       # assertion is the regression guard for the field itself surviving
       # that gate. The ls-set above attaches (allowedListeners from=All,
       # listeners survive conflict detection), so the count is exactly 1.
-      - type: contains
-        target: "status:default/ls-host-gw:rendered"
-        pattern: '"attachedListenerSets":1'
+      - {type: contains, target: "status:default/ls-host-gw:rendered", pattern: '"attachedListenerSets":1'}

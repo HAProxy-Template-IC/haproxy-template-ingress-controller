@@ -88,7 +88,6 @@ func TestCachedValidator_SharedCache(t *testing.T) {
 		Port:    func() *int64 { p := int64(8080); return &p }(),
 	}
 
-	// Validate on cv1
 	err := cv1.ValidateServer(server)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, cacheLen(cache))

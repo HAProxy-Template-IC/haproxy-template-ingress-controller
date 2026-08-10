@@ -76,7 +76,6 @@ func TestRingBuffer_FindByType(t *testing.T) {
 	rb.Add(mockEvent{eventType: "config.parsed", timestamp: time.Now()})
 	rb.Add(mockEvent{eventType: "deployment.started", timestamp: time.Now()})
 
-	// Find by type
 	configEvents := rb.FindByTypeInWindow("config.parsed", longWindow)
 	assert.Len(t, configEvents, 2)
 
@@ -121,7 +120,6 @@ func TestRingBuffer_FindByTypeInWindow(t *testing.T) {
 	rb.Add(mockEvent{eventType: "test", timestamp: now.Add(-3 * time.Minute)})  // Within window
 	rb.Add(mockEvent{eventType: "test", timestamp: now.Add(-1 * time.Minute)})  // Within window
 
-	// Find events within last 5 minutes
 	events := rb.FindByTypeInWindow("test", 5*time.Minute)
 	assert.Len(t, events, 2)
 }
@@ -197,7 +195,6 @@ func TestRingBuffer_FindByCorrelationID(t *testing.T) {
 	// Add non-correlated event (mockEvent doesn't implement CorrelatedEvent)
 	rb.Add(mockEvent{eventType: "test", timestamp: time.Now()})
 
-	// Find by correlation ID
 	found := rb.FindByCorrelationID(correlationID, 0) // 0 means no limit
 	assert.Len(t, found, 2)
 

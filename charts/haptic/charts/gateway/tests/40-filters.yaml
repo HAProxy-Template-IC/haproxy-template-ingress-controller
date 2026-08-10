@@ -1,45 +1,53 @@
+_fx:
+  gatewaysGatewayGw: &gatewaysGatewayGw
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      metadata: {name: gw, namespace: default}
+      spec:
+        gatewayClassName: haptic
+        listeners:
+          - {name: http, port: 80, protocol: HTTP}
+  servicesServiceApiService: &servicesServiceApiService
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: api-service, namespace: default}
+      spec:
+        ports:
+          - port: 80
+  gatewayclassesGatewayclass: &gatewayclassesGatewayclass
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: GatewayClass
+      metadata: {name: haptic}
+      spec: {controllerName: haproxy.org/haptic}
+  matchesPathprefixApi: &matchesPathprefixApi
+    - path: {type: PathPrefix, value: /api}
+
 validationTests:
   test-httproute-request-header-modifier:
     requires: [httproutes]
     description: HTTPRoute with RequestHeaderModifier filter (add, set, remove headers)
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: api-service
-            namespace: default
-          spec:
-            ports:
-              - port: 80
+      services: *servicesServiceApiService
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: header-filter-route
-            namespace: default
+          metadata: {name: header-filter-route, namespace: default}
           spec:
             hostnames:
               - api.example.com
             rules:
-              - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /api
+              - matches: *matchesPathprefixApi
                 filters:
                   - type: RequestHeaderModifier
                     requestHeaderModifier:
                       add:
-                        - name: X-Custom-Header
-                          value: custom-value
+                        - {name: X-Custom-Header, value: custom-value}
                       set:
-                        - name: X-Replace-Header
-                          value: new-value
+                        - {name: X-Replace-Header, value: new-value}
                       remove:
                         - X-Remove-Header
                 backendRefs:
-                  - name: api-service
-                    port: 80
+                  - {name: api-service, port: 80}
     assertions:
       - type: haproxy_valid
 
@@ -51,51 +59,33 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request set-header X-Replace-Header 'new-value' if"
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request del-header X-Remove-Header if'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-Remove-Header if'}
 
   test-httproute-response-header-modifier:
     requires: [httproutes]
     description: HTTPRoute with ResponseHeaderModifier filter (add, set, remove response headers)
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: api-service
-            namespace: default
-          spec:
-            ports:
-              - port: 80
+      services: *servicesServiceApiService
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: response-filter-route
-            namespace: default
+          metadata: {name: response-filter-route, namespace: default}
           spec:
             hostnames:
               - api.example.com
             rules:
-              - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /api
+              - matches: *matchesPathprefixApi
                 filters:
                   - type: ResponseHeaderModifier
                     responseHeaderModifier:
                       add:
-                        - name: X-Response-Header
-                          value: response-value
+                        - {name: X-Response-Header, value: response-value}
                       set:
-                        - name: X-Replace-Response
-                          value: new-response
+                        - {name: X-Replace-Response, value: new-response}
                       remove:
                         - X-Remove-Response
                 backendRefs:
-                  - name: api-service
-                    port: 80
+                  - {name: api-service, port: 80}
     assertions:
       - type: haproxy_valid
 
@@ -107,49 +97,32 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-response set-header X-Replace-Response 'new-response' if"
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-response del-header X-Remove-Response if'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response del-header X-Remove-Response if'}
 
   test-httproute-request-redirect:
     requires: [httproutes]
     description: HTTPRoute with RequestRedirect filter (scheme, path, status code)
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: api-service
-            namespace: default
-          spec:
-            ports:
-              - port: 80
+      services: *servicesServiceApiService
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: redirect-route
-            namespace: default
+          metadata: {name: redirect-route, namespace: default}
           spec:
             hostnames:
               - old.example.com
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /old
+                  - path: {type: PathPrefix, value: /old}
                 filters:
                   - type: RequestRedirect
                     requestRedirect:
                       scheme: https
                       hostname: new.example.com
-                      path:
-                        type: ReplacePrefixMatch
-                        replacePrefixMatch: /new
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: /new}
                       statusCode: 301
                 backendRefs:
-                  - name: api-service
-                    port: 80
+                  - {name: api-service, port: 80}
     assertions:
       - type: haproxy_valid
 
@@ -168,98 +141,58 @@ validationTests:
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: redirect-default-ports
-            namespace: default
+          metadata: {name: redirect-default-ports, namespace: default}
           spec:
             hostnames:
               - example.org
             rules:
               # Empty spec.scheme + port:80 → http://example.org (no :80)
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /scheme-nil-and-port-80
+                  - path: {type: PathPrefix, value: /scheme-nil-and-port-80}
                 filters:
                   - type: RequestRedirect
-                    requestRedirect:
-                      hostname: example.org
-                      port: 80
-                      statusCode: 302
+                    requestRedirect: {hostname: example.org, port: 80, statusCode: 302}
               # spec.scheme=https + port:443 → https://example.org (no :443)
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /scheme-https-and-port-443
+                  - path: {type: PathPrefix, value: /scheme-https-and-port-443}
                 filters:
                   - type: RequestRedirect
-                    requestRedirect:
-                      scheme: https
-                      hostname: example.org
-                      port: 443
-                      statusCode: 302
+                    requestRedirect: {scheme: https, hostname: example.org, port: 443, statusCode: 302}
               # Non-default port stays in Location: spec.scheme=http + port:8080.
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /non-default-port
+                  - path: {type: PathPrefix, value: /non-default-port}
                 filters:
                   - type: RequestRedirect
-                    requestRedirect:
-                      scheme: http
-                      hostname: example.org
-                      port: 8080
-                      statusCode: 302
+                    requestRedirect: {scheme: http, hostname: example.org, port: 8080, statusCode: 302}
     assertions:
       - type: haproxy_valid
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'http://example\.org:80(?:[^0-9]|$)'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'https://example\.org:443(?:[^0-9]|$)'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http://example\.org:8080'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http://example\.org:80(?:[^0-9]|$)'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'https://example\.org:443(?:[^0-9]|$)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http://example\.org:8080'}
 
   test-httproute-url-rewrite:
     requires: [httproutes]
     description: HTTPRoute with URLRewrite filter (hostname and path rewrite)
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: api-service
-            namespace: default
-          spec:
-            ports:
-              - port: 80
+      services: *servicesServiceApiService
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: rewrite-route
-            namespace: default
+          metadata: {name: rewrite-route, namespace: default}
           spec:
             hostnames:
               - external.example.com
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /api/v1
+                  - path: {type: PathPrefix, value: /api/v1}
                 filters:
                   - type: URLRewrite
                     urlRewrite:
                       hostname: internal.example.com
-                      path:
-                        type: ReplacePrefixMatch
-                        replacePrefixMatch: /api/v2
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: /api/v2}
                 backendRefs:
-                  - name: api-service
-                    port: 80
+                  - {name: api-service, port: 80}
     assertions:
       - type: haproxy_valid
 
@@ -267,55 +200,28 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request set-header Host 'internal.example.com' if"
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request replace-path'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request replace-path'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '"/api/v2'
+      - {type: contains, target: haproxy.cfg, pattern: '"/api/v2'}
 
   test-httproute-cors-filter:
     requires: [gatewayclasses, gateways, httproutes]
     requiresFields: [httproutes.spec.rules.filters.cors]
     description: HTTPRoute CORS filter generates set-var, return 200, and response headers
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
-      gateways:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: Gateway
-          metadata:
-            name: gw
-            namespace: default
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
+      gatewayclasses: *gatewayclassesGatewayclass
+      gateways: *gatewaysGatewayGw
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: backend
-            namespace: default
+          metadata: {name: backend, namespace: default}
           spec:
             ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+              - {name: http, port: 80, targetPort: 8080}
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: cors-route
-            namespace: default
+          metadata: {name: cors-route, namespace: default}
           spec:
             parentRefs:
               - name: gw
@@ -323,9 +229,7 @@ validationTests:
               - cors.example.com
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /
+                  - path: {type: PathPrefix, value: /}
                 filters:
                   - type: CORS
                     cors:
@@ -337,8 +241,7 @@ validationTests:
                       allowHeaders:
                         - X-Custom-Header
                 backendRefs:
-                  - name: backend
-                    port: 80
+                  - {name: backend, port: 80}
     assertions:
       - type: haproxy_valid
 
@@ -350,13 +253,9 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request return status 200 hdr access-control-allow-origin .* if METH_OPTIONS \\{ var\\(txn\\.gw_cors_origin\\) -m found \\} \\{ req\\.fhdr\\(Access-Control-Request-Method\\) -m found \\}"
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "hdr access-control-allow-methods \"GET, POST\""
+      - {type: contains, target: haproxy.cfg, pattern: "hdr access-control-allow-methods \"GET, POST\""}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "hdr access-control-allow-headers \"X-Custom-Header\""
+      - {type: contains, target: haproxy.cfg, pattern: "hdr access-control-allow-headers \"X-Custom-Header\""}
 
       - type: contains
         target: haproxy.cfg
@@ -367,42 +266,19 @@ validationTests:
     requiresFields: [httproutes.spec.rules.filters.cors]
     description: "Closes the chart-side gap on the HTTPRouteCORS conformance test sub-cases that send `allowMethods: [\"*\"]`."
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
-      gateways:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: Gateway
-          metadata:
-            name: gw
-            namespace: default
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
+      gatewayclasses: *gatewayclassesGatewayclass
+      gateways: *gatewaysGatewayGw
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: backend
-            namespace: default
+          metadata: {name: backend, namespace: default}
           spec:
             ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+              - {name: http, port: 80, targetPort: 8080}
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: cors-wildcard-methods-route
-            namespace: default
+          metadata: {name: cors-wildcard-methods-route, namespace: default}
           spec:
             parentRefs:
               - name: gw
@@ -410,9 +286,7 @@ validationTests:
               - cors-wildcard.example.com
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /cors-2
+                  - path: {type: PathPrefix, value: /cors-2}
                 filters:
                   - type: CORS
                     cors:
@@ -420,8 +294,7 @@ validationTests:
                         - https://www.foo.com
                       allowMethods: ["*"]
                 backendRefs:
-                  - name: backend
-                    port: 80
+                  - {name: backend, port: 80}
     assertions:
       - type: haproxy_valid
 
@@ -440,52 +313,25 @@ validationTests:
     requires: [gatewayclasses, gateways, httproutes]
     description: HTTPRoute with per-backendRef RequestHeaderModifier emits set-header in correct backend
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
-      gateways:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: Gateway
-          metadata:
-            name: gw
-            namespace: default
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
+      gatewayclasses: *gatewayclassesGatewayclass
+      gateways: *gatewaysGatewayGw
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: backend-v1
-            namespace: default
+          metadata: {name: backend-v1, namespace: default}
           spec:
             ports:
-              - name: http
-                port: 8080
-                targetPort: 8080
+              - {name: http, port: 8080, targetPort: 8080}
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: backend-v2
-            namespace: default
+          metadata: {name: backend-v2, namespace: default}
           spec:
             ports:
-              - name: http
-                port: 8080
-                targetPort: 8080
+              - {name: http, port: 8080, targetPort: 8080}
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: br-route
-            namespace: default
+          metadata: {name: br-route, namespace: default}
           spec:
             parentRefs:
               - name: gw
@@ -498,8 +344,7 @@ validationTests:
                       - type: RequestHeaderModifier
                         requestHeaderModifier:
                           set:
-                            - name: Backend
-                              value: backend-v1
+                            - {name: Backend, value: backend-v1}
                   - name: backend-v2
                     port: 8080
                     weight: 10
@@ -507,8 +352,7 @@ validationTests:
                       - type: RequestHeaderModifier
                         requestHeaderModifier:
                           set:
-                            - name: Backend
-                              value: backend-v2
+                            - {name: Backend, value: backend-v2}
     assertions:
       - type: haproxy_valid
 
@@ -529,41 +373,26 @@ validationTests:
     requiresFields: [httproutes.spec.rules.filters.cors]
     description: HTTPRoute CORS filter on catch-all route (no hostnames) routes correctly
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+      gatewayclasses: *gatewayclassesGatewayclass
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: same-namespace
-            namespace: gateway-conformance-infra
+          metadata: {name: same-namespace, namespace: gateway-conformance-infra}
           spec:
             gatewayClassName: haptic
             listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
+              - {name: http, port: 80, protocol: HTTP}
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: infra-backend-v1
-            namespace: gateway-conformance-infra
+          metadata: {name: infra-backend-v1, namespace: gateway-conformance-infra}
           spec:
             ports:
-              - port: 8080
-                targetPort: 8080
+              - {port: 8080, targetPort: 8080}
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: cors-wildcard-origin
-            namespace: gateway-conformance-infra
+          metadata: {name: cors-wildcard-origin, namespace: gateway-conformance-infra}
           spec:
             parentRefs:
               - name: same-namespace
@@ -576,12 +405,9 @@ validationTests:
                       allowMethods: ["PUT"]
                       allowCredentials: false
                 matches:
-                  - path:
-                      type: PathPrefix
-                      value: /cors-wildcard-origin
+                  - path: {type: PathPrefix, value: /cors-wildcard-origin}
                 backendRefs:
-                  - name: infra-backend-v1
-                    port: 8080
+                  - {name: infra-backend-v1, port: 8080}
     assertions:
       - type: haproxy_valid
 
@@ -601,68 +427,37 @@ validationTests:
     requires: [gatewayclasses, gateways, httproutes]
     description: RequestRedirect without spec.scheme preserves the request's scheme via txn.gw_request_scheme
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
-      gateways:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: Gateway
-          metadata:
-            name: gw
-            namespace: default
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
+      gatewayclasses: *gatewayclassesGatewayclass
+      gateways: *gatewaysGatewayGw
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: backend-svc
-            namespace: default
+          metadata: {name: backend-svc, namespace: default}
           spec:
             ports:
-              - port: 8080
-                targetPort: 8080
+              - {port: 8080, targetPort: 8080}
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: redir-route
-            namespace: default
+          metadata: {name: redir-route, namespace: default}
           spec:
             parentRefs:
               - name: gw
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /scheme-nil-and-port-nil
+                  - path: {type: PathPrefix, value: /scheme-nil-and-port-nil}
                 filters:
                   - type: RequestRedirect
-                    requestRedirect:
-                      hostname: example.org
+                    requestRedirect: {hostname: example.org}
                 backendRefs:
-                  - name: backend-svc
-                    port: 8080
+                  - {name: backend-svc, port: 8080}
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /scheme-https-and-port-nil
+                  - path: {type: PathPrefix, value: /scheme-https-and-port-nil}
                 filters:
                   - type: RequestRedirect
-                    requestRedirect:
-                      hostname: example.org
-                      scheme: https
+                    requestRedirect: {hostname: example.org, scheme: https}
                 backendRefs:
-                  - name: backend-svc
-                    port: 8080
+                  - {name: backend-svc, port: 8080}
     assertions:
       - type: haproxy_valid
 
@@ -696,44 +491,30 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: api-service
-            namespace: default
+          metadata: {name: api-service, namespace: default}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: mirror-backend
-            namespace: default
+          metadata: {name: mirror-backend, namespace: default}
           spec:
             ports:
               - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: mirror-route
-            namespace: default
+          metadata: {name: mirror-route, namespace: default}
           spec:
             hostnames:
               - api.example.com
             rules:
-              - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /api
+              - matches: *matchesPathprefixApi
                 filters:
                   - type: RequestMirror
-                    requestMirror:
-                      backendRef:
-                        name: mirror-backend
-                        namespace: default
-                        port: 8080
+                    requestMirror: {backendRef: {name: mirror-backend, namespace: default, port: 8080}}
                 backendRefs:
-                  - name: api-service
-                    port: 80
+                  - {name: api-service, port: 80}
     assertions:
       - type: haproxy_valid
 
@@ -749,9 +530,7 @@ validationTests:
         target: haproxy.cfg
         pattern: 'http-request send-spoe-group spoa-hub mirror-group if \{ var\(txn\.gw_mirror_targets\) -m found \}'
 
-      - type: not_contains
-        target: file:spoe.conf
-        pattern: 'spoe-message mirror-1'
+      - {type: not_contains, target: file:spoe.conf, pattern: 'spoe-message mirror-1'}
 
       - type: contains
         target: file:spoe.conf
@@ -764,24 +543,18 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: api-service
-            namespace: default
+          metadata: {name: api-service, namespace: default}
           spec:
             ports: [{port: 80}]
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: mirror-backend
-            namespace: default
+          metadata: {name: mirror-backend, namespace: default}
           spec:
             ports: [{port: 8080}]
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: mirror-percent-route
-            namespace: default
+          metadata: {name: mirror-percent-route, namespace: default}
           spec:
             hostnames: [api.example.com]
             rules:
@@ -799,9 +572,7 @@ validationTests:
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_mirror_targets\) str\(http\|mirror-backend\.default\.svc\.cluster\.local:8080\|50000\|3;\),concat\(,txn\.gw_mirror_targets,\) if .* \{ rand\(100\) -m int lt 20 \}'
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'gw_mirror_sample'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'gw_mirror_sample'}
 
   test-httproute-request-mirror-fraction:
     requires: [httproutes]
@@ -811,24 +582,18 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: api-service
-            namespace: default
+          metadata: {name: api-service, namespace: default}
           spec:
             ports: [{port: 80}]
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: mirror-backend
-            namespace: default
+          metadata: {name: mirror-backend, namespace: default}
           spec:
             ports: [{port: 8080}]
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: mirror-fraction-route
-            namespace: default
+          metadata: {name: mirror-fraction-route, namespace: default}
           spec:
             hostnames: [api.example.com]
             rules:
@@ -837,9 +602,7 @@ validationTests:
                   - type: RequestMirror
                     requestMirror:
                       backendRef: {name: mirror-backend, namespace: default, port: 8080}
-                      fraction:
-                        numerator: 25
-                        denominator: 50
+                      fraction: {numerator: 25, denominator: 50}
                 backendRefs: [{name: api-service, port: 80}]
     assertions:
       - type: haproxy_valid
@@ -855,42 +618,32 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: api-service
-            namespace: default
+          metadata: {name: api-service, namespace: default}
           spec:
             ports: [{port: 80}]
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: mirror-a
-            namespace: default
+          metadata: {name: mirror-a, namespace: default}
           spec:
             ports: [{port: 8081}]
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: mirror-b
-            namespace: default
+          metadata: {name: mirror-b, namespace: default}
           spec:
             ports: [{port: 8082}]
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: mirror-multi-route
-            namespace: default
+          metadata: {name: mirror-multi-route, namespace: default}
           spec:
             hostnames: [api.example.com]
             rules:
               - matches: [{path: {type: PathPrefix, value: /api}}]
                 filters:
                   - type: RequestMirror
-                    requestMirror:
-                      backendRef: {name: mirror-a, namespace: default, port: 8081}
+                    requestMirror: {backendRef: {name: mirror-a, namespace: default, port: 8081}}
                   - type: RequestMirror
-                    requestMirror:
-                      backendRef: {name: mirror-b, namespace: default, port: 8082}
+                    requestMirror: {backendRef: {name: mirror-b, namespace: default, port: 8082}}
                 backendRefs: [{name: api-service, port: 80}]
     assertions:
       - type: haproxy_valid
@@ -907,9 +660,7 @@ validationTests:
         target: haproxy.cfg
         pattern: 'http-request send-spoe-group spoa-hub mirror-group if \{ var\(txn\.gw_mirror_targets\) -m found \}'
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'mirror-2-group'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'mirror-2-group'}
 
   test-httproute-request-mirror-https-scheme:
     requires: [httproutes]
@@ -918,35 +669,26 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: api-service
-            namespace: default
+          metadata: {name: api-service, namespace: default}
           spec:
             ports: [{port: 80}]
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: mirror-tls
-            namespace: default
+          metadata: {name: mirror-tls, namespace: default}
           spec:
             ports:
-              - port: 443
-                name: https
-                appProtocol: https
+              - {port: 443, name: https, appProtocol: https}
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: mirror-https-route
-            namespace: default
+          metadata: {name: mirror-https-route, namespace: default}
           spec:
             hostnames: [api.example.com]
             rules:
               - matches: [{path: {type: PathPrefix, value: /api}}]
                 filters:
                   - type: RequestMirror
-                    requestMirror:
-                      backendRef: {name: mirror-tls, namespace: default, port: 443}
+                    requestMirror: {backendRef: {name: mirror-tls, namespace: default, port: 443}}
                 backendRefs: [{name: api-service, port: 80}]
     assertions:
       - type: haproxy_valid
@@ -962,9 +704,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: api-service
-            namespace: default
+          metadata: {name: api-service, namespace: default}
           spec:
             ports: [{port: 80}]
         - apiVersion: v1
@@ -989,8 +729,7 @@ validationTests:
               - matches: [{path: {type: PathPrefix, value: /one}}]
                 filters:
                   - type: RequestMirror
-                    requestMirror:
-                      backendRef: {name: m1, namespace: default, port: 8081}
+                    requestMirror: {backendRef: {name: m1, namespace: default, port: 8081}}
                 backendRefs: [{name: api-service, port: 80}]
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -1014,15 +753,9 @@ validationTests:
       - type: contains
         target: file:spoe.conf
         pattern: 'spoe-message mirror\n    args arg_targets=var\(txn\.gw_mirror_targets\)'
-      - type: contains
-        target: file:spoe.conf
-        pattern: 'spoe-group mirror-group\n    messages mirror'
-      - type: not_contains
-        target: file:spoe.conf
-        pattern: 'spoe-message mirror-1'
-      - type: not_contains
-        target: file:spoe.conf
-        pattern: 'spoe-group mirror-1-group'
+      - {type: contains, target: file:spoe.conf, pattern: 'spoe-group mirror-group\n    messages mirror'}
+      - {type: not_contains, target: file:spoe.conf, pattern: 'spoe-message mirror-1'}
+      - {type: not_contains, target: file:spoe.conf, pattern: 'spoe-group mirror-1-group'}
 
       # The 3-mirror route appends all three targets to the one list variable.
       - type: contains

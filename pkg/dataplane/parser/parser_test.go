@@ -1086,7 +1086,6 @@ backend web2
 
 	p := newTestParser(t)
 
-	// First config
 	conf1, err := p.ParseFromString(config1)
 	if err != nil {
 		t.Fatalf("First ParseFromString() failed: %v", err)

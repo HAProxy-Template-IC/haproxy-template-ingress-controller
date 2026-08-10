@@ -72,7 +72,6 @@ func TestConfigLoaderComponent_ProcessCRD(t *testing.T) {
 	bus.Publish(events.NewLibrarySetChangedEvent(nil))
 	bus.Publish(events.NewConfigResourceChangedEvent(unstructuredCRD))
 
-	// Wait for ConfigParsedEvent
 	parsedEvent := testutil.WaitForEvent[*events.ConfigParsedEvent](t, eventChan, testutil.LongTimeout)
 	assert.Equal(t, "test-config=7", parsedEvent.Version,
 		"the composite version keys on generation, so a status write cannot look like a config change")
@@ -129,7 +128,6 @@ func TestConfigLoaderComponent_Stop(t *testing.T) {
 	// Give loader time to start
 	time.Sleep(testutil.DebounceWait)
 
-	// Stop the loader
 	loader.Stop()
 
 	// Loader should exit gracefully

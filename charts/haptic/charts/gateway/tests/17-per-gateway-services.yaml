@@ -1,3 +1,8 @@
+_fx:
+  tlsSecretSharedTls: &tlsSecretSharedTls
+    certificateRefs:
+      - {kind: Secret, name: shared-tls, namespace: default}
+
 validationTests:
   test-gateway-per-gateway-services-shape:
     requires: [gateways]
@@ -12,70 +17,43 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-https
-            namespace: default
+          metadata: {name: gw-https, namespace: default}
           spec:
             gatewayClassName: haptic
             listeners:
               - name: https
                 port: 443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                      namespace: default
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecretSharedTls
               - name: https-alt
                 port: 8443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                      namespace: default
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecretSharedTls
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-http-only
-            namespace: default
+          metadata: {name: gw-http-only, namespace: default}
           spec:
             gatewayClassName: haptic
             listeners:
               - name: http
                 port: 80
                 protocol: HTTP
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+                allowedRoutes: {namespaces: {from: Same}}
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-pinned
-            namespace: default
+          metadata: {name: gw-pinned, namespace: default}
           spec:
             gatewayClassName: haptic
             addresses:
-              - type: IPAddress
-                value: "192.0.2.10"
+              - {type: IPAddress, value: "192.0.2.10"}
             listeners:
               - name: https
                 port: 443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                      namespace: default
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecretSharedTls
       controller_services:
         - apiVersion: v1
           kind: Service
@@ -85,18 +63,13 @@ validationTests:
             labels:
               app.kubernetes.io/name: haptic
               app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
+          spec: {type: LoadBalancer}
     assertions:
       - type: haproxy_valid
 
       # gw-https: per-Gateway Service emitted with both listener ports.
-      - type: contains
-        target: "k8s:gateway-static-addresses"
-        pattern: 'name: gw-default-gw-https\b'
-      - type: contains
-        target: "k8s:gateway-static-addresses"
-        pattern: 'app\.kubernetes\.io/name: haptic'
+      - {type: contains, target: "k8s:gateway-static-addresses", pattern: 'name: gw-default-gw-https\b'}
+      - {type: contains, target: "k8s:gateway-static-addresses", pattern: 'app\.kubernetes\.io/name: haptic'}
       # Both listener ports map to allocated pod ports. HTTP and HTTPS
       # listeners both get allocations (per-Gateway binds for listener
       # isolation). Ports are the allocator's sha256-derived slots for
@@ -114,9 +87,7 @@ validationTests:
       # gw-http-only: now gets its OWN per-Gateway Service too (HTTP
       # listeners are isolated by per-Gateway bind, same as HTTPS), with
       # its :80 listener DNATed to the allocated pod port 18281.
-      - type: contains
-        target: "k8s:gateway-static-addresses"
-        pattern: 'name: gw-default-gw-http-only'
+      - {type: contains, target: "k8s:gateway-static-addresses", pattern: 'name: gw-default-gw-http-only'}
       - type: contains
         target: "k8s:gateway-static-addresses"
         pattern: '(?s)name: gw-default-gw-http-only.*?targetPort: 18281'
@@ -138,28 +109,18 @@ validationTests:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: multi-port-gw
-            namespace: default
+          metadata: {name: multi-port-gw, namespace: default}
           spec:
             gatewayClassName: haptic
             listeners:
-              - name: l-80
-                port: 80
-                protocol: HTTP
-              - name: l-8080
-                port: 8080
-                protocol: HTTP
-              - name: l-8090
-                port: 8090
-                protocol: HTTP
+              - {name: l-80, port: 80, protocol: HTTP}
+              - {name: l-8080, port: 8080, protocol: HTTP}
+              - {name: l-8090, port: 8090, protocol: HTTP}
     extraContext:
       haproxyService:
         type: LoadBalancer
@@ -176,37 +137,18 @@ validationTests:
         healthCheckNodePort: 0
         publishNotReadyAddresses: false
         ports:
-          - name: http
-            port: 80
-            targetPort: http
-            protocol: TCP
-          - name: https
-            port: 443
-            targetPort: https
-            protocol: TCP
-          - name: stats
-            port: 8404
-            targetPort: stats
-            protocol: TCP
+          - {name: http, port: 80, targetPort: http, protocol: TCP}
+          - {name: https, port: 443, targetPort: https, protocol: TCP}
+          - {name: stats, port: 8404, targetPort: stats, protocol: TCP}
     assertions:
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "name: http\n"
+      - {type: contains, target: "k8s:haproxy-service", pattern: "name: http\n"}
 
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "name: gw-8080-h"
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "name: gw-8090-h"
+      - {type: contains, target: "k8s:haproxy-service", pattern: "name: gw-8080-h"}
+      - {type: contains, target: "k8s:haproxy-service", pattern: "name: gw-8090-h"}
 
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "(?ms)name: gw-8080-h.*\\n.*port: 8080"
+      - {type: contains, target: "k8s:haproxy-service", pattern: "(?ms)name: gw-8080-h.*\\n.*port: 8080"}
 
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "(?ms)name: gw-8090-h.*\\n.*port: 8090"
+      - {type: contains, target: "k8s:haproxy-service", pattern: "(?ms)name: gw-8090-h.*\\n.*port: 8090"}
 
   test-k8s-haproxy-service-listenerset-ports:
     requires: [gatewayclasses, gateways, listenersets]
@@ -215,41 +157,26 @@ validationTests:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: ls-parent-gw
-            namespace: default
+          metadata: {name: ls-parent-gw, namespace: default}
           spec:
             gatewayClassName: haptic
-            allowedListeners:
-              namespaces:
-                from: Same
+            allowedListeners: {namespaces: {from: Same}}
             listeners:
-              - name: l-80
-                port: 80
-                protocol: HTTP
+              - {name: l-80, port: 80, protocol: HTTP}
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: svc-ports-ls
-            namespace: default
+          metadata: {name: svc-ports-ls, namespace: default}
           spec:
-            parentRef:
-              name: ls-parent-gw
+            parentRef: {name: ls-parent-gw}
             listeners:
-              - name: ls-8085
-                protocol: HTTP
-                port: 8085
-              - name: ls-8086
-                protocol: HTTP
-                port: 8086
+              - {name: ls-8085, protocol: HTTP, port: 8085}
+              - {name: ls-8086, protocol: HTTP, port: 8086}
     extraContext:
       haproxyService:
         type: LoadBalancer
@@ -266,22 +193,9 @@ validationTests:
         healthCheckNodePort: 0
         publishNotReadyAddresses: false
         ports:
-          - name: http
-            port: 80
-            targetPort: http
-            protocol: TCP
-          - name: https
-            port: 443
-            targetPort: https
-            protocol: TCP
-          - name: stats
-            port: 8404
-            targetPort: stats
-            protocol: TCP
+          - {name: http, port: 80, targetPort: http, protocol: TCP}
+          - {name: https, port: 443, targetPort: https, protocol: TCP}
+          - {name: stats, port: 8404, targetPort: stats, protocol: TCP}
     assertions:
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "(?ms)name: gw-8085-h.*\\n.*port: 8085"
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "(?ms)name: gw-8086-h.*\\n.*port: 8086"
+      - {type: contains, target: "k8s:haproxy-service", pattern: "(?ms)name: gw-8085-h.*\\n.*port: 8085"}
+      - {type: contains, target: "k8s:haproxy-service", pattern: "(?ms)name: gw-8086-h.*\\n.*port: 8086"}

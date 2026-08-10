@@ -266,7 +266,6 @@ func (c *Component) Start(ctx context.Context) error {
 	}
 	c.server = server
 
-	// Register validators
 	c.registerValidators()
 
 	// Create server context

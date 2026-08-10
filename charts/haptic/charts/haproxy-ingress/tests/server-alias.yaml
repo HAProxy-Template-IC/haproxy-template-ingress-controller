@@ -1,5 +1,12 @@
 # haproxy-ingress library — server-alias / server-alias-regex validation tests.
 # Extra hostnames routing to the same backends as the Ingress's primary host.
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+
 validationTests:
   # ==========================================================================
   # server-alias: extra exact hostnames → primary host's routes
@@ -20,15 +27,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: primary.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -56,20 +55,10 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:host.map
-        pattern: "(?m)^www\\.example\\.com example\\.com$"
+      - {type: contains, target: map:host.map, pattern: "(?m)^www\\.example\\.com example\\.com$"}
 
   # ==========================================================================
   # server-alias-regex: regex-matched hostnames → primary host's routes
@@ -90,15 +79,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: app.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains

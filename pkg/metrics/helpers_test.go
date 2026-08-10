@@ -78,7 +78,6 @@ func TestNewGauge(t *testing.T) {
 	gauge.Dec()
 	assert.Equal(t, 25.5, testutil.ToFloat64(gauge))
 
-	// Add
 	gauge.Add(10)
 	assert.Equal(t, 35.5, testutil.ToFloat64(gauge))
 
@@ -188,7 +187,6 @@ func TestMetricsRegistration(t *testing.T) {
 	NewGauge(registry, "app_active_connections", "Active connections")
 	NewHistogramWithBuckets(registry, "app_request_duration_seconds", "Request duration", DurationBuckets())
 
-	// Gather metrics
 	metricFamilies, err := registry.Gather()
 	require.NoError(t, err)
 
@@ -207,12 +205,10 @@ func TestInstanceBasedMetrics(t *testing.T) {
 	// Test that metrics in different registries are independent
 	// This validates the instance-based (non-global) design
 
-	// Registry 1
 	registry1 := prometheus.NewRegistry()
 	counter1 := NewCounter(registry1, "instance_counter", "Counter for instance")
 	counter1.Add(10)
 
-	// Registry 2
 	registry2 := prometheus.NewRegistry()
 	counter2 := NewCounter(registry2, "instance_counter", "Counter for instance")
 	counter2.Add(20)
@@ -221,7 +217,6 @@ func TestInstanceBasedMetrics(t *testing.T) {
 	assert.Equal(t, 10.0, testutil.ToFloat64(counter1))
 	assert.Equal(t, 20.0, testutil.ToFloat64(counter2))
 
-	// Gather from registry 1
 	metrics1, err := registry1.Gather()
 	require.NoError(t, err)
 
@@ -235,7 +230,6 @@ func TestInstanceBasedMetrics(t *testing.T) {
 	}
 	assert.True(t, found1)
 
-	// Gather from registry 2
 	metrics2, err := registry2.Gather()
 	require.NoError(t, err)
 

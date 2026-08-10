@@ -1,3 +1,11 @@
+_fx:
+  specHttp: &specHttp
+    ports:
+      - {name: http, port: 80, targetPort: 8080}
+  rulesBackend8080: &rulesBackend8080
+    - backendRefs:
+        - {name: backend, port: 8080}
+
 validationTests:
   test-httproute-duplicate-backend-different-ports:
     requires: [httproutes]
@@ -6,17 +14,11 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: api-svc
-            namespace: default
+          metadata: {name: api-svc, namespace: default}
           spec:
             ports:
-              - name: http
-                port: 80
-                targetPort: 8080
-              - name: admin
-                port: 81
-                targetPort: 8081
+              - {name: http, port: 80, targetPort: 8080}
+              - {name: admin, port: 81, targetPort: 8081}
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -28,73 +30,47 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.1"]
-              targetRef:
-                kind: Pod
-                name: api-pod-1
+              targetRef: {kind: Pod, name: api-pod-1}
           ports:
-            - name: http
-              port: 8080
-              protocol: TCP
-            - name: admin
-              port: 8081
-              protocol: TCP
+            - {name: http, port: 8080, protocol: TCP}
+            - {name: admin, port: 8081, protocol: TCP}
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: multi-port
-            namespace: default
+          metadata: {name: multi-port, namespace: default}
           spec:
             parentRefs:
-              - name: gateway
-                namespace: default
+              - {name: gateway, namespace: default}
             hostnames:
               - example.com
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /api
+                  - path: {type: PathPrefix, value: /api}
                 backendRefs:
-                  - name: api-svc
-                    port: 80
+                  - {name: api-svc, port: 80}
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /admin
+                  - path: {type: PathPrefix, value: /admin}
                 backendRefs:
-                  - name: api-svc
-                    port: 81
+                  - {name: api-svc, port: 81}
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /app
+                  - path: {type: PathPrefix, value: /app}
                 backendRefs:
-                  - name: api-svc
-                    port: 80
+                  - {name: api-svc, port: 80}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend gtw_default_multi-port_api-svc_80"
+      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_multi-port_api-svc_80"}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend gtw_default_multi-port_api-svc_81"
+      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_multi-port_api-svc_81"}
 
       - type: match_count
         target: haproxy.cfg
         pattern: "(?m)^backend gtw_default_multi-port_api-svc_"
         expected: "2"
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "10.0.0.1:8080"
+      - {type: contains, target: haproxy.cfg, pattern: "10.0.0.1:8080"}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "10.0.0.1:8081"
+      - {type: contains, target: haproxy.cfg, pattern: "10.0.0.1:8081"}
 
   test-grpcroute-duplicate-backend-different-ports:
     requires: [grpcroutes]
@@ -103,64 +79,39 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: grpc-svc
-            namespace: default
+          metadata: {name: grpc-svc, namespace: default}
           spec:
             ports:
-              - name: grpc
-                port: 9090
-                targetPort: 9090
-              - name: grpc-admin
-                port: 9091
-                targetPort: 9091
+              - {name: grpc, port: 9090, targetPort: 9090}
+              - {name: grpc-admin, port: 9091, targetPort: 9091}
       grpcroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GRPCRoute
-          metadata:
-            name: multi-port
-            namespace: default
+          metadata: {name: multi-port, namespace: default}
           spec:
             parentRefs:
-              - name: gateway
-                namespace: default
+              - {name: gateway, namespace: default}
             hostnames:
               - grpc.example.com
             rules:
               - matches:
-                  - method:
-                      type: Exact
-                      service: com.example.API
-                      method: Method1
+                  - method: {type: Exact, service: com.example.API, method: Method1}
                 backendRefs:
-                  - name: grpc-svc
-                    port: 9090
+                  - {name: grpc-svc, port: 9090}
               - matches:
-                  - method:
-                      type: Exact
-                      service: com.example.Admin
-                      method: Method1
+                  - method: {type: Exact, service: com.example.Admin, method: Method1}
                 backendRefs:
-                  - name: grpc-svc
-                    port: 9091
+                  - {name: grpc-svc, port: 9091}
               - matches:
-                  - method:
-                      type: Exact
-                      service: com.example.App
-                      method: Method1
+                  - method: {type: Exact, service: com.example.App, method: Method1}
                 backendRefs:
-                  - name: grpc-svc
-                    port: 9090
+                  - {name: grpc-svc, port: 9090}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend gtw_default_multi-port_grpc-svc_9090"
+      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_multi-port_grpc-svc_9090"}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend gtw_default_multi-port_grpc-svc_9091"
+      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_multi-port_grpc-svc_9091"}
 
       - type: match_count
         target: haproxy.cfg
@@ -184,8 +135,7 @@ validationTests:
           metadata: { namespace: default, name: rk }
           spec:
             parentRefs:
-              - name: gateway
-                namespace: default
+              - {name: gateway, namespace: default}
             hostnames:
               - rk.example.com
             rules:
@@ -219,48 +169,32 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: app
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+          metadata: {name: app, namespace: default}
+          spec: *specHttp
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: single-backend
-            namespace: default
+          metadata: {name: single-backend, namespace: default}
           spec:
             parentRefs:
-              - name: gateway
-                namespace: default
+              - {name: gateway, namespace: default}
             hostnames:
               - single.example.com
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /
+                  - path: {type: PathPrefix, value: /}
                 backendRefs:
-                  - name: app
-                    port: 80
+                  - {name: app, port: 80}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend gtw_default_single-backend_app_80"
+      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_single-backend_app_80"}
 
       - type: contains
         target: map:path-prefix.map
         pattern: "single.example.com/ GW_ROUTE_ID:http:default_single-backend_0"
 
-      - type: not_contains
-        target: map:weighted-multi-backend.map
-        pattern: "default_single-backend"
+      - {type: not_contains, target: map:weighted-multi-backend.map, pattern: "default_single-backend"}
 
   test-httproute-method-matching:
     requires: [httproutes]
@@ -269,56 +203,34 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: read-service
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+          metadata: {name: read-service, namespace: default}
+          spec: *specHttp
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: write-service
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+          metadata: {name: write-service, namespace: default}
+          spec: *specHttp
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: method-route
-            namespace: default
+          metadata: {name: method-route, namespace: default}
           spec:
             hostnames:
               - api.example.com
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /api
+                  - path: {type: PathPrefix, value: /api}
                     method: GET
                 backendRefs:
-                  - name: read-service
-                    port: 80
+                  - {name: read-service, port: 80}
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /api
+                  - path: {type: PathPrefix, value: /api}
                     method: POST
                 backendRefs:
-                  - name: write-service
-                    port: 80
+                  - {name: write-service, port: 80}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: map:path-prefix.map
-        pattern: "api.example.com/api/ GW_ROUTE_ID:http"
+      - {type: contains, target: map:path-prefix.map, pattern: "api.example.com/api/ GW_ROUTE_ID:http"}
 
       - type: contains
         target: haproxy.cfg
@@ -335,36 +247,24 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: app
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+          metadata: {name: app, namespace: default}
+          spec: *specHttp
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: multi-host
-            namespace: default
+          metadata: {name: multi-host, namespace: default}
           spec:
             parentRefs:
-              - name: gateway
-                namespace: default
+              - {name: gateway, namespace: default}
             hostnames:
               - one.example.com
               - two.example.com
               - three.example.com
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /
+                  - path: {type: PathPrefix, value: /}
                 backendRefs:
-                  - name: app
-                    port: 80
+                  - {name: app, port: 80}
     assertions:
       - type: haproxy_valid
 
@@ -384,37 +284,26 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: grpc-app
-            namespace: default
+          metadata: {name: grpc-app, namespace: default}
           spec:
             ports:
-              - name: grpc
-                port: 9090
-                targetPort: 9090
+              - {name: grpc, port: 9090, targetPort: 9090}
       grpcroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GRPCRoute
-          metadata:
-            name: multi-host-grpc
-            namespace: default
+          metadata: {name: multi-host-grpc, namespace: default}
           spec:
             parentRefs:
-              - name: gateway
-                namespace: default
+              - {name: gateway, namespace: default}
             hostnames:
               - one.example.com
               - two.example.com
               - three.example.com
             rules:
               - matches:
-                  - method:
-                      type: Exact
-                      service: com.example.Service
-                      method: TestMethod
+                  - method: {type: Exact, service: com.example.Service, method: TestMethod}
                 backendRefs:
-                  - name: grpc-app
-                    port: 9090
+                  - {name: grpc-app, port: 9090}
     assertions:
       - type: haproxy_valid
 
@@ -434,29 +323,22 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: exact-service
-            namespace: default
+          metadata: {name: exact-service, namespace: default}
           spec:
             ports:
               - port: 80
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: exact-route
-            namespace: default
+          metadata: {name: exact-route, namespace: default}
           spec:
             hostnames:
               - api.example.com
             rules:
               - matches:
-                  - path:
-                      type: Exact
-                      value: /api/users
+                  - path: {type: Exact, value: /api/users}
                 backendRefs:
-                  - name: exact-service
-                    port: 80
+                  - {name: exact-service, port: 80}
     assertions:
       - type: haproxy_valid
 
@@ -464,9 +346,7 @@ validationTests:
         target: map:path-exact.map
         pattern: "api.example.com/api/users GW_ROUTE_ID:http:default_exact-route_0"
 
-      - type: not_contains
-        target: map:path-prefix.map
-        pattern: "api.example.com/api/users"
+      - {type: not_contains, target: map:path-prefix.map, pattern: "api.example.com/api/users"}
 
   test-httproute-path-regex:
     requires: [httproutes]
@@ -475,29 +355,22 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: versioned-service
-            namespace: default
+          metadata: {name: versioned-service, namespace: default}
           spec:
             ports:
               - port: 80
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: regex-route
-            namespace: default
+          metadata: {name: regex-route, namespace: default}
           spec:
             hostnames:
               - api.example.com
             rules:
               - matches:
-                  - path:
-                      type: RegularExpression
-                      value: "^/api/v[0-9]+/users$"
+                  - path: {type: RegularExpression, value: "^/api/v[0-9]+/users$"}
                 backendRefs:
-                  - name: versioned-service
-                    port: 80
+                  - {name: versioned-service, port: 80}
     assertions:
       - type: haproxy_valid
 
@@ -505,9 +378,7 @@ validationTests:
         target: map:path-regex.map
         pattern: "api\\.example\\.com\\^/api/v\\[0-9\\]\\+/users\\$ gtw_default_regex-route_versioned-service_80"
 
-      - type: not_contains
-        target: map:path-prefix.map
-        pattern: "api.example.com/.*users"
+      - {type: not_contains, target: map:path-prefix.map, pattern: "api.example.com/.*users"}
 
   test-httproute-listener-port-matching:
     requires: [gatewayclasses, gateways, httproutes]
@@ -516,87 +387,51 @@ validationTests:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw
-            namespace: default
+          metadata: {name: gw, namespace: default}
           spec:
             gatewayClassName: haptic
             listeners:
-              - name: l-80
-                port: 80
-                hostname: foo.com
-                protocol: HTTP
-              - name: l-8080
-                port: 8080
-                hostname: foo.com
-                protocol: HTTP
-              - name: l-8090
-                port: 8090
-                hostname: foo.com
-                protocol: HTTP
+              - {name: l-80, port: 80, hostname: foo.com, protocol: HTTP}
+              - {name: l-8080, port: 8080, hostname: foo.com, protocol: HTTP}
+              - {name: l-8090, port: 8090, hostname: foo.com, protocol: HTTP}
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: backend
-            namespace: default
+          metadata: {name: backend, namespace: default}
           spec:
             ports:
-              - port: 8080
-                targetPort: 8080
+              - {port: 8080, targetPort: 8080}
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: route-on-80
-            namespace: default
+          metadata: {name: route-on-80, namespace: default}
           spec:
             parentRefs:
-              - name: gw
-                port: 80
-            rules:
-              - backendRefs:
-                  - name: backend
-                    port: 8080
+              - {name: gw, port: 80}
+            rules: *rulesBackend8080
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: route-on-8080
-            namespace: default
+          metadata: {name: route-on-8080, namespace: default}
           spec:
             parentRefs:
-              - name: gw
-                port: 8080
-            rules:
-              - backendRefs:
-                  - name: backend
-                    port: 8080
+              - {name: gw, port: 8080}
+            rules: *rulesBackend8080
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: route-on-8090-by-section
-            namespace: default
+          metadata: {name: route-on-8090-by-section, namespace: default}
           spec:
             parentRefs:
-              - name: gw
-                sectionName: l-8090
-            rules:
-              - backendRefs:
-                  - name: backend
-                    port: 8080
+              - {name: gw, sectionName: l-8090}
+            rules: *rulesBackend8080
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: map:host.map
-        pattern: "(?m)^foo\\.com foo\\.com$"
+      - {type: contains, target: map:host.map, pattern: "(?m)^foo\\.com foo\\.com$"}
 
       - type: contains
         target: map:host.map

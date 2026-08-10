@@ -110,7 +110,6 @@ func runController(_ *cobra.Command, _ []string) error {
 
 	runCRDName = resolveConfigName(runCRDName)
 
-	// Secret name
 	if runSecretName == "" {
 		runSecretName = os.Getenv("SECRET_NAME")
 	}
@@ -132,7 +131,6 @@ func runController(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Debug port
 	if runDebugPort == 0 {
 		if envDebugPort := os.Getenv("DEBUG_PORT"); envDebugPort != "" {
 			if port, err := strconv.Atoi(envDebugPort); err == nil {
@@ -207,7 +205,6 @@ func runController(_ *cobra.Command, _ []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
-	// Run the controller
 	if err := controller.Run(
 		ctx,
 		k8sClient,

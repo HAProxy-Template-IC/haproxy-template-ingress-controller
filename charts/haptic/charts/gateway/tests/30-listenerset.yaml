@@ -1,3 +1,12 @@
+_fx:
+  listenersHttp: &listenersHttp
+    - {name: http, protocol: HTTP, port: 80}
+  listenersExtraHttp: &listenersExtraHttp
+    - {name: extra, protocol: HTTP, port: 8081}
+  tlsSecretSharedTls: &tlsSecretSharedTls
+    certificateRefs:
+      - {kind: Secret, name: shared-tls}
+
 validationTests:
   test-listenerset-default-not-allowed:
     requires: [gateways, listenersets]
@@ -6,30 +15,17 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gateway-default-deny
-            namespace: default
-            generation: 1
+          metadata: {name: gateway-default-deny, namespace: default, generation: 1}
           spec:
             gatewayClassName: haproxy
-            listeners:
-              - name: http
-                protocol: HTTP
-                port: 80
+            listeners: *listenersHttp
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: not-allowed-set
-            namespace: default
-            generation: 1
+          metadata: {name: not-allowed-set, namespace: default, generation: 1}
           spec:
-            parentRef:
-              name: gateway-default-deny
-            listeners:
-              - name: extra
-                protocol: HTTP
-                port: 8081
+            parentRef: {name: gateway-default-deny}
+            listeners: *listenersExtraHttp
     assertions:
       - type: haproxy_valid
 
@@ -46,33 +42,18 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gateway-allow-same
-            namespace: default
-            generation: 1
+          metadata: {name: gateway-allow-same, namespace: default, generation: 1}
           spec:
             gatewayClassName: haproxy
-            allowedListeners:
-              namespaces:
-                from: Same
-            listeners:
-              - name: http
-                protocol: HTTP
-                port: 80
+            allowedListeners: {namespaces: {from: Same}}
+            listeners: *listenersHttp
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: allowed-set
-            namespace: default
-            generation: 1
+          metadata: {name: allowed-set, namespace: default, generation: 1}
           spec:
-            parentRef:
-              name: gateway-allow-same
-            listeners:
-              - name: extra
-                protocol: HTTP
-                port: 8081
+            parentRef: {name: gateway-allow-same}
+            listeners: *listenersExtraHttp
     assertions:
       - type: haproxy_valid
 
@@ -83,34 +64,18 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gateway-allow-same
-            namespace: default
-            generation: 1
+          metadata: {name: gateway-allow-same, namespace: default, generation: 1}
           spec:
             gatewayClassName: haproxy
-            allowedListeners:
-              namespaces:
-                from: Same
-            listeners:
-              - name: http
-                protocol: HTTP
-                port: 80
+            allowedListeners: {namespaces: {from: Same}}
+            listeners: *listenersHttp
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: cross-ns-set
-            namespace: other
-            generation: 1
+          metadata: {name: cross-ns-set, namespace: other, generation: 1}
           spec:
-            parentRef:
-              name: gateway-allow-same
-              namespace: default
-            listeners:
-              - name: extra
-                protocol: HTTP
-                port: 8081
+            parentRef: {name: gateway-allow-same, namespace: default}
+            listeners: *listenersExtraHttp
     assertions:
       - type: haproxy_valid
 
@@ -121,91 +86,49 @@ validationTests:
       referencegrants:
         - apiVersion: gateway.networking.k8s.io/v1beta1
           kind: ReferenceGrant
-          metadata:
-            name: rg-allow-listenersets
-            namespace: default
+          metadata: {name: rg-allow-listenersets, namespace: default}
           spec:
             from:
-              - group: gateway.networking.k8s.io
-                kind: ListenerSet
-                namespace: selector-allowed-ns
-              - group: gateway.networking.k8s.io
-                kind: ListenerSet
-                namespace: selector-not-allowed-ns
+              - {group: gateway.networking.k8s.io, kind: ListenerSet, namespace: selector-allowed-ns}
+              - {group: gateway.networking.k8s.io, kind: ListenerSet, namespace: selector-not-allowed-ns}
             to:
-              - group: gateway.networking.k8s.io
-                kind: Gateway
+              - {group: gateway.networking.k8s.io, kind: Gateway}
       namespaces:
         - apiVersion: v1
           kind: Namespace
-          metadata:
-            name: selector-allowed-ns
-            labels:
-              allowed: ns
+          metadata: {name: selector-allowed-ns, labels: {allowed: ns}}
         - apiVersion: v1
           kind: Namespace
-          metadata:
-            name: selector-not-allowed-ns
-            labels:
-              other: label
+          metadata: {name: selector-not-allowed-ns, labels: {other: label}}
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-selector
-            namespace: default
-            generation: 1
+          metadata: {name: gw-selector, namespace: default, generation: 1}
           spec:
             gatewayClassName: haproxy
-            allowedListeners:
-              namespaces:
-                from: Selector
-                selector:
-                  matchLabels:
-                    allowed: ns
-            listeners:
-              - name: http
-                protocol: HTTP
-                port: 80
+            allowedListeners: {namespaces: {from: Selector, selector: {matchLabels: {allowed: ns}}}}
+            listeners: *listenersHttp
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: ls-permitted
-            namespace: selector-allowed-ns
-            generation: 1
+          metadata: {name: ls-permitted, namespace: selector-allowed-ns, generation: 1}
           spec:
-            parentRef:
-              name: gw-selector
-              namespace: default
+            parentRef: {name: gw-selector, namespace: default}
             listeners:
-              - name: extra-permitted
-                protocol: HTTP
-                port: 8082
+              - {name: extra-permitted, protocol: HTTP, port: 8082}
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: ls-denied
-            namespace: selector-not-allowed-ns
-            generation: 1
+          metadata: {name: ls-denied, namespace: selector-not-allowed-ns, generation: 1}
           spec:
-            parentRef:
-              name: gw-selector
-              namespace: default
+            parentRef: {name: gw-selector, namespace: default}
             listeners:
-              - name: extra-denied
-                protocol: HTTP
-                port: 8083
+              - {name: extra-denied, protocol: HTTP, port: 8083}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'bind \*:8082'
+      - {type: contains, target: haproxy.cfg, pattern: 'bind \*:8082'}
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'bind \*:8083'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'bind \*:8083'}
 
   test-listenerset-cross-namespace-parentref-allowed-by-from-all:
     requires: [gateways, listenersets]
@@ -214,40 +137,23 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-allow-all
-            namespace: default
-            generation: 1
+          metadata: {name: gw-allow-all, namespace: default, generation: 1}
           spec:
             gatewayClassName: haproxy
-            allowedListeners:
-              namespaces:
-                from: All
-            listeners:
-              - name: http
-                protocol: HTTP
-                port: 80
+            allowedListeners: {namespaces: {from: All}}
+            listeners: *listenersHttp
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: ls-cross-ns
-            namespace: tenant-a
-            generation: 1
+          metadata: {name: ls-cross-ns, namespace: tenant-a, generation: 1}
           spec:
-            parentRef:
-              name: gw-allow-all
-              namespace: default
+            parentRef: {name: gw-allow-all, namespace: default}
             listeners:
-              - name: extra
-                protocol: HTTP
-                port: 8090
+              - {name: extra, protocol: HTTP, port: 8090}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'bind \*:8090'
+      - {type: contains, target: haproxy.cfg, pattern: 'bind \*:8090'}
 
   test-listenerset-cross-namespace-parentref-with-grant:
     requires: [gateways, listenersets, referencegrants]
@@ -256,55 +162,32 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-allow-all
-            namespace: default
-            generation: 1
+          metadata: {name: gw-allow-all, namespace: default, generation: 1}
           spec:
             gatewayClassName: haproxy
-            allowedListeners:
-              namespaces:
-                from: All
-            listeners:
-              - name: http
-                protocol: HTTP
-                port: 80
+            allowedListeners: {namespaces: {from: All}}
+            listeners: *listenersHttp
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: ls-cross-ns-with-grant
-            namespace: tenant-a
-            generation: 1
+          metadata: {name: ls-cross-ns-with-grant, namespace: tenant-a, generation: 1}
           spec:
-            parentRef:
-              name: gw-allow-all
-              namespace: default
+            parentRef: {name: gw-allow-all, namespace: default}
             listeners:
-              - name: extra
-                protocol: HTTP
-                port: 8091
+              - {name: extra, protocol: HTTP, port: 8091}
       referencegrants:
         - apiVersion: gateway.networking.k8s.io/v1beta1
           kind: ReferenceGrant
-          metadata:
-            name: rg-allow-ls
-            namespace: default
+          metadata: {name: rg-allow-ls, namespace: default}
           spec:
             from:
-              - group: gateway.networking.k8s.io
-                kind: ListenerSet
-                namespace: tenant-a
+              - {group: gateway.networking.k8s.io, kind: ListenerSet, namespace: tenant-a}
             to:
-              - group: gateway.networking.k8s.io
-                kind: Gateway
-                name: gw-allow-all
+              - {group: gateway.networking.k8s.io, kind: Gateway, name: gw-allow-all}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'bind \*:8091'
+      - {type: contains, target: haproxy.cfg, pattern: 'bind \*:8091'}
 
   test-listenerset-listener-multi-port-bind:
     requires: [gateways, listenersets]
@@ -313,50 +196,29 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: multi-port-with-ls
-            namespace: default
-            generation: 1
+          metadata: {name: multi-port-with-ls, namespace: default, generation: 1}
           spec:
             gatewayClassName: haproxy
-            allowedListeners:
-              namespaces:
-                from: Same
+            allowedListeners: {namespaces: {from: Same}}
             listeners:
-              - name: gw-listener
-                protocol: HTTP
-                port: 80
+              - {name: gw-listener, protocol: HTTP, port: 80}
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: extra-ports-ls
-            namespace: default
-            generation: 1
+          metadata: {name: extra-ports-ls, namespace: default, generation: 1}
           spec:
-            parentRef:
-              name: multi-port-with-ls
+            parentRef: {name: multi-port-with-ls}
             listeners:
-              - name: extra-1
-                protocol: HTTP
-                port: 8085
-              - name: extra-2
-                protocol: HTTP
-                port: 8086
+              - {name: extra-1, protocol: HTTP, port: 8085}
+              - {name: extra-2, protocol: HTTP, port: 8086}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'bind \*:80\b'
+      - {type: contains, target: haproxy.cfg, pattern: 'bind \*:80\b'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'bind \*:8085\b'
+      - {type: contains, target: haproxy.cfg, pattern: 'bind \*:8085\b'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'bind \*:8086\b'
+      - {type: contains, target: haproxy.cfg, pattern: 'bind \*:8086\b'}
 
   test-listenerset-hostname-conflict:
     requires: [gateways, listenersets]
@@ -372,18 +234,13 @@ validationTests:
             creationTimestamp: "2024-01-01T00:00:00Z"
           spec:
             gatewayClassName: haproxy
-            allowedListeners:
-              namespaces:
-                from: Same
+            allowedListeners: {namespaces: {from: Same}}
             listeners:
               - name: gw-listener
                 protocol: HTTPS
                 port: 443
                 hostname: shared.example.com
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                tls: *tlsSecretSharedTls
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
@@ -393,25 +250,18 @@ validationTests:
             generation: 1
             creationTimestamp: "2024-01-02T00:00:00Z"
           spec:
-            parentRef:
-              name: gw-with-conflict
+            parentRef: {name: gw-with-conflict}
             listeners:
               - name: ls-good
                 protocol: HTTPS
                 port: 443
                 hostname: ls-only.example.com
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                tls: *tlsSecretSharedTls
               - name: ls-conflicts-with-gw
                 protocol: HTTPS
                 port: 443
                 hostname: shared.example.com
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                tls: *tlsSecretSharedTls
     assertions:
       - type: haproxy_valid
 
@@ -437,13 +287,9 @@ validationTests:
             creationTimestamp: "2024-01-01T00:00:00Z"
           spec:
             gatewayClassName: haproxy
-            allowedListeners:
-              namespaces:
-                from: Same
+            allowedListeners: {namespaces: {from: Same}}
             listeners:
-              - name: gw-http-80
-                protocol: HTTP
-                port: 80
+              - {name: gw-http-80, protocol: HTTP, port: 80}
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
@@ -453,21 +299,14 @@ validationTests:
             generation: 1
             creationTimestamp: "2024-01-02T00:00:00Z"
           spec:
-            parentRef:
-              name: gw-protocol-host
+            parentRef: {name: gw-protocol-host}
             listeners:
-              - name: ls-tcp-80
-                protocol: TCP
-                port: 80
-              - name: ls-good-http-9000
-                protocol: HTTP
-                port: 9000
+              - {name: ls-tcp-80, protocol: TCP, port: 80}
+              - {name: ls-good-http-9000, protocol: HTTP, port: 9000}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'bind \*:9000\b'
+      - {type: contains, target: haproxy.cfg, pattern: 'bind \*:9000\b'}
 
   test-listenerset-allowed-routes-supported-kinds:
     requires: [gateways, listenersets]
@@ -482,17 +321,13 @@ validationTests:
             generation: 1
           spec:
             gatewayClassName: haproxy
-            allowedListeners:
-              namespaces:
-                from: All
+            allowedListeners: {namespaces: {from: All}}
             listeners:
               - name: gateway-listener
                 protocol: HTTP
                 port: 80
                 hostname: gateway-listener.com
-                allowedRoutes:
-                  namespaces:
-                    from: All
+                allowedRoutes: {namespaces: {from: All}}
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
@@ -502,20 +337,17 @@ validationTests:
             generation: 1
             creationTimestamp: "2024-01-01T00:00:00Z"
           spec:
-            parentRef:
-              name: gateway-with-listener-sets-test-supported-route-kinds
+            parentRef: {name: gateway-with-listener-sets-test-supported-route-kinds}
             listeners:
               - name: listener-set-listener-allowed-routes-tls-only
                 protocol: TLS
                 port: 443
                 hostname: listener-set-listener-allowed-routes-tls-only.com
                 allowedRoutes:
-                  namespaces:
-                    from: All
+                  namespaces: {from: All}
                   kinds:
                     - kind: HTTPRoute
-                tls:
-                  mode: Passthrough
+                tls: {mode: Passthrough}
     assertions:
       - type: contains
         target: "status:default/listenerset-test-allowed-routes-supported-kinds:rendered"
@@ -539,35 +371,25 @@ validationTests:
             generation: 1
           spec:
             gatewayClassName: haproxy
-            allowedListeners:
-              namespaces:
-                from: All
+            allowedListeners: {namespaces: {from: All}}
             listeners:
               - name: gateway-listener
                 protocol: HTTP
                 port: 80
                 hostname: gateway-listener.com
-                allowedRoutes:
-                  namespaces:
-                    from: All
+                allowedRoutes: {namespaces: {from: All}}
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: ls-rendered-variant-programmed-observed-gen
-            namespace: default
-            generation: 1
+          metadata: {name: ls-rendered-variant-programmed-observed-gen, namespace: default, generation: 1}
           spec:
-            parentRef:
-              name: gateway-rendered-variant-programmed-observed-gen
+            parentRef: {name: gateway-rendered-variant-programmed-observed-gen}
             listeners:
               - name: listener
                 protocol: HTTP
                 port: 8081
                 hostname: ls.example.com
-                allowedRoutes:
-                  namespaces:
-                    from: All
+                allowedRoutes: {namespaces: {from: All}}
     assertions:
       # Condition objects serialise with alphabetically-ordered keys
       # (Go map JSON), so observedGeneration always appears before type

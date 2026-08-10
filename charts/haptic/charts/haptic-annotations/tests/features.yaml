@@ -1,6 +1,13 @@
 # haptic-annotations library — feature validation tests (40-features.yaml).
 # Covers the native haproxy-haptic.org/* redirects, HSTS, default-backend and
 # raw config injection. All fixtures use ingressClassName: haptic.
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+
 validationTests:
 
   # Regression guards for the renderMode-aware rejection of a misconfigured
@@ -9,8 +16,7 @@ validationTests:
   # reconcile, so one already-present bad Ingress can't brick the fleet.
   test-haptic-invalid-redirect-code-admission-rejected:
     description: Under the admission webhook, an invalid https-redirect-code value is rejected.
-    extraContext:
-      renderMode: admission
+    extraContext: {renderMode: admission}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -35,8 +41,7 @@ validationTests:
 
   test-haptic-invalid-redirect-code-reconcile-warns:
     description: On a live reconcile, an invalid https-redirect-code warns (Event) and the render still succeeds instead of failing.
-    extraContext:
-      renderMode: reconcile
+    extraContext: {renderMode: reconcile}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -79,20 +84,10 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: secure.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:ssl-redirect-301.map
-        pattern: "secure\\.example\\.com"
+      - {type: contains, target: map:ssl-redirect-301.map, pattern: "secure\\.example\\.com"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect scheme https code 301 if !\\{ ssl_fc \\}"
@@ -112,15 +107,7 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: old.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -132,15 +119,7 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: promo.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -168,15 +147,7 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: hsts.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -189,17 +160,13 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: app-service
+          metadata: {namespace: default, name: app-service}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: errors-service
+          metadata: {namespace: default, name: errors-service}
           spec:
             ports:
               - port: 8080
@@ -244,19 +211,13 @@ validationTests:
                   paths:
                     - path: /app
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: app-service
-                          port:
-                            number: 80
+                      backend: {service: {name: app-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_db-ingress_default-backend_errors-service"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.0\\.9:9000"
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10\\.0\\.0\\.9:9000"}
       - type: contains
         target: map:path-prefix.map
         pattern: "db\\.example\\.com/ BACKEND:default_db-ingress_default-backend_errors-service"
@@ -266,10 +227,7 @@ validationTests:
     # Self-contained w.r.t. WAF governance: raw-config injection is gated by
     # allowRawHAProxyConfig once any WAF policy activates governance. Set it here
     # so this test passes whether or not the deployment defines a policy.
-    extraContext:
-      waf:
-        ingressPermissions:
-          allowRawHAProxyConfig: true
+    extraContext: {waf: {ingressPermissions: {allowRawHAProxyConfig: true}}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -285,23 +243,9 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: cfg.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "tune.bufsize 32768"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "option dontlognull"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-header X-Haptic-Test yes"
+      - {type: contains, target: haproxy.cfg, pattern: "tune.bufsize 32768"}
+      - {type: contains, target: haproxy.cfg, pattern: "option dontlognull"}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request set-header X-Haptic-Test yes"}

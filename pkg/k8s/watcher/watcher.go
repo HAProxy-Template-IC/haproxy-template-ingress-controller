@@ -79,7 +79,6 @@ type Watcher struct {
 //
 
 func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger) (*Watcher, error) {
-	// Set defaults
 	cfg.SetDefaults()
 
 	// Validate configuration
@@ -166,7 +165,6 @@ func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger)
 		logger:               logger,
 	}
 
-	// Create informer
 	if err := w.createInformer(); err != nil {
 		return nil, fmt.Errorf("creating informer: %w", err)
 	}
@@ -230,7 +228,6 @@ func (w *Watcher) createInformer() error {
 		return fmt.Errorf("setting watch error handler: %w", err)
 	}
 
-	// Add event handlers
 	_, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    w.handleAdd,
 		UpdateFunc: w.handleUpdate,
@@ -284,7 +281,6 @@ func (w *Watcher) Start(ctx context.Context) error {
 	// Start informer
 	go w.informer.Run(w.stopCh)
 
-	// Wait for cache sync
 	if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
 		return errors.New("syncing cache")
 	}
@@ -345,7 +341,6 @@ func (w *Watcher) Store() types.Store {
 //	}
 //	slog.Info("Watcher synced", "resource_count", count)
 func (w *Watcher) WaitForSync(ctx context.Context) (int, error) {
-	// Wait for informer sync
 	if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
 		return 0, errors.New("syncing cache")
 	}

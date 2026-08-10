@@ -205,7 +205,6 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 	defer cancel()
 	_, validationResult, err := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission, admissionSubjectOpts(req.Overlays)...)
 	if err != nil {
-		// Render failed
 		c.logger.Warn("Proposal validation failed: render error",
 			"request_id", req.ID,
 			"error", err,
@@ -236,7 +235,6 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 		return
 	}
 
-	// Validation succeeded
 	c.logger.Debug("Proposal validation succeeded",
 		"request_id", req.ID,
 		"source", req.Source,

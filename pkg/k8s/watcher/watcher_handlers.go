@@ -118,7 +118,6 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 		return
 	}
 
-	// Add converted resource to store
 	if err := w.store.Add(result.ConvertedResource, result.Keys); err != nil {
 		w.logger.Error("Failed to add resource to store",
 			"gvr", w.config.GVR.String(),
@@ -156,7 +155,6 @@ func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
 		return
 	}
 
-	// Update converted resource in store
 	if err := w.store.Update(result.ConvertedResource, result.Keys); err != nil {
 		w.logger.Error("Failed to update resource in store",
 			"gvr", w.config.GVR.String(),
@@ -192,7 +190,6 @@ func (w *Watcher) processDelete(resource *unstructured.Unstructured) {
 		return
 	}
 
-	// Delete from store
 	if err := w.store.Delete(keys...); err != nil {
 		w.logger.Error("Failed to delete resource from store",
 			"gvr", w.config.GVR.String(),

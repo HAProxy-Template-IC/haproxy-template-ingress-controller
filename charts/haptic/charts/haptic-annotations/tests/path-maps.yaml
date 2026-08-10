@@ -12,9 +12,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: exact-service
+          metadata: {namespace: default, name: exact-service}
           spec:
             ports:
               - port: 80
@@ -34,11 +32,7 @@ validationTests:
                   paths:
                     - path: /api/users
                       pathType: ImplementationSpecific
-                      backend:
-                        service:
-                          name: exact-service
-                          port:
-                            number: 80
+                      backend: {service: {name: exact-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -51,9 +45,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: prefix-service
+          metadata: {namespace: default, name: prefix-service}
           spec:
             ports:
               - port: 80
@@ -73,11 +65,7 @@ validationTests:
                   paths:
                     - path: /api
                       pathType: ImplementationSpecific
-                      backend:
-                        service:
-                          name: prefix-service
-                          port:
-                            number: 80
+                      backend: {service: {name: prefix-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -90,9 +78,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: regex-service
+          metadata: {namespace: default, name: regex-service}
           spec:
             ports:
               - port: 80
@@ -112,11 +98,7 @@ validationTests:
                   paths:
                     - path: /api/v[0-9]+/.*
                       pathType: ImplementationSpecific
-                      backend:
-                        service:
-                          name: regex-service
-                          port:
-                            number: 80
+                      backend: {service: {name: regex-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -146,11 +128,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -182,11 +160,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains

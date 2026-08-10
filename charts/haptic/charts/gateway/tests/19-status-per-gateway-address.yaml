@@ -12,39 +12,27 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-https-allocated
-            namespace: default
-            generation: 1
+          metadata: {name: gw-https-allocated, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
               - name: https
                 port: 443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+                allowedRoutes: {namespaces: {from: Same}}
                 tls:
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                      namespace: default
+                    - {kind: Secret, name: shared-tls, namespace: default}
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-http-only
-            namespace: default
-            generation: 1
+          metadata: {name: gw-http-only, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
               - name: http
                 port: 80
                 protocol: HTTP
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+                allowedRoutes: {namespaces: {from: Same}}
       controller_services:
         - apiVersion: v1
           kind: Service
@@ -54,8 +42,7 @@ validationTests:
             labels:
               app.kubernetes.io/name: haptic
               app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
+          spec: {type: LoadBalancer}
           status:
             loadBalancer:
               ingress:
@@ -74,8 +61,7 @@ validationTests:
             labels:
               gateway.networking.k8s.io/gateway-name: gw-https-allocated
               gateway.networking.k8s.io/gateway-namespace: default
-          spec:
-            type: LoadBalancer
+          spec: {type: LoadBalancer}
           status:
             loadBalancer:
               ingress:
@@ -91,8 +77,7 @@ validationTests:
             labels:
               gateway.networking.k8s.io/gateway-name: gw-http-only
               gateway.networking.k8s.io/gateway-namespace: default
-          spec:
-            type: LoadBalancer
+          spec: {type: LoadBalancer}
           status:
             loadBalancer:
               ingress:
@@ -110,9 +95,5 @@ validationTests:
       # gw-http-only: now uses its OWN per-Gateway Service IP (HTTP
       # listeners are isolated by per-Gateway bind, same as HTTPS), NOT
       # the chart's main LB IP.
-      - type: contains
-        target: 'status:default/gw-http-only:rendered'
-        pattern: '"value":"203\.0\.113\.51"'
-      - type: not_contains
-        target: 'status:default/gw-http-only:rendered'
-        pattern: '"value":"10\.0\.0\.1"'
+      - {type: contains, target: 'status:default/gw-http-only:rendered', pattern: '"value":"203\.0\.113\.51"'}
+      - {type: not_contains, target: 'status:default/gw-http-only:rendered', pattern: '"value":"10\.0\.0\.1"'}

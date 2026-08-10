@@ -80,7 +80,6 @@ type SingleWatcher struct {
 //	    },
 //	}, k8sClient)
 func NewSingle(cfg *types.SingleWatcherConfig, k8sClient *client.Client) (*SingleWatcher, error) {
-	// Set defaults
 	cfg.SetDefaults()
 
 	// Validate configuration
@@ -100,7 +99,6 @@ func NewSingle(cfg *types.SingleWatcherConfig, k8sClient *client.Client) (*Singl
 		// synced defaults to false (atomic.Bool zero value)
 	}
 
-	// Create informer
 	if err := w.createInformer(); err != nil {
 		return nil, fmt.Errorf("creating informer: %w", err)
 	}
@@ -143,7 +141,6 @@ func (w *SingleWatcher) createInformer() error {
 		return fmt.Errorf("setting watch error handler: %w", err)
 	}
 
-	// Add event handlers
 	_, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    w.handleAdd,
 		UpdateFunc: w.handleUpdate,
@@ -365,7 +362,6 @@ func (w *SingleWatcher) Start(ctx context.Context) error {
 		// Start informer
 		go w.informer.Run(w.stopCh)
 
-		// Wait for cache sync
 		if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
 			startErr = errors.New("syncing cache")
 			return

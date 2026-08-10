@@ -30,11 +30,7 @@ func TestNewSingle(t *testing.T) {
 		{
 			name: "valid config",
 			config: types.SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:       configMapGVR,
 				Namespace: "default",
 				Name:      "test-config",
 				OnChange: func(obj any) error {
@@ -63,11 +59,7 @@ func TestNewSingle(t *testing.T) {
 		{
 			name: "missing namespace",
 			config: types.SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:  configMapGVR,
 				Name: "test-config",
 				OnChange: func(obj any) error {
 					return nil
@@ -79,11 +71,7 @@ func TestNewSingle(t *testing.T) {
 		{
 			name: "missing name",
 			config: types.SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:       configMapGVR,
 				Namespace: "default",
 				OnChange: func(obj any) error {
 					return nil
@@ -95,11 +83,7 @@ func TestNewSingle(t *testing.T) {
 		{
 			name: "missing callback",
 			config: types.SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:       configMapGVR,
 				Namespace: "default",
 				Name:      "test-config",
 			},
@@ -109,11 +93,7 @@ func TestNewSingle(t *testing.T) {
 		{
 			name: "nil client",
 			config: types.SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:       configMapGVR,
 				Namespace: "default",
 				Name:      "test-config",
 				OnChange: func(obj any) error {
@@ -143,11 +123,7 @@ func TestSingleWatcher_WaitForSyncTimeout(t *testing.T) {
 	k8sClient := createFakeClientForSingleWatcher()
 
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -181,11 +157,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 		{
 			name: "valid config",
 			config: types.SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:       configMapGVR,
 				Namespace: "default",
 				Name:      "test-config",
 				OnChange: func(obj any) error {
@@ -213,11 +185,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 		{
 			name: "missing namespace",
 			config: types.SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:  configMapGVR,
 				Name: "test-config",
 				OnChange: func(obj any) error {
 					return nil
@@ -229,11 +197,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 		{
 			name: "missing name",
 			config: types.SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:       configMapGVR,
 				Namespace: "default",
 				OnChange: func(obj any) error {
 					return nil
@@ -245,11 +209,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 		{
 			name: "missing callback",
 			config: types.SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:       configMapGVR,
 				Namespace: "default",
 				Name:      "test-config",
 			},
@@ -282,11 +242,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 // TestSingleWatcherConfig_SetDefaults verifies default value application.
 func TestSingleWatcherConfig_SetDefaults(t *testing.T) {
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -308,11 +264,7 @@ func TestSingleWatcher_NoAddCallbacksDuringSync(t *testing.T) {
 
 	callbackCount := 0
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -360,11 +312,7 @@ func TestSingleWatcher_NoUpdateCallbacksDuringSync(t *testing.T) {
 
 	callbackCount := 0
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -407,11 +355,7 @@ func TestSingleWatcher_NoDeleteCallbacksDuringSync(t *testing.T) {
 
 	callbackCount := 0
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -458,11 +402,7 @@ func TestSingleWatcher_StopIdempotency(t *testing.T) {
 	k8sClient := createFakeClientForSingleWatcher()
 
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -499,11 +439,7 @@ func TestSingleWatcher_ConcurrentCallbacks(t *testing.T) {
 	var mu sync.Mutex
 
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -560,11 +496,7 @@ func TestSingleWatcher_StartIdempotency(t *testing.T) {
 	k8sClient := createFakeClientForConfigMapListing()
 
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -669,11 +601,7 @@ func TestSingleWatcher_SkipsStatusOnlyUpdates(t *testing.T) {
 
 	callbackCount := 0
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -776,11 +704,7 @@ func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
 
 	callbackCount := 0
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -836,11 +760,7 @@ func TestSingleWatcher_OnSyncComplete_CalledAfterSync(t *testing.T) {
 	var mu sync.Mutex
 
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -873,7 +793,6 @@ func TestSingleWatcher_OnSyncComplete_CalledAfterSync(t *testing.T) {
 		_ = w.Start(ctx)
 	}()
 
-	// Wait for sync
 	err = w.WaitForSync(ctx)
 	if err != nil {
 		t.Fatalf("WaitForSync failed: %v", err)
@@ -916,11 +835,7 @@ func TestSingleWatcher_OnSyncComplete_ReceivesCurrentResource(t *testing.T) {
 	var mu sync.Mutex
 
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {
@@ -984,11 +899,7 @@ func TestSingleWatcher_OnSyncComplete_Optional(t *testing.T) {
 	k8sClient := createFakeClientForConfigMapListing()
 
 	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
+		GVR:       configMapGVR,
 		Namespace: "default",
 		Name:      "test-config",
 		OnChange: func(obj any) error {

@@ -51,7 +51,6 @@ func navigateJSONPath(item any, path string) any {
 		return item
 	}
 
-	// Split path into segments
 	segments := strings.Split(path, ".")
 	current := item
 

@@ -98,7 +98,6 @@ func TestStateCache_HandleConfigValidated(t *testing.T) {
 		},
 	}
 
-	// Publish event
 	bus.Publish(events.NewConfigValidatedEvent(testConfig, nil, "v123", ""))
 
 	// Allow time for event processing
@@ -149,7 +148,6 @@ func TestStateCache_HandleCredentialsUpdated(t *testing.T) {
 		DataplanePassword: "secret123",
 	}
 
-	// Publish event
 	bus.Publish(events.NewCredentialsUpdatedEvent(testCreds, "secret-v456"))
 
 	// Allow time for event processing
@@ -201,7 +199,6 @@ func TestStateCache_HandleTemplateRendered(t *testing.T) {
 		},
 	}
 
-	// Publish event
 	bus.Publish(events.NewTemplateRenderedEvent(
 		testConfig,
 		testAuxFiles,
@@ -246,7 +243,6 @@ func TestStateCache_HandleTemplateRenderFailed(t *testing.T) {
 	go cache.Start(ctx)
 	bus.Start()
 
-	// Publish render failed event
 	bus.Publish(events.NewTemplateRenderFailedEvent("haproxy.cfg", "template error", "stack trace"))
 
 	// Allow time for event processing
@@ -270,7 +266,6 @@ func TestStateCache_HandleReconciliationTriggered(t *testing.T) {
 	go cache.Start(ctx)
 	bus.Start()
 
-	// Publish reconciliation triggered event
 	bus.Publish(events.NewReconciliationTriggeredEvent("config_change", true))
 
 	// Allow time for event processing
@@ -299,7 +294,6 @@ func TestStateCache_HandleValidationCompleted(t *testing.T) {
 	bus.Publish(events.NewTemplateRenderedEvent(testConfig, nil, nil, nil, 0, 100, "", "", true))
 	time.Sleep(50 * time.Millisecond)
 
-	// Publish validation completed event
 	bus.Publish(events.NewValidationCompletedEvent([]string{"warning1"}, 150, "", nil, true))
 
 	// Allow time for event processing
@@ -330,7 +324,6 @@ func TestStateCache_HandleValidationFailed(t *testing.T) {
 	go cache.Start(ctx)
 	bus.Start()
 
-	// Publish validation failed event
 	bus.Publish(events.NewValidationFailedEvent([]string{"[ALERT] parsing error"}, 50, ""))
 
 	// Allow time for event processing
@@ -364,7 +357,6 @@ func TestStateCache_HandleDeploymentStarted(t *testing.T) {
 		{URL: "http://haproxy2:5555"},
 	}
 
-	// Publish deployment started event
 	bus.Publish(events.NewDeploymentStartedEvent(len(endpoints)))
 
 	// Allow time for event processing
@@ -482,7 +474,6 @@ func TestStateCache_HandleInstanceDeploymentFailed(t *testing.T) {
 	bus.Publish(events.NewDeploymentStartedEvent(len(endpoints)))
 	time.Sleep(50 * time.Millisecond)
 
-	// Publish instance deployment failed event
 	bus.Publish(events.NewInstanceDeploymentFailedEvent(endpoint, "connection refused", true))
 
 	// Allow time for event processing

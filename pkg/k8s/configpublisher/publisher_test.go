@@ -38,13 +38,31 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func TestPublishConfig_CreateNew(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
+// newTestPublisher builds a Publisher over fake clients. The SSA list-map merge
+// reactor is what makes per-pod status patches accumulate the way a real
+// apiserver applies them.
+func newTestPublisher(t *testing.T) (ctx context.Context, k8sClient *k8sfake.Clientset, crdClient *fake.Clientset, publisher *Publisher) {
+	t.Helper()
+	k8sClient = k8sfake.NewClientset()
+	crdClient = fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
+	return context.Background(), k8sClient, crdClient, NewWithListers(k8sClient, crdClient, nil, testLogger())
+}
 
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+// basePublishRequest is the minimal valid request the tests vary from.
+func basePublishRequest() PublishRequest {
+	return PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "abc123",
+	}
+}
+
+func TestPublishConfig_CreateNew(t *testing.T) {
+	ctx, k8sClient, crdClient, publisher := newTestPublisher(t)
 
 	req := PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -120,12 +138,7 @@ func TestPublishConfig_CreateNew(t *testing.T) {
 }
 
 func TestPublishConfig_Update(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create initial runtime config
 	initialReq := PublishRequest{
@@ -166,27 +179,14 @@ func TestPublishConfig_Update(t *testing.T) {
 }
 
 func TestUpdateDeploymentStatus_AddPod(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create runtime config first
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-	}
+	req := basePublishRequest()
 
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
 
-	// Update deployment status
 	update := DeploymentStatusUpdate{
 		RuntimeConfigName:      "test-config-haproxycfg",
 		RuntimeConfigNamespace: "default",
@@ -236,22 +236,10 @@ func TestUpdateDeploymentStatus_NotPublishedYetReturnsSentinel(t *testing.T) {
 }
 
 func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create runtime config
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-	}
+	req := basePublishRequest()
 
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
@@ -303,12 +291,7 @@ func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 // recorded at all — so the pod correctly reads as never-converged rather than
 // being stamped with the checksum it failed to receive.
 func TestUpdateDeploymentStatus_FirstDeployFailureRecordsNoChecksum(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	_, err := publisher.PublishConfig(ctx, &PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -342,22 +325,10 @@ func TestUpdateDeploymentStatus_FirstDeployFailureRecordsNoChecksum(t *testing.T
 }
 
 func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create runtime config
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-	}
+	req := basePublishRequest()
 
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
@@ -395,22 +366,10 @@ func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
 }
 
 func TestCleanupPodReferences_RemovePod(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create runtime config
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-	}
+	req := basePublishRequest()
 
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
@@ -448,22 +407,10 @@ func TestCleanupPodReferences_RemovePod(t *testing.T) {
 }
 
 func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create runtime config
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-	}
+	req := basePublishRequest()
 
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
@@ -476,7 +423,6 @@ func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 
 	err = publisher.CleanupPodReferences(ctx, &cleanup)
 
-	// Should not error - it's a no-op
 	require.NoError(t, err)
 
 	// Verify runtime config status unchanged
@@ -489,12 +435,7 @@ func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 }
 
 func TestPublishConfig_GeneralFiles(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	req := PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -534,12 +475,7 @@ func TestPublishConfig_GeneralFiles(t *testing.T) {
 }
 
 func TestPublishConfig_CRTListFiles(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	req := PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -578,12 +514,7 @@ func TestPublishConfig_CRTListFiles(t *testing.T) {
 }
 
 func TestPublishConfig_WithCompression(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create large content that will benefit from compression
 	// Repeating patterns compress well
@@ -623,12 +554,7 @@ func TestPublishConfig_WithCompression(t *testing.T) {
 }
 
 func TestPublishConfig_CompressionDisabled(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create large content
 	var largeContent strings.Builder
@@ -663,12 +589,7 @@ func TestPublishConfig_CompressionDisabled(t *testing.T) {
 }
 
 func TestPublishConfig_SSLSecretCompressionAnnotation(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, k8sClient, _, publisher := newTestPublisher(t)
 
 	req := PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -713,22 +634,10 @@ func TestPublishConfig_SSLSecretCompressionAnnotation(t *testing.T) {
 }
 
 func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create runtime config
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-	}
+	req := basePublishRequest()
 
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
@@ -762,22 +671,10 @@ func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
 }
 
 func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create runtime config
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-	}
+	req := basePublishRequest()
 
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
@@ -810,22 +707,10 @@ func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
 }
 
 func TestReconcileDeployedToPods_NoStalePods(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create runtime config
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-	}
+	req := basePublishRequest()
 
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
@@ -858,22 +743,10 @@ func TestReconcileDeployedToPods_NoStalePods(t *testing.T) {
 }
 
 func TestReconcileDeployedToPods_EmptyStatus(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create runtime config without adding any pods
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-	}
+	req := basePublishRequest()
 
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)

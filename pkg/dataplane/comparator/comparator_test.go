@@ -289,7 +289,6 @@ func TestCompare_UserlistModification(t *testing.T) {
 		t.Fatalf("Compare() failed: %v", err)
 	}
 
-	// Verify operations
 	verifyFineGrainedUserOperations(t, diff.Operations)
 }
 

@@ -246,7 +246,6 @@ func runDeleteNonExistentTest(t *testing.T, store interface {
 }, sizeGetter storeWithSize, existingResource any, existingKeys []string, nonExistentKeys []string) {
 	t.Helper()
 
-	// Add a resource first
 	if err := store.Add(existingResource, existingKeys); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}

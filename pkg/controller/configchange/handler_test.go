@@ -286,10 +286,8 @@ func TestConfigChangeHandler_HandleBecameLeader_WithValidatedConfig(t *testing.T
 	bus.Publish(events.NewConfigValidatedEvent(testConfig, nil, "initial", ""))
 	time.Sleep(testutil.DebounceWait)
 
-	// Drain any events from the channel
 	testutil.DrainChannel(eventChan)
 
-	// Now publish BecameLeaderEvent
 	bus.Publish(events.NewBecameLeaderEvent("test-identity"))
 
 	// Should re-publish the cached ConfigValidatedEvent

@@ -193,7 +193,6 @@ func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtim
 			return fmt.Errorf("getting runtime config: %w", err)
 		}
 
-		// Remove pod from deployedToPods list
 		newDeployedToPods, removed := removePodFromStatus(current.Status.DeployedToPods, cleanup.PodName)
 		if !removed {
 			return nil // Pod not in this runtime config

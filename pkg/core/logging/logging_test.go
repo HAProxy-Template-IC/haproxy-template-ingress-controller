@@ -93,23 +93,18 @@ func TestNewDynamicLogger(t *testing.T) {
 }
 
 func TestSetLevel(t *testing.T) {
-	// Set to DEBUG
 	SetLevel("DEBUG")
 	assert.Equal(t, "DEBUG", GetLevel())
 
-	// Set to INFO
 	SetLevel("INFO")
 	assert.Equal(t, "INFO", GetLevel())
 
-	// Set to WARN
 	SetLevel("WARN")
 	assert.Equal(t, "WARN", GetLevel())
 
-	// Set to ERROR
 	SetLevel("ERROR")
 	assert.Equal(t, "ERROR", GetLevel())
 
-	// Set to TRACE
 	SetLevel("TRACE")
 	assert.Equal(t, "TRACE", GetLevel())
 
@@ -219,7 +214,6 @@ func TestLoggerFiltering(t *testing.T) {
 			})
 			logger := slog.New(handler)
 
-			// Log at the test level
 			logger.Log(context.Background(), tt.logLevel, "test message")
 
 			if tt.shouldLog {

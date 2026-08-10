@@ -90,7 +90,6 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			// Use shared clientset (rate limiting disabled) to avoid exhaustion
 			clientset := Clientset()
 
-			// Wait for controller to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
@@ -254,7 +253,6 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			// Use shared clientset (rate limiting disabled) to avoid exhaustion
 			clientset := Clientset()
 
-			// Wait for controller to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 			t.Log("Controller pod ready")

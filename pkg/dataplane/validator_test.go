@@ -638,7 +638,6 @@ func TestValidationCacheHelpers(t *testing.T) {
 	})
 
 	t.Run("hashVersion", func(t *testing.T) {
-		// nil version
 		if hashVersion(nil) != "nil" {
 			t.Error("hashVersion(nil) should return 'nil'")
 		}
@@ -673,10 +672,8 @@ func TestValidationCacheMechanism(t *testing.T) {
 		t.Error("isValidationCached() should return false for uncached config")
 	}
 
-	// Cache the result
 	cacheValidationResult(configHash, auxHash, versionHash)
 
-	// Now should be cached
 	if !isValidationCached(configHash, auxHash, versionHash) {
 		t.Error("isValidationCached() should return true for cached config")
 	}

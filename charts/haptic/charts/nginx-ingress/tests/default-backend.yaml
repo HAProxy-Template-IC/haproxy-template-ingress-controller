@@ -8,17 +8,13 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: app-service
+          metadata: {namespace: default, name: app-service}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: errors-service
+          metadata: {namespace: default, name: errors-service}
           spec:
             ports:
               - port: 8080
@@ -63,19 +59,13 @@ validationTests:
                   paths:
                     - path: /app
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: app-service
-                          port:
-                            number: 80
+                      backend: {service: {name: app-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_db-ingress_default-backend_errors-service"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.0\\.9:9000"
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10\\.0\\.0\\.9:9000"}
       - type: contains
         target: map:path-prefix.map
         pattern: "db\\.example\\.com/ BACKEND:default_db-ingress_default-backend_errors-service"
@@ -86,17 +76,13 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: main-service
+          metadata: {namespace: default, name: main-service}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: shared
-            name: fallback-service
+          metadata: {namespace: shared, name: fallback-service}
           spec:
             ports:
               - port: 80
@@ -141,13 +127,7 @@ validationTests:
                   paths:
                     - path: /main
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: main-service
-                          port:
-                            number: 80
+                      backend: {service: {name: main-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.1\\.7:8081"
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10\\.0\\.1\\.7:8081"}

@@ -127,7 +127,6 @@ func NewCompositeStore(base Store, overlay *StoreOverlay) *CompositeStore {
 //   - Modifications (replacing base resources with same keys)
 //   - Additions that match the keys
 func (s *CompositeStore) Get(keys ...string) ([]any, error) {
-	// Get base results
 	baseResults, err := s.base.Get(keys...)
 	if err != nil {
 		return nil, err

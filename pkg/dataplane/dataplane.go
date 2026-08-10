@@ -12,109 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package dataplane provides a simple, high-level API for synchronizing HAProxy configurations
-// via the Dataplane API.
+// Package dataplane synchronizes HAProxy configurations via the Dataplane API:
+// it fetches and parses the current config, computes a fine-grained ConfigDiff
+// classifying each change as a runtime-eligible server-field update or as
+// structural, then pushes the desired config in one raw request — skip-reload
+// with an X-Runtime-Actions header when every change is runtime-eligible,
+// force-reload otherwise — retrying the connection failures HAProxy's reload
+// re-exec causes.
 //
-// The library handles all complexity internally:
-//   - Fetches current configuration from the Dataplane API
-//   - Parses both current and desired configurations
-//   - Computes a fine-grained ConfigDiff to classify changes as runtime-eligible
-//     server-field updates (weight, address, port, maintenance, agent checks) vs.
-//     structural changes
-//   - Applies the desired configuration by pushing it in full in a single request
-//     (no per-operation transactions): a skip-reload raw push carrying an
-//     X-Runtime-Actions header when every change is runtime-eligible, otherwise a
-//     force-reload raw push
-//   - Retries transient connection failures (the master socket is briefly down
-//     while HAProxy re-execs on reload)
-//   - Returns detailed results including applied changes and reload information
-//
-// # Basic Usage (Recommended)
-//
-// For production use, create a Client to reuse connections across multiple operations:
-//
-//	endpoint := &dataplane.Endpoint{
-//	    URL:      "http://haproxy:5555/v3",
-//	    Username: "admin",
-//	    Password: "secret",
-//	}
-//
-//	// Create client once, reuse for multiple operations
-//	client, err := dataplane.NewClient(context.Background(), endpoint)
-//	if err != nil {
-//	    slog.Error("Failed to create client", "error", err)
-//	    os.Exit(1)
-//	}
-//	defer client.Close()
-//
-//	desiredConfig := `
-//	global
-//	    daemon
-//	defaults
-//	    mode http
-//	    timeout client 30s
-//	    timeout server 30s
-//	    timeout connect 5s
-//	backend web
-//	    balance roundrobin
-//	    server srv1 192.168.1.10:80 check
-//	`
-//
-//	result, err := client.Sync(ctx, desiredConfig, nil, nil)
-//	if err != nil {
-//	    slog.Error("Sync failed", "error", err)
-//	    os.Exit(1)
-//	}
-//
-//	fmt.Printf("Applied %d operations\n", len(result.AppliedOperations))
-//	if result.ReloadTriggered {
-//	    fmt.Printf("HAProxy reloaded (ID: %s)\n", result.ReloadID)
-//	}
-//
-// # Simple One-Off Operations
-//
-// For quick scripts, use the convenience functions (creates client internally):
-//
-//	result, err := dataplane.Sync(ctx, endpoint, desiredConfig, nil, nil)
-//
-// # Custom Options
-//
-// Configure sync behavior with options:
-//
-//	client, err := dataplane.NewClient(ctx, endpoint)
-//	if err != nil {
-//	    return err
-//	}
-//	defer client.Close()
-//
-//	opts := &dataplane.SyncOptions{
-//	    Timeout:                   3 * time.Minute, // Overall timeout
-//	    VerifyReload:              true,            // Poll reload status after sync
-//	    ReloadVerificationTimeout: 10 * time.Second,
-//	}
-//
-//	result, err := client.Sync(ctx, desiredConfig, nil, opts)
-//
-// # Error Handling
-//
-// The library provides detailed, actionable error messages:
-//
-//	client, err := dataplane.NewClient(ctx, endpoint)
+//	client, err := dataplane.NewClient(ctx, &dataplane.Endpoint{
+//	    URL: "http://haproxy:5555/v3", Username: "admin", Password: "secret",
+//	})
 //	if err != nil {
 //	    return err
 //	}
 //	defer client.Close()
 //
 //	result, err := client.Sync(ctx, desiredConfig, nil, nil)
-//	if err != nil {
-//	    if syncErr, ok := errors.AsType[*dataplane.SyncError](err); ok {
-//	        fmt.Printf("Stage: %s\n", syncErr.Stage)
-//	        fmt.Printf("Error: %s\n", syncErr.Message)
-//	        for _, hint := range syncErr.Hints {
-//	            fmt.Printf("  Hint: %s\n", hint)
-//	        }
-//	    }
-//	}
+//
+// Pass a *SyncOptions to override the defaults (overall timeout, reload
+// verification). Sync errors carry a *SyncError with a Stage and actionable
+// Hints; see errors.AsType.
 package dataplane
 
 import (
@@ -126,21 +44,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
-// Client manages a persistent connection to the HAProxy Dataplane API.
-// It reuses connections for multiple operations, making it efficient for
-// repeated sync operations.
-//
-// For production use with multiple operations, create a Client explicitly:
-//
-//	client, err := dataplane.NewClient(ctx, endpoint)
-//	if err != nil {
-//	    return err
-//	}
-//	defer client.Close()
-//
-//	// Reuse client for multiple operations
-//	result1, err := client.Sync(ctx, config1, auxFiles1, opts)
-//	result2, err := client.Sync(ctx, config2, auxFiles2, opts)
+// Client holds a persistent connection to one HAProxy Dataplane API endpoint
+// and is meant to be reused across sync operations.
 type Client struct {
 	// Endpoint contains connection information
 	Endpoint Endpoint
@@ -149,26 +54,9 @@ type Client struct {
 	orch *orchestrator
 }
 
-// NewClient creates a new Client for the given endpoint.
-// The client reuses connections for multiple operations.
-//
-// Example:
-//
-//	// NewClient takes endpoint by pointer (so the controller can mutate
-//	// the cached version fields on the same struct).
-//	endpoint := &dataplane.Endpoint{
-//	    URL:      "http://haproxy:5555/v3",
-//	    Username: "admin",
-//	    Password: "secret",
-//	}
-//
-//	client, err := dataplane.NewClient(ctx, endpoint)
-//	if err != nil {
-//	    return fmt.Errorf("creating client: %w", err)
-//	}
-//	defer client.Close()
-//
-//	result, err := client.Sync(ctx, desiredConfig, nil, nil)
+// NewClient creates a Client for the given endpoint. The endpoint is taken by
+// pointer so the controller can mutate the cached version fields on the same
+// struct.
 func NewClient(ctx context.Context, endpoint *Endpoint) (*Client, error) {
 	// Create logger with pod context
 	logger := slog.Default().With("pod", endpoint.PodName)
@@ -208,44 +96,8 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// Sync synchronizes the desired HAProxy configuration using this client.
-//
-// This method:
-//  1. Fetches the current configuration from the Dataplane API
-//  2. Parses both current and desired configurations
-//  3. Compares them to compute a fine-grained ConfigDiff, classifying changes
-//     as runtime-eligible server-field updates vs. structural changes
-//  4. Applies the desired configuration with a single full-config push (no
-//     per-operation transactions): a skip-reload raw push carrying
-//     X-Runtime-Actions when every change is runtime-eligible, otherwise a
-//     force-reload raw push
-//  5. Retries transient connection failures across HAProxy's reload re-exec
-//  6. Returns detailed results including applied changes and reload information
-//
-// Parameters:
-//   - ctx: Context for cancellation and timeout
-//   - desiredConfig: The desired HAProxy configuration as a string
-//   - auxFiles: Auxiliary files to sync (use nil for defaults)
-//   - opts: Sync options (use nil for defaults)
-//
-// Returns:
-//   - *SyncResult: Detailed information about the sync operation
-//   - error: Detailed error with actionable hints if the sync fails
-//
-// Example:
-//
-//	client, err := dataplane.NewClient(ctx, endpoint)
-//	if err != nil {
-//	    return err
-//	}
-//	defer client.Close()
-//
-//	result, err := client.Sync(ctx, desiredConfig, nil, nil)
-//	if err != nil {
-//	    return fmt.Errorf("sync failed: %w", err)
-//	}
-//
-//	fmt.Printf("Applied %d operations in %v\n", len(result.AppliedOperations), result.Duration)
+// Sync applies desiredConfig to this endpoint, running the workflow described
+// in the package doc. nil auxFiles and nil opts select the defaults.
 func (c *Client) Sync(ctx context.Context, desiredConfig string, auxFiles *AuxiliaryFiles, opts *SyncOptions) (*SyncResult, error) {
 	// Use default options if none provided
 	if opts == nil {

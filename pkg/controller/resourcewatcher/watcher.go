@@ -315,7 +315,6 @@ func toGVR(wr *coreconfig.WatchedResource) (schema.GroupVersionResource, error) 
 		return schema.GroupVersionResource{}, errors.New("resources is required")
 	}
 
-	// Parse APIVersion into Group/Version
 	group, version := parseAPIVersion(wr.APIVersion)
 
 	// Use the explicit plural resource name from configuration

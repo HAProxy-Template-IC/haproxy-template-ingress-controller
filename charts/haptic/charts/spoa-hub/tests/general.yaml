@@ -5,22 +5,30 @@
 # tests/coraza.yaml; external-auth-specific tests live in their owning vendor
 # libraries (haproxytech / haproxy-ingress / nginx-ingress).
 
+_fx:
+  spoahubEnabledHaproxy: &spoahubEnabledHaproxy
+    enabled: true
+    haproxy:
+      socketPath: /run/spoa/hub.sock
+      modeSpop: true
+      messages:
+        - check-auth
+      timeoutHello: 2s
+      timeoutIdle: 5m
+      timeoutProcessing: 500ms
+      poolMaxConn: 100
+      poolPurgeDelay: 30s
+
 validationTests:
 
   test-spoa-hub-disabled:
     description: "With extraContext.spoaHub.enabled=false (or missing), the library must not emit the `backend spoa-hub` block, the SPOE filter, or any spoe.conf reference."
-    extraContext:
-      spoaHub:
-        enabled: false
+    extraContext: {spoaHub: {enabled: false}}
     fixtures: {}
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "backend spoa-hub"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "filter spoe engine spoa-hub"
+      - {type: not_contains, target: haproxy.cfg, pattern: "backend spoa-hub"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "filter spoe engine spoa-hub"}
 
   test-spoa-hub-rendering:
     # The fixture below pins haproxyVersion=3.2 so the rendered backend
@@ -37,18 +45,7 @@ validationTests:
       # `mode tcp`. test-spoa-hub-rendering-mode-tcp-on-haproxy30
       # covers that fallback path.
       haproxyVersion: "3.2"
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+      spoaHub: *spoahubEnabledHaproxy
     fixtures:
       # Trigger the http_frontend (where the SPOE filter directive +
       # frontend-filters auth-flow assertions live). The auth-url
@@ -73,46 +70,22 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: trigger-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: trigger-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend spoa-hub"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "mode spop"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server hub /run/spoa/hub.sock"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "filter spoe engine spoa-hub config"
+      - {type: contains, target: haproxy.cfg, pattern: "backend spoa-hub"}
+      - {type: contains, target: haproxy.cfg, pattern: "mode spop"}
+      - {type: contains, target: haproxy.cfg, pattern: "server hub /run/spoa/hub.sock"}
+      - {type: contains, target: haproxy.cfg, pattern: "filter spoe engine spoa-hub config"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request send-spoe-group spoa-hub check-auth-group"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 401"
-      - type: contains
-        target: file:spoe.conf
-        pattern: "spoe-agent spoa-hub-agent"
-      - type: contains
-        target: file:spoe.conf
-        pattern: "groups check-auth-group"
-      - type: contains
-        target: file:spoe.conf
-        pattern: "spoe-message check-auth"
-      - type: contains
-        target: file:spoe.conf
-        pattern: "args auth_url=var\\(txn.auth_url\\)"
-      - type: contains
-        target: file:spoe.conf
-        pattern: "spoe-group check-auth-group"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 401"}
+      - {type: contains, target: file:spoe.conf, pattern: "spoe-agent spoa-hub-agent"}
+      - {type: contains, target: file:spoe.conf, pattern: "groups check-auth-group"}
+      - {type: contains, target: file:spoe.conf, pattern: "spoe-message check-auth"}
+      - {type: contains, target: file:spoe.conf, pattern: "args auth_url=var\\(txn.auth_url\\)"}
+      - {type: contains, target: file:spoe.conf, pattern: "spoe-group check-auth-group"}
 
   # Regression: an Ingress with haproxy.org/forwarded-for=true triggers
   # the haproxytech library to emit `option forwardfor` in the frontend
@@ -127,25 +100,12 @@ validationTests:
     description: "When haproxytech's option-forwardfor and the spoa-hub filter spoe directive both render at frontend-filters priority 100, they must be on separate lines. Catches the cycle 4 part C bug where the `{%- if` in spoa-hub's snippet stripped the separating newline."
     extraContext:
       haproxyVersion: "3.2"
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+      spoaHub: *spoahubEnabledHaproxy
     fixtures:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: ff-svc
+          metadata: {namespace: default, name: ff-svc}
           spec:
             ports:
               - port: 80
@@ -165,45 +125,22 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: ff-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: ff-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "forwardforfilter"
+      - {type: not_contains, target: haproxy.cfg, pattern: "forwardforfilter"}
 
   test-spoa-hub-mode-tcp-on-haproxy-3-0:
     description: "On HAProxy 3.0 the `spop` proxy mode doesn't exist (introduced in 3.1). The chart must auto-fall-back the spoa-hub backend to `mode tcp` — both transports work with the SPOE filter; mode spop is just..."
     extraContext:
       haproxyVersion: "3.0"
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+      spoaHub: *spoahubEnabledHaproxy
     fixtures: {}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend spoa-hub"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "mode tcp"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "backend spoa-hub\\n    mode spop"
+      - {type: contains, target: haproxy.cfg, pattern: "backend spoa-hub"}
+      - {type: contains, target: haproxy.cfg, pattern: "mode tcp"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "backend spoa-hub\\n    mode spop"}
 
   # ============================================================================
   # spoa-hub-config.toml rendering (ADR-0007 / MR3)
@@ -258,9 +195,7 @@ validationTests:
         pattern: '(?m)^spoe-message mirror$\n\s+args [^\n]*\breq_id=unique-id\b'
       # HAProxy must actually generate an id, or `unique-id` fetches empty and the
       # hub falls back to its own — losing the correlation the argument exists for.
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'unique-id-format %\[uuid\(7\)\]'
+      - {type: contains, target: haproxy.cfg, pattern: 'unique-id-format %\[uuid\(7\)\]'}
 
   test-spoa-hub-req-id-is-never-client-controlled:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
@@ -308,10 +243,7 @@ validationTests:
           timeoutProcessing: 500ms
           poolMaxConn: 100
           poolPurgeDelay: 30s
-        hub:
-          logLevel: info
-          maxConnections: 1000
-          blockingThreadKeepAliveSecs: 30
+        hub: {logLevel: info, maxConnections: 1000, blockingThreadKeepAliveSecs: 30}
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -334,36 +266,18 @@ validationTests:
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'plugin_dir = "/etc/haproxy-spoa-hub/plugins"'
-      - type: contains
-        target: file:spoa-hub-config.toml
-        pattern: 'log_level = "info"'
-      - type: contains
-        target: file:spoa-hub-config.toml
-        pattern: 'max_connections = 1000'
-      - type: contains
-        target: file:spoa-hub-config.toml
-        pattern: '\[\[listeners\]\]'
-      - type: contains
-        target: file:spoa-hub-config.toml
-        pattern: 'address = "/run/spoa/hub.sock"'
-      - type: contains
-        target: file:spoa-hub-config.toml
-        pattern: '\[\[plugins\]\]'
-      - type: contains
-        target: file:spoa-hub-config.toml
-        pattern: 'name = "coraza"'
-      - type: contains
-        target: file:spoa-hub-config.toml
-        pattern: 'library = "libcoraza_plugin.so"'
-      - type: contains
-        target: file:spoa-hub-config.toml
-        pattern: 'timeout_ms = 15'
+      - {type: contains, target: file:spoa-hub-config.toml, pattern: 'log_level = "info"'}
+      - {type: contains, target: file:spoa-hub-config.toml, pattern: 'max_connections = 1000'}
+      - {type: contains, target: file:spoa-hub-config.toml, pattern: '\[\[listeners\]\]'}
+      - {type: contains, target: file:spoa-hub-config.toml, pattern: 'address = "/run/spoa/hub.sock"'}
+      - {type: contains, target: file:spoa-hub-config.toml, pattern: '\[\[plugins\]\]'}
+      - {type: contains, target: file:spoa-hub-config.toml, pattern: 'name = "coraza"'}
+      - {type: contains, target: file:spoa-hub-config.toml, pattern: 'library = "libcoraza_plugin.so"'}
+      - {type: contains, target: file:spoa-hub-config.toml, pattern: 'timeout_ms = 15'}
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'Include @coraza.conf-recommended\nSecRuleEngine On'
-      - type: contains
-        target: file:spoa-hub-config.toml
-        pattern: 'request_body_limit = 8192'
+      - {type: contains, target: file:spoa-hub-config.toml, pattern: 'request_body_limit = 8192'}
       - type: not_contains
         target: file:spoa-hub-config.toml
         pattern: '# nginx-ingress modsecurity-snippet from'

@@ -285,7 +285,6 @@ func TestDiscovery_DiscoverEndpoints_Success(t *testing.T) {
 			// Create discovery instance (using test helper that doesn't require haproxy)
 			discovery := createTestDiscovery(tt.dataplanePort)
 
-			// Discover endpoints
 			endpoints, err := discovery.DiscoverEndpoints(podStore, tt.credentials)
 
 			// Verify
@@ -386,7 +385,6 @@ func TestDiscovery_DiscoverEndpoints_MapResources(t *testing.T) {
 		DataplanePassword: "secret",
 	}
 
-	// Discover endpoints
 	endpoints, err := discovery.DiscoverEndpoints(podStore, credentials)
 
 	// Verify
@@ -422,10 +420,8 @@ func createPodWithPortAndPhase(name, podIP, phase string, dataplanePort int) *un
 		"component": "loadbalancer",
 	})
 
-	// Set pod IP in status
 	_ = unstructured.SetNestedField(pod.Object, podIP, "status", "podIP")
 
-	// Set pod phase in status
 	_ = unstructured.SetNestedField(pod.Object, phase, "status", "phase")
 
 	// Set spec.containers with dataplane container

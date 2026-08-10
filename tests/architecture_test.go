@@ -21,7 +21,6 @@ func TestArchitecture(t *testing.T) {
 	// Load module information
 	moduleInfo := configuration.Load("haptic")
 
-	// Load configuration from arch-go.yml
 	config, err := configuration.LoadConfig("../arch-go.yml")
 	if err != nil {
 		t.Fatalf("Failed to load arch-go.yml configuration: %v", err)

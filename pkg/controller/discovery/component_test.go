@@ -43,6 +43,19 @@ func createTestComponent(t *testing.T, bus *busevents.EventBus) *Component {
 	return component
 }
 
+// startComponent subscribes a test channel, starts the bus, and runs component
+// under a deadline. Subscription happens before Start so no event is missed.
+func startComponent(t *testing.T, bus *busevents.EventBus, component *Component,
+	timeout time.Duration) (ctx context.Context, eventChan <-chan busevents.Event) {
+	t.Helper()
+	eventChan = bus.Subscribe("test-sub", 10)
+	bus.Start()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	t.Cleanup(cancel)
+	go func() { _ = component.Start(ctx) }()
+	return ctx, eventChan
+}
+
 func TestComponent_ConfigValidatedEvent(t *testing.T) {
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
@@ -56,17 +69,7 @@ func TestComponent_ConfigValidatedEvent(t *testing.T) {
 		DataplanePassword: "secret",
 	}
 
-	// Subscribe to events
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)
-	defer cancel()
-
-	// Start component
-	go func() {
-		_ = component.Start(ctx)
-	}()
+	_, eventChan := startComponent(t, bus, component, testutil.VeryLongTimeout)
 
 	// Publish CredentialsUpdatedEvent first (need credentials)
 	bus.Publish(events.NewCredentialsUpdatedEvent(credentials, "v1"))
@@ -100,17 +103,7 @@ func TestComponent_CredentialsUpdatedEvent(t *testing.T) {
 	podStore := createTestPodStore(t, []string{"127.0.0.1"})
 	component.SetPodStore(podStore)
 
-	// Subscribe to events
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)
-	defer cancel()
-
-	// Start component
-	go func() {
-		_ = component.Start(ctx)
-	}()
+	_, eventChan := startComponent(t, bus, component, testutil.VeryLongTimeout)
 
 	// Publish ConfigValidatedEvent first (need dataplane port)
 	config := &coreconfig.Config{
@@ -153,17 +146,7 @@ func TestComponent_ResourceIndexUpdatedEvent(t *testing.T) {
 		DataplanePassword: "secret",
 	}
 
-	// Subscribe to events
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)
-	defer cancel()
-
-	// Start component
-	go func() {
-		_ = component.Start(ctx)
-	}()
+	_, eventChan := startComponent(t, bus, component, testutil.VeryLongTimeout)
 
 	// Publish prerequisite events
 	config := &coreconfig.Config{
@@ -208,17 +191,7 @@ func TestComponent_ResourceIndexUpdatedEvent_InitialSync_Skipped(t *testing.T) {
 		DataplanePassword: "secret",
 	}
 
-	// Subscribe to events
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
-	defer cancel()
-
-	// Start component
-	go func() {
-		_ = component.Start(ctx)
-	}()
+	_, eventChan := startComponent(t, bus, component, testutil.EventTimeout)
 
 	// Publish prerequisite events
 	config := &coreconfig.Config{
@@ -259,17 +232,7 @@ func TestComponent_ResourceIndexUpdatedEvent_WrongResourceType_Ignored(t *testin
 		DataplanePassword: "secret",
 	}
 
-	// Subscribe to events
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
-	defer cancel()
-
-	// Start component
-	go func() {
-		_ = component.Start(ctx)
-	}()
+	_, eventChan := startComponent(t, bus, component, testutil.EventTimeout)
 
 	// Publish prerequisite events
 	config := &coreconfig.Config{
@@ -310,17 +273,7 @@ func TestComponent_ResourceSyncCompleteEvent(t *testing.T) {
 		DataplanePassword: "secret",
 	}
 
-	// Subscribe to events
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)
-	defer cancel()
-
-	// Start component
-	go func() {
-		_ = component.Start(ctx)
-	}()
+	_, eventChan := startComponent(t, bus, component, testutil.VeryLongTimeout)
 
 	// Publish prerequisite events
 	config := &coreconfig.Config{
@@ -334,7 +287,6 @@ func TestComponent_ResourceSyncCompleteEvent(t *testing.T) {
 	// Wait briefly for prerequisites to be processed
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish ResourceSyncCompleteEvent for haproxy-pods
 	bus.Publish(events.NewResourceSyncCompleteEvent("haproxy-pods", 1))
 
 	// Wait for HAProxyPodsDiscoveredEvent - verifies that ResourceSyncCompleteEvent triggers discovery.
@@ -357,17 +309,7 @@ func TestComponent_ResourceSyncCompleteEvent_WrongResourceType_Ignored(t *testin
 		DataplanePassword: "secret",
 	}
 
-	// Subscribe to events
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
-	defer cancel()
-
-	// Start component
-	go func() {
-		_ = component.Start(ctx)
-	}()
+	_, eventChan := startComponent(t, bus, component, testutil.EventTimeout)
 
 	// Publish prerequisite events
 	config := &coreconfig.Config{
@@ -447,17 +389,7 @@ func testMissingPrerequisite(t *testing.T, hasConfig, hasCredentials, hasPodStor
 		component.SetPodStore(podStore)
 	}
 
-	// Subscribe to events
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
-	defer cancel()
-
-	// Start component
-	go func() {
-		_ = component.Start(ctx)
-	}()
+	ctx, eventChan := startComponent(t, bus, component, testutil.EventTimeout)
 
 	// Publish prerequisite events
 	if hasConfig {
@@ -489,7 +421,6 @@ func testMissingPrerequisite(t *testing.T, hasConfig, hasCredentials, hasPodStor
 	}
 	bus.Publish(events.NewResourceIndexUpdatedEvent("haproxy-pods", changeStats))
 
-	// Check if discovery occurred
 	checkDiscoveryOccurred(t, eventChan, ctx, shouldDiscover)
 }
 
@@ -555,7 +486,6 @@ func TestComponent_BecameLeaderEvent(t *testing.T) {
 		DataplanePassword: "secret",
 	}
 
-	// Subscribe to events
 	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
@@ -599,17 +529,7 @@ func TestComponent_BecameLeaderEvent_MissingPrerequisites(t *testing.T) {
 
 	// DO NOT set prerequisites - should not trigger discovery
 
-	// Subscribe to events
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
-	defer cancel()
-
-	// Start component
-	go func() {
-		_ = component.Start(ctx)
-	}()
+	_, eventChan := startComponent(t, bus, component, testutil.EventTimeout)
 
 	// Wait for startup
 	time.Sleep(testutil.StartupDelay)
@@ -638,22 +558,11 @@ func TestComponent_InvalidConfigType(t *testing.T) {
 		DataplanePassword: "secret",
 	}
 
-	// Subscribe to events
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
-	defer cancel()
-
-	// Start component
-	go func() {
-		_ = component.Start(ctx)
-	}()
+	_, eventChan := startComponent(t, bus, component, testutil.EventTimeout)
 
 	// Wait for startup
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish credentials first
 	bus.Publish(events.NewCredentialsUpdatedEvent(credentials, "v1"))
 
 	// Publish ConfigValidatedEvent with wrong config type (string instead of *Config)
@@ -671,17 +580,7 @@ func TestComponent_InvalidCredentialsType(t *testing.T) {
 	podStore := createTestPodStore(t, []string{"127.0.0.1"})
 	component.SetPodStore(podStore)
 
-	// Subscribe to events
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
-	defer cancel()
-
-	// Start component
-	go func() {
-		_ = component.Start(ctx)
-	}()
+	_, eventChan := startComponent(t, bus, component, testutil.EventTimeout)
 
 	// Wait for startup
 	time.Sleep(testutil.StartupDelay)
@@ -723,7 +622,6 @@ func TestComponent_PerformInitialDiscovery_NoPodsInStore(t *testing.T) {
 	component.hasDataplanePort = true
 	component.mu.Unlock()
 
-	// Subscribe to events
 	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
@@ -773,11 +671,9 @@ func addPodToStoreWithPort(t *testing.T, podStore types.Store, name, namespace, 
 	err := unstructured.SetNestedSlice(pod.Object, containers, "spec", "containers")
 	require.NoError(t, err)
 
-	// Set pod status to Running
 	err = unstructured.SetNestedField(pod.Object, "Running", "status", "phase")
 	require.NoError(t, err)
 
-	// Set pod IP
 	err = unstructured.SetNestedField(pod.Object, ip, "status", "podIP")
 	require.NoError(t, err)
 

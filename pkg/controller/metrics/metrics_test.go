@@ -261,11 +261,9 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 	metrics.RecordHAProxyPodRejected("version_mismatch_older")
 	metrics.RecordConfigRejected("validationtests")
 
-	// Gather all metrics
 	metricFamilies, err := registry.Gather()
 	require.NoError(t, err)
 
-	// Expected metrics
 	expectedMetrics := []string{
 		"haptic_reconciliation_duration_seconds",
 		"haptic_reconciliation_total",
@@ -312,14 +310,12 @@ func TestMetrics_RecordWebhookRequest(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1.0, testutil.ToFloat64(webhookTotal))
 
-	// Record denied webhook request
 	metrics.RecordWebhookRequest("v1.ConfigMap", "denied", 0.3)
 
 	webhookDenied, err := metrics.WebhookRequestsTotal.GetMetricWithLabelValues("v1.ConfigMap", "denied")
 	require.NoError(t, err)
 	assert.Equal(t, 1.0, testutil.ToFloat64(webhookDenied))
 
-	// Record error webhook request
 	metrics.RecordWebhookRequest("v1.Secret", "error", 0.1)
 
 	webhookError, err := metrics.WebhookRequestsTotal.GetMetricWithLabelValues("v1.Secret", "error")
@@ -331,14 +327,12 @@ func TestMetrics_RecordWebhookValidation(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
 
-	// Record allowed validation
 	metrics.RecordWebhookValidation("v1.ConfigMap", "allowed")
 
 	validation, err := metrics.WebhookValidationTotal.GetMetricWithLabelValues("v1.ConfigMap", "allowed")
 	require.NoError(t, err)
 	assert.Equal(t, 1.0, testutil.ToFloat64(validation))
 
-	// Record denied validation
 	metrics.RecordWebhookValidation("v1.ConfigMap", "denied")
 
 	denied, err := metrics.WebhookValidationTotal.GetMetricWithLabelValues("v1.ConfigMap", "denied")
@@ -375,7 +369,6 @@ func TestMetrics_RecordLeadershipTransition(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
 
-	// Record transitions
 	metrics.RecordLeadershipTransition()
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.LeaderElectionTransitionsTotal))
 
@@ -390,11 +383,9 @@ func TestMetrics_AddTimeAsLeader(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
 
-	// Add time as leader
 	metrics.AddTimeAsLeader(100.5)
 	assert.Equal(t, 100.5, testutil.ToFloat64(metrics.LeaderElectionTimeAsLeaderSeconds))
 
-	// Add more time
 	metrics.AddTimeAsLeader(50.25)
 	assert.Equal(t, 150.75, testutil.ToFloat64(metrics.LeaderElectionTimeAsLeaderSeconds))
 }

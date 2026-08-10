@@ -92,7 +92,6 @@ func TestBaseValidator_Stop(t *testing.T) {
 	// Give validator time to start
 	time.Sleep(50 * time.Millisecond)
 
-	// Stop the validator
 	validator.Stop()
 
 	// Wait for validator to stop
@@ -141,7 +140,6 @@ func TestBaseValidator_PanicRecovery(t *testing.T) {
 	go validator.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	// Create a valid test config
 	cfg := createValidTestConfig()
 
 	// Send a validation request that will trigger the panic
@@ -306,7 +304,6 @@ func TestTemplateValidator_SnippetErrors(t *testing.T) {
 	req := events.NewConfigValidationRequest(cfg, "test-version")
 	bus.Publish(req)
 
-	// Wait for response
 	response := testutil.WaitForEventWithPredicate(t, eventChan, 2*time.Second,
 		func(resp *events.ConfigValidationResponse) bool {
 			return resp.ValidatorName == ValidatorNameTemplate
@@ -347,7 +344,6 @@ func TestTemplateValidator_MapErrors(t *testing.T) {
 	req := events.NewConfigValidationRequest(cfg, "test-version")
 	bus.Publish(req)
 
-	// Wait for response
 	response := testutil.WaitForEventWithPredicate(t, eventChan, 2*time.Second,
 		func(resp *events.ConfigValidationResponse) bool {
 			return resp.ValidatorName == ValidatorNameTemplate
@@ -388,7 +384,6 @@ func TestTemplateValidator_FileErrors(t *testing.T) {
 	req := events.NewConfigValidationRequest(cfg, "test-version")
 	bus.Publish(req)
 
-	// Wait for response
 	response := testutil.WaitForEventWithPredicate(t, eventChan, 2*time.Second,
 		func(resp *events.ConfigValidationResponse) bool {
 			return resp.ValidatorName == ValidatorNameTemplate
@@ -471,7 +466,6 @@ func TestJSONPathValidator_IndexByErrors(t *testing.T) {
 	req := events.NewConfigValidationRequest(cfg, "test-version")
 	bus.Publish(req)
 
-	// Wait for response
 	response := testutil.WaitForEventWithPredicate(t, eventChan, 2*time.Second,
 		func(resp *events.ConfigValidationResponse) bool {
 			return resp.ValidatorName == ValidatorNameJSONPath

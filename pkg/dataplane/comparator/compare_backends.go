@@ -110,51 +110,39 @@ func (c *Comparator) compareModifiedBackendsWithIndexes(desiredBackends, current
 		serverOps := c.compareServersWithIndex(name, current.ServerIndex[name], desired.ServerIndex[name], summary)
 		appendOperationsIfNotEmpty(&operations, serverOps, &backendModified)
 
-		// Compare ACLs within this backend
 		aclOps := c.compareACLs("backend", name, currentBackend.ACLList, desiredBackend.ACLList, summary)
 		appendOperationsIfNotEmpty(&operations, aclOps, &backendModified)
 
-		// Compare HTTP request rules within this backend
 		requestRuleOps := c.compareHTTPRequestRules("backend", name, currentBackend.HTTPRequestRuleList, desiredBackend.HTTPRequestRuleList)
 		appendOperationsIfNotEmpty(&operations, requestRuleOps, &backendModified)
 
-		// Compare HTTP response rules within this backend
 		responseRuleOps := c.compareHTTPResponseRules("backend", name, currentBackend.HTTPResponseRuleList, desiredBackend.HTTPResponseRuleList)
 		appendOperationsIfNotEmpty(&operations, responseRuleOps, &backendModified)
 
-		// Compare TCP request rules within this backend
 		tcpRequestRuleOps := c.compareTCPRequestRules("backend", name, currentBackend.TCPRequestRuleList, desiredBackend.TCPRequestRuleList)
 		appendOperationsIfNotEmpty(&operations, tcpRequestRuleOps, &backendModified)
 
-		// Compare TCP response rules within this backend
 		tcpResponseRuleOps := c.compareTCPResponseRules(name, currentBackend.TCPResponseRuleList, desiredBackend.TCPResponseRuleList)
 		appendOperationsIfNotEmpty(&operations, tcpResponseRuleOps, &backendModified)
 
-		// Compare log targets within this backend
 		logTargetOps := c.compareLogTargets("backend", name, currentBackend.LogTargetList, desiredBackend.LogTargetList)
 		appendOperationsIfNotEmpty(&operations, logTargetOps, &backendModified)
 
-		// Compare stick rules within this backend
 		stickRuleOps := c.compareStickRules(name, currentBackend.StickRuleList, desiredBackend.StickRuleList)
 		appendOperationsIfNotEmpty(&operations, stickRuleOps, &backendModified)
 
-		// Compare HTTP after response rules within this backend
 		httpAfterRuleOps := c.compareHTTPAfterResponseRules(name, currentBackend.HTTPAfterResponseRuleList, desiredBackend.HTTPAfterResponseRuleList)
 		appendOperationsIfNotEmpty(&operations, httpAfterRuleOps, &backendModified)
 
-		// Compare server switching rules within this backend
 		serverSwitchingRuleOps := c.compareServerSwitchingRules(name, currentBackend.ServerSwitchingRuleList, desiredBackend.ServerSwitchingRuleList)
 		appendOperationsIfNotEmpty(&operations, serverSwitchingRuleOps, &backendModified)
 
-		// Compare filters within this backend
 		filterOps := c.compareFilters("backend", name, currentBackend.FilterList, desiredBackend.FilterList)
 		appendOperationsIfNotEmpty(&operations, filterOps, &backendModified)
 
-		// Compare HTTP checks within this backend
 		httpCheckOps := c.compareHTTPChecks(name, currentBackend.HTTPCheckList, desiredBackend.HTTPCheckList)
 		appendOperationsIfNotEmpty(&operations, httpCheckOps, &backendModified)
 
-		// Compare TCP checks within this backend
 		tcpCheckOps := c.compareTCPChecks(name, currentBackend.TCPCheckRuleList, desiredBackend.TCPCheckRuleList)
 		appendOperationsIfNotEmpty(&operations, tcpCheckOps, &backendModified)
 

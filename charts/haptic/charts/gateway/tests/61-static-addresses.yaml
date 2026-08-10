@@ -18,8 +18,7 @@ validationTests:
             labels:
               app.kubernetes.io/name: haptic
               app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
+          spec: {type: LoadBalancer}
           status:
             loadBalancer:
               ingress:
@@ -27,10 +26,7 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: multi-ip-gw
-            namespace: default
-            generation: 1
+          metadata: {name: multi-ip-gw, namespace: default, generation: 1}
           spec:
             gatewayClassName: haproxy
             addresses:
@@ -39,9 +35,7 @@ validationTests:
               - type: IPAddress
                 value: "1.0.0.1"      # RFC 5737 unusable
             listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
+              - {name: http, port: 80, protocol: HTTP}
     assertions:
       - type: haproxy_valid
 
@@ -75,19 +69,13 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gateway-static-addresses
-            namespace: gateway-conformance-infra
-            generation: 1
+          metadata: {name: gateway-static-addresses, namespace: gateway-conformance-infra, generation: 1}
           spec:
             gatewayClassName: haproxy
             addresses:
-              - type: IPAddress
-                value: "172.19.255.249"
+              - {type: IPAddress, value: "172.19.255.249"}
             listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
+              - {name: http, port: 80, protocol: HTTP}
     assertions:
       - type: haproxy_valid
 

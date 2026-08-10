@@ -60,7 +60,6 @@ func parseDirective(line string) (keyword string, values []string) {
 		mainPart = strings.TrimSpace(line[:commentIdx])
 	}
 
-	// Split into fields
 	fields := splitFields(mainPart, false)
 	if len(fields) == 0 {
 		return "", nil

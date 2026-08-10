@@ -111,7 +111,6 @@ func runBenchmark(_ *cobra.Command, _ []string) error {
 	}))
 	slog.SetDefault(logger)
 
-	// Load config
 	configSpec, err := loadConfigFromFiles([]string{benchmarkConfigFile})
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -150,7 +149,6 @@ func runBenchmark(_ *cobra.Command, _ []string) error {
 		return errNoValidationTests
 	}
 
-	// Setup validation paths
 	validationPaths, _, _, cleanupFunc, err := setupValidationPaths(configSpec)
 	if err != nil {
 		return err
@@ -231,16 +229,13 @@ func runSingleTestBenchmark(
 		httpFixtures = testrunner.MergeHTTPFixtures(globalTest.HTTPFixtures, test.HTTPFixtures)
 	}
 
-	// Create stores from fixtures
 	storeMap, err := createStoresForBenchmark(cfg, engine, fixtures)
 	if err != nil {
 		return nil, fmt.Errorf("creating fixture stores: %w", err)
 	}
 
-	// Create HTTP store
 	httpStore := createHTTPStoreForBenchmark(httpFixtures, logger)
 
-	// Build render context
 	renderCtx := buildBenchmarkContext(cfg, storeMap, validationPaths, httpStore, typedResourceTypes, logger)
 
 	// Fold in the _global + per-test extraContext baseline so the benchmark

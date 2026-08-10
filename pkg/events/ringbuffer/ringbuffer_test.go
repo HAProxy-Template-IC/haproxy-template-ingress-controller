@@ -49,12 +49,10 @@ func TestGetLast(t *testing.T) {
 	// Empty buffer
 	assert.Equal(t, []int{}, rb.GetLast(2))
 
-	// Add some items
 	rb.Add(1)
 	rb.Add(2)
 	rb.Add(3)
 
-	// Get last 2
 	last2 := rb.GetLast(2)
 	assert.Equal(t, []int{2, 3}, last2)
 
@@ -62,7 +60,6 @@ func TestGetLast(t *testing.T) {
 	last10 := rb.GetLast(10)
 	assert.Equal(t, []int{1, 2, 3}, last10)
 
-	// Get all
 	all := rb.GetLast(3)
 	assert.Equal(t, []int{1, 2, 3}, all)
 }
@@ -83,7 +80,6 @@ func TestGetLastWithWrapAround(t *testing.T) {
 	all := rb.GetLast(3)
 	assert.Equal(t, []int{3, 4, 5}, all)
 
-	// Get last 2
 	last2 := rb.GetLast(2)
 	assert.Equal(t, []int{4, 5}, last2)
 }

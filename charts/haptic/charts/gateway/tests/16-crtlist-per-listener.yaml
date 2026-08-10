@@ -1,18 +1,19 @@
+_fx:
+  tlsSecretTlsCert: &tlsSecretTlsCert
+    certificateRefs:
+      - {kind: Secret, name: tls-cert, namespace: default}
+
 validationTests:
   test-gateway-crtlist-per-listener-shapes:
     requires: [gateways]
     requiresFields: [gateways.spec.tls.frontend]
     description: "Phase 2 of the per-Gateway-IP refactor. Verifies that every HTTPS Gateway listener gets its OWN crt-list file via fileRegistry, and that the file's single line carries the listener-specific SSL options:   * Catchall + AllowValidOnly default validation → cert line     with `ca-file <path> verify required` and NO SNI filter.   * Hostnamed + AllowInsecureFallback per-port validation →     cert line with `ca-file <path> verify optional     ca-ignore-err all crt-ignore-err all` and the listener's     hostname as the SNI filter.   * Catchall + no mTLS → cert line with just `ocsp-update on`     (no verify clause, no SNI filter).   * mTLS-blocked listener (CA refs unresolvable) → NO crt-list     file emitted (phase 4's bind drops on missing file)."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-mixed
-            namespace: default
-            generation: 1
+          metadata: {name: gw-mixed, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             tls:
@@ -20,50 +21,31 @@ validationTests:
                 default:
                   validation:
                     caCertificateRefs:
-                      - kind: ConfigMap
-                        group: ""
-                        name: ca-cm
+                      - {kind: ConfigMap, group: "", name: ca-cm}
                 perPort:
                   - port: 8443
                     tls:
                       validation:
                         mode: AllowInsecureFallback
                         caCertificateRefs:
-                          - kind: ConfigMap
-                            group: ""
-                            name: ca-cm
+                          - {kind: ConfigMap, group: "", name: ca-cm}
             listeners:
               # Catchall + AllowValidOnly default validation.
               - name: https-default
                 port: 443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: tls-cert
-                      namespace: default
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecretTlsCert
               # Hostnamed + AllowInsecureFallback per-port override.
               - name: https-perport
                 port: 8443
                 hostname: second-example.org
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: tls-cert
-                      namespace: default
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecretTlsCert
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-bare
-            namespace: default
-            generation: 1
+          metadata: {name: gw-bare, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -71,20 +53,11 @@ validationTests:
               - name: https
                 port: 9443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: tls-cert
-                      namespace: default
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecretTlsCert
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-broken-ca
-            namespace: default
-            generation: 1
+          metadata: {name: gw-broken-ca, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             tls:
@@ -92,29 +65,19 @@ validationTests:
                 default:
                   validation:
                     caCertificateRefs:
-                      - kind: ConfigMap
-                        group: ""
-                        name: nonexistent-ca
+                      - {kind: ConfigMap, group: "", name: nonexistent-ca}
             listeners:
               # mTLS-blocked: CA ref points at a non-existent ConfigMap.
               # Phase 2 must skip emission (no crt-list file).
               - name: https
                 port: 7443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: tls-cert
-                      namespace: default
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecretTlsCert
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            name: tls-cert
-            namespace: default
+          metadata: {name: tls-cert, namespace: default}
           type: kubernetes.io/tls
           data:
             tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
@@ -122,9 +85,7 @@ validationTests:
       configmaps:
         - apiVersion: v1
           kind: ConfigMap
-          metadata:
-            name: ca-cm
-            namespace: default
+          metadata: {name: ca-cm, namespace: default}
           data:
             ca.crt: |
               -----BEGIN CERTIFICATE-----

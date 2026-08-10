@@ -126,7 +126,6 @@ func TestComponent_StopRefresher(t *testing.T) {
 	component.refreshers["http://example.com"] = timer
 	component.mu.Unlock()
 
-	// Stop the refresher
 	component.StopRefresher("http://example.com")
 
 	// Verify refresher is removed
@@ -151,7 +150,6 @@ func TestComponent_HandleValidationCompleted_NoPending(t *testing.T) {
 
 	component := New(bus, logger, 0)
 
-	// Subscribe to events
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
@@ -258,7 +256,6 @@ func TestComponent_StopAllRefreshers(t *testing.T) {
 	component.refreshers["http://example3.com"] = time.NewTimer(1 * time.Hour)
 	component.mu.Unlock()
 
-	// Stop all
 	component.stopAllRefreshers()
 
 	// Verify all removed
@@ -327,7 +324,6 @@ func TestComponent_RefreshURL_NilContext(t *testing.T) {
 
 	component := New(bus, logger, 0)
 
-	// ctx is nil
 	component.ctx = nil
 
 	// Should return early without panic

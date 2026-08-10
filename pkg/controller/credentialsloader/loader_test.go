@@ -222,7 +222,6 @@ func TestCredentialsLoaderComponent_IgnoresOtherEvents(t *testing.T) {
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish some other event type (ConfigParsedEvent)
 	bus.Publish(events.NewConfigParsedEvent(nil, nil, "v1", ""))
 
 	// Then publish a valid secret event

@@ -508,7 +508,6 @@ func TestEventCommentator_ProcessEvent(t *testing.T) {
 
 	event := events.NewConfigParsedEvent(nil, nil, "v1", "s1")
 
-	// Process event
 	ec.processEvent(event)
 
 	// Verify it was added to ring buffer
@@ -536,7 +535,6 @@ func TestEventCommentator_StartStop(t *testing.T) {
 	// Give it time to start
 	time.Sleep(50 * time.Millisecond)
 
-	// Publish an event
 	bus.Publish(events.NewConfigParsedEvent(nil, nil, "v1", "s1"))
 
 	// Give it time to process
@@ -825,7 +823,6 @@ func TestEventCommentator_AppendCorrelation(t *testing.T) {
 		// Start with base attrs
 		attrs := []any{"event_type", "test"}
 
-		// Append correlation
 		result := ec.appendCorrelation(event, attrs)
 
 		// Verify event_id and correlation_id were added (6 items: event_type, test, event_id, uuid, correlation_id, uuid)

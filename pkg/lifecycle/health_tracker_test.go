@@ -107,6 +107,5 @@ func TestActivityStallTimeout(t *testing.T) {
 }
 
 func TestDefaultProcessingTimeout(t *testing.T) {
-	// Default should be 2 minutes
 	assert.Equal(t, 2*time.Minute, DefaultProcessingTimeout)
 }

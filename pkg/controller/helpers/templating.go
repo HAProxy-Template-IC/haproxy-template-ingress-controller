@@ -189,7 +189,6 @@ func ExtractPostProcessorConfigs(cfg *config.Config) map[string][]templating.Pos
 		}
 	}
 
-	// SSL certificates
 	for name, certDef := range cfg.SSLCertificates {
 		if len(certDef.PostProcessing) > 0 {
 			configs[name] = convertPostProcessorConfigs(certDef.PostProcessing)

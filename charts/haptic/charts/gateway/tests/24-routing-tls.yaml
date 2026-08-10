@@ -1,17 +1,58 @@
+_fx:
+  specTls443: &specTls443
+    gatewayClassName: haptic
+    listeners:
+      - name: tls
+        protocol: TLS
+        port: 443
+        hostname: "*.example.com"
+        allowedRoutes:
+          namespaces: {from: Same}
+          kinds:
+            - kind: TLSRoute
+        tls: {mode: Passthrough}
+  servicesServiceTcpBackend: &servicesServiceTcpBackend
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: tcp-backend, namespace: default}
+      spec:
+        ports:
+          - port: 8443
+  servicesServiceTcpBackend2: &servicesServiceTcpBackend2
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: tcp-backend, namespace: default}
+      spec:
+        ports:
+          - port: 443
+  metadataTlsApp: &metadataTlsApp
+    name: tls-app
+    namespace: default
+    generation: 1
+  rulesTcpBackend8443: &rulesTcpBackend8443
+    - backendRefs:
+        - {name: tcp-backend, port: 8443}
+  rulesTlsBackend443: &rulesTlsBackend443
+    - backendRefs:
+        - {name: tls-backend, port: 443}
+  rulesTcpBackend443: &rulesTcpBackend443
+    - backendRefs:
+        - {name: tcp-backend, port: 443}
+  metadataGwTls: &metadataGwTls
+    name: gw-tls
+    namespace: default
+    generation: 1
+
 validationTests:
   test-tlsroute-terminate-on-chart-static-httpsport:
     requires: [gateways, tlsroutes]
     description: "Mirrors the upstream TLSRouteTerminateSimpleSameNamespace conformance fixture: a Gateway with one TLS-Terminate listener on port 8443 (which is also the chart's default httpsPort) and nothing else com."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsroute-terminate-default
-            namespace: default
-            generation: 1
+          metadata: {name: gw-tlsroute-terminate-default, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -20,66 +61,38 @@ validationTests:
                 port: 8443
                 hostname: tls.example.com
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
                 tls:
                   mode: Terminate
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                      namespace: default
+                    - {kind: Secret, name: shared-tls, namespace: default}
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: tls-app
-            namespace: default
-            generation: 1
+          metadata: *metadataTlsApp
           spec:
             parentRefs:
               - name: gw-tlsroute-terminate-default
             hostnames:
               - tls.example.com
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 8443
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 8443
+            rules: *rulesTcpBackend8443
+      services: *servicesServiceTcpBackend
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend gateway-tls-port-8443$'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+bind \*:8443 ssl crt-list '
-      - type: match_count
-        target: haproxy.cfg
-        pattern: '(?m)^\s+bind \*:8443'
-        expected: "1"
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tls-port-8443$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+bind \*:8443 ssl crt-list '}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^\s+bind \*:8443', expected: "1"}
   test-tlsroute-invalid-backend-rejects-on-frontend:
     requires: [gateways, tlsroutes]
     description: "Mirror of the upstream TLSRouteInvalidBackendRefUnknownKind conformance fixture's chart-side contract: a TLS Passthrough listener has a TLSRoute attached whose backendRef points at an unknown kind."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsroute-invalid
-            namespace: default
-            generation: 1
+          metadata: {name: gw-tlsroute-invalid, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -87,19 +100,14 @@ validationTests:
                 protocol: TLS
                 port: 9445
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+                tls: {mode: Passthrough}
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: invalid-backend
-            namespace: default
-            generation: 1
+          metadata: {name: invalid-backend, namespace: default, generation: 1}
           spec:
             parentRefs:
               - name: gw-tlsroute-invalid
@@ -107,36 +115,23 @@ validationTests:
               - example.com
             rules:
               - backendRefs:
-                  - group: unknownkind.example.com
-                    kind: NonExistent
-                    name: tls-backend
-                    port: 443
+                  - {group: unknownkind.example.com, kind: NonExistent, name: tls-backend, port: 443}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend gateway-tls-port-9445$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tls-port-9445$'}
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'use_backend .* req_ssl_sni -m str example\.com'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+tcp-request content reject$'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'use_backend .* req_ssl_sni -m str example\.com'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+tcp-request content reject$'}
   test-tlsroute-invalid-backend-rejects-on-chart-static:
     requires: [gateways, tlsroutes]
     description: "Mirrors the upstream TLSRouteInvalidBackendRefNonexistent / TLSRouteInvalidBackendRefUnknownKind conformance scenario at chart-static httpsPort (443/8443): a TLS Passthrough listener on the chart-static port has a TLSRoute attached whose backendRef points at a non-existent Service. The route is recorded in sslPassthroughBackends with `invalid: true`; this lights bindHTTPSDefault so chart-static `frontend ssl-tcp` renders, and the route's claimed SNI joins listener_sni so connections to that SNI hit the reject path (not the ssl-loopback fallback)."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsroute-invalid-default
-            namespace: default
-            generation: 1
+          metadata: {name: gw-tlsroute-invalid-default, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -144,19 +139,14 @@ validationTests:
                 protocol: TLS
                 port: 8443
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+                tls: {mode: Passthrough}
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: invalid-backend-default
-            namespace: default
-            generation: 1
+          metadata: {name: invalid-backend-default, namespace: default, generation: 1}
           spec:
             parentRefs:
               - name: gw-tlsroute-invalid-default
@@ -164,17 +154,12 @@ validationTests:
               - example.com
             rules:
               - backendRefs:
-                  - name: nonexistent-service
-                    port: 443
+                  - {name: nonexistent-service, port: 443}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend ssl-tcp$'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'use_backend .* req_ssl_sni -m str example\.com'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend ssl-tcp$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'use_backend .* req_ssl_sni -m str example\.com'}
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)acl gw_default_gw_tlsroute_invalid_default_invalid_sni req_ssl_sni -m str example\.com'
@@ -184,16 +169,12 @@ validationTests:
   test-tlsroute-hostname-intersection-multi-gateway:
     requires: [gateways, tlsroutes]
     description: "Mirrors the upstream TLSRouteHostnameIntersection conformance fixture: four Gateways on port 443 (chart-static httpsPort), each with a different listener-hostname pattern (exact / *.example.com / *.com / empty). Each Gateway has TLSRoutes whose hostnames intersect with the parent listener pattern. Per Gateway-API spec, a SNI matching one Gateway's listener pattern but not claimed by any of THAT Gateway's routes must be rejected — even if a sibling Gateway on the same port has routes that would accept the SNI under a wider pattern. Without per-Gateway routing isolation the chart's union-style route_sni ACL would let `non.matching.com` reach G4's `*.com` backend via G3's `*.com` listener, breaking the spec contract."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsroute-exact-hostname-x-1
-            namespace: default
-            generation: 1
+          metadata: {name: gw-tlsroute-exact-hostname-x-1, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -202,18 +183,13 @@ validationTests:
                 port: 443
                 hostname: abc.example.com
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+                tls: {mode: Passthrough}
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsroute-more-specific-wc-hostname-x-2
-            namespace: default
-            generation: 1
+          metadata: {name: gw-tlsroute-more-specific-wc-hostname-x-2, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -222,18 +198,13 @@ validationTests:
                 port: 443
                 hostname: "*.example.com"
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+                tls: {mode: Passthrough}
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsroute-less-specific-wc-hostname-x-3
-            namespace: default
-            generation: 1
+          metadata: {name: gw-tlsroute-less-specific-wc-hostname-x-3, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -242,18 +213,13 @@ validationTests:
                 port: 443
                 hostname: "*.com"
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+                tls: {mode: Passthrough}
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsroute-empty-hostname-x-4
-            namespace: default
-            generation: 1
+          metadata: {name: gw-tlsroute-empty-hostname-x-4, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -261,75 +227,51 @@ validationTests:
                 protocol: TLS
                 port: 443
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+                tls: {mode: Passthrough}
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: r-x-1
-            namespace: default
+          metadata: {name: r-x-1, namespace: default}
           spec:
             parentRefs:
               - name: gw-tlsroute-exact-hostname-x-1
             hostnames:
               - "*.example.com"
-            rules:
-              - backendRefs:
-                  - name: tls-backend
-                    port: 443
+            rules: *rulesTlsBackend443
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: r-x-2-exact
-            namespace: default
+          metadata: {name: r-x-2-exact, namespace: default}
           spec:
             parentRefs:
               - name: gw-tlsroute-more-specific-wc-hostname-x-2
             hostnames:
               - abc.example.com
-            rules:
-              - backendRefs:
-                  - name: tls-backend
-                    port: 443
+            rules: *rulesTlsBackend443
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: r-x-3-exact
-            namespace: default
+          metadata: {name: r-x-3-exact, namespace: default}
           spec:
             parentRefs:
               - name: gw-tlsroute-less-specific-wc-hostname-x-3
             hostnames:
               - abc.example.com
-            rules:
-              - backendRefs:
-                  - name: tls-backend
-                    port: 443
+            rules: *rulesTlsBackend443
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: r-x-4-less
-            namespace: default
+          metadata: {name: r-x-4-less, namespace: default}
           spec:
             parentRefs:
               - name: gw-tlsroute-empty-hostname-x-4
             hostnames:
               - "*.com"
-            rules:
-              - backendRefs:
-                  - name: tls-backend
-                    port: 443
+            rules: *rulesTlsBackend443
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: tls-backend
-            namespace: default
+          metadata: {name: tls-backend, namespace: default}
           spec:
             ports:
               - port: 443
@@ -367,16 +309,12 @@ validationTests:
   test-tlsroute-terminate-nondefault-port-frontend:
     requires: [gateways, tlsroutes]
     description: TLSRoute attached to a TLS Terminate listener on a non-chart- static port renders a per-port mode-tcp frontend with TLS termination on the bind.
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsroute-terminate
-            namespace: default
-            generation: 1
+          metadata: {name: gw-tlsroute-terminate, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -385,51 +323,30 @@ validationTests:
                 port: 9444
                 hostname: tls.example.com
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
                 tls:
                   mode: Terminate
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                      namespace: default
+                    - {kind: Secret, name: shared-tls, namespace: default}
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: tls-app
-            namespace: default
-            generation: 1
+          metadata: *metadataTlsApp
           spec:
             parentRefs:
               - name: gw-tlsroute-terminate
             hostnames:
               - tls.example.com
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 8443
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 8443
+            rules: *rulesTcpBackend8443
+      services: *servicesServiceTcpBackend
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend gateway-tls-port-9444$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tls-port-9444$'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+bind \*:9444 ssl crt-list '
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+bind \*:9444 ssl crt-list '}
       - type: contains
         target: haproxy.cfg
         pattern: 'use_backend gtw_tls_default_tls-app_0 if \{ ssl_fc_sni -m str tls\.example\.com \}'
@@ -439,16 +356,12 @@ validationTests:
   test-tlsroute-passthrough-nondefault-port-frontend:
     requires: [gateways, tlsroutes]
     description: "TLSRoute attached to a TLS Passthrough listener on a port OTHER than the chart-static httpsPort lands on the new `frontends-600-gateway-tls-listener` per-port frontend, not on the chart's static ssl-t."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsroute-9443
-            namespace: default
-            generation: 1
+          metadata: {name: gw-tlsroute-9443, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -457,127 +370,66 @@ validationTests:
                 port: 9443
                 hostname: "*.example.com"
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+                tls: {mode: Passthrough}
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: tls-app
-            namespace: default
-            generation: 1
+          metadata: *metadataTlsApp
           spec:
             parentRefs:
               - name: gw-tlsroute-9443
             hostnames:
               - abc.example.com
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 8443
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 8443
+            rules: *rulesTcpBackend8443
+      services: *servicesServiceTcpBackend
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend gateway-tls-port-9443$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tls-port-9443$'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+mode tcp$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+mode tcp$'}
 
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^frontend gateway-tls-port-9443$.*?^\s+mode tcp$.*?^\s+log-format "%\{\+json\}o '
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+bind \*:9443$'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'tcp-request inspect-delay 5s'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+bind \*:9443$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'tcp-request inspect-delay 5s'}
       - type: contains
         target: haproxy.cfg
         pattern: 'use_backend gtw_tls_default_tls-app_0 if \{ req_ssl_sni -m str abc\.example\.com \}'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+tcp-request content reject if !allowed_sni$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+tcp-request content reject if !allowed_sni$'}
   test-tlsroute-passthrough-basic:
     requires: [gateways, tlsroutes]
     description: "TLSRoute attached to a TLS Passthrough listener emits a TCP-mode backend named gtw_tls_<ns>_<route>_<rule> and a SNI-keyed use_backend rule on the ssl-tcp frontend."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsroute
-            namespace: default
-            generation: 1
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: tls
-                protocol: TLS
-                port: 443
-                hostname: "*.example.com"
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                  kinds:
-                    - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+          metadata: {name: gw-tlsroute, namespace: default, generation: 1}
+          spec: *specTls443
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: tls-app
-            namespace: default
-            generation: 1
+          metadata: *metadataTlsApp
           spec:
             parentRefs:
               - name: gw-tlsroute
             hostnames:
               - abc.example.com
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 8443
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 8443
+            rules: *rulesTcpBackend8443
+      services: *servicesServiceTcpBackend
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend gtw_tls_default_tls-app_0"
+      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_tls_default_tls-app_0"}
       - type: contains
         target: haproxy.cfg
         pattern: "use_backend gtw_tls_default_tls-app_0 if \\{ req_ssl_sni -m str abc\\.example\\.com \\}"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "frontend ssl-tcp"
+      - {type: contains, target: haproxy.cfg, pattern: "frontend ssl-tcp"}
       - type: not_contains
         target: haproxy.cfg
         pattern: "use_backend gtw_tls_default_tls-app_0 if .*ssl_fc_sni"
@@ -585,68 +437,43 @@ validationTests:
   test-tlsroute-no-tls-listener:
     requires: [gateways, tlsroutes]
     description: "TLSRoute parented to an HTTP-only Gateway (no TLS listener) must NOT produce a TLSRoute backend. Mirrors conformance tlsroute-invalid-no-matching-listener for the HTTP / HTTPS case."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-http-only
-            namespace: default
-            generation: 1
+          metadata: {name: gw-http-only, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
               - name: http
                 protocol: HTTP
                 port: 80
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+                allowedRoutes: {namespaces: {from: Same}}
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: tls-app
-            namespace: default
+          metadata: {name: tls-app, namespace: default}
           spec:
             parentRefs:
               - name: gw-http-only
             hostnames:
               - tls.example.com
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 443
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 443
+            rules: *rulesTcpBackend443
+      services: *servicesServiceTcpBackend2
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "backend gtw_tls_default_tls-app"
+      - {type: not_contains, target: haproxy.cfg, pattern: "backend gtw_tls_default_tls-app"}
 
   test-tlsroute-hostname-mismatch:
     requires: [gateways, tlsroutes]
     description: "TLSRoute hostname not intersecting the listener hostname does NOT produce a passthrough backend. Mirrors conformance tlsroute-invalid-no-matching-listener-hostname."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tls
-            namespace: default
-            generation: 1
+          metadata: *metadataGwTls
           spec:
             gatewayClassName: haptic
             listeners:
@@ -655,93 +482,46 @@ validationTests:
                 port: 443
                 hostname: example.com
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+                tls: {mode: Passthrough}
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: tls-mismatch
-            namespace: default
+          metadata: {name: tls-mismatch, namespace: default}
           spec:
             parentRefs:
               - name: gw-tls
             hostnames:
               - other.test
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 443
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 443
+            rules: *rulesTcpBackend443
+      services: *servicesServiceTcpBackend2
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "backend gtw_tls_default_tls-mismatch"
+      - {type: not_contains, target: haproxy.cfg, pattern: "backend gtw_tls_default_tls-mismatch"}
 
   test-tlsroute-wildcard-listener-exact-route:
     requires: [gateways, tlsroutes]
     description: "Wildcard listener \"*.example.com\" + exact route \"abc.example.com\" produces a backend keyed on the exact route hostname (per Gateway API HostnameSinglePairIntersection)."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-wildcard
-            namespace: default
-            generation: 1
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: tls
-                protocol: TLS
-                port: 443
-                hostname: "*.example.com"
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                  kinds:
-                    - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+          metadata: {name: gw-wildcard, namespace: default, generation: 1}
+          spec: *specTls443
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: tls-exact
-            namespace: default
+          metadata: {name: tls-exact, namespace: default}
           spec:
             parentRefs:
               - name: gw-wildcard
             hostnames:
               - abc.example.com
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 443
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 443
+            rules: *rulesTcpBackend443
+      services: *servicesServiceTcpBackend2
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -751,88 +531,56 @@ validationTests:
   test-tlsroute-section-name-no-match:
     requires: [gateways, tlsroutes]
     description: "TLSRoute parentRef.sectionName referencing a nonexistent listener must not attach (NoMatchingParent on status side; backend not emitted on data plane). Mirrors conformance test case tlsroute-no-matching-section-name."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tls
-            namespace: default
-            generation: 1
+          metadata: *metadataGwTls
           spec:
             gatewayClassName: haptic
             listeners:
               - name: tls-passthrough
                 protocol: TLS
                 port: 443
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  mode: Passthrough
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: {mode: Passthrough}
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: tls-bad-section
-            namespace: default
+          metadata: {name: tls-bad-section, namespace: default}
           spec:
             parentRefs:
-              - name: gw-tls
-                sectionName: nonexistent-listener
+              - {name: gw-tls, sectionName: nonexistent-listener}
             hostnames:
               - tls.example.com
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 443
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 443
+            rules: *rulesTcpBackend443
+      services: *servicesServiceTcpBackend2
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "backend gtw_tls_default_tls-bad-section"
+      - {type: not_contains, target: haproxy.cfg, pattern: "backend gtw_tls_default_tls-bad-section"}
 
   test-tlsroute-invalid-backend-kind-no-attach:
     requires: [gateways, tlsroutes]
     description: "TLSRoute backendRef with non-Service kind must not produce a backend (status side reports ResolvedRefs=False/InvalidKind)."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tls
-            namespace: default
-            generation: 1
+          metadata: *metadataGwTls
           spec:
             gatewayClassName: haptic
             listeners:
               - name: tls
                 protocol: TLS
                 port: 443
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  mode: Passthrough
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: {mode: Passthrough}
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: tls-bad-kind
-            namespace: default
+          metadata: {name: tls-bad-kind, namespace: default}
           spec:
             parentRefs:
               - name: gw-tls
@@ -840,15 +588,10 @@ validationTests:
               - tls.example.com
             rules:
               - backendRefs:
-                  - group: example.com
-                    kind: NotAService
-                    name: not-a-service
-                    port: 443
+                  - {group: example.com, kind: NotAService, name: not-a-service, port: 443}
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "backend gtw_tls_default_tls-bad-kind"
+      - {type: not_contains, target: haproxy.cfg, pattern: "backend gtw_tls_default_tls-bad-kind"}
 
   test-tlsroute-mixed-termination-protocol-conflict:
     requires: [gatewayclasses, gateways]
@@ -857,10 +600,8 @@ validationTests:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
@@ -876,37 +617,30 @@ validationTests:
                 protocol: TLS
                 hostname: terminate.example.com
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
                 tls:
                   mode: Terminate
                   certificateRefs:
-                    - name: tls-terminate-checks-certificate
-                      namespace: gateway-conformance-infra
+                    - {name: tls-terminate-checks-certificate, namespace: gateway-conformance-infra}
               - name: tls-passthrough
                 port: 8443
                 protocol: TLS
                 hostname: passthrough.example.com
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+                tls: {mode: Passthrough}
       namespaces:
         - apiVersion: v1
           kind: Namespace
-          metadata:
-            name: gateway-conformance-infra
+          metadata: {name: gateway-conformance-infra}
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            name: tls-terminate-checks-certificate
-            namespace: gateway-conformance-infra
+          metadata: {name: tls-terminate-checks-certificate, namespace: gateway-conformance-infra}
           type: kubernetes.io/tls
           data:
             tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
@@ -938,62 +672,27 @@ validationTests:
       SNI-routing path without any error.
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
-      proxyProtocol:
-        enabled: true
-        httpPort: 8081
-        httpsPort: 8444
+      proxyProtocol: {enabled: true, httpPort: 8081, httpsPort: 8444}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsroute
-            namespace: default
-            generation: 1
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: tls
-                protocol: TLS
-                port: 443
-                hostname: "*.example.com"
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                  kinds:
-                    - kind: TLSRoute
-                tls:
-                  mode: Passthrough
+          metadata: {name: gw-tlsroute, namespace: default, generation: 1}
+          spec: *specTls443
       tlsroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TLSRoute
-          metadata:
-            name: tls-app
-            namespace: default
-            generation: 1
+          metadata: *metadataTlsApp
           spec:
             parentRefs:
               - name: gw-tlsroute
             hostnames:
               - abc.example.com
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 8443
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 8443
+            rules: *rulesTcpBackend8443
+      services: *servicesServiceTcpBackend
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^frontend ssl-tcp$.*?^\s+bind \*:8444 accept-proxy$'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'bind \*:8444 accept-proxy ssl'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'bind \*:8444 accept-proxy ssl'}

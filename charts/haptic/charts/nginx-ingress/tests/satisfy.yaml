@@ -8,9 +8,7 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: satisfy-auth
+          metadata: {namespace: default, name: satisfy-auth}
           data:
             # htpasswd: user:$apr1$... (one entry). Value is base64 of "user:hash".
             auth: YWRtaW46JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
@@ -34,11 +32,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -60,9 +54,7 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: satall-auth
+          metadata: {namespace: default, name: satall-auth}
           data:
             auth: YWRtaW46JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
       ingresses:
@@ -84,11 +76,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains

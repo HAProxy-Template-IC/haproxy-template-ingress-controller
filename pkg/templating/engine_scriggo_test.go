@@ -186,7 +186,6 @@ func TestScriggoEngine_Tracing(t *testing.T) {
 	// Initially disabled
 	assert.False(t, engine.IsTracingEnabled())
 
-	// Enable tracing
 	engine.EnableTracing()
 	assert.True(t, engine.IsTracingEnabled())
 
@@ -202,7 +201,6 @@ func TestScriggoEngine_Tracing(t *testing.T) {
 	trace = engine.GetTraceOutput()
 	assert.Empty(t, trace)
 
-	// Disable tracing
 	engine.DisableTracing()
 	assert.False(t, engine.IsTracingEnabled())
 
@@ -264,11 +262,9 @@ func TestScriggoEngine_AppendTraces(t *testing.T) {
 	require.NoError(t, err)
 	engine2.EnableTracing()
 
-	// Render in engine2
 	_, err = engine2.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 
-	// Append traces from engine2 to engine1
 	engine1.AppendTraces(engine2)
 
 	// engine1 should now have engine2's traces
@@ -310,13 +306,11 @@ func TestScriggoEngine_FilterDebug(t *testing.T) {
 	assert.False(t, engine.tracing.debugFilters)
 	engine.tracing.mu.Unlock()
 
-	// Enable
 	engine.EnableFilterDebug()
 	engine.tracing.mu.Lock()
 	assert.True(t, engine.tracing.debugFilters)
 	engine.tracing.mu.Unlock()
 
-	// Disable
 	engine.DisableFilterDebug()
 	engine.tracing.mu.Lock()
 	assert.False(t, engine.tracing.debugFilters)
@@ -419,14 +413,12 @@ func TestScriggoTemplateFS(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "content", string(buf[:n]))
 
-	// Stat
 	stat, err := file.Stat()
 	require.NoError(t, err)
 	assert.Equal(t, "test.html", stat.Name())
 	assert.Equal(t, int64(7), stat.Size())
 	assert.False(t, stat.IsDir())
 
-	// Close
 	err = file.Close()
 	require.NoError(t, err)
 
@@ -609,7 +601,6 @@ Secret: {{ secret.(map[string]any)["name"] }}`,
 		"templateSnippets": []string{},
 	}
 
-	// Test List()
 	output, err := engine.Render(context.Background(), "list_test", templateCtx)
 	require.NoError(t, err)
 	assert.Contains(t, output, "ingress-1")
@@ -620,7 +611,6 @@ Secret: {{ secret.(map[string]any)["name"] }}`,
 	require.NoError(t, err)
 	assert.Contains(t, output, "Secret: my-secret")
 
-	// Test Fetch()
 	output, err = engine.Render(context.Background(), "fetch_test", templateCtx)
 	require.NoError(t, err)
 	assert.Contains(t, output, "endpoint-1")

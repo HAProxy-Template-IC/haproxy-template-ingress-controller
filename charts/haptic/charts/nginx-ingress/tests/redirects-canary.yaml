@@ -1,6 +1,13 @@
 # nginx-ingress library — redirect + canary validation tests.
 # permanent/temporal redirect, multi-sibling redirect, upstream-hash, canary
 # by header and by weight.
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+
 validationTests:
   test-nginx-ingress-permanent-redirect:
     description: Nginx Ingress permanent-redirect generates 301 redirect
@@ -17,15 +24,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: permredir.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -47,15 +46,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: tempredir.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -68,9 +59,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: permcode-service
+          metadata: {namespace: default, name: permcode-service}
           spec:
             ports:
               - port: 80
@@ -91,19 +80,13 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: permcode-service
-                          port:
-                            number: 80
+                      backend: {service: {name: permcode-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
         target: map:redirect-loc-308.map
         pattern: "permcode.example.com https://new.example.com"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "code 301"
+      - {type: not_contains, target: haproxy.cfg, pattern: "code 301"}
 
   test-nginx-ingress-temporal-redirect-code:
     description: temporal-redirect-code overrides the default 302 redirect status
@@ -111,9 +94,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: tempcode-service
+          metadata: {namespace: default, name: tempcode-service}
           spec:
             ports:
               - port: 80
@@ -134,11 +115,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: tempcode-service
-                          port:
-                            number: 80
+                      backend: {service: {name: tempcode-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -197,9 +174,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: apexwww-service
+          metadata: {namespace: default, name: apexwww-service}
           spec:
             ports:
               - port: 80
@@ -219,16 +194,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: apexwww-service
-                          port:
-                            number: 80
+                      backend: {service: {name: apexwww-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:from-to-www.map
-        pattern: "example.com www.example.com"
+      - {type: contains, target: map:from-to-www.map, pattern: "example.com www.example.com"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect prefix https://%\\[var\\(txn.host\\),map\\([^)]*from-to-www\\.map\\)\\] code 301 if \\{ ssl_fc \\}"
@@ -242,9 +211,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: wwwapex-service
+          metadata: {namespace: default, name: wwwapex-service}
           spec:
             ports:
               - port: 80
@@ -264,16 +231,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: wwwapex-service
-                          port:
-                            number: 80
+                      backend: {service: {name: wwwapex-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:from-to-www.map
-        pattern: "www.foo.com foo.com"
+      - {type: contains, target: map:from-to-www.map, pattern: "www.foo.com foo.com"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect prefix https://%\\[var\\(txn.host\\),map\\([^)]*from-to-www\\.map\\)\\] code 301 if \\{ ssl_fc \\}"
@@ -295,41 +256,31 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: redir-svc
+          metadata: {namespace: default, name: redir-svc}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: cors-svc
+          metadata: {namespace: default, name: cors-svc}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: rewrite-svc
+          metadata: {namespace: default, name: rewrite-svc}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: hsts-svc
+          metadata: {namespace: default, name: hsts-svc}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: srcip-svc
+          metadata: {namespace: default, name: srcip-svc}
           spec:
             ports:
               - port: 80
@@ -404,10 +355,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: redir-svc
-                          port: {number: 80}
+                      backend: {service: {name: redir-svc, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -424,10 +372,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: cors-svc
-                          port: {number: 80}
+                      backend: {service: {name: cors-svc, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -443,10 +388,7 @@ validationTests:
                   paths:
                     - path: /old
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: rewrite-svc
-                          port: {number: 80}
+                      backend: {service: {name: rewrite-svc, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -463,10 +405,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: hsts-svc
-                          port: {number: 80}
+                      backend: {service: {name: hsts-svc, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -482,10 +421,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: srcip-svc
-                          port: {number: 80}
+                      backend: {service: {name: srcip-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -507,23 +443,11 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: hash.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "balance hash req\\.hdr\\(x-forwarded-for\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "hash-type consistent"
+      - {type: contains, target: haproxy.cfg, pattern: "balance hash req\\.hdr\\(x-forwarded-for\\)"}
+      - {type: contains, target: haproxy.cfg, pattern: "hash-type consistent"}
 
   test-nginx-ingress-canary-by-header:
     description: Nginx Ingress canary by header generates use_backend rule
@@ -531,17 +455,13 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: main-service
+          metadata: {namespace: default, name: main-service}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: canary-service
+          metadata: {namespace: default, name: canary-service}
           spec:
             ports:
               - port: 80
@@ -573,9 +493,7 @@ validationTests:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            namespace: default
-            name: main-ingress
+          metadata: {namespace: default, name: main-ingress}
           spec:
             ingressClassName: haproxy
             rules:
@@ -584,11 +502,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: main-service
-                          port:
-                            number: 80
+                      backend: {service: {name: main-service, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -605,19 +519,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: canary-service
-                          port:
-                            number: 80
+                      backend: {service: {name: canary-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "use_backend"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "req\\.hdr\\(X-Canary\\)"
+      - {type: contains, target: haproxy.cfg, pattern: "use_backend"}
+      - {type: contains, target: haproxy.cfg, pattern: "req\\.hdr\\(X-Canary\\)"}
 
   test-nginx-ingress-canary-by-weight:
     description: Nginx Ingress canary by weight generates randomized use_backend
@@ -625,17 +531,13 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: main-service
+          metadata: {namespace: default, name: main-service}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: canary-weight-service
+          metadata: {namespace: default, name: canary-weight-service}
           spec:
             ports:
               - port: 80
@@ -667,9 +569,7 @@ validationTests:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            namespace: default
-            name: main-weight-ingress
+          metadata: {namespace: default, name: main-weight-ingress}
           spec:
             ingressClassName: haproxy
             rules:
@@ -678,11 +578,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: main-service
-                          port:
-                            number: 80
+                      backend: {service: {name: main-service, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -699,16 +595,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: canary-weight-service
-                          port:
-                            number: 80
+                      backend: {service: {name: canary-weight-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "rand\\(100\\) lt 20"
+      - {type: contains, target: haproxy.cfg, pattern: "rand\\(100\\) lt 20"}
 
   test-nginx-ingress-canary-main-owns-base-route:
     description: "A canary Ingress does not own its base route — it only overlays a use_backend split; the main Ingress owns the base map entry. Here two non-canary mains (main-old, main-new) and one canary all claim clash.example.com/. The canary is excluded from base-route ownership entirely, while the two real mains COMPETE under oldest-wins, so the OLDER main (main-old) owns the route. This pins both the canary exclusion and that a genuine second main still competes (unlike the canary)."
@@ -716,25 +606,19 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: main-old-service
+          metadata: {namespace: default, name: main-old-service}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: main-new-service
+          metadata: {namespace: default, name: main-new-service}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: canary-service
+          metadata: {namespace: default, name: canary-service}
           spec:
             ports:
               - port: 80
@@ -778,10 +662,7 @@ validationTests:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            namespace: default
-            name: main-old
-            creationTimestamp: "2020-01-01T00:00:00Z"
+          metadata: {namespace: default, name: main-old, creationTimestamp: "2020-01-01T00:00:00Z"}
           spec:
             ingressClassName: haproxy
             rules:
@@ -790,17 +671,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: main-old-service
-                          port:
-                            number: 80
+                      backend: {service: {name: main-old-service, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            namespace: default
-            name: main-new
-            creationTimestamp: "2026-01-01T00:00:00Z"
+          metadata: {namespace: default, name: main-new, creationTimestamp: "2026-01-01T00:00:00Z"}
           spec:
             ingressClassName: haproxy
             rules:
@@ -809,11 +683,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: main-new-service
-                          port:
-                            number: 80
+                      backend: {service: {name: main-new-service, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -830,11 +700,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: canary-service
-                          port:
-                            number: 80
+                      backend: {service: {name: canary-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -868,9 +734,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: solo-canary-service
+          metadata: {namespace: default, name: solo-canary-service}
           spec:
             ports:
               - port: 80
@@ -905,11 +769,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: solo-canary-service
-                          port:
-                            number: 80
+                      backend: {service: {name: solo-canary-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains

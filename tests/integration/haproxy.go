@@ -584,7 +584,6 @@ type DataplaneEndpoint struct {
 
 // setupPortForward sets up port forwarding from localhost to the HAProxy pod
 func (h *HAProxyInstance) setupPortForward() error {
-	// Get rest config from the namespace's cluster
 	config, err := h.namespace.cluster.getRestConfig()
 	if err != nil {
 		return fmt.Errorf("failed to get rest config: %w", err)
@@ -642,13 +641,11 @@ func (h *HAProxyInstance) Delete() error {
 		close(h.stopChan)
 	}
 
-	// Delete Pod
 	err := h.namespace.clientset.CoreV1().Pods(h.Namespace).Delete(ctx, h.Name, metav1.DeleteOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to delete pod: %w", err)
 	}
 
-	// Delete ConfigMap
 	err = h.namespace.clientset.CoreV1().ConfigMaps(h.Namespace).Delete(ctx, h.Name+"-config", metav1.DeleteOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to delete configmap: %w", err)

@@ -232,15 +232,12 @@ func TestGeneralFiles(t *testing.T) {
 			env := fixenv.New(t)
 			ctx := context.Background()
 
-			// Setup
 			if tt.setup != nil {
 				tt.setup(t, ctx, env)
 			}
 
-			// Operation
 			tt.operation(t, ctx, env)
 
-			// Verify
 			tt.verify(t, ctx, env)
 		})
 	}
@@ -431,15 +428,12 @@ func TestSSLCertificates(t *testing.T) {
 			env := fixenv.New(t)
 			ctx := context.Background()
 
-			// Setup
 			if tt.setup != nil {
 				tt.setup(t, ctx, env)
 			}
 
-			// Operation
 			tt.operation(t, ctx, env)
 
-			// Verify
 			tt.verify(t, ctx, env)
 		})
 	}
@@ -970,15 +964,12 @@ func TestCRTLists(t *testing.T) {
 			// Skip if CRT-list storage is not supported (requires DataPlane API v3.2+)
 			skipIfCRTListNotSupported(t, env)
 
-			// Setup
 			if tt.setup != nil {
 				tt.setup(t, ctx, env)
 			}
 
-			// Operation
 			tt.operation(t, ctx, env)
 
-			// Verify
 			tt.verify(t, ctx, env)
 		})
 	}

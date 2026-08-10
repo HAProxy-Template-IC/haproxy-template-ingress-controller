@@ -52,10 +52,8 @@ func TestEventBus_PublishSubscribe(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
 
-	// Subscribe
 	sub := bus.Subscribe("test-sub", 10)
 
-	// Start the bus
 	bus.Start()
 
 	// Publish event
@@ -85,7 +83,6 @@ func TestEventBus_MultipleSubscribers(t *testing.T) {
 		subs[i] = bus.Subscribe("test-sub", 10)
 	}
 
-	// Start the bus
 	bus.Start()
 
 	// Publish event
@@ -144,7 +141,6 @@ func TestEventBus_ConcurrentPublish(t *testing.T) {
 	bus := NewEventBus(100)
 	sub := bus.Subscribe("test-sub", 1000)
 
-	// Start the bus
 	bus.Start()
 
 	// Publish 100 events concurrently
@@ -189,7 +185,6 @@ func TestEventBus_RequestAllResponses(t *testing.T) {
 	// Give responders time to subscribe
 	time.Sleep(50 * time.Millisecond)
 
-	// Start the bus
 	bus.Start()
 
 	// Send request
@@ -223,7 +218,6 @@ func TestEventBus_RequestTimeout(t *testing.T) {
 	go startResponder(bus, "validator-1")
 	time.Sleep(50 * time.Millisecond)
 
-	// Start the bus
 	bus.Start()
 
 	// Send request
@@ -252,7 +246,6 @@ func TestEventBus_RequestConcurrent(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	// Start the bus
 	bus.Start()
 
 	// Send 10 concurrent requests
@@ -306,11 +299,9 @@ func TestEventBus_RequestContextCancellation(t *testing.T) {
 	// Create cancellable context
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Start responder (but it will be slow)
 	go startSlowResponder(bus, "slow-validator", 1*time.Second)
 	time.Sleep(50 * time.Millisecond)
 
-	// Start the bus
 	bus.Start()
 
 	// Start request in background
@@ -400,7 +391,6 @@ func TestEventBus_Start_BuffersEventsBeforeStart(t *testing.T) {
 	bus.Publish(testEvent{message: "event-2"})
 	bus.Publish(testEvent{message: "event-3"})
 
-	// Now subscribe
 	sub := bus.Subscribe("test-sub", 10)
 
 	// No events should be received yet
@@ -437,13 +427,10 @@ func TestEventBus_Start_EventsPublishedAfterStart(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
 
-	// Subscribe
 	sub := bus.Subscribe("test-sub", 10)
 
-	// Start the bus
 	bus.Start()
 
-	// Publish events AFTER Start()
 	sent := bus.Publish(testEvent{message: "after-start-1"})
 	assert.Equal(t, 1, sent, "expected 1 subscriber to receive event")
 
@@ -467,10 +454,8 @@ func TestEventBus_Start_PreservesEventOrder(t *testing.T) {
 		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
 	}
 
-	// Subscribe
 	sub := bus.Subscribe("test-sub", 10)
 
-	// Start
 	bus.Start()
 
 	// Verify events are received in order
@@ -491,10 +476,8 @@ func TestEventBus_Start_Idempotent(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
 
-	// Publish events
 	bus.Publish(testEvent{message: "event-1"})
 
-	// Subscribe
 	sub := bus.Subscribe("test-sub", 10)
 
 	// Start multiple times
@@ -531,7 +514,6 @@ func TestEventBus_Start_MultipleSubscribers(t *testing.T) {
 		subs[i] = bus.Subscribe("test-sub", 10)
 	}
 
-	// Start
 	bus.Start()
 
 	// All subscribers should receive both events
@@ -558,7 +540,6 @@ func TestEventBus_Start_ConcurrentPublish(t *testing.T) {
 		bus.Publish(testEvent{message: fmt.Sprintf("pre-%d", i)})
 	}
 
-	// Subscribe
 	sub := bus.Subscribe("test-sub", 100)
 
 	// Concurrently publish more events while calling Start
@@ -603,7 +584,6 @@ func TestEventBus_Start_EmptyBuffer(t *testing.T) {
 	// Start with empty buffer
 	bus.Start()
 
-	// Publish after Start
 	sent := bus.Publish(testEvent{message: "after-start"})
 	assert.Equal(t, 1, sent, "expected 1 subscriber")
 
@@ -622,14 +602,12 @@ func TestEventBus_Start_PublishReturnsZeroBeforeStart(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
 
-	// Subscribe
 	bus.Subscribe("test-sub", 10)
 
 	// Publish before Start - should return 0 (buffered)
 	sent := bus.Publish(testEvent{message: "buffered"})
 	assert.Equal(t, 0, sent, "expected 0 (buffered)")
 
-	// Start
 	bus.Start()
 
 	// Publish after Start - should return 1 (sent to subscriber)
@@ -661,7 +639,6 @@ func BenchmarkEventBus_PublishWithSubscribers(b *testing.B) {
 		}(sub)
 	}
 
-	// Start the bus
 	bus.Start()
 
 	b.ResetTimer()
@@ -680,7 +657,6 @@ func BenchmarkEventBus_Request(b *testing.B) {
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	// Start the bus
 	bus.Start()
 
 	b.ResetTimer()
@@ -705,16 +681,13 @@ func TestEventBus_SubscribeTypes_FiltersCorrectly(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
 
-	// Subscribe to only "test.event" type
 	typedSub := bus.SubscribeTypes("test-typed", 10, "test.event")
 
 	// Also subscribe universally to verify events are published
 	universalSub := bus.Subscribe("test-sub", 10)
 
-	// Start the bus
 	bus.Start()
 
-	// Publish both event types
 	bus.Publish(testEvent{message: "should receive"})
 	bus.Publish(otherTestEvent{value: 42})
 	bus.Publish(testEvent{message: "should also receive"})
@@ -753,13 +726,10 @@ func TestEventBus_SubscribeTypes_MultipleTypes(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
 
-	// Subscribe to both event types
 	typedSub := bus.SubscribeTypes("test-typed", 10, "test.event", "other.test.event")
 
-	// Start the bus
 	bus.Start()
 
-	// Publish both types
 	bus.Publish(testEvent{message: "test1"})
 	bus.Publish(otherTestEvent{value: 1})
 	bus.Publish(testEvent{message: "test2"})
@@ -787,7 +757,6 @@ func TestEventBus_SubscribeTypes_BufferedBeforeStart(t *testing.T) {
 	bus.Publish(otherTestEvent{value: 999})
 	bus.Publish(testEvent{message: "buffered2"})
 
-	// Subscribe to only testEvent type
 	typedSub := bus.SubscribeTypes("test-typed", 10, "test.event")
 
 	// Start - should replay only matching events
@@ -816,7 +785,6 @@ func TestEventBus_SubscribeTypes_SlowSubscriberDropsEvents(t *testing.T) {
 	// Create typed subscriber with buffer size 2
 	typedSub := bus.SubscribeTypes("test-typed", 2, "test.event")
 
-	// Start the bus
 	bus.Start()
 
 	// Fill the buffer
@@ -853,7 +821,6 @@ func TestEventBus_SubscribeTypesLeaderOnly_FiltersCorrectly(t *testing.T) {
 	// Subscribe to only "test.event" type using leader-only method
 	typedSub := bus.SubscribeTypesLeaderOnly("test-typed-leader", 10, "test.event")
 
-	// Publish both event types
 	bus.Publish(testEvent{message: "should receive"})
 	bus.Publish(otherTestEvent{value: 42})
 	bus.Publish(testEvent{message: "should also receive"})
@@ -887,7 +854,6 @@ func BenchmarkEventBus_SubscribeTypes(b *testing.B) {
 		}
 	}()
 
-	// Start the bus
 	bus.Start()
 
 	b.ResetTimer()
@@ -909,7 +875,6 @@ func BenchmarkEventBus_SubscribeTypes_NonMatchingEvents(b *testing.B) {
 		}
 	}()
 
-	// Start the bus
 	bus.Start()
 
 	b.ResetTimer()
@@ -931,7 +896,6 @@ func TestEventBus_SubscribeLossy_SilentDrop(t *testing.T) {
 	// Create lossy subscriber with tiny buffer
 	lossySub := bus.SubscribeLossy("test-lossy", 1)
 
-	// Start the bus
 	bus.Start()
 
 	// Fill buffer and cause drops
@@ -961,7 +925,6 @@ func TestEventBus_Subscribe_CriticalDrop(t *testing.T) {
 	// Create regular (critical) subscriber with tiny buffer
 	criticalSub := bus.Subscribe("test-sub", 1)
 
-	// Start the bus
 	bus.Start()
 
 	// Fill buffer and cause drops
@@ -991,7 +954,6 @@ func TestEventBus_SubscribeTypes_CriticalDrop(t *testing.T) {
 	// Create regular (critical) typed subscriber with tiny buffer
 	criticalTypedSub := bus.SubscribeTypes("test-typed", 1, "test.event")
 
-	// Start the bus
 	bus.Start()
 
 	// Fill buffer and cause drops
@@ -1017,7 +979,6 @@ func TestEventBus_MixedSubscribers_DropCounters(t *testing.T) {
 	_ = bus.SubscribeLossy("test-lossy", 1)               // lossy universal
 	_ = bus.SubscribeTypes("test-typed", 1, "test.event") // critical typed
 
-	// Start the bus
 	bus.Start()
 
 	// Cause drops

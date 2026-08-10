@@ -152,7 +152,6 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			// Use shared clientset (rate limiting disabled) to avoid exhaustion
 			clientset := Clientset()
 
-			// Wait for controller to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
@@ -448,7 +447,6 @@ func buildControllerCrashRecoveryFeature() types.Feature {
 			// Use shared clientset (rate limiting disabled) to avoid exhaustion
 			clientset := Clientset()
 
-			// Wait for controller to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
@@ -563,7 +561,6 @@ func buildRapidConfigUpdatesFeature() types.Feature {
 			// Use shared clientset (rate limiting disabled) to avoid exhaustion
 			clientset := Clientset()
 
-			// Wait for controller to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
@@ -691,7 +688,6 @@ func buildGracefulShutdownFeature() types.Feature {
 			// Use shared clientset (rate limiting disabled) to avoid exhaustion
 			clientset := Clientset()
 
-			// Wait for controller to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
@@ -803,7 +799,6 @@ func buildDataplaneUnreachableFeature() types.Feature {
 			// Use shared clientset (rate limiting disabled) to avoid exhaustion
 			clientset := Clientset()
 
-			// Wait for controller to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
@@ -990,7 +985,6 @@ func buildLeadershipDuringReconciliationFeature() types.Feature {
 			err = WaitForPodCount(ctx, client, namespace, "app="+ControllerDeploymentName, 2, 60*time.Second)
 			require.NoError(t, err, "Should have 2 controller pods after replacement")
 
-			// Wait for pods to be ready again
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 90*time.Second)
 			require.NoError(t, err, "Pods should become ready after leader deletion")
 
@@ -1205,7 +1199,6 @@ func buildTransactionConflictFeature() types.Feature {
 			// Use shared clientset (rate limiting disabled) to avoid exhaustion
 			clientset := Clientset()
 
-			// Wait for controller to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
@@ -1345,7 +1338,6 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 			// Use shared clientset (rate limiting disabled) to avoid exhaustion
 			clientset := Clientset()
 
-			// Wait for controller to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 			t.Log("Controller pod ready")

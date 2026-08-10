@@ -137,7 +137,6 @@ func PatchKubeconfigForDind(kubeconfig string) string {
 	kubeconfig = strings.ReplaceAll(kubeconfig, "https://0.0.0.0:", "https://"+hostname+":")
 	// Replace 127.0.0.1 (default)
 	kubeconfig = strings.ReplaceAll(kubeconfig, "https://127.0.0.1:", "https://"+hostname+":")
-	// Replace localhost
 	kubeconfig = strings.ReplaceAll(kubeconfig, "https://localhost:", "https://"+hostname+":")
 	return kubeconfig
 }

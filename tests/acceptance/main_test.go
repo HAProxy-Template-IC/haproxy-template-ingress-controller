@@ -58,7 +58,6 @@ func TestMain(m *testing.M) {
 		setupForLocalDevelopment()
 	}
 
-	// Run tests
 	os.Exit(testEnv.Run(m))
 }
 
@@ -237,7 +236,6 @@ func setupForDind(kindClusterName, kindNodeImage string) {
 			// Patch kubeconfig for DinD (replace localhost with docker hostname)
 			kubeconfig = kindutil.PatchKubeconfigForDind(kubeconfig)
 
-			// Write kubeconfig to file
 			if err := os.WriteFile(TestKubeconfigPath, []byte(kubeconfig), 0600); err != nil {
 				return ctx, fmt.Errorf("failed to write kubeconfig: %w", err)
 			}
@@ -297,7 +295,6 @@ func setupForLocal(kindClusterName, kindNodeImage string) {
 
 	testEnv.Setup(
 		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			// Create cluster
 			kubeconfigPath, err := kindCluster.Create(ctx)
 			if err != nil {
 				return ctx, fmt.Errorf("failed to create kind cluster: %w", err)

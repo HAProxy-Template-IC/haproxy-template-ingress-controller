@@ -118,7 +118,6 @@ func RegisterVariables(
 		return provider.GetResourceCounts()
 	}))
 
-	// Events
 	registry.Publish(keyEvents, &EventsVar{
 		buffer:       eventBuffer,
 		defaultLimit: 100,

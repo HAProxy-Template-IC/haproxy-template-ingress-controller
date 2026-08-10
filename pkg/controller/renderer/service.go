@@ -248,7 +248,6 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
 
-	// Render auxiliary files
 	staticFiles, err := s.renderAuxiliaryFiles(ctx, renderContext)
 	if err != nil {
 		return nil, err

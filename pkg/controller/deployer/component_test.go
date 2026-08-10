@@ -62,7 +62,6 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 		true, // coalescible
 	)
 
-	// Publish event
 	bus.Publish(event)
 
 	// Wait a bit for processing
@@ -115,7 +114,6 @@ func TestComponent_EndToEndFlow(t *testing.T) {
 	// NOW start the bus to begin event processing
 	bus.Start()
 
-	// Subscribe to events
 	eventChan := bus.Subscribe("test-sub", 10)
 
 	// Simulate deployment scheduled event (with no endpoints)

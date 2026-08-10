@@ -11,9 +11,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: pssl-service
+          metadata: {namespace: default, name: pssl-service}
           spec:
             ports:
               - port: 443
@@ -33,9 +31,7 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: upstream-client
+          metadata: {namespace: default, name: upstream-client}
           type: kubernetes.io/tls
           data:
             ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
@@ -63,19 +59,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: pssl-service
-                          port:
-                            number: 443
+                      backend: {service: {name: pssl-service, port: {number: 443}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ssl verify required"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "ssl verify none"
+      - {type: contains, target: haproxy.cfg, pattern: "ssl verify required"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "ssl verify none"}
       - type: contains
         target: haproxy.cfg
         pattern: "ca-file [^ ]*default-upstream-client-proxy-ssl-ca\\.pem"
@@ -83,30 +71,14 @@ validationTests:
       # bare filename — a ssl/-prefixed value doubles to ssl/ssl/<name> and fails
       # `haproxy -c` on a real deploy (offline validation hides it by writing the
       # cert wherever the config names it, so this exact-value pin is the guard).
-      - type: contains
-        target: haproxy.cfg
-        pattern: " crt default-upstream-client-proxy-ssl-client\\.pem"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "crt ssl/"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "verify-depth 3"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "sni str\\(upstream\\.internal\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "verifyhost upstream\\.internal"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ciphers ECDHE-RSA-AES128-GCM-SHA256"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ssl-min-ver TLSv1\\.2"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ssl-max-ver TLSv1\\.3"
+      - {type: contains, target: haproxy.cfg, pattern: " crt default-upstream-client-proxy-ssl-client\\.pem"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "crt ssl/"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "verify-depth 3"}
+      - {type: contains, target: haproxy.cfg, pattern: "sni str\\(upstream\\.internal\\)"}
+      - {type: contains, target: haproxy.cfg, pattern: "verifyhost upstream\\.internal"}
+      - {type: contains, target: haproxy.cfg, pattern: "ciphers ECDHE-RSA-AES128-GCM-SHA256"}
+      - {type: contains, target: haproxy.cfg, pattern: "ssl-min-ver TLSv1\\.2"}
+      - {type: contains, target: haproxy.cfg, pattern: "ssl-max-ver TLSv1\\.3"}
 
   test-nginx-ingress-proxy-ssl-verify-off:
     description: proxy-ssl-verify=off keeps verify none and proxy-ssl directives are skipped when backend SSL is not enabled
@@ -128,16 +100,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "sni str\\(ignored\\.internal\\)"
+      - {type: not_contains, target: haproxy.cfg, pattern: "sni str\\(ignored\\.internal\\)"}
 
   # ==========================================================================
   # proxy-cookie-domain / proxy-cookie-path
@@ -163,11 +129,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -206,15 +168,9 @@ validationTests:
                       backend: {service: {name: pssl-svc, port: {number: 443}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ssl verify none sni str\\(up\\.internal\\)"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "verifyhost"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "verify required"
+      - {type: contains, target: haproxy.cfg, pattern: "ssl verify none sni str\\(up\\.internal\\)"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "verifyhost"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "verify required"}
 
   test-nginx-ingress-proxy-ssl-verify-on-without-ca-rejected:
     description: proxy-ssl-verify with a truthy value ("True", case-insensitive) but no CA fails the render fail-closed (never silently downgrades to verify none)
@@ -276,6 +232,4 @@ validationTests:
                       pathType: Prefix
                       backend: {service: {name: inj-svc, port: {number: 80}}}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "must not contain control characters"
+      - {type: contains, target: rendering_error, pattern: "must not contain control characters"}

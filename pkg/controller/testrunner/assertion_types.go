@@ -202,7 +202,6 @@ func (r *Runner) assertMatchCount(
 		return result
 	}
 
-	// Find all matches
 	matches := re.FindAllString(target, -1)
 	actualCount := len(matches)
 

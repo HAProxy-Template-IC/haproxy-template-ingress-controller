@@ -211,7 +211,6 @@ func TestDebouncer_MixedOperations(t *testing.T) {
 	// First create fires immediately (leading edge)
 	debouncer.RecordCreate()
 
-	// Wait for first callback
 	recorder.waitForCallbacks(t, 1)
 
 	// These operations happen within refractory period - batched together
@@ -377,7 +376,6 @@ func TestDebouncer_SyncMode(t *testing.T) {
 	// In sync mode by default
 	debouncer.RecordCreate()
 
-	// Wait for callback
 	recorder.waitForCallbacks(t, 1)
 
 	received := recorder.getReceived()
@@ -581,7 +579,6 @@ func TestDebouncer_LeadingEdge_ImmediateFire(t *testing.T) {
 	startTime := time.Now()
 	debouncer.RecordCreate()
 
-	// Wait for callback
 	recorder.waitForCallbacks(t, 1)
 
 	times := recorder.getTimes()
@@ -605,7 +602,6 @@ func TestDebouncer_LeadingEdge_RefractoryPeriod(t *testing.T) {
 	// First change fires immediately
 	debouncer.RecordCreate()
 
-	// Wait for first callback
 	recorder.waitForCallbacks(t, 1)
 
 	// These changes are within refractory period - should be queued
@@ -650,7 +646,6 @@ func TestDebouncer_LeadingEdge_NoRecentActivity(t *testing.T) {
 	time1 := time.Now()
 	debouncer.RecordCreate()
 
-	// Wait for callback
 	recorder.waitForCallbacks(t, 1)
 
 	// Wait for refractory period to fully expire
@@ -660,7 +655,6 @@ func TestDebouncer_LeadingEdge_NoRecentActivity(t *testing.T) {
 	time2 := time.Now()
 	debouncer.RecordCreate()
 
-	// Wait for second callback
 	recorder.waitForCallbacks(t, 2)
 
 	times := recorder.getTimes()

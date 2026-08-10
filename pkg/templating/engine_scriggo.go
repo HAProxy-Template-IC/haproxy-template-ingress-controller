@@ -146,7 +146,6 @@ func newScriggoEngine(templates map[string]string, entryPoints []string, customF
 		return nil, err
 	}
 
-	// Build post-processors
 	if err := buildScriggoPostProcessors(engine, postProcessorConfigs); err != nil {
 		return nil, err
 	}
@@ -290,7 +289,6 @@ func (e *ScriggoEngine) Render(ctx context.Context, templateName string, templat
 		result += "\n"
 	}
 
-	// Apply post-processors
 	result, err = e.applyPostProcessors(templateName, result)
 	if err != nil {
 		return "", err

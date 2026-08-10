@@ -10,100 +10,65 @@ validationTests:
       namespaces:
         - apiVersion: v1
           kind: Namespace
-          metadata:
-            name: gateway-conformance-infra
+          metadata: {name: gateway-conformance-infra}
         - apiVersion: v1
           kind: Namespace
-          metadata:
-            name: routes-allowed-ns
-            labels:
-              allowed: ns
+          metadata: {name: routes-allowed-ns, labels: {allowed: ns}}
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-ls
-            namespace: gateway-conformance-infra
+          metadata: {name: gw-ls, namespace: gateway-conformance-infra}
           spec:
             gatewayClassName: haptic
-            allowedListeners:
-              namespaces:
-                from: All
+            allowedListeners: {namespaces: {from: All}}
             listeners:
               - name: gateway-listener
                 port: 80
                 protocol: HTTP
                 hostname: gateway-listener.com
-                allowedRoutes:
-                  namespaces:
-                    from: All
+                allowedRoutes: {namespaces: {from: All}}
       listenersets:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
-          metadata:
-            name: ls-test
-            namespace: gateway-conformance-infra
+          metadata: {name: ls-test, namespace: gateway-conformance-infra}
           spec:
-            parentRef:
-              group: gateway.networking.k8s.io
-              kind: Gateway
-              name: gw-ls
+            parentRef: {group: gateway.networking.k8s.io, kind: Gateway, name: gw-ls}
             listeners:
               - name: ls-same
                 port: 80
                 protocol: HTTP
                 hostname: same.com
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+                allowedRoutes: {namespaces: {from: Same}}
               - name: ls-all
                 port: 80
                 protocol: HTTP
                 hostname: all.com
-                allowedRoutes:
-                  namespaces:
-                    from: All
+                allowedRoutes: {namespaces: {from: All}}
               - name: ls-selector
                 port: 80
                 protocol: HTTP
                 hostname: selector.com
-                allowedRoutes:
-                  namespaces:
-                    from: Selector
-                    selector:
-                      matchLabels:
-                        allowed: ns
+                allowedRoutes: {namespaces: {from: Selector, selector: {matchLabels: {allowed: ns}}}}
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: route-same
-            namespace: gateway-conformance-infra
+          metadata: {name: route-same, namespace: gateway-conformance-infra}
           spec:
             parentRefs:
-              - group: gateway.networking.k8s.io
-                kind: ListenerSet
-                name: ls-test
+              - {group: gateway.networking.k8s.io, kind: ListenerSet, name: ls-test}
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /route-in-same-namespace
+                  - path: {type: PathPrefix, value: /route-in-same-namespace}
                 backendRefs:
-                  - name: infra-backend-v1
-                    port: 8080
+                  - {name: infra-backend-v1, port: 8080}
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: route-other
-            namespace: routes-allowed-ns
+          metadata: {name: route-other, namespace: routes-allowed-ns}
           spec:
             parentRefs:
               - group: gateway.networking.k8s.io
@@ -112,48 +77,34 @@ validationTests:
                 namespace: gateway-conformance-infra
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /route-in-selected-namespace
+                  - path: {type: PathPrefix, value: /route-in-selected-namespace}
                 backendRefs:
-                  - name: infra-backend-v2
-                    namespace: gateway-conformance-infra
-                    port: 8080
+                  - {name: infra-backend-v2, namespace: gateway-conformance-infra, port: 8080}
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: infra-backend-v1
-            namespace: gateway-conformance-infra
+          metadata: {name: infra-backend-v1, namespace: gateway-conformance-infra}
           spec:
             ports:
-              - port: 8080
-                targetPort: 8080
+              - {port: 8080, targetPort: 8080}
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: infra-backend-v2
-            namespace: gateway-conformance-infra
+          metadata: {name: infra-backend-v2, namespace: gateway-conformance-infra}
           spec:
             ports:
-              - port: 8080
-                targetPort: 8080
+              - {port: 8080, targetPort: 8080}
     assertions:
       - type: haproxy_valid
       # from:Same listener — only the same-namespace route attaches.
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^same\\.com/route-in-same-namespace/ GW_ROUTE_ID:http:gateway-conformance-infra_route-same_0$"
-      - type: not_contains
-        target: map:path-prefix.map
-        pattern: "same\\.com/route-in-selected-namespace"
+      - {type: not_contains, target: map:path-prefix.map, pattern: "same\\.com/route-in-selected-namespace"}
       # from:Selector listener — only the label-matched namespace's route attaches.
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^selector\\.com/route-in-selected-namespace/ GW_ROUTE_ID:http:routes-allowed-ns_route-other_0$"
-      - type: not_contains
-        target: map:path-prefix.map
-        pattern: "selector\\.com/route-in-same-namespace"
+      - {type: not_contains, target: map:path-prefix.map, pattern: "selector\\.com/route-in-same-namespace"}
       # from:All listener — both routes attach.
       - type: contains
         target: map:path-prefix.map

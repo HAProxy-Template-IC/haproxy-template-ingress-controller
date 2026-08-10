@@ -357,7 +357,6 @@ backend different-backend
 	hash2 := store.contentHash
 	store.mu.RUnlock()
 
-	// Hash should change
 	assert.NotEqual(t, hash1, hash2, "hash should change for different content")
 
 	// Config should be different (re-parsed)

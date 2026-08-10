@@ -17,10 +17,8 @@ func TestSetDefaults_AllUnset(t *testing.T) {
 
 	SetDefaults(cfg)
 
-	// Dataplane defaults
 	assert.Equal(t, DefaultDataplanePort, cfg.Dataplane.Port)
 
-	// Leader election defaults
 	assert.Equal(t, DefaultLeaderElectionLeaseName, cfg.Controller.LeaderElection.LeaseName)
 }
 

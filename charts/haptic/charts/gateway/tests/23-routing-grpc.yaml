@@ -6,16 +6,12 @@ validationTests:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gateway
-            namespace: default
+          metadata: {name: gateway, namespace: default}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -23,81 +19,55 @@ validationTests:
                 port: 80
                 protocol: HTTP
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: GRPCRoute
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: grpc-svc
-            namespace: default
+          metadata: {name: grpc-svc, namespace: default}
           spec:
             ports:
-              - name: grpc
-                port: 9090
-                targetPort: 9090
+              - {name: grpc, port: 9090, targetPort: 9090}
       grpcroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GRPCRoute
-          metadata:
-            name: grpc-h2c
-            namespace: default
+          metadata: {name: grpc-h2c, namespace: default}
           spec:
             parentRefs:
-              - name: gateway
-                namespace: default
+              - {name: gateway, namespace: default}
             hostnames:
               - grpc.example.com
             rules:
               - matches:
-                  - method:
-                      type: Exact
-                      service: com.example.API
-                      method: Echo
+                  - method: {type: Exact, service: com.example.API, method: Echo}
                 backendRefs:
-                  - name: grpc-svc
-                    port: 9090
+                  - {name: grpc-svc, port: 9090}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend http-tcp$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http-tcp$'}
       - type: contains
         target: haproxy.cfg
         pattern: 'acl is_h2c req\.payload\(0,24\) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'use_backend http-h2c-loopback if is_h2c'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'default_backend http-h1-loopback'
+      - {type: contains, target: haproxy.cfg, pattern: 'use_backend http-h2c-loopback if is_h2c'}
+      - {type: contains, target: haproxy.cfg, pattern: 'default_backend http-h1-loopback'}
       - type: contains
         target: haproxy.cfg
         pattern: 'server loopback unix@/etc/haproxy/http-h1-frontend\.sock send-proxy-v2'
       - type: contains
         target: haproxy.cfg
         pattern: 'server loopback unix@/etc/haproxy/http-h2c-frontend\.sock send-proxy-v2'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend http_frontend$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http_frontend$'}
       - type: contains
         target: haproxy.cfg
         pattern: 'bind unix@/etc/haproxy/http-h1-frontend\.sock mode 660 accept-proxy'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend http_frontend_h2c$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http_frontend_h2c$'}
       - type: contains
         target: haproxy.cfg
         pattern: 'bind unix@/etc/haproxy/http-h2c-frontend\.sock mode 660 accept-proxy proto h2'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'backend gtw_default_grpc-h2c_grpc-svc_9090'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'default-server check proto h2'
+      - {type: contains, target: haproxy.cfg, pattern: 'backend gtw_default_grpc-h2c_grpc-svc_9090'}
+      - {type: contains, target: haproxy.cfg, pattern: 'default-server check proto h2'}
   test-grpcroute-https-listener-alpn-h2:
     requires: [gatewayclasses, gateways, grpcroutes]
     description: "Pins the chart's gRPC-over-TLS+ALPN-h2 emission contract for the production-relevant scenario where a Gateway has an HTTPS listener + GRPCRoute (the upstream conformance suite tests the plaintext h2c ."
@@ -105,16 +75,12 @@ validationTests:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gateway
-            namespace: default
+          metadata: {name: gateway, namespace: default}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -123,62 +89,41 @@ validationTests:
                 protocol: HTTPS
                 hostname: grpc.example.com
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: GRPCRoute
                 tls:
                   mode: Terminate
                   certificateRefs:
-                    - group: ""
-                      kind: Secret
-                      name: shared-tls
-                      namespace: default
+                    - {group: "", kind: Secret, name: shared-tls, namespace: default}
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: grpc-svc
-            namespace: default
+          metadata: {name: grpc-svc, namespace: default}
           spec:
             ports:
-              - name: grpc
-                port: 9090
-                targetPort: 9090
+              - {name: grpc, port: 9090, targetPort: 9090}
       grpcroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GRPCRoute
-          metadata:
-            name: grpc-https
-            namespace: default
+          metadata: {name: grpc-https, namespace: default}
           spec:
             parentRefs:
-              - name: gateway
-                namespace: default
+              - {name: gateway, namespace: default}
             hostnames:
               - grpc.example.com
             rules:
               - matches:
-                  - method:
-                      type: Exact
-                      service: com.example.API
-                      method: Echo
+                  - method: {type: Exact, service: com.example.API, method: Echo}
                 backendRefs:
-                  - name: grpc-svc
-                    port: 9090
+                  - {name: grpc-svc, port: 9090}
     assertions:
       - type: haproxy_valid
 
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+bind \*:443 ssl crt-list [^ ]+ alpn h2,http/1\.1'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^backend gtw_default_grpc-https_grpc-svc_9090'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend gtw_default_grpc-https_grpc-svc_9090'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'default-server check proto h2'
-      - type: contains
-        target: map:host.map
-        pattern: '(?m)^grpc\.example\.com\b'
+      - {type: contains, target: haproxy.cfg, pattern: 'default-server check proto h2'}
+      - {type: contains, target: map:host.map, pattern: '(?m)^grpc\.example\.com\b'}

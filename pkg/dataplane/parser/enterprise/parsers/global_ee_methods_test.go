@@ -125,14 +125,11 @@ func TestGlobalEE_CRUDRoundTrip(t *testing.T) {
 	got, _ = p.GetOne(1)
 	assert.Equal(t, "device-atlas-json-file", got.(*EEGlobalDirective).Type)
 
-	// Set with non-EEGlobalDirective rejects.
 	require.Error(t, p.Set("not a directive", 1), "Set must reject non-EEGlobalDirective data")
 
-	// Set out of range rejects.
 	require.Error(t, p.Set(dReplace, 99), "Set must reject out-of-range index")
 	require.Error(t, p.Set(dReplace, -1), "Set must reject negative index")
 
-	// Insert with non-EEGlobalDirective rejects.
 	require.Error(t, p.Insert("not a directive", 0), "Insert must reject non-EEGlobalDirective data")
 
 	// Delete in the middle.

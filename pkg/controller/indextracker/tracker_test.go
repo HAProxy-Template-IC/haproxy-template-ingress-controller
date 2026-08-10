@@ -73,12 +73,10 @@ func TestHandleResourceSyncComplete_MultipleResources(t *testing.T) {
 	// Initially not synced
 	assert.False(t, tracker.allResourcesSynced())
 
-	// Sync ingresses
 	tracker.handleResourceSyncComplete(events.NewResourceSyncCompleteEvent("ingresses", 10))
 	assert.True(t, tracker.expectedResources["ingresses"])
 	assert.False(t, tracker.allResourcesSynced())
 
-	// Sync services
 	tracker.handleResourceSyncComplete(events.NewResourceSyncCompleteEvent("services", 20))
 	assert.True(t, tracker.expectedResources["services"])
 	assert.False(t, tracker.allResourcesSynced())
@@ -116,7 +114,6 @@ func TestHandleResourceSyncComplete_DuplicateEvent(t *testing.T) {
 
 	tracker := New(bus, logger, resourceNames)
 
-	// First event
 	tracker.handleResourceSyncComplete(events.NewResourceSyncCompleteEvent("ingresses", 42))
 	assert.True(t, tracker.expectedResources["ingresses"])
 	assert.Equal(t, 42, tracker.resourceCounts["ingresses"])
@@ -135,7 +132,6 @@ func TestStart_PublishesIndexSynchronizedEvent(t *testing.T) {
 
 	tracker := New(bus, logger, resourceNames)
 
-	// Subscribe to events
 	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
@@ -150,11 +146,9 @@ func TestStart_PublishesIndexSynchronizedEvent(t *testing.T) {
 	// Give tracker time to start
 	time.Sleep(50 * time.Millisecond)
 
-	// Publish sync complete events
 	bus.Publish(events.NewResourceSyncCompleteEvent("ingresses", 10))
 	bus.Publish(events.NewResourceSyncCompleteEvent("services", 20))
 
-	// Wait for IndexSynchronizedEvent
 	indexSyncEvent := testutil.WaitForEvent[*events.IndexSynchronizedEvent](t, eventChan, testutil.LongTimeout)
 
 	// Verify event
@@ -170,7 +164,6 @@ func TestStart_DoesNotPublishDuplicateIndexSynchronizedEvent(t *testing.T) {
 
 	tracker := New(bus, logger, resourceNames)
 
-	// Subscribe to events
 	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
@@ -185,7 +178,6 @@ func TestStart_DoesNotPublishDuplicateIndexSynchronizedEvent(t *testing.T) {
 	// Give tracker time to start
 	time.Sleep(50 * time.Millisecond)
 
-	// Publish sync complete event
 	bus.Publish(events.NewResourceSyncCompleteEvent("ingresses", 10))
 
 	// Wait for first IndexSynchronizedEvent
