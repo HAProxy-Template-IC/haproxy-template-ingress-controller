@@ -340,7 +340,12 @@ func (c *Component) handleReconciliationCompleted(ctx context.Context, event *ev
 	}
 	// applyAndPrune handles the empty-set case: any resources still in
 	// lastAppliedKeys but not in the new desired set are pruned.
-	c.applyAndPrune(ctx, event.RenderedResources)
+	if err := c.applyAndPrune(ctx, event.RenderedResources); err != nil {
+		c.Logger().Error("Rendered resources did not converge; status publication deferred",
+			"error", err,
+			"correlation_id", event.CorrelationID())
+		return
+	}
 
 	// Forward the cycle's status patches now that its resources exist: the
 	// StatusApplier writes the "rendered" variant on this event, so
@@ -555,11 +560,11 @@ func (c *Component) handleLostLeadership() {
 
 // applyAndPrune applies the new desired set and deletes any
 // previously-applied resources that are no longer in it.
-func (c *Component) applyAndPrune(ctx context.Context, resources []templating.RenderedResource) {
+func (c *Component) applyAndPrune(ctx context.Context, resources []templating.RenderedResource) error {
 	startTime := time.Now()
 	desiredKeys := make(map[string]appliedKeyMeta, len(resources))
 	var dkMu sync.Mutex
-	var applied, skipped, refused atomic.Int64
+	var applied, skipped, refused, failed atomic.Int64
 
 	// Apply resources CONCURRENTLY (bounded fan-out). A serial loop made each
 	// reconciliation's apply pass slow (one SSA round-trip per changed
@@ -577,6 +582,8 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 		r := &resources[i]
 		g.Go(func() error {
 			switch outcome := c.applyOne(gctx, r, desiredKeys, &dkMu); outcome {
+			case applyOutcomeError:
+				failed.Add(1)
 			case applyOutcomeApplied:
 				applied.Add(1)
 			case applyOutcomeSkipped:
@@ -589,7 +596,15 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 	}
 	_ = g.Wait()
 
-	deleted := c.pruneOrphans(ctx, desiredKeys)
+	failedN := int(failed.Load())
+	if failedN > 0 {
+		return fmt.Errorf("%d of %d rendered resources failed; retry occurs on the next reconciliation", failedN, len(resources))
+	}
+
+	deleted, deleteFailures := c.pruneOrphans(ctx, desiredKeys)
+	if deleteFailures > 0 {
+		return fmt.Errorf("%d orphaned resources could not be deleted; retry occurs on the next reconciliation", deleteFailures)
+	}
 
 	appliedN, skippedN, refusedN := int(applied.Load()), int(skipped.Load()), int(refused.Load())
 	if appliedN+skippedN+deleted+refusedN > 0 {
@@ -598,6 +613,7 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 			"deleted", deleted, "refused", refusedN,
 			"duration_ms", time.Since(startTime).Milliseconds())
 	}
+	return nil
 }
 
 // applyOutcome enumerates per-resource results so applyAndPrune can keep
@@ -684,14 +700,13 @@ func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource
 }
 
 // pruneOrphans deletes resources that were applied last pass but aren't in
-// the new desired set. Returns the number of objects actually deleted.
-func (c *Component) pruneOrphans(ctx context.Context, desiredKeys map[string]appliedKeyMeta) int {
+// the new desired set.
+func (c *Component) pruneOrphans(ctx context.Context, desiredKeys map[string]appliedKeyMeta) (deleted, failed int) {
 	c.mu.Lock()
 	prior := c.lastAppliedKeys
 	stillApplied := maps.Clone(desiredKeys)
 	c.mu.Unlock()
 
-	deleted := 0
 	for key, meta := range prior {
 		if _, kept := desiredKeys[key]; kept {
 			continue
@@ -705,6 +720,7 @@ func (c *Component) pruneOrphans(ctx context.Context, desiredKeys map[string]app
 				"error", err)
 			// Keep it in the cache so we'll try again next reconciliation.
 			stillApplied[key] = meta
+			failed++
 			continue
 		}
 		deleted++
@@ -716,7 +732,7 @@ func (c *Component) pruneOrphans(ctx context.Context, desiredKeys map[string]app
 	c.mu.Lock()
 	c.lastAppliedKeys = stillApplied
 	c.mu.Unlock()
-	return deleted
+	return deleted, failed
 }
 
 // refused returns true when the policy says to skip this resource

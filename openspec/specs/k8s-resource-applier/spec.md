@@ -97,9 +97,19 @@ The applier SHALL support a RestrictToOwnNamespace mode that refuses (logs and s
 
 ### Requirement: ResourcesAppliedEvent Ordering
 
-After completing an apply-and-prune pass, the applier SHALL publish a ResourcesAppliedEvent carrying the cycle's status patches (forwarded from the ReconciliationCompletedEvent, with correlation propagated). The StatusApplier writes the "rendered" status variant on this event — not on render completion — so status conditions can never precede the infrastructure resources they describe.
+After successfully completing an apply-and-prune pass, the applier SHALL publish a ResourcesAppliedEvent carrying the cycle's status patches (forwarded from the ReconciliationCompletedEvent, with correlation propagated). If any apply fails, the applier SHALL skip pruning because its desired-key set may be incomplete. If any apply or orphan deletion fails, it SHALL withhold ResourcesAppliedEvent; the unfinished work remains tracked for the next reconciliation. The StatusApplier writes the "rendered" status variant on this event — not on render completion — so status conditions can never precede the infrastructure resources they describe.
 
 #### Scenario: Conditions follow infrastructure
 
 - **WHEN** a render emits both k8sResources and status patches
 - **THEN** the ResourcesAppliedEvent carrying the patches SHALL be published only after the resources were applied
+
+#### Scenario: Failed apply preserves the prior managed set
+
+- **WHEN** any rendered resource cannot be resolved, encoded, or applied
+- **THEN** the applier SHALL NOT prune from the incomplete desired-key set or publish ResourcesAppliedEvent
+
+#### Scenario: Failed orphan deletion withholds convergence
+
+- **WHEN** an orphan cannot be deleted
+- **THEN** the applier SHALL retain it for retry and SHALL NOT publish ResourcesAppliedEvent until deletion succeeds

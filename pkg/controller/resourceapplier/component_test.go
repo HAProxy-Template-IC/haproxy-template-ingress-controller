@@ -16,6 +16,7 @@ package resourceapplier
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -312,8 +313,10 @@ func TestApplyAndPrune_PartialOwnership_DropEntryReapplies(t *testing.T) {
 }
 
 func TestApplyAndPrune_RestrictToOwnNamespace_RefusesForeign(t *testing.T) {
-	comp, _, counter := newTestComp(t, true) // restrict=true
+	comp, bus, counter := newTestComp(t, true) // restrict=true
 	setLeader(comp)
+	observer := bus.Subscribe("resources-applied-observer", 10)
+	bus.Start()
 	comp.handleReconciliationCompleted(context.Background(),
 		reconciliationCompletedEvent([]templating.RenderedResource{
 			sampleResource("haptic", "svc-a", 80),  // own namespace → allowed
@@ -321,6 +324,7 @@ func TestApplyAndPrune_RestrictToOwnNamespace_RefusesForeign(t *testing.T) {
 			sampleResource("", "cluster-thing", 0), // cluster-scoped → refused
 		}))
 	assert.Equal(t, int32(1), counter.Load(), "only the own-namespace resource must apply")
+	_ = testutil.WaitForEvent[*events.ResourcesAppliedEvent](t, observer, testutil.EventTimeout)
 }
 
 func TestHandleBecameLeader_ClearsChecksumCache_NoAutoReapply(t *testing.T) {
@@ -678,6 +682,90 @@ func TestHandleReconciliationCompleted_PublishesResourcesApplied(t *testing.T) {
 	require.Len(t, applied.StatusPatches, 1, "the cycle's status patches must be forwarded")
 	assert.Equal(t, "gw-1", applied.StatusPatches[0].Name)
 	assert.Equal(t, "corr-1", applied.CorrelationID(), "correlation must propagate for tracing")
+}
+
+func TestHandleReconciliationCompleted_ApplyFailureWithholdsSuccessAndRetries(t *testing.T) {
+	comp, bus, counter := newTestComp(t, false)
+	setLeader(comp)
+	observer := bus.Subscribe("resources-applied-observer", 10)
+	bus.Start()
+
+	var failOnce atomic.Bool
+	failOnce.Store(true)
+	client := comp.dynamicClient.(*dynamicfake.FakeDynamicClient)
+	client.PrependReactor("patch", "services", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		patch, ok := action.(k8stesting.PatchAction)
+		if ok && patch.GetName() == "svc-b" && failOnce.CompareAndSwap(true, false) {
+			return true, nil, errors.New("temporary API failure")
+		}
+		return false, nil, nil
+	})
+
+	evt := events.NewReconciliationCompletedEvent(0, []templating.RenderedResource{
+		sampleResource("haptic", "svc-a", 80),
+		sampleResource("haptic", "svc-b", 81),
+	}, nil)
+	comp.handleReconciliationCompleted(context.Background(), evt)
+
+	testutil.AssertNoEvent[*events.ResourcesAppliedEvent](t, observer, testutil.NoEventTimeout)
+	assert.Equal(t, int32(1), counter.Load(), "the resource that succeeded must remain cached")
+
+	comp.handleReconciliationCompleted(context.Background(), evt)
+	_ = testutil.WaitForEvent[*events.ResourcesAppliedEvent](t, observer, testutil.EventTimeout)
+	assert.Equal(t, int32(2), counter.Load(), "retry must skip the converged resource and reapply only the failure")
+}
+
+func TestHandleReconciliationCompleted_ResolutionFailureDoesNotPrune(t *testing.T) {
+	comp, bus, _ := newTestComp(t, false)
+	setLeader(comp)
+	observer := bus.Subscribe("resources-applied-observer", 10)
+	bus.Start()
+
+	comp.handleReconciliationCompleted(context.Background(),
+		reconciliationCompletedEvent([]templating.RenderedResource{sampleResource("haptic", "svc-a", 80)}))
+	_ = testutil.WaitForEvent[*events.ResourcesAppliedEvent](t, observer, testutil.EventTimeout)
+
+	var deletes atomic.Int32
+	client := comp.dynamicClient.(*dynamicfake.FakeDynamicClient)
+	client.PrependReactor("delete", "services", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		deletes.Add(1)
+		return true, nil, nil
+	})
+
+	unresolved := sampleResource("haptic", "svc-a", 80)
+	unresolved.Kind = "Unknown"
+	comp.handleReconciliationCompleted(context.Background(),
+		reconciliationCompletedEvent([]templating.RenderedResource{unresolved}))
+
+	testutil.AssertNoEvent[*events.ResourcesAppliedEvent](t, observer, testutil.NoEventTimeout)
+	assert.Equal(t, int32(0), deletes.Load(), "an incomplete desired-key set must never drive orphan pruning")
+}
+
+func TestHandleReconciliationCompleted_DeleteFailureWithholdsSuccessAndRetries(t *testing.T) {
+	comp, bus, _ := newTestComp(t, false)
+	setLeader(comp)
+	observer := bus.Subscribe("resources-applied-observer", 10)
+	bus.Start()
+
+	comp.handleReconciliationCompleted(context.Background(),
+		reconciliationCompletedEvent([]templating.RenderedResource{sampleResource("haptic", "svc-a", 80)}))
+	_ = testutil.WaitForEvent[*events.ResourcesAppliedEvent](t, observer, testutil.EventTimeout)
+
+	var deleteAttempts atomic.Int32
+	client := comp.dynamicClient.(*dynamicfake.FakeDynamicClient)
+	client.PrependReactor("delete", "services", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		if deleteAttempts.Add(1) == 1 {
+			return true, nil, errors.New("temporary delete failure")
+		}
+		return true, nil, nil
+	})
+
+	comp.handleReconciliationCompleted(context.Background(), reconciliationCompletedEvent(nil))
+	testutil.AssertNoEvent[*events.ResourcesAppliedEvent](t, observer, testutil.NoEventTimeout)
+
+	comp.handleReconciliationCompleted(context.Background(), reconciliationCompletedEvent(nil))
+	_ = testutil.WaitForEvent[*events.ResourcesAppliedEvent](t, observer, testutil.EventTimeout)
+	assert.Equal(t, int32(2), deleteAttempts.Load(), "failed orphan deletion must remain tracked for retry")
 }
 
 // TestHandleReconciliationCompleted_NoPublishWhenNotLeader: a follower must
