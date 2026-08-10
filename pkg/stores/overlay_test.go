@@ -362,7 +362,7 @@ func TestCompositeStore_ReadOnlyOperations(t *testing.T) {
 		{
 			name: "Delete",
 			operation: func() error {
-				return composite.Delete("key")
+				return composite.Delete("default", "obj", []string{"key"})
 			},
 		},
 		{

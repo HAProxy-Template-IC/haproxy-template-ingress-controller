@@ -75,12 +75,12 @@ func minimalComponentForGuardTest(t *testing.T) *Component {
 // BEFORE triggerDiscovery runs.
 type fakePodStoreForGuard struct{}
 
-func (fakePodStoreForGuard) Get(_ ...string) ([]any, error) { return nil, nil }
-func (fakePodStoreForGuard) List() ([]any, error)           { return nil, nil }
-func (fakePodStoreForGuard) Add(_ any, _ []string) error    { return nil }
-func (fakePodStoreForGuard) Update(_ any, _ []string) error { return nil }
-func (fakePodStoreForGuard) Delete(_ ...string) error       { return nil }
-func (fakePodStoreForGuard) Clear() error                   { return nil }
+func (fakePodStoreForGuard) Get(_ ...string) ([]any, error)       { return nil, nil }
+func (fakePodStoreForGuard) List() ([]any, error)                 { return nil, nil }
+func (fakePodStoreForGuard) Add(_ any, _ []string) error          { return nil }
+func (fakePodStoreForGuard) Update(_ any, _ []string) error       { return nil }
+func (fakePodStoreForGuard) Delete(_, _ string, _ []string) error { return nil }
+func (fakePodStoreForGuard) Clear() error                         { return nil }
 
 func TestComponent_TryInitialDiscovery_SkipsWhenAlreadyDone(t *testing.T) {
 	c := minimalComponentForGuardTest(t)

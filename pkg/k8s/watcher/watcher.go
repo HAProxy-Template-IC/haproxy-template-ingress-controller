@@ -49,6 +49,7 @@ type Watcher struct {
 	syncMu               sync.RWMutex
 	initialCount         int          // Number of resources loaded during initial sync
 	lastWatchErrNanos    atomic.Int64 // observability: most recent watch-connection error
+	labelSelector        string       // serialized form of config.LabelSelector; "" when unset
 	logger               *slog.Logger
 }
 
@@ -89,6 +90,16 @@ func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger)
 	// Handle namespaced watch
 	if cfg.NamespacedWatch {
 		cfg.Namespace = k8sClient.Namespace()
+	}
+
+	// Serialize the selector once; Validate already proved it converts.
+	var labelSelector string
+	if cfg.LabelSelector != nil {
+		selector, err := metav1.LabelSelectorAsSelector(cfg.LabelSelector)
+		if err != nil {
+			return nil, fmt.Errorf("converting label selector: %w", err)
+		}
+		labelSelector = selector.String()
 	}
 
 	// Create indexer
@@ -162,6 +173,7 @@ func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger)
 		stopCh:               make(chan struct{}),
 		synced:               false,
 		initialCount:         0,
+		labelSelector:        labelSelector,
 		logger:               logger,
 	}
 
@@ -205,17 +217,28 @@ func (w *Watcher) createInformer() error {
 	// Get informer for resource
 	w.informer = informerFactory.ForResource(w.config.GVR).Informer()
 
-	// For on-demand (CachedStore) kinds, body-strip the objects the informer
-	// retains in its internal cache. The render reads the full body via a live
-	// API GET (CachedStore.fetchResourceByRef), so the informer never needs to
-	// hold it. Must be installed before the informer is started (Run). Only
-	// the indexBy / fieldSelector / identity fields survive, so handler-side
-	// key extraction and field-selector evaluation still work. See ADR-0012.
-	if w.config.StoreType == types.StoreTypeCached {
-		roots := projectionRoots(w.config.IndexBy, w.config.FieldSelector)
-		if err := w.informer.SetTransform(newProjectionTransform(roots, w.indexer)); err != nil {
-			return fmt.Errorf("installing projection transform: %w", err)
-		}
+	// Every store type gets a transform, but they differ, and the difference is
+	// load-bearing. Both run before the informer caches the object and before
+	// any handler sees it, which is what keeps handlers from mutating objects
+	// client-go still owns.
+	//
+	//   on-demand (CachedStore) → project, then normalise. The render reads the
+	//     full body via a live API GET, so the informer only needs the indexBy /
+	//     fieldSelector / identity fields. See ADR-0012.
+	//   full (MemoryStore) → normalise only. The stored body IS what templates
+	//     read, so projecting here would serve them a husk.
+	//
+	// No default branch: New rejects unknown store types, and a silently
+	// untransformed store would put raw float64 bodies back into templates.
+	var transform cache.TransformFunc
+	switch w.config.StoreType {
+	case types.StoreTypeCached:
+		transform = newProjectionTransform(projectionRoots(w.config.IndexBy, w.config.FieldSelector), w.indexer)
+	case types.StoreTypeMemory:
+		transform = newNormalizeTransform(w.indexer)
+	}
+	if err := w.informer.SetTransform(transform); err != nil {
+		return fmt.Errorf("installing %s-store transform: %w", w.config.StoreType, err)
 	}
 
 	// Surface watch-connection errors instead of leaving them to client-go's
@@ -261,15 +284,15 @@ func (w *Watcher) LastWatchError() time.Time {
 	return time.Unix(0, ns)
 }
 
-// applyListOptions applies label selector to list options.
+// applyListOptions applies the label selector to list options.
+//
+// The selector was converted once in New, after Validate accepted it, so there
+// is no error to handle per List/Watch. That matters: the previous version
+// swallowed a conversion error and left the selector unset, turning a scoped
+// watch into a cluster-wide one with no diagnostic.
 func (w *Watcher) applyListOptions(options *metav1.ListOptions) {
-	if w.config.LabelSelector != nil {
-		selector, err := metav1.LabelSelectorAsSelector(w.config.LabelSelector)
-		if err != nil {
-			// This should never happen with valid MatchLabels
-			return
-		}
-		options.LabelSelector = selector.String()
+	if w.labelSelector != "" {
+		options.LabelSelector = w.labelSelector
 	}
 }
 

@@ -517,7 +517,7 @@ func (m *mockStore) Update(resource any, keys []string) error {
 	return nil
 }
 
-func (m *mockStore) Delete(keys ...string) error {
+func (m *mockStore) Delete(_, _ string, _ []string) error {
 	return nil
 }
 

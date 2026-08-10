@@ -196,7 +196,7 @@ func (s *CompositeStore) Update(_ any, _ []string) error {
 
 // Delete is not supported on CompositeStore.
 // CompositeStore is read-only; modifications should be made through the overlay.
-func (s *CompositeStore) Delete(_ ...string) error {
+func (s *CompositeStore) Delete(_, _ string, _ []string) error {
 	return &ReadOnlyStoreError{Operation: "Delete"}
 }
 

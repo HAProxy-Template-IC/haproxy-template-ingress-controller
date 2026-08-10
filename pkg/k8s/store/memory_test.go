@@ -120,7 +120,7 @@ func TestMemoryStore_Update(t *testing.T) {
 func TestMemoryStore_Delete(t *testing.T) {
 	store := NewMemoryStore(2)
 
-	resource := map[string]string{"name": "test"}
+	resource := namedResource("default", "test")
 	keys := []string{"default", "test"}
 
 	if err := store.Add(resource, keys); err != nil {
@@ -133,7 +133,7 @@ func TestMemoryStore_Delete(t *testing.T) {
 	}
 
 	// Delete resource
-	if err := store.Delete(keys...); err != nil {
+	if err := store.Delete("default", "test", keys); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestMemoryStore_WrongKeyCount(t *testing.T) {
 	}
 
 	// Try to delete with wrong number of keys
-	err = store.Delete("only-one-key")
+	err = store.Delete("default", "obj", []string{"only-one-key"})
 	if err == nil {
 		t.Error("expected error for wrong key count")
 	}
@@ -563,24 +563,17 @@ func TestMemoryStore_UpdateWithNonUniqueKeys(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_DeleteWithNonUniqueKeys verifies that Delete removes ALL
-// resources matching the provided keys.
+// TestMemoryStore_DeleteWithNonUniqueKeys verifies that deleting one resource
+// leaves its siblings under the same index key in place.
+//
+// This is the shipped chart's EndpointSlice shape: every slice of a Service
+// shares the (namespace, service-name) bucket, so a bucket-wide delete would
+// empty the backend.
 func TestMemoryStore_DeleteWithNonUniqueKeys(t *testing.T) {
 	store := NewMemoryStore(1)
 
-	// Add multiple resources with the same index key
-	slice1 := map[string]any{
-		"metadata": map[string]any{
-			"namespace": "default",
-			"name":      "nginx-slice-1",
-		},
-	}
-	slice2 := map[string]any{
-		"metadata": map[string]any{
-			"namespace": "default",
-			"name":      "nginx-slice-2",
-		},
-	}
+	slice1 := namedResource("default", "nginx-slice-1")
+	slice2 := namedResource("default", "nginx-slice-2")
 
 	if err := store.Add(slice1, []string{"nginx"}); err != nil {
 		t.Fatalf("Add slice1 failed: %v", err)
@@ -594,14 +587,12 @@ func TestMemoryStore_DeleteWithNonUniqueKeys(t *testing.T) {
 		t.Errorf("expected size 2 before delete, got %d", store.Size())
 	}
 
-	// Delete all resources with this index key
-	if err := store.Delete("nginx"); err != nil {
+	if err := store.Delete("default", "nginx-slice-1", []string{"nginx"}); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	// Verify ALL resources with this key were deleted
-	if store.Size() != 0 {
-		t.Errorf("expected size 0 after delete, got %d", store.Size())
+	if store.Size() != 1 {
+		t.Errorf("expected size 1 after deleting one sibling, got %d", store.Size())
 	}
 
 	results, err := store.Get("nginx")
@@ -609,8 +600,81 @@ func TestMemoryStore_DeleteWithNonUniqueKeys(t *testing.T) {
 		t.Fatalf("Get failed: %v", err)
 	}
 
-	if len(results) != 0 {
-		t.Errorf("expected 0 results after delete, got %d", len(results))
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result after delete, got %d", len(results))
+	}
+	if _, name := extractNamespaceName(results[0]); name != "nginx-slice-2" {
+		t.Errorf("expected the surviving resource to be nginx-slice-2, got %q", name)
+	}
+}
+
+// TestMemoryStore_DeleteRemovesEmptyBucket verifies the composite key's map
+// entry is dropped once its last resource is deleted. Leaving an empty slice
+// behind would leak one map key per churned bucket.
+func TestMemoryStore_DeleteRemovesEmptyBucket(t *testing.T) {
+	store := NewMemoryStore(1)
+
+	if err := store.Add(namedResource("default", "only"), []string{"nginx"}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	if err := store.Delete("default", "only", []string{"nginx"}); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	if len(store.data) != 0 {
+		t.Errorf("expected the bucket's map entry to be removed, got %d entries", len(store.data))
+	}
+}
+
+// TestMemoryStore_DeleteMatchesOnNamespaceToo verifies that identity is the
+// full (namespace, name) pair. Two resources can share both an index key and a
+// name while living in different namespaces — matching on name alone would
+// evict the wrong one.
+func TestMemoryStore_DeleteMatchesOnNamespaceToo(t *testing.T) {
+	store := NewMemoryStore(1)
+
+	inDefault := namedResource("default", "shared-name")
+	inOther := namedResource("other", "shared-name")
+
+	if err := store.Add(inDefault, []string{"nginx"}); err != nil {
+		t.Fatalf("Add inDefault failed: %v", err)
+	}
+	if err := store.Add(inOther, []string{"nginx"}); err != nil {
+		t.Fatalf("Add inOther failed: %v", err)
+	}
+
+	if err := store.Delete("default", "shared-name", []string{"nginx"}); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	results, err := store.Get("nginx")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result after delete, got %d", len(results))
+	}
+	if ns, _ := extractNamespaceName(results[0]); ns != "other" {
+		t.Errorf("expected the surviving resource to be the one in namespace \"other\", got %q", ns)
+	}
+}
+
+// TestMemoryStore_DeleteUnknownIdentityIsNoOp verifies that deleting a name
+// that isn't in the bucket leaves the bucket untouched.
+func TestMemoryStore_DeleteUnknownIdentityIsNoOp(t *testing.T) {
+	store := NewMemoryStore(1)
+
+	if err := store.Add(namedResource("default", "present"), []string{"nginx"}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	if err := store.Delete("default", "absent", []string{"nginx"}); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	if store.Size() != 1 {
+		t.Errorf("expected size 1 after no-op delete, got %d", store.Size())
 	}
 }
 

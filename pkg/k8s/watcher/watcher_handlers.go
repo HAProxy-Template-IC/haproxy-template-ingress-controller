@@ -106,11 +106,13 @@ func (w *Watcher) logFieldSelectorSkip(msg string, resource *unstructured.Unstru
 }
 
 // processAdd adds a resource to the store and records the change.
+//
+// The resource arrives already filtered and float-converted by the informer's
+// transform, so this only reads index keys off it.
 func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
-	// Process resource (filter fields, extract keys, convert for templates)
-	result, err := w.indexer.Process(resource)
+	keys, err := w.indexer.ExtractKeys(resource)
 	if err != nil {
-		w.logger.Error("Failed to process resource for indexing",
+		w.logger.Error("Failed to extract keys from resource for indexing",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
@@ -118,12 +120,12 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 		return
 	}
 
-	if err := w.store.Add(result.ConvertedResource, result.Keys); err != nil {
+	if err := w.store.Add(resource.Object, keys); err != nil {
 		w.logger.Error("Failed to add resource to store",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
-			"keys", result.Keys,
+			"keys", keys,
 			"error", err)
 		return
 	}
@@ -136,18 +138,20 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 		"name", resource.GetName(),
 		"namespace", resource.GetNamespace(),
 		"resource_version", resource.GetResourceVersion(),
-		"keys", result.Keys)
+		"keys", keys)
 
 	// Record change
 	w.debouncer.RecordCreate()
 }
 
 // processUpdate updates a resource in the store and records the change.
+//
+// As with processAdd, the informer's transform has already normalised the
+// resource, so this only reads index keys off it.
 func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
-	// Process resource (filter fields, extract keys, convert for templates)
-	result, err := w.indexer.Process(resource)
+	keys, err := w.indexer.ExtractKeys(resource)
 	if err != nil {
-		w.logger.Error("Failed to process resource for indexing",
+		w.logger.Error("Failed to extract keys from resource for indexing",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
@@ -155,12 +159,12 @@ func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
 		return
 	}
 
-	if err := w.store.Update(result.ConvertedResource, result.Keys); err != nil {
+	if err := w.store.Update(resource.Object, keys); err != nil {
 		w.logger.Error("Failed to update resource in store",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
-			"keys", result.Keys,
+			"keys", keys,
 			"error", err)
 		return
 	}
@@ -171,7 +175,7 @@ func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
 		"name", resource.GetName(),
 		"namespace", resource.GetNamespace(),
 		"resource_version", resource.GetResourceVersion(),
-		"keys", result.Keys)
+		"keys", keys)
 
 	// Record change
 	w.debouncer.RecordUpdate()
@@ -179,7 +183,6 @@ func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
 
 // processDelete removes a resource from the store and records the change.
 func (w *Watcher) processDelete(resource *unstructured.Unstructured) {
-	// Extract keys for deletion (before filtering)
 	keys, err := w.indexer.ExtractKeys(resource)
 	if err != nil {
 		w.logger.Error("Failed to extract keys from resource for deletion",
@@ -190,7 +193,7 @@ func (w *Watcher) processDelete(resource *unstructured.Unstructured) {
 		return
 	}
 
-	if err := w.store.Delete(keys...); err != nil {
+	if err := w.store.Delete(resource.GetNamespace(), resource.GetName(), keys); err != nil {
 		w.logger.Error("Failed to delete resource from store",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),

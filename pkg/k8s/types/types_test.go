@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -199,6 +200,59 @@ func TestWatcherConfig_Validate(t *testing.T) {
 				OnChange: validCallback,
 			},
 			wantErr: false,
+		},
+		{
+			// nil must keep meaning "unfiltered": LabelSelectorAsSelector(nil)
+			// returns a selector matching NOTHING without erroring, so a
+			// missing nil guard here would turn every unselectored watch into
+			// an empty one.
+			name: "nil label selector is valid",
+			config: WatcherConfig{
+				GVR: schema.GroupVersionResource{
+					Group:    "networking.k8s.io",
+					Version:  "v1",
+					Resource: "ingresses",
+				},
+				IndexBy:       []string{"metadata.namespace", "metadata.name"},
+				OnChange:      validCallback,
+				LabelSelector: nil,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid label selector",
+			config: WatcherConfig{
+				GVR: schema.GroupVersionResource{
+					Group:    "networking.k8s.io",
+					Version:  "v1",
+					Resource: "ingresses",
+				},
+				IndexBy:       []string{"metadata.namespace", "metadata.name"},
+				OnChange:      validCallback,
+				LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "nginx"}},
+			},
+			wantErr: false,
+		},
+		{
+			// Rejected at construction rather than silently dropped at list
+			// time, which would widen the watch to the whole kind.
+			name: "unconvertible label selector",
+			config: WatcherConfig{
+				GVR: schema.GroupVersionResource{
+					Group:    "networking.k8s.io",
+					Version:  "v1",
+					Resource: "ingresses",
+				},
+				IndexBy:  []string{"metadata.namespace", "metadata.name"},
+				OnChange: validCallback,
+				LabelSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{Key: "tier", Operator: "BogusOperator", Values: []string{"x"}},
+					},
+				},
+			},
+			wantErr:     true,
+			errContains: "LabelSelector",
 		},
 		{
 			name: "missing GVR.Resource",

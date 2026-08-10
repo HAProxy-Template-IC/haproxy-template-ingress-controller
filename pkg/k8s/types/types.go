@@ -55,9 +55,10 @@ const (
 )
 
 const (
-	fieldGVRResource = "GVR.Resource"
-	fieldIndexBy     = "IndexBy"
-	fieldOnChange    = "OnChange"
+	fieldGVRResource   = "GVR.Resource"
+	fieldIndexBy       = "IndexBy"
+	fieldOnChange      = "OnChange"
+	fieldLabelSelector = "LabelSelector"
 )
 
 // Store defines the interface for storing and retrieving indexed Kubernetes resources.
@@ -103,13 +104,21 @@ type Store interface {
 	// Returns an error if the operation fails.
 	Update(resource any, keys []string) error
 
-	// Delete removes a resource from the store using its index keys.
+	// Delete removes the single resource identified by namespace/name from the
+	// bucket addressed by keys. Index keys are configurable and need not be
+	// unique — the shipped chart indexes EndpointSlices by
+	// (namespace, service-name label) — so identity must be passed separately
+	// or siblings sharing the bucket would be evicted too.
+	//
+	// Deleting a resource that is not present is a no-op returning nil.
 	//
 	// Parameters:
-	//   - keys: Index keys identifying the resource to delete
+	//   - namespace: Namespace of the resource to delete ("" for cluster-scoped)
+	//   - name: Name of the resource to delete
+	//   - keys: Index keys addressing the bucket the resource lives in
 	//
 	// Returns an error if the operation fails.
-	Delete(keys ...string) error
+	Delete(namespace, name string, keys []string) error
 
 	// Clear removes all resources from the store.
 	Clear() error
@@ -379,6 +388,15 @@ func (c *WatcherConfig) Validate() error {
 	}
 	if c.OnChange == nil {
 		return &ConfigError{Field: fieldOnChange, Message: "callback is required"}
+	}
+	// A selector that cannot be converted would otherwise be dropped at list
+	// time, silently widening the watch to every object of this kind. The nil
+	// check is required: LabelSelectorAsSelector(nil) returns a selector
+	// matching NOTHING without erroring, so nil must keep meaning "unfiltered".
+	if c.LabelSelector != nil {
+		if _, err := metav1.LabelSelectorAsSelector(c.LabelSelector); err != nil {
+			return &ConfigError{Field: fieldLabelSelector, Message: err.Error()}
+		}
 	}
 	return nil
 }

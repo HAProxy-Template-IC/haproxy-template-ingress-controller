@@ -46,12 +46,12 @@ func (s *mutatingStore) snapshot() []any {
 	return s.snapshots[idx]
 }
 
-func (s *mutatingStore) List() ([]any, error)           { return s.snapshot(), nil }
-func (s *mutatingStore) Get(_ ...string) ([]any, error) { return s.snapshot(), nil }
-func (s *mutatingStore) Add(_ any, _ []string) error    { return nil }
-func (s *mutatingStore) Update(_ any, _ []string) error { return nil }
-func (s *mutatingStore) Delete(_ ...string) error       { return nil }
-func (s *mutatingStore) Clear() error                   { return nil }
+func (s *mutatingStore) List() ([]any, error)                 { return s.snapshot(), nil }
+func (s *mutatingStore) Get(_ ...string) ([]any, error)       { return s.snapshot(), nil }
+func (s *mutatingStore) Add(_ any, _ []string) error          { return nil }
+func (s *mutatingStore) Update(_ any, _ []string) error       { return nil }
+func (s *mutatingStore) Delete(_, _ string, _ []string) error { return nil }
+func (s *mutatingStore) Clear() error                         { return nil }
 
 var _ stores.Store = (*mutatingStore)(nil)
 

@@ -310,9 +310,14 @@ func (s *CachedStore) Update(resource any, keys []string) error {
 	return nil
 }
 
-// Delete removes a resource from the store.
-// NOTE: With non-unique index keys, this removes ALL resources matching the provided keys.
-func (s *CachedStore) Delete(keys ...string) error {
+// Delete removes the single resource identified by namespace/name from the
+// bucket addressed by keys, leaving any siblings that share the bucket in
+// place. Deleting a resource that is not present is a no-op.
+//
+// Only the deleted resource's cache entry is evicted. Purging the whole
+// bucket's entries would drop warm bodies still referenced elsewhere, forcing
+// a live API GET on the next render.
+func (s *CachedStore) Delete(namespace, name string, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -326,14 +331,22 @@ func (s *CachedStore) Delete(keys ...string) error {
 		return nil
 	}
 
-	// Delete cache entries for all matching resources
+	remaining := make([]resourceRef, 0, len(refs))
 	for _, ref := range refs {
-		cacheKey := ref.namespace + "/" + ref.name
-		s.cache.Remove(cacheKey)
+		if ref.namespace == namespace && ref.name == name {
+			// Same key shape as cacheResource.
+			s.cache.Remove(ref.namespace + "/" + ref.name)
+			continue
+		}
+		remaining = append(remaining, ref)
 	}
 
-	// Delete the refs entry
-	delete(s.refs, keyStr)
+	if len(remaining) == 0 {
+		delete(s.refs, keyStr)
+		return nil
+	}
+
+	s.refs[keyStr] = remaining
 
 	return nil
 }

@@ -569,8 +569,11 @@ type WatchedResource struct {
 	//
 	// Equality-only: comma-separated "key=value" pairs.
 	// Example: "app=nginx,environment=production"
-	// Set-based syntax (e.g. "tier in (frontend,api)", "!disabled") is NOT supported —
-	// the controller's parseLabelSelector splits on ',' and '=' and silently drops the rest.
+	// Parsed with the Kubernetes label-selector grammar. Set-based syntax
+	// (e.g. "tier in (frontend,api)", "!disabled", "app!=nginx") is NOT supported
+	// and is rejected: the configuration fails to load rather than the selector
+	// being dropped, which would silently widen the watch to every object of
+	// this kind cluster-wide.
 	// +optional
 	LabelSelector string `json:"labelSelector,omitempty"`
 

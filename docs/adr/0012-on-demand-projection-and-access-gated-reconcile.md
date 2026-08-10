@@ -139,7 +139,7 @@ storms — keep those on `store: full` + `IgnoreFields`).
 | File | Change |
 |------|--------|
 | `pkg/k8s/types/types.go` | `WatcherConfig`: nothing new required — projection roots derive from existing `IndexBy` + `FieldSelector`. |
-| `pkg/k8s/watcher/watcher.go` `createInformer` | Build a projection `TransformFunc` from `IndexBy`+`FieldSelector` roots; `informer.SetTransform(...)` before `Run`. Only when `StoreType == Cached`. |
+| `pkg/k8s/watcher/watcher.go` `createInformer` | Build a projection `TransformFunc` from `IndexBy`+`FieldSelector` roots; `informer.SetTransform(...)` before `Run`. Only when `StoreType == Cached`. **Superseded — see the amendment below.** |
 | `pkg/k8s/store/cached.go` | A `projected` flag; under it, `Add`/`Update` skip `cacheResource` and `Update`/`Delete` invalidate the LRU. |
 | `pkg/controller/resourcewatcher/watcher.go` | No change (StoreType already drives the cached branch). |
 
@@ -147,6 +147,27 @@ Verification (TDD): projection retains indexBy + field-selector + identity
 fields; drops a heavy non-indexed field; key extraction + field-selector eval
 still pass on the projected object; the render read returns the **full** body
 (live GET); `ListCached`/warm-prime never serves a husk.
+
+### Amendment: a transform is installed for every store type — but they differ
+
+A `TransformFunc` is now installed for **both** store types, because the
+handlers used to filter and float-convert the object *after* the informer had
+already cached it, which mutates an object client-go still owns. The transform
+is the sanctioned mutation point, so that work moved there.
+
+This does **not** extend projection to memory-backed watchers, and must never
+be read that way:
+
+| `StoreType` | Transform | Why |
+|---|---|---|
+| `Cached` (on-demand) | project to the index roots, then normalise | the render reads the full body via a live GET, so the informer need not hold it |
+| `Memory` (full) | normalise only — filter `IgnoreFields`, convert floats | **the stored body IS what templates read** |
+
+The reasoning at "Why this fails for MemoryStore" above and blocker **B1**
+("key-projection that discards the body for MemoryStore kinds: breaks
+templates") are unchanged and still binding. `TestNew_MemoryStore_Informer
+TransformKeepsFullBody` is the regression guard: it fails if the projection
+transform is ever wired onto a memory store.
 
 ## Mechanism 2 — access-gated reconcile (DEFER)
 

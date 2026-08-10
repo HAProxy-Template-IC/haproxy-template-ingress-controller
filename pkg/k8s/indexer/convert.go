@@ -41,8 +41,14 @@ func ConvertResource(resource any) map[string]any {
 
 // convertFloatsToInts recursively converts float64 values to int64 where they
 // have no fractional part. Mutation is performed in-place to avoid allocating
-// new maps and slices at each nesting level. This is safe because resources are
-// freshly deserialized from K8s watch events and owned by us.
+// new maps and slices at each nesting level.
+//
+// The sanctioned caller is the watcher's informer TransformFunc, which runs
+// before the object enters the informer's cache and before any handler sees
+// it — the one point where mutating a watch object is allowed. Calling this
+// from an event handler instead would modify an object client-go still owns.
+// It must stay idempotent (an int64 falls through untouched below), because a
+// cached object can be passed back to the transform on a Replace.
 //
 // This is necessary because JSON unmarshaling converts all numbers to float64
 // when the target type is any. For Kubernetes resources, this causes

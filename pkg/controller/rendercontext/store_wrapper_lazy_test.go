@@ -69,10 +69,10 @@ func (s *cachedTestStore) ListCached() ([]any, error) {
 	return append([]any{}, s.cached...), nil
 }
 
-func (s *cachedTestStore) Add(_ any, _ []string) error    { return nil }
-func (s *cachedTestStore) Update(_ any, _ []string) error { return nil }
-func (s *cachedTestStore) Delete(_ ...string) error       { return nil }
-func (s *cachedTestStore) Clear() error                   { return nil }
+func (s *cachedTestStore) Add(_ any, _ []string) error          { return nil }
+func (s *cachedTestStore) Update(_ any, _ []string) error       { return nil }
+func (s *cachedTestStore) Delete(_, _ string, _ []string) error { return nil }
+func (s *cachedTestStore) Clear() error                         { return nil }
 
 var (
 	_ stores.Store = (*cachedTestStore)(nil)

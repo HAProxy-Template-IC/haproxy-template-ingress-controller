@@ -38,7 +38,7 @@ func (m *MockStore) Update(_ any, _ []string) error {
 	return nil
 }
 
-func (m *MockStore) Delete(_ ...string) error {
+func (m *MockStore) Delete(_, _ string, _ []string) error {
 	return nil
 }
 

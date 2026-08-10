@@ -33,7 +33,7 @@ func (m *mockStore) Get(_ ...string) ([]any, error)             { return nil, ni
 func (m *mockStore) List() ([]any, error)                       { return nil, nil }
 func (m *mockStore) Add(_ any, _ []string) error                { return nil }
 func (m *mockStore) Update(_ any, _ []string) error             { return nil }
-func (m *mockStore) Delete(_ ...string) error                   { return nil }
+func (m *mockStore) Delete(_, _ string, _ []string) error       { return nil }
 func (m *mockStore) Clear() error                               { return nil }
 func (m *mockStore) GetByPartialKey(_ ...string) ([]any, error) { return nil, nil }
 

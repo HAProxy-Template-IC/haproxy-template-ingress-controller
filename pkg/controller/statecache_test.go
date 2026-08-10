@@ -556,12 +556,12 @@ type listCountingStore struct {
 	listCalls int
 }
 
-func (s *listCountingStore) Get(_ ...string) ([]any, error) { return s.items, nil }
-func (s *listCountingStore) List() ([]any, error)           { s.listCalls++; return s.items, nil }
-func (s *listCountingStore) Add(_ any, _ []string) error    { return nil }
-func (s *listCountingStore) Update(_ any, _ []string) error { return nil }
-func (s *listCountingStore) Delete(_ ...string) error       { return nil }
-func (s *listCountingStore) Clear() error                   { return nil }
+func (s *listCountingStore) Get(_ ...string) ([]any, error)       { return s.items, nil }
+func (s *listCountingStore) List() ([]any, error)                 { s.listCalls++; return s.items, nil }
+func (s *listCountingStore) Add(_ any, _ []string) error          { return nil }
+func (s *listCountingStore) Update(_ any, _ []string) error       { return nil }
+func (s *listCountingStore) Delete(_, _ string, _ []string) error { return nil }
+func (s *listCountingStore) Clear() error                         { return nil }
 
 // sizedStore implements types.Store and Size(). Its List() fails the test if
 // called — resourceCounts must use the cheap Size() path and never trigger the
@@ -576,11 +576,11 @@ func (s *sizedStore) List() ([]any, error) {
 	s.t.Fatal("List() must not be called when the store implements Size()")
 	return nil, nil
 }
-func (s *sizedStore) Add(_ any, _ []string) error    { return nil }
-func (s *sizedStore) Update(_ any, _ []string) error { return nil }
-func (s *sizedStore) Delete(_ ...string) error       { return nil }
-func (s *sizedStore) Clear() error                   { return nil }
-func (s *sizedStore) Size() int                      { return s.size }
+func (s *sizedStore) Add(_ any, _ []string) error          { return nil }
+func (s *sizedStore) Update(_ any, _ []string) error       { return nil }
+func (s *sizedStore) Delete(_, _ string, _ []string) error { return nil }
+func (s *sizedStore) Clear() error                         { return nil }
+func (s *sizedStore) Size() int                            { return s.size }
 
 func TestResourceCounts_UsesSizeAndAvoidsListStorm(t *testing.T) {
 	listOnly := &listCountingStore{items: []any{"a", "b", "c"}}
@@ -620,11 +620,11 @@ func (s *cachedListerStore) List() ([]any, error) {
 	s.t.Fatal("List() must not be called when the store implements ListCached()")
 	return nil, nil
 }
-func (s *cachedListerStore) Add(_ any, _ []string) error    { return nil }
-func (s *cachedListerStore) Update(_ any, _ []string) error { return nil }
-func (s *cachedListerStore) Delete(_ ...string) error       { return nil }
-func (s *cachedListerStore) Clear() error                   { return nil }
-func (s *cachedListerStore) ListCached() ([]any, error)     { return s.cached, nil }
+func (s *cachedListerStore) Add(_ any, _ []string) error          { return nil }
+func (s *cachedListerStore) Update(_ any, _ []string) error       { return nil }
+func (s *cachedListerStore) Delete(_, _ string, _ []string) error { return nil }
+func (s *cachedListerStore) Clear() error                         { return nil }
+func (s *cachedListerStore) ListCached() ([]any, error)           { return s.cached, nil }
 
 func TestListResources_PrefersListCachedForOnDemandStore(t *testing.T) {
 	cached := &cachedListerStore{t: t, cached: []any{"warm-1", "warm-2"}}
