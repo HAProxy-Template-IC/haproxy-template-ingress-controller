@@ -2,9 +2,7 @@
 # TLS certificate for SSL passthrough demo
 apiVersion: v1
 kind: Secret
-metadata:
-  name: haproxy-demo-backend-tls
-  namespace: echo
+metadata: {name: haproxy-demo-backend-tls, namespace: echo}
 type: Opaque
 data:
   # Combined PEM file (certificate + private key) for echo-passthrough.localdev.me
@@ -14,9 +12,7 @@ data:
 ---
 apiVersion: v1
 kind: ConfigMap
-metadata:
-  name: haproxy-demo-backend-config
-  namespace: echo
+metadata: {name: haproxy-demo-backend-config, namespace: echo}
 data:
   haproxy.cfg: |
     global
@@ -49,20 +45,12 @@ data:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata:
-  name: haproxy-demo-backend
-  namespace: echo
-  labels:
-    app: haproxy-demo-backend
+metadata: {name: haproxy-demo-backend, namespace: echo, labels: {app: haproxy-demo-backend}}
 spec:
   replicas: 1
-  selector:
-    matchLabels:
-      app: haproxy-demo-backend
+  selector: {matchLabels: {app: haproxy-demo-backend}}
   template:
-    metadata:
-      labels:
-        app: haproxy-demo-backend
+    metadata: {labels: {app: haproxy-demo-backend}}
     spec:
       containers:
         - name: haproxy
@@ -89,41 +77,25 @@ spec:
           # startupProbe ensures BOTH ports are ready before pod is marked Ready
           # This prevents race conditions where port 8080 is up but 8443 isn't yet
           startupProbe:
-            tcpSocket:
-              port: 8443
+            tcpSocket: {port: 8443}
             initialDelaySeconds: 2
             failureThreshold: 15
             periodSeconds: 2
-          livenessProbe:
-            tcpSocket:
-              port: 8080
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          readinessProbe:
-            tcpSocket:
-              port: 8080
-            initialDelaySeconds: 1
-            periodSeconds: 5
+          livenessProbe: {tcpSocket: {port: 8080}, initialDelaySeconds: 5, periodSeconds: 10}
+          readinessProbe: {tcpSocket: {port: 8080}, initialDelaySeconds: 1, periodSeconds: 5}
       volumes:
         - name: config
-          configMap:
-            name: haproxy-demo-backend-config
+          configMap: {name: haproxy-demo-backend-config}
         - name: tls
-          secret:
-            secretName: haproxy-demo-backend-tls
+          secret: {secretName: haproxy-demo-backend-tls}
 
 ---
 apiVersion: v1
 kind: Service
-metadata:
-  name: haproxy-demo-backend
-  namespace: echo
-  labels:
-    app: haproxy-demo-backend
+metadata: {name: haproxy-demo-backend, namespace: echo, labels: {app: haproxy-demo-backend}}
 spec:
   type: ClusterIP
-  selector:
-    app: haproxy-demo-backend
+  selector: {app: haproxy-demo-backend}
   ports:
     - name: http
       port: 8080

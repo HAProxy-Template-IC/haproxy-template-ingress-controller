@@ -34,9 +34,7 @@
 # Base Gateway resource that HTTPRoutes will attach to
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
-metadata:
-  name: dev-gateway
-  namespace: echo
+metadata: {name: dev-gateway, namespace: echo}
 spec:
   gatewayClassName: haproxy
   listeners:
@@ -49,9 +47,7 @@ spec:
 # Demonstrates: Simple PathPrefix matching with single backend
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
-metadata:
-  name: echo-basic
-  namespace: echo
+metadata: {name: echo-basic, namespace: echo}
 spec:
   parentRefs:
     - name: dev-gateway
@@ -59,9 +55,7 @@ spec:
     - "echo-gateway.localdev.me"
   rules:
     - matches:
-        - path:
-            type: PathPrefix
-            value: /
+        - path: {type: PathPrefix, value: /}
       backendRefs:
         - name: echo-server
           port: 80
@@ -71,9 +65,7 @@ spec:
 # Demonstrates: Exact and PathPrefix matching on different paths
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
-metadata:
-  name: echo-paths
-  namespace: echo
+metadata: {name: echo-paths, namespace: echo}
 spec:
   parentRefs:
     - name: dev-gateway
@@ -82,25 +74,19 @@ spec:
   rules:
     # Exact path match - only matches /exact, not /exact/foo
     - matches:
-        - path:
-            type: Exact
-            value: /exact
+        - path: {type: Exact, value: /exact}
       backendRefs:
         - name: echo-server
           port: 80
     # PathPrefix match - matches /api, /api/, /api/foo, etc.
     - matches:
-        - path:
-            type: PathPrefix
-            value: /api
+        - path: {type: PathPrefix, value: /api}
       backendRefs:
         - name: echo-server
           port: 80
     # Default catch-all for other paths
     - matches:
-        - path:
-            type: PathPrefix
-            value: /
+        - path: {type: PathPrefix, value: /}
       backendRefs:
         - name: echo-server
           port: 80
@@ -110,9 +96,7 @@ spec:
 # Demonstrates: Weighted routing to multiple backends (70/30 split)
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
-metadata:
-  name: echo-split
-  namespace: echo
+metadata: {name: echo-split, namespace: echo}
 spec:
   parentRefs:
     - name: dev-gateway
@@ -133,23 +117,12 @@ spec:
 # Second echo server variant for traffic splitting demonstration
 apiVersion: apps/v1
 kind: Deployment
-metadata:
-  name: echo-server-v2
-  namespace: echo
-  labels:
-    app: echo-server-v2
-    variant: v2
+metadata: {name: echo-server-v2, namespace: echo, labels: {app: echo-server-v2, variant: v2}}
 spec:
   replicas: 1
-  selector:
-    matchLabels:
-      app: echo-server-v2
-      variant: v2
+  selector: {matchLabels: {app: echo-server-v2, variant: v2}}
   template:
-    metadata:
-      labels:
-        app: echo-server-v2
-        variant: v2
+    metadata: {labels: {app: echo-server-v2, variant: v2}}
     spec:
       containers:
         - name: server
@@ -175,16 +148,9 @@ spec:
 # Service for echo-server-v2
 apiVersion: v1
 kind: Service
-metadata:
-  name: echo-server-v2
-  namespace: echo
-  labels:
-    app: echo-server-v2
-    variant: v2
+metadata: {name: echo-server-v2, namespace: echo, labels: {app: echo-server-v2, variant: v2}}
 spec:
-  selector:
-    app: echo-server-v2
-    variant: v2
+  selector: {app: echo-server-v2, variant: v2}
   ports:
     - name: http
       port: 80
@@ -197,9 +163,7 @@ spec:
 #            curl -X POST http://localhost:30080/api -H "Host: echo-methods.localdev.me"
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
-metadata:
-  name: echo-methods
-  namespace: echo
+metadata: {name: echo-methods, namespace: echo}
 spec:
   parentRefs:
     - name: dev-gateway
@@ -208,27 +172,21 @@ spec:
   rules:
     # Route POST requests to primary echo-server
     - matches:
-        - path:
-            type: PathPrefix
-            value: /api
+        - path: {type: PathPrefix, value: /api}
           method: POST
       backendRefs:
         - name: echo-server
           port: 80
     # Route GET requests to v2 echo-server
     - matches:
-        - path:
-            type: PathPrefix
-            value: /api
+        - path: {type: PathPrefix, value: /api}
           method: GET
       backendRefs:
         - name: echo-server-v2
           port: 80
     # Default for other methods
     - matches:
-        - path:
-            type: PathPrefix
-            value: /
+        - path: {type: PathPrefix, value: /}
       backendRefs:
         - name: echo-server
           port: 80
@@ -240,9 +198,7 @@ spec:
 #            curl http://localhost:30080 -H "Host: echo-headers.localdev.me" -H "X-User-Agent: mobile-app-ios"
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
-metadata:
-  name: echo-headers
-  namespace: echo
+metadata: {name: echo-headers, namespace: echo}
 spec:
   parentRefs:
     - name: dev-gateway
@@ -269,9 +225,7 @@ spec:
           port: 80
     # Default for requests without special headers
     - matches:
-        - path:
-            type: PathPrefix
-            value: /
+        - path: {type: PathPrefix, value: /}
       backendRefs:
         - name: echo-server
           port: 80
@@ -283,9 +237,7 @@ spec:
 #            curl "http://localhost:30080/search?debug=true" -H "Host: echo-query.localdev.me"
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
-metadata:
-  name: echo-query
-  namespace: echo
+metadata: {name: echo-query, namespace: echo}
 spec:
   parentRefs:
     - name: dev-gateway
@@ -312,9 +264,7 @@ spec:
           port: 80
     # Default for requests without special query params
     - matches:
-        - path:
-            type: PathPrefix
-            value: /
+        - path: {type: PathPrefix, value: /}
       backendRefs:
         - name: echo-server
           port: 80
@@ -327,9 +277,7 @@ spec:
 #              -H "Content-Type: application/json"
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
-metadata:
-  name: echo-combined
-  namespace: echo
+metadata: {name: echo-combined, namespace: echo}
 spec:
   parentRefs:
     - name: dev-gateway
@@ -338,9 +286,7 @@ spec:
   rules:
     # Complex rule: POST + Content-Type header + token query param
     - matches:
-        - path:
-            type: PathPrefix
-            value: /api
+        - path: {type: PathPrefix, value: /api}
           method: POST
           headers:
             - type: Exact
@@ -355,9 +301,7 @@ spec:
           port: 80
     # Default fallback
     - matches:
-        - path:
-            type: PathPrefix
-            value: /
+        - path: {type: PathPrefix, value: /}
       backendRefs:
         - name: echo-server
           port: 80
@@ -411,9 +355,7 @@ spec:
 #
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
-metadata:
-  name: echo-precedence
-  namespace: echo
+metadata: {name: echo-precedence, namespace: echo}
 spec:
   parentRefs:
     - name: dev-gateway
@@ -423,9 +365,7 @@ spec:
     # RULE 0: Medium precedence - GET + 1 header
     # Declared FIRST but should be sorted to position 2 (after rule 2)
     - matches:
-        - path:
-            type: PathPrefix
-            value: /
+        - path: {type: PathPrefix, value: /}
           method: GET
           headers:
             - type: Exact
@@ -438,9 +378,7 @@ spec:
     # RULE 1: Lowest precedence - No matchers (catch-all)
     # Declared SECOND but should be sorted to position 4 (last)
     - matches:
-        - path:
-            type: PathPrefix
-            value: /
+        - path: {type: PathPrefix, value: /}
       backendRefs:
         - name: echo-server
           port: 80
@@ -448,9 +386,7 @@ spec:
     # RULE 2: Highest precedence - GET + 2 headers + 1 query param
     # Declared THIRD but should be sorted to position 1 (first)
     - matches:
-        - path:
-            type: PathPrefix
-            value: /
+        - path: {type: PathPrefix, value: /}
           method: GET
           headers:
             - type: Exact
@@ -470,9 +406,7 @@ spec:
     # RULE 3: Low precedence - GET only
     # Declared FOURTH but should be sorted to position 3 (before catch-all)
     - matches:
-        - path:
-            type: PathPrefix
-            value: /
+        - path: {type: PathPrefix, value: /}
           method: GET
       backendRefs:
         - name: echo-server-v2
@@ -487,9 +421,7 @@ spec:
 ---
 apiVersion: v1
 kind: Secret
-metadata:
-  name: gateway-tls-cert
-  namespace: echo
+metadata: {name: gateway-tls-cert, namespace: echo}
 type: kubernetes.io/tls
 data:
   tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURIekNDQWdlZ0F3SUJBZ0lVR1AyWUpEVCttcGFjN21rNFdPb09EdXRsd3Vrd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0h6RWRNQnNHQTFVRUF3d1VaV05vYnkxMGJITXViRzlqWVd4a1pYWXViV1V3SGhjTk1qVXhNVEl3TVRBeQpPVEV3V2hjTk1qWXhNVEl3TVRBeU9URXdXakFmTVIwd0d3WURWUVFEREJSbFkyaHZMWFJzY3k1c2IyTmhiR1JsCmRpNXRaVENDQVNJd0RRWUpLb1pJaHZjTkFRRUJCUUFEZ2dFUEFEQ0NBUW9DZ2dFQkFOdzB1NmZoUkFXeG5Ta0YKWk1ZWXArcmxMTmg3WFRuaVo4QVFMdGxpdHBpRW9ncWdZMmVVUjJQbUZIbHpjKzE5U2k3T0ZWcVBVakxUR0JvdwpMcDNRVjFPVjZoN2JoMzdybHg2ZzJMd1lBRnJ6d2JRK04xTnRMRUQ5OWswTWlQODhLM1pESkpLUE1jYVJSamE4CndHb0dQUWZCdlRMSjZ1STBadE82aUFDZUZlZEJVLytubXZQTVg5OVg1NlA5bmpsdkthaXFKVXNkWGZlOE1xS1QKRkNjb25IQ3IwZWVmMXE4SHJZTHo2QUZoZ2tUNnpYb1BNeWpJMFIvS2ljbzNoOUIvbGU4RDdvQ0xHM3gxN3QwcQpna0xqN0xOY1IxSW9YSGxaQzJkYlE4dEVzWXFMd3hlaFhWZ0lVRmZtSjVSMm1tcU1sdmJ5U2dWdzRPYUErd0VQCmhucngvdkVDQXdFQUFhTlRNRkV3SFFZRFZSME9CQllFRkpMRjFmclZMMVp2akR5NWVqeWV1aUo0aEkrcU1COEcKQTFVZEl3UVlNQmFBRkpMRjFmclZMMVp2akR5NWVqeWV1aUo0aEkrcU1BOEdBMVVkRXdFQi93UUZNQU1CQWY4dwpEUVlKS29aSWh2Y05BUUVMQlFBRGdnRUJBRDZPTVEvUDVJQ1puSlM2MXRhcmJab2NjMFhIMHp1alM4bUNtaXIrCkdDdVZtQThYVkl3Rnd0b2FBbU9XTkpGVlE2SnZXTnZIR25rTjZaWTVFcEtVeUZ1aSszdFpjQjNkTW9oZUZoUUIKMzE3NmZyNjBIVTBBeXdPVGJud3lRVWZtTm9KQ1NOb3A0NjZzNm1VNkI5TVRRWkMwYXZNcHlwcFFrN1lDb0gyUAprRVAwRmtJQklmUTIrVWozdzkvYkxjZHNXNVdJT3BnM3JFRGxPR1lmbDFhWVNrcjlqbkh2L2RlYXdMaUlvYzRsCnoxTkNlcWd1WmV0R2luTjFKNjZGZ2tjcjE2RHBKQnlKZ1grRlhtd2dxWEFHRUE0b2RiWXllZEtkRE9ORG9BZ1kKQkpGeEhJMjZ3QVk1OXNkNWVZYkFZd1F2alA5TUptR21SVmFmcFJ5ZmRHY0h3SFE9Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
@@ -499,9 +431,7 @@ data:
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
-metadata:
-  name: tls-gateway
-  namespace: echo
+metadata: {name: tls-gateway, namespace: echo}
 spec:
   gatewayClassName: haproxy
   listeners:
@@ -520,9 +450,7 @@ spec:
 # Test with: curl -k https://echo-gateway-tls.localdev.me/
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
-metadata:
-  name: echo-gateway-tls
-  namespace: echo
+metadata: {name: echo-gateway-tls, namespace: echo}
 spec:
   parentRefs:
     - name: tls-gateway
@@ -531,9 +459,7 @@ spec:
     - "echo-gateway-tls.localdev.me"
   rules:
     - matches:
-        - path:
-            type: PathPrefix
-            value: /
+        - path: {type: PathPrefix, value: /}
       backendRefs:
         - name: echo-server
           port: 80

@@ -4,9 +4,7 @@
 # nginx.ingress.kubernetes.io/auth-url annotation set.
 apiVersion: v1
 kind: ConfigMap
-metadata:
-  name: auth-server-config
-  namespace: echo
+metadata: {name: auth-server-config, namespace: echo}
 data:
   default.conf: |
     server {
@@ -54,18 +52,12 @@ data:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata:
-  name: auth-server
-  namespace: echo
+metadata: {name: auth-server, namespace: echo}
 spec:
   replicas: 1
-  selector:
-    matchLabels:
-      app: auth-server
+  selector: {matchLabels: {app: auth-server}}
   template:
-    metadata:
-      labels:
-        app: auth-server
+    metadata: {labels: {app: auth-server}}
     spec:
       containers:
       - name: nginx
@@ -95,17 +87,13 @@ spec:
           readOnly: true
       volumes:
       - name: nginx-conf
-        configMap:
-          name: auth-server-config
+        configMap: {name: auth-server-config}
 ---
 apiVersion: v1
 kind: Service
-metadata:
-  name: auth-server
-  namespace: echo
+metadata: {name: auth-server, namespace: echo}
 spec:
-  selector:
-    app: auth-server
+  selector: {app: auth-server}
   ports:
   - port: 80
     targetPort: 80
