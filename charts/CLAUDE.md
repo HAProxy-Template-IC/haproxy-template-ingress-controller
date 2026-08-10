@@ -1738,8 +1738,7 @@ Scriggo supports both function call syntax and pipe syntax:
 | `dig(obj, keys...)` | Navigate nested maps **and** typed structs (via JSON-tag → Go-field lookup); optional `omitempty` fields with zero values normalise to nil | `dig(obj, "meta", "name")` |
 | `fallback(v, default)` | Return default if nil | `fallback(obj.field, "")` |
 | `dig_string(obj, default, keys...)` | Fused `dig + fallback + tostring` — string access at polymorphic boundaries (annotation / metadata lookups on `any`-typed values) | `v \| dig_string("", "metadata", "name")` |
-| `append(slice, item)` | Go's builtin, unshadowed: type-preserving, and `append(dst, src...)` spreads a slice of the **same** type. Widening into `[]any` is a compile error — box per element with a loop | `append(items, newItem)`, `append(all, more...)` |
-| `append_any(slice, item)` | For the two cases Go's append rejects: a nil slice, and a slice whose static type is `any` (a value read out of a `map[string]any`) | `m["xs"] = append_any(m["xs"], x)` |
+| `append(slice, item)` | Go's builtin: type-preserving, and `append(dst, src...)` spreads a slice of the **same** type. Widening into `[]any` is a compile error — box per element with a loop. A slice reached through `any` (a `map[string]any` value, a `coalesce()` result) is asserted at the boundary, which is the house style in ~50 places | `append(items, newItem)`, `append(gf["hosts"].([]any), h)` |
 | `toSlice(v)` | Convert to []any | `toSlice(maybeNil)` |
 | `toStringSlice(v)` | Convert `[]any` to `[]string` | `toStringSlice(items)` |
 | `ceil(n)` | Ceiling of a float | `ceil(1.2)` → `2` |

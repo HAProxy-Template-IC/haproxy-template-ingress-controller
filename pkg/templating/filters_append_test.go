@@ -57,35 +57,31 @@ func TestAppendRejectsWideningSpread(t *testing.T) {
 	require.Contains(t, err.Error(), "append")
 }
 
-// TestAppendAnyHandlesUntypedSlices pins the native that took over the cases
-// Go's append cannot express: a nil slice, and a slice whose static type is
-// `any` because it came out of a map[string]any.
-func TestAppendAnyHandlesUntypedSlices(t *testing.T) {
-	tests := []struct {
-		name     string
-		template string
-		want     string
-	}{
-		{
-			name:     "nil grows into a new slice",
-			template: `{{ len(append_any(nil, "first")) }}`,
-			want:     "1",
-		},
-		{
-			name: "value read out of a map[string]any",
-			template: `{% var m = map[string]any{"xs": []any{1}} %}` +
-				`{% m["xs"] = append_any(m["xs"], 2) %}{{ len(m["xs"].([]any)) }}`,
-			want: "2",
-		},
-	}
+// TestAppendOnAnyRequiresAssertion pins the contract that replaced append_any:
+// a slice reached through `any` is asserted at the boundary, which is what the
+// chart does in 49 places and what makes the boundary visible. There is no
+// second append that swallows it silently.
+func TestAppendOnAnyRequiresAssertion(t *testing.T) {
+	_, err := New(map[string]string{
+		"t": `{% var m = map[string]any{"xs": []any{1}} %}{% m["xs"] = append(m["xs"], 2) %}{{ len(m) }}`,
+	}, nil)
+	require.Error(t, err, "appending to an any-typed value must not compile")
+	require.Contains(t, err.Error(), "append")
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			engine, err := New(map[string]string{"t": tt.template}, nil)
-			require.NoError(t, err)
-			got, err := engine.Render(context.Background(), "t", nil)
-			require.NoError(t, err)
-			require.Equal(t, tt.want, strings.TrimSpace(got))
-		})
-	}
+	engine, err := New(map[string]string{
+		"t": `{% var m = map[string]any{"xs": []any{1}} %}` +
+			`{% m["xs"] = append(m["xs"].([]any), 2) %}{{ len(m["xs"].([]any)) }}`,
+	}, nil)
+	require.NoError(t, err, "the assertion is the supported spelling")
+
+	out, err := engine.Render(context.Background(), "t", nil)
+	require.NoError(t, err)
+	require.Equal(t, "2", strings.TrimSpace(out))
+}
+
+// TestAppendAnyIsGone pins that the name is not quietly still registered.
+func TestAppendAnyIsGone(t *testing.T) {
+	_, err := New(map[string]string{"t": `{{ len(append_any(nil, "x")) }}`}, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "append_any")
 }
