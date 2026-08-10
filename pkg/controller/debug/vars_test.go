@@ -15,6 +15,7 @@
 package debug
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -241,6 +242,56 @@ func TestAuxFilesVar_Get_Success(t *testing.T) {
 	assert.Equal(t, 1, summary["ssl_count"])
 	assert.Equal(t, 1, summary["map_count"])
 	assert.Equal(t, 1, summary["general_count"])
+}
+
+// Guards the /debug/vars surface against re-exposing key material: the fleet's
+// TLS private keys and the tls-ticket-keys STEK file both arrive as aux-file
+// Content, and both endpoints serialize the whole AuxiliaryFiles value.
+func TestAuxFilesVar_RedactsFileContent(t *testing.T) {
+	const privateKey = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADAN\n-----END PRIVATE KEY-----"
+
+	registry := newRegistry(&mockStateProvider{
+		auxFiles: &dataplane.AuxiliaryFiles{
+			SSLCertificates: []auxiliaryfiles.SSLCertificate{
+				{Path: "/etc/haproxy/certs/cert.pem", Content: privateKey},
+			},
+			SSLCaFiles: []auxiliaryfiles.SSLCaFile{
+				{Path: "/etc/haproxy/ssl/ca.pem", Content: "ca-bundle-content"},
+			},
+			MapFiles: []auxiliaryfiles.MapFile{
+				{Path: "/etc/haproxy/maps/hosts.map", Content: "host1 backend1"},
+			},
+			GeneralFiles: []auxiliaryfiles.GeneralFile{
+				{Filename: "tls-ticket-keys", Content: "stek-secret-material"},
+			},
+			CRTListFiles: []auxiliaryfiles.CRTListFile{
+				{Path: "/etc/haproxy/crt-lists/l.txt", Content: "crt-list-content"},
+			},
+		},
+		auxFilesTime: time.Now(),
+	})
+
+	for _, name := range []string{"auxfiles", "state"} {
+		t.Run(name, func(t *testing.T) {
+			result, err := registry.Get(name)
+			require.NoError(t, err)
+
+			encoded, err := json.Marshal(result)
+			require.NoError(t, err)
+			payload := string(encoded)
+
+			for _, secret := range []string{
+				privateKey, "BEGIN PRIVATE KEY", "ca-bundle-content",
+				"host1 backend1", "stek-secret-material", "crt-list-content",
+			} {
+				assert.NotContains(t, payload, secret)
+			}
+
+			// Paths and filenames must survive — they are what the endpoint is for.
+			assert.Contains(t, payload, "/etc/haproxy/certs/cert.pem")
+			assert.Contains(t, payload, "tls-ticket-keys")
+		})
+	}
 }
 
 func TestAuxFilesVar_Get_Error(t *testing.T) {

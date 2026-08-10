@@ -23,4 +23,5 @@ const (
 	keyVersion   = "version"
 	keyTimestamp = "timestamp"
 	keyEvents    = "events"
+	keyAuxFiles  = "auxfiles"
 )

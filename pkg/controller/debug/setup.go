@@ -96,7 +96,7 @@ func RegisterVariables(
 	}))
 
 	// auxfiles: auxiliary files from the last deployment + per-type counts.
-	registry.Publish("auxfiles", introspection.Func(func() (any, error) {
+	registry.Publish(keyAuxFiles, introspection.Func(func() (any, error) {
 		auxFiles, timestamp, err := provider.GetAuxiliaryFiles()
 		if err != nil {
 			return nil, err
@@ -145,7 +145,7 @@ func RegisterVariables(
 				keyConfig:    rendered,
 				keyTimestamp: renderedTime,
 			},
-			"auxfiles": map[string]any{
+			keyAuxFiles: map[string]any{
 				"files":      auxFiles,
 				keyTimestamp: auxTime,
 			},

@@ -229,7 +229,7 @@ func createReconciliationComponents(
 	}
 
 	// Create publisher with informer-backed listers for cached reads
-	purePublisher, err := createConfigPublisher(crdClientset, k8sClient, logger)
+	purePublisher, err := createConfigPublisher(setup.IterCtx.Done(), crdClientset, k8sClient, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +413,10 @@ func newResourceApplier(crd *v1alpha1.HAProxyTemplateConfig, k8sClient *client.C
 
 // createConfigPublisher creates a config publisher with informer-backed listers for cached reads.
 // This significantly reduces API calls by checking cached state before doing status updates.
-func createConfigPublisher(crdClientset versioned.Interface, k8sClient *client.Client, logger *slog.Logger) (*configpublisher.Publisher, error) {
+// stopCh must be the iteration's Done channel: the controller rebuilds its
+// components per iteration, so informers tied to anything longer-lived leak a
+// reflector per informer per iteration.
+func createConfigPublisher(stopCh <-chan struct{}, crdClientset versioned.Interface, k8sClient *client.Client, logger *slog.Logger) (*configpublisher.Publisher, error) {
 	// Create shared informer factory for HAProxy CRDs
 	// The informers provide cached reads for status updates, significantly reducing API calls.
 	// We use a 30-second resync period to keep the cache reasonably fresh while minimizing overhead.
@@ -435,7 +438,6 @@ func createConfigPublisher(crdClientset versioned.Interface, k8sClient *client.C
 
 	// Start informers in background - they'll begin watching and populating the cache
 	// The factory tracks all created informers and starts them together
-	stopCh := make(chan struct{})
 	informerFactory.Start(stopCh)
 
 	// Wait for cache to sync before creating publisher
@@ -444,7 +446,6 @@ func createConfigPublisher(crdClientset versioned.Interface, k8sClient *client.C
 	syncResult := informerFactory.WaitForCacheSync(stopCh)
 	for informerType, synced := range syncResult {
 		if !synced {
-			close(stopCh)
 			return nil, fmt.Errorf("informer cache sync failed for %v", informerType)
 		}
 	}

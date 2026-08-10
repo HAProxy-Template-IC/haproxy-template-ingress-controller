@@ -29,8 +29,9 @@ import (
 // every pod; callers compute it ONCE per fire via ComputeRuntimeServerUpdates
 // and apply it to every pod, instead of re-diffing per pod.
 type RuntimeServerUpdates struct {
-	runtimeOps []comparator.Operation
-	summary    comparator.DiffSummary
+	runtimeOps    []comparator.Operation
+	structuralOps []comparator.Operation
+	summary       comparator.DiffSummary
 }
 
 // ServerOpCount returns the number of runtime-eligible server changes in the set
@@ -47,11 +48,15 @@ func (u *RuntimeServerUpdates) ServerOpCount() int {
 // deployer's lane classifier uses this to decide runtime-raw vs structural: a
 // diff with zero structural ops can apply purely via the runtime fast path
 // (no reload), bypassing the deployment interval.
+//
+// Counts the partition, not DiffSummary.StructuralOperations() — the summary
+// subtracts every modified server, so a reload-only server change riding along
+// with a runtime-eligible one would classify the whole diff as runtime-raw.
 func (u *RuntimeServerUpdates) StructuralOpCount() int {
 	if u == nil {
 		return 0
 	}
-	return u.summary.StructuralOperations()
+	return len(u.structuralOps)
 }
 
 // IsRuntimeEligible reports whether this diff can be applied entirely through the
@@ -73,8 +78,8 @@ func ComputeRuntimeServerUpdates(prev, current *parser.StructuredConfig) (*Runti
 	if err != nil {
 		return nil, fmt.Errorf("runtime fast-path render diff: %w", err)
 	}
-	runtimeOps, _ := partitionByRuntimeEligibility(diff.Operations)
-	return &RuntimeServerUpdates{runtimeOps: runtimeOps, summary: diff.Summary}, nil
+	runtimeOps, structuralOps := partitionByRuntimeEligibility(diff.Operations)
+	return &RuntimeServerUpdates{runtimeOps: runtimeOps, structuralOps: structuralOps, summary: diff.Summary}, nil
 }
 
 // syncRuntimeRawPush applies the shared render diff to the live worker without

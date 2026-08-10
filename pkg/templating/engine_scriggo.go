@@ -176,7 +176,11 @@ func (e *ScriggoEngine) compileTemplates(allTemplates map[string]string, entryPo
 		opts := &scriggo.BuildOptions{
 			Globals:         e.globals,
 			EnableProfiling: e.profilingEnabled,
-			AllowGoStmt:     true, // Enable parallel template rendering (go MacroName(), go render)
+			// Parallel rendering uses the expression form ({{ go Macro(...) }}),
+			// which compiles to OpGoRender and is not gated by this flag. The flag
+			// gates only {% go f() %}, whose goroutine outlives the render and
+			// whose panic is unrecovered.
+			AllowGoStmt: false,
 		}
 
 		compiled, err := scriggo.BuildTemplate(fsys, name, opts)

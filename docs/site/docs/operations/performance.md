@@ -8,6 +8,26 @@ Tune HAPTIC in three areas:
 - **HAProxy performance** - Load balancer throughput and latency
 - **Kubernetes integration** - Resource watching and event handling
 
+## Measured render cost by object count
+
+Every render walks the whole watched-object store, so render time scales with cluster size. These numbers come from `scripts/test-benchmark.sh` against the bundled chart's default libraries, with a realistic mix of one Ingress, one Service, and two EndpointSlices per step:
+
+| Ingresses | Total render | Per Ingress | `haproxy.cfg` | Path maps |
+|---|---|---|---|---|
+| 100 | 15 ms | 0.15 ms | 10 ms | 2.6 ms |
+| 1,000 | 113 ms | 0.11 ms | 77 ms | 20 ms |
+| 5,000 | 742 ms | 0.15 ms | 386 ms | 302 ms |
+
+Reproduce them with:
+
+```bash
+./scripts/test-benchmark.sh --ingress-only --steps 100,1000,5000 --iterations 3
+```
+
+Two things to read off this table. The overall cost is close to linear at roughly 0.11–0.15 ms per Ingress, so a 5,000-Ingress cluster spends under a second per render. But the **path maps grow faster than the object count** — `path-prefix-exact` alone goes from 6 ms at N=1,000 to 94 ms at N=5,000, a 15× rise for 5× the objects — and by N=5,000 the three path maps are about 40% of the render.
+
+The admission webhook renders the entire configuration once per admitted object, so this is also the per-admission cost. On a cluster where a single render approaches `controller.webhook.timeoutSeconds` (10 seconds by default), a burst of `kubectl apply`s starts failing admission under `failurePolicy: Fail`. Measure your own cluster with the command above before assuming headroom.
+
 ## Controller resource sizing
 
 ### Recommended resources

@@ -43,6 +43,10 @@ func TestComputeReloadImpact(t *testing.T) {
 	// Two servers so the address-only edit is a runtime field update, not add/delete.
 	const cfgIP = "global\n  daemon\ndefaults\n  mode http\nfrontend fe\n  bind :80\n  default_backend be\nbackend be\n  server s1 10.0.0.9:80 check\n"
 	scIP := mustParse(t, cfgIP)
+	const cfgMixedBase = "global\n  daemon\ndefaults\n  mode http\nfrontend fe\n  bind :80\n  default_backend be\nbackend be\n  server s1 10.0.0.1:80 check\n  server s2 10.0.0.2:80 check\n"
+	scMixedBase := mustParse(t, cfgMixedBase)
+	const cfgMixedDesired = "global\n  daemon\ndefaults\n  mode http\nfrontend fe\n  bind :80\n  default_backend be\nbackend be\n  server s1 10.0.0.9:80 check\n  server s2 10.0.0.2:80 check ssl verify none\n"
+	scMixedDesired := mustParse(t, cfgMixedDesired)
 	const cfgBackend = cfg + "backend be2\n  server s1 10.0.0.2:80 check\n"
 	scBackend := mustParse(t, cfgBackend)
 
@@ -80,6 +84,7 @@ func TestComputeReloadImpact(t *testing.T) {
 		{name: "sidecar general file delete -> no reload", baseCfg: sc, desiredCfg: sc, baseAux: baseSidecar, desiredCfgText: cfg, caps: CapabilitiesFromVersion(caps32), wantChanged: false, wantReload: false},
 		{name: "general file delete with no config text -> reload", baseCfg: sc, desiredCfg: sc, baseAux: baseFile, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: true},
 		{name: "server address change -> runtime", baseCfg: sc, desiredCfg: scIP, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: false},
+		{name: "runtime and structural server changes -> reload", baseCfg: scMixedBase, desiredCfg: scMixedDesired, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: true},
 		{name: "new backend -> reload", baseCfg: sc, desiredCfg: scBackend, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: true},
 		{name: "map update on v3.0 is still runtime (maps are v3.0+)", baseCfg: sc, desiredCfg: sc, baseAux: baseMap, desiredAux: updMap, caps: CapabilitiesFromVersion(caps30), wantChanged: true, wantReload: false, wantRuntimeMaps: 1},
 	}

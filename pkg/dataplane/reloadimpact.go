@@ -69,7 +69,11 @@ func ComputeReloadImpact(baseline, desired *parser.StructuredConfig, baselineAux
 	if err != nil {
 		return nil, err
 	}
-	structural := diff.Summary.StructuralOperations()
+	// Partition rather than DiffSummary.StructuralOperations(): the summary
+	// subtracts every modified server, so a reload-only server change would
+	// predict WouldReload=false.
+	_, structuralOps := partitionByRuntimeEligibility(diff.Operations)
+	structural := len(structuralOps)
 	serverUpdates := 0
 	for _, servers := range diff.Summary.ServersModified {
 		serverUpdates += len(servers)
