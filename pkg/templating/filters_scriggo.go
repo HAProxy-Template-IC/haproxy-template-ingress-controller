@@ -198,7 +198,6 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	// from typed-access loops (e.g., `hosts []string` from
 	// `ingress.Spec.Rules[i].Host`) and pass them to typed-param
 	// macros without an intermediate conversion.
-	decl[FuncAppendAny] = scriggoAppendAdaptive
 	// shard_slice is declared as an AdaptiveFunc so the call's static
 	// return type preserves the input slice's element type — enabling
 	// typed loop variables (and typed field access) on the resulting

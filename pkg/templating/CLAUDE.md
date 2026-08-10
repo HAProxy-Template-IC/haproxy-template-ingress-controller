@@ -106,7 +106,7 @@ pkg/templating/
 ├── filter_names.go             # Constants for every filter name (one source of truth)
 ├── filters.go                  # Filter registration entry point
 ├── filters_scriggo.go          # Scriggo-specific filter wiring + custom-filter dispatch
-├── filters_collection.go       # glob_match / shard_slice / first_seen / append_any
+├── filters_collection.go       # glob_match / shard_slice / first_seen
 ├── filters_pipeline.go         # filter / reject / flat_map / unique / unique_by / group_by / sort_by
 ├── filters_navigation.go       # dig / fallback / coalesce / merge / keys
 ├── filters_string.go           # toLower / replace / split / trim / hasPrefix / hasSuffix / strip / b64decode / debug / indent

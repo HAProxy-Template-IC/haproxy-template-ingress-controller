@@ -183,13 +183,6 @@ const (
 	// Syntax: to_str_map(value) - returns map[string]string.
 	FuncToStrMap = "to_str_map"
 
-	// FuncAppendAny appends an item to a slice whose static type is `any` —
-	// a nil slice, or a value read out of a map[string]any. Go's own append
-	// rejects both, and shadowing it with this cost the language's variadic
-	// `append(dst, src...)`, so the two are separate names.
-	// Syntax: append_any(slice, item).
-	FuncAppendAny = "append_any"
-
 	// Deduplication and filtering functions.
 
 	// FuncFirstSeen checks if a composite key is being seen for the first time.
