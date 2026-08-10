@@ -490,37 +490,3 @@ templateSnippets:
         }
         return scope
       }) %}
-
-  # Port-scope SUFFIX for a Gateway listener's host/path map keys.
-  #   * catch-all listener (empty hostname): ALWAYS `:<podPort>` — this is
-  #     what closes the no-hostname cross-Gateway leak (base's `:port`
-  #     fallback then resolves to THIS Gateway's pod port only).
-  #   * hostname'd listener on a NON-default port: `:<podPort>` — base's
-  #     `host:port` cascade step carries the port, scoped per Gateway.
-  #   * hostname'd listener on the protocol's DEFAULT port (HTTP:80 /
-  #     HTTPS:443 / TLS:443): "" (bare host) — base's wildcard/host
-  #     cascade steps don't carry a port, so suffixing would break
-  #     wildcard matching; cross-Gateway same-hostname collisions on a
-  #     default port stay possible but are not what the isolation tests
-  #     exercise.
-  # Falls back to the listener port when the Gateway has no allocation
-  # (pinned / chart-static), keeping those keys listener-port-scoped.
-  util-gateway-port-scope-for:
-    requires: [gateways]
-    template: |
-      {%- macro PortScopeSuffix(gwNs string, gwName string, port int, proto string, hostname string) string %}
-        {{ render "util-gateway-port-scope" -}}
-        {%%
-          var scope = shared.Get("gatewayPortScope").(map[string]any)
-          var scopePort = port
-          if val, ok := scope[gwNs + "/" + gwName + ":" + tostring(port)]; ok {
-            scopePort = toint(val)
-          }
-          var isNonDefault = (proto == "HTTP" && port != 80) || ((proto == "HTTPS" || proto == "TLS") && port != 443)
-          var suffix = ""
-          if hostname == "" || isNonDefault {
-            suffix = ":" + tostring(scopePort)
-          }
-        %%}
-        {{- suffix -}}
-      {%- end macro -%}

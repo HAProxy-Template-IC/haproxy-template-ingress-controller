@@ -9,25 +9,16 @@
 ---
 apiVersion: v1
 kind: Namespace
-metadata:
-  name: echo
+metadata: {name: echo}
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata:
-  name: echo-server
-  namespace: echo
-  labels:
-    app: echo-server
+metadata: {name: echo-server, namespace: echo, labels: {app: echo-server}}
 spec:
   replicas: 1
-  selector:
-    matchLabels:
-      app: echo-server
+  selector: {matchLabels: {app: echo-server}}
   template:
-    metadata:
-      labels:
-        app: echo-server
+    metadata: {labels: {app: echo-server}}
     spec:
       containers:
         - name: server
@@ -54,14 +45,9 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata:
-  name: echo-server
-  namespace: echo
-  labels:
-    app: echo-server
+metadata: {name: echo-server, namespace: echo, labels: {app: echo-server}}
 spec:
-  selector:
-    app: echo-server
+  selector: {app: echo-server}
   ports:
     - name: http
       port: 80

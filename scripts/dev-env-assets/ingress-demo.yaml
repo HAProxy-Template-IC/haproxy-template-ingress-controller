@@ -7,9 +7,7 @@
 # Supporting Resources - Basic Auth Secret
 apiVersion: v1
 kind: Secret
-metadata:
-  name: echo-auth-secret
-  namespace: echo
+metadata: {name: echo-auth-secret, namespace: echo}
 type: Opaque
 data:
   # Username: admin, Password: admin (bcrypt hash)
@@ -25,9 +23,7 @@ data:
 ##############################################################################
 apiVersion: networking.k8s.io/v1
 kind: Ingress
-metadata:
-  name: echo-basic
-  namespace: echo
+metadata: {name: echo-basic, namespace: echo}
 spec:
   ingressClassName: haptic
   rules:
@@ -36,11 +32,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -63,11 +55,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -93,11 +81,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -121,11 +105,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -147,11 +127,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -173,11 +149,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -199,11 +171,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -227,11 +195,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -255,11 +219,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -280,11 +240,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -306,11 +262,7 @@ spec:
         paths:
           - path: /api/v1
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -331,11 +283,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -356,11 +304,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -388,11 +332,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -413,11 +353,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -442,11 +378,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -469,11 +401,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -494,11 +422,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -519,11 +443,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -558,11 +478,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -590,11 +506,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -617,11 +529,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -645,11 +553,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: haproxy-demo-backend
-                port:
-                  number: 8080
+            backend: {service: {name: haproxy-demo-backend, port: {number: 8080}}}
 
 ---
 ##############################################################################
@@ -674,11 +578,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: haproxy-demo-backend
-                port:
-                  number: 8443
+            backend: {service: {name: haproxy-demo-backend, port: {number: 8443}}}
 
 ---
 ##############################################################################
@@ -700,11 +600,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ##############################################################################
 # 26. Backend mTLS (Mutual TLS to backend servers)
@@ -730,9 +626,7 @@ spec:
 ---
 apiVersion: v1
 kind: Secret
-metadata:
-  name: backend-mtls-ca
-  namespace: echo
+metadata: {name: backend-mtls-ca, namespace: echo}
 type: Opaque
 data:
   ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUREekNDQWZlZ0F3SUJBZ0lVTGJRKzlYeUFDbk9CS0xRZlhrMGFWeVlrWllzd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0Z6RVZNQk1HQTFVRUF3d01SR1Z0YnlCdFZFeFRJRU5CTUI0WERUSTFNVEV3T0RFM016SXlOVm9YRFRJMgpNVEV3T0RFM016SXlOVm93RnpFVk1CTUdBMVVFQXd3TVJHVnRieUJ0VkV4VElFTkJNSUlCSWpBTkJna3Foa2lHCjl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUFwdmdhNkl5cmRuN1pXUkI4UjJFZm9hSmF6Q1B5RjdObS9ZeVMKNk5RSVJhZzdCTVR1Z0RUTml5bmh2Mmx3TG14c2xyNmtncXdieEo0TkZETWRxK3pnVGNmbFFpRjE5N1lsbnlPVAovRzZPMVVNNitOLzQyMmpKYlFOeHI4bTh2TThVN0FkUXU0ek5MREtwZU9YbVo3c2ZWWDI3ZVNqUENmR2drWTl3CjI3c3JubXY4UzVGanVhRlBVbkxHSzBVUWhWRTlIcE5scC91cHhyUmQzOUNDOUFWZlN6WWUvNGNjay9yYVBoZDAKSkhCa1NEWDdmWkY5aE1UQXNsdHdUSGp4KzFQNHF4T3BFeGd6MHNTQ0dPVjNHRHRocmhKZndMaU5RZU1nQXdWawpzRWxUT095M2d1WGxVS3UxRVhvN1dnMTBOOXkzRjRyWURPa1p0c2loWVlOM3VvaEM3UUlEQVFBQm8xTXdVVEFkCkJnTlZIUTRFRmdRVWo4NWRiaXBQR2ZWMzVOeWJIdGlpd2NwNG9kRXdId1lEVlIwakJCZ3dGb0FVajg1ZGJpcFAKR2ZWMzVOeWJIdGlpd2NwNG9kRXdEd1lEVlIwVEFRSC9CQVV3QXdFQi96QU5CZ2txaGtpRzl3MEJBUXNGQUFPQwpBUUVBbCtXOUtLQ3hCOXpXQ1kxZ0t0TVJGU0FtRUNVODNwaDlrRVVMMnZJdklMLzBOMEJQZjFtWjV4S1BUL0hQClZYZE9YTFg5aTJGYi9xMndKSEtQNVNVYzBqaFVYK2NlVHA3TDhJNjdmWXpxYUd2cVIxY3dCQWh2eW9RV0U1NysKTkszRFo3L3NFT3BCNFdmR2hycEJiZ1FZUTVSb3h0c3A0aTV4UFJJaktha2tuZzJDdXg4bEpYT29sZ3ZIRm5FMgpBRys3Vit0d0JJbVhtUDNyRzB1QmliSVE4M1NmOUNmWG5IbEJqOVlJSUJ3MHE5Rk5Md2duai9CUkpwRXM0OERnCm9VUkZMd1VFWmxLTkZLWld2dGhMVTJrOGdteFQxc3dmd01BMW1zcmF4SUpCZEZMZkdDS1pWanpxWllRRFdPcHcKdjF4eC9sQmVVMDV5UVhxc3B6dU04THpyVFE9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
@@ -741,9 +635,7 @@ data:
 ---
 apiVersion: v1
 kind: Secret
-metadata:
-  name: backend-mtls-client-cert
-  namespace: echo
+metadata: {name: backend-mtls-client-cert, namespace: echo}
 type: kubernetes.io/tls
 data:
   tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURBRENDQWVpZ0F3SUJBZ0lVVVFFNHBtcy9lQnJKamM4WmVyclpyd3hNSW1Jd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0Z6RVZNQk1HQTFVRUF3d01SR1Z0YnlCdFZFeFRJRU5CTUI0WERUSTFNVEV3T0RFM016SXpPRm9YRFRJMgpNVEV3T0RFM016SXpPRm93R1RFWE1CVUdBMVVFQXd3T1ltRmphMlZ1WkMxamJHbGxiblF3Z2dFaU1BMEdDU3FHClNJYjNEUUVCQVFVQUE0SUJEd0F3Z2dFS0FvSUJBUUN3Nk5LemtqR1BJb0N4N1ZSUTQyNW5kNU1nZmZMZ1BGZDIKbGZLRTdQRCtwUUdiWTNwTW4zUk1Ha2FhSHh6NTlueGhyYjAzZVdUdmZ6YzJEV1hoc2tXRjJxMEFLRGxmbzRyUwptVTREUjVWYktwUS8xdkp5T01TMU1ZQW9yVU9CdzRQTHdGZ2E0c0ZvRXFTV25BWHJwWDcwUHVLOElDV0FWbFN5CmorNUVTTlFYQ0pnRkgzQzF4REFsVWM2ZkhCZTZyWFdlUTMvN2plbnpSK3VneGFQUUl6bERUNE4zUWFuekpxNmQKQUtCZXhWWjJKcGgzb3ZiUVBKbE1RSlpsOWpicThEb3JnOEE5NzBJNHNmWEQzeUFReFhRR3JIdm9FRTJvOHl1RAoyMThZeEJpMzdReXZiT1drcElUY3lybG5sdFJoaGNYZld3UERtMlN1OFpMMHQ3SjRtNTZkQWdNQkFBR2pRakJBCk1CMEdBMVVkRGdRV0JCUWtpZXJidGNidVJzRXJjdjRrZGtnTGY3Y2VOakFmQmdOVkhTTUVHREFXZ0JTUHpsMXUKS2s4WjlYZmszSnNlMktMQnluaWgwVEFOQmdrcWhraUc5dzBCQVFzRkFBT0NBUUVBYmJNOUhwdFhwRndsQU5qdgowZXNZODJqRjhaUWVsK1ZVY1ZhR00wcDlwaTJoZGZoU3A3Ry8xV0RSVEFiVDFKSXYzak1kdEVFdW1MeDlUTnRHCnFEMVUzdkhSdXliSHltUkZURThYUDNDUjJTbEFJcEMvN045N25GRmpGT2EwcEZwRS8weWhkRmpNWkZKUVR0dVAKOXFSNVJSbk9JaXZFSGEwOExXcXlTVml4WUQrY3B1TGFXTm9QVHVIdEM0WVgyenEvMG1yelV1a2RBQWx3anppMwpqd2V2NHNWT3RNWGJXZGhya1lxejBjQ1QrZ1NXbGNsY3FUZEFESFpyZTd5QVFKY1RNV08wMVlycmQ2M2dINUQzCmQ1cWdoOTRTTXdMcExyTkhvaEx2cGRKT01XT0VoV0RiNitaSGZwcnBhUWppMTlaa0JjT0ZTSjQ0aitPZk1IaS8KOGlYNUxRPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
@@ -773,11 +665,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -801,11 +689,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: haproxy-demo-backend
-                port:
-                  number: 8443
+            backend: {service: {name: haproxy-demo-backend, port: {number: 8443}}}
 
 ---
 ##############################################################################
@@ -816,9 +700,7 @@ spec:
 ---
 apiVersion: v1
 kind: Secret
-metadata:
-  name: echo-tls-cert
-  namespace: echo
+metadata: {name: echo-tls-cert, namespace: echo}
 type: kubernetes.io/tls
 data:
   tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURIekNDQWdlZ0F3SUJBZ0lVR1AyWUpEVCttcGFjN21rNFdPb09EdXRsd3Vrd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0h6RWRNQnNHQTFVRUF3d1VaV05vYnkxMGJITXViRzlqWVd4a1pYWXViV1V3SGhjTk1qVXhNVEl3TVRBeQpPVEV3V2hjTk1qWXhNVEl3TVRBeU9URXdXakFmTVIwd0d3WURWUVFEREJSbFkyaHZMWFJzY3k1c2IyTmhiR1JsCmRpNXRaVENDQVNJd0RRWUpLb1pJaHZjTkFRRUJCUUFEZ2dFUEFEQ0NBUW9DZ2dFQkFOdzB1NmZoUkFXeG5Ta0YKWk1ZWXArcmxMTmg3WFRuaVo4QVFMdGxpdHBpRW9ncWdZMmVVUjJQbUZIbHpjKzE5U2k3T0ZWcVBVakxUR0JvdwpMcDNRVjFPVjZoN2JoMzdybHg2ZzJMd1lBRnJ6d2JRK04xTnRMRUQ5OWswTWlQODhLM1pESkpLUE1jYVJSamE4CndHb0dQUWZCdlRMSjZ1STBadE82aUFDZUZlZEJVLytubXZQTVg5OVg1NlA5bmpsdkthaXFKVXNkWGZlOE1xS1QKRkNjb25IQ3IwZWVmMXE4SHJZTHo2QUZoZ2tUNnpYb1BNeWpJMFIvS2ljbzNoOUIvbGU4RDdvQ0xHM3gxN3QwcQpna0xqN0xOY1IxSW9YSGxaQzJkYlE4dEVzWXFMd3hlaFhWZ0lVRmZtSjVSMm1tcU1sdmJ5U2dWdzRPYUErd0VQCmhucngvdkVDQXdFQUFhTlRNRkV3SFFZRFZSME9CQllFRkpMRjFmclZMMVp2akR5NWVqeWV1aUo0aEkrcU1COEcKQTFVZEl3UVlNQmFBRkpMRjFmclZMMVp2akR5NWVqeWV1aUo0aEkrcU1BOEdBMVVkRXdFQi93UUZNQU1CQWY4dwpEUVlKS29aSWh2Y05BUUVMQlFBRGdnRUJBRDZPTVEvUDVJQ1puSlM2MXRhcmJab2NjMFhIMHp1alM4bUNtaXIrCkdDdVZtQThYVkl3Rnd0b2FBbU9XTkpGVlE2SnZXTnZIR25rTjZaWTVFcEtVeUZ1aSszdFpjQjNkTW9oZUZoUUIKMzE3NmZyNjBIVTBBeXdPVGJud3lRVWZtTm9KQ1NOb3A0NjZzNm1VNkI5TVRRWkMwYXZNcHlwcFFrN1lDb0gyUAprRVAwRmtJQklmUTIrVWozdzkvYkxjZHNXNVdJT3BnM3JFRGxPR1lmbDFhWVNrcjlqbkh2L2RlYXdMaUlvYzRsCnoxTkNlcWd1WmV0R2luTjFKNjZGZ2tjcjE2RHBKQnlKZ1grRlhtd2dxWEFHRUE0b2RiWXllZEtkRE9ORG9BZ1kKQkpGeEhJMjZ3QVk1OXNkNWVZYkFZd1F2alA5TUptR21SVmFmcFJ5ZmRHY0h3SFE9Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
@@ -828,9 +710,7 @@ data:
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
-metadata:
-  name: echo-tls
-  namespace: echo
+metadata: {name: echo-tls, namespace: echo}
 spec:
   ingressClassName: haptic
   tls:
@@ -843,11 +723,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -858,9 +734,7 @@ spec:
 ---
 apiVersion: v1
 kind: Secret
-metadata:
-  name: echo-tls-multi-cert
-  namespace: echo
+metadata: {name: echo-tls-multi-cert, namespace: echo}
 type: kubernetes.io/tls
 data:
   tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURiakNDQWxhZ0F3SUJBZ0lVRDF3RUNZd3BXcVgxTjVaOTJTMWd0UWxhSHA4d0RRWUpLb1pJaHZjTkFRRUwKQlFBd0pURWpNQ0VHQTFVRUF3d2FaV05vYnkxMGJITXRiWFZzZEdrdWJHOWpZV3hrWlhZdWJXVXdIaGNOTWpVeApNVEl3TVRBeU9URXlXaGNOTWpZeE1USXdNVEF5T1RFeVdqQWxNU013SVFZRFZRUUREQnBsWTJodkxYUnNjeTF0CmRXeDBhUzVzYjJOaGJHUmxkaTV0WlRDQ0FTSXdEUVlKS29aSWh2Y05BUUVCQlFBRGdnRVBBRENDQVFvQ2dnRUIKQUtCUjBPT1o5UUVNb1dUSnJMV3BBU1lGVTg3R25qb3psQ1BOT093cVFpMGx1UGhBdDdZU2xPcEJ2Q0NxV2VVRApIanZTdzVCUU4waFI5WndTcXA2a01tUWs2RW45Sm9QL0JsUXl4aXViZHVaNXM0a0VZeGdiOEFwQ0YwVStGeTJlCm4vZElRYnN6b2daQnJsRmQ0RjdDdW40cE5SYk80aEkrSjdJRkRtQmIwcVZQSDl0S1ZnMGZ4dmRPaVphb0M1cCsKWk5WVXNyR1Y3Lzl2UVROdmx0eFgvTGlTbUdYeWZVZjRDcEFMWm9xR0J0dUs1ZVVYQXEzWkVvelI0NGd0SFBxcAo1MkFESUVJanZiMWRSQitDdTVoWmIyb2dHeTF3UVljRjNBS05zeHR0SEJhUEhlSk1qK3VLMUpFb2YxbnhxQUFhCmZ6Ujk3WGFOcFlYN0NwOFFFWlR2UzIwQ0F3RUFBYU9CbFRDQmtqQWRCZ05WSFE0RUZnUVVlYkZBK1daMG9rYk8KN2VkNjMvZWE2ZWU0TGk4d0h3WURWUjBqQkJnd0ZvQVVlYkZBK1daMG9rYk83ZWQ2My9lYTZlZTRMaTh3RHdZRApWUjBUQVFIL0JBVXdBd0VCL3pBL0JnTlZIUkVFT0RBMmdocGxZMmh2TFhSc2N5MXRkV3gwYVM1c2IyTmhiR1JsCmRpNXRaWUlZWldOb2J5MTBiSE10WVd4MExteHZZMkZzWkdWMkxtMWxNQTBHQ1NxR1NJYjNEUUVCQ3dVQUE0SUIKQVFBUTVoc0pXN2VaQnNhR0MxZzJLVnZXVkU1Y1JycHkwdGVUV0lLSHJpVGJPdUxWN3AzcVlNS1VBckhQNWRTcwo3bXpjTER0YmF0Slh5VmQ4L21kWUwvMndRWEVMcUVZSDhCNXNUUzVHYzNZSEZDck1uWG1lRWJxODdmams5TURSCndFRGlKWHQ3VlhaSm9QZTFVeGJrQVhGTWtVQmM5bmhiYTFvWjd3eWdZblo0YUIyVlNTdnFvWEJzY1M4eC9YQVcKdCtuSjhhb2thQ3dvaitKdFdDOFpROWZEaS85REtMWHZHYmV1Rk0xSkFob0JiYk5EQUQxSy93Qm1pZ0JhTWs5dwpPcUh1aGpFU0tmdlppUDUyL2tBLytUTnhPTlYyS2QwOWpXQlNuMzd5dGxkemhrTkNTREY4b0NUWFpTbzV0K0V4CjRCK05HSFVadUlRaiszd0k3Mncvdk1wSQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
@@ -870,9 +744,7 @@ data:
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
-metadata:
-  name: echo-tls-multi
-  namespace: echo
+metadata: {name: echo-tls-multi, namespace: echo}
 spec:
   ingressClassName: haptic
   tls:
@@ -886,21 +758,13 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
     - host: echo-tls-alt.localdev.me
       http:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -932,11 +796,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -953,9 +813,7 @@ spec:
 ##############################################################################
 apiVersion: networking.k8s.io/v1
 kind: Ingress
-metadata:
-  name: echo-http-store-demo
-  namespace: echo
+metadata: {name: echo-http-store-demo, namespace: echo}
 spec:
   ingressClassName: haptic
   rules:
@@ -964,11 +822,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -1001,11 +855,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 apiVersion: networking.k8s.io/v1
@@ -1023,18 +873,12 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
-metadata:
-  name: echo-auth-noannotation
-  namespace: echo
+metadata: {name: echo-auth-noannotation, namespace: echo}
 spec:
   ingressClassName: haptic
   rules:
@@ -1043,11 +887,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -1083,11 +923,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 # auth-headers-succeed: extracts X-Auth-User from the auth-server's
@@ -1111,11 +947,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 # auth-headers-fail: extracts WWW-Authenticate and X-Error-Reason from
@@ -1139,11 +971,7 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}
 
 ---
 ##############################################################################
@@ -1183,8 +1011,4 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend:
-              service:
-                name: echo-server
-                port:
-                  number: 80
+            backend: {service: {name: echo-server, port: {number: 80}}}

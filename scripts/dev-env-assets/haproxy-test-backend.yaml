@@ -2,9 +2,7 @@
 # Self-signed certificate for SSL testing
 apiVersion: v1
 kind: Secret
-metadata:
-  name: haproxy-test-backend-cert
-  namespace: echo
+metadata: {name: haproxy-test-backend-cert, namespace: echo}
 type: Opaque
 data:
   cert.pem: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURIekNDQWdlZ0F3SUJBZ0lVY04wOGVTREk5VnZMRUVIK1o4ang2NzlVc1NRd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0h6RWRNQnNHQTFVRUF3d1VhR0Z3Y205NGVTMTBaWE4wTFdKaFkydGxibVF3SGhjTk1qVXhNVEE1TVRJeQpOak14V2hjTk1qWXhNVEE1TVRJeU5qTXhXakFmTVIwd0d3WURWUVFEREJSb1lYQnliM2g1TFhSbGMzUXRZbUZqCmEyVnVaRENDQVNJd0RRWUpLb1pJaHZjTkFRRUJCUUFEZ2dFUEFEQ0NBUW9DZ2dFQkFPdDBSYk8xcXZFSlN3ZUYKRTNhVXlsNGFxS0pTYWw5a2FvTmQxak5tSk8vclFkWEd6eXVmSDQ4Y0pHcEM4aXN5V2pIVmlEUFdvRytGcGt6RgpBdzN2b2s5dkVQZjlRbTZTVEtJaldtSmdvVVoveEpQRXY3ekk0cWM1eWF3aUpHc1ZEY3JhRThqV3pDSlI1ZEtyCnhLNnEza1c0V3p2Mlh0R0tVTGZ6RlA4UVg3WHBjbkl1MDJlVm9kL0t5alJpQWxBSU9XdzVIcFdIajluczRpMFgKaWR0b09pakNZckV1bFhFVGlyQ3FScU81NFAzZ3d4SWw5ejZYaGNmT1phd0wvVVMwUXpvYjd6d3djV1h1YllGdgp1dklFOWNRNjRGMXdOc3I4bFE2Z1o3bm90Q3QyVE05MjFRQ09KM1pnMUNGNUZCTk1MOFRrb2FGSlBIVWN6UUpXCk5JMDVPczhDQXdFQUFhTlRNRkV3SFFZRFZSME9CQllFRkIwUVIzVG1GTksrM2dNbEFxQy9MN2x4bWlWVk1COEcKQTFVZEl3UVlNQmFBRkIwUVIzVG1GTksrM2dNbEFxQy9MN2x4bWlWVk1BOEdBMVVkRXdFQi93UUZNQU1CQWY4dwpEUVlKS29aSWh2Y05BUUVMQlFBRGdnRUJBR3J6YWpxbXhHN2lUcDdybHVuTVVWWE5zTUh3RGl6WGUvcnJGYjQ0CnFrMzJUME5pRlpKNFBML1VJZGZqdWdLNjJGZDNEUkp3S3ZnbkQxWWJETU5pZTFqRHdDaWhlWjlBU052Vnc2Q0YKMk5WWm1FRk5tY3UrUnBGZ1JkNTZXbHFUQzBjTzNockVsZUVqVXJRckd4d0dvOStNc3I1MW9NVzlUOWtZcy9JTgoxNE82ZUZvLzY5ZGMzUTFtTldNZFhEdisrWmNzdEE4R2ZycUtNUE1NdU81WVh2VklPK1E5Q1BtcklKYTh4cHhyCmMyMmhYUFdoMTdZYW53V1VJbjI5b29QamJEU20wS3RKTTlVNVBOUWFPWmJwWnUzYTI4U0x4MGh5alJrL1lIMEEKRjF5cEpnYkhyTFFQWHVONm5oVE1RbjgxbTE4VVh4YjJBYnVIU3RYaExyRzFnV3c9Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0KLS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktrd2dnU2xBZ0VBQW9JQkFRRHJkRVd6dGFyeENVc0gKaFJOMmxNcGVHcWlpVW1wZlpHcURYZFl6WmlUdjYwSFZ4czhybngrUEhDUnFRdklyTWxveDFZZ3oxcUJ2aGFaTQp4UU1ONzZKUGJ4RDMvVUp1a2t5aUkxcGlZS0ZHZjhTVHhMKzh5T0tuT2Ntc0lpUnJGUTNLMmhQSTFzd2lVZVhTCnE4U3VxdDVGdUZzNzlsN1JpbEMzOHhUL0VGKzE2WEp5THRObmxhSGZ5c28wWWdKUUNEbHNPUjZWaDQvWjdPSXQKRjRuYmFEb293bUt4THBWeEU0cXdxa2FqdWVEOTRNTVNKZmMrbDRYSHptV3NDLzFFdEVNNkcrODhNSEZsN20yQgpiN3J5QlBYRU91QmRjRGJLL0pVT29HZTU2TFFyZGt6UGR0VUFqaWQyWU5RaGVSUVRUQy9FNUtHaFNUeDFITTBDClZqU05PVHJQQWdNQkFBRUNnZ0VBWjRGanFzNnY2T29XNjZWYW13UnB1ZGlxVFVGQnRkR2s2VDcxRFA5WU9ZZ0kKRnZ3ZzBxSk84MUNCeVp6SWJLamo4WWhYS2NLdUlKaDJOTVZleEYrVjBLbVlvZ3ZaaWxZU0RpelFiUExoc3VZegorbW5CaURJZlFUZ3NLZG1RZk9weWQ3eEtlajNDMjB0NVpwVlFEeURhT1hnRDAyWkk1SUNUWDJvaXpzWFo3Vk5zCnRJZytCdUNHaTJsS1ZVeWVsUEt2Y1Q4bThkYXpWSjVscDdQdFJycVdENmtGTU5ib0NRYTNvaTZDYm9WbGpseW8KQzQrKzM5aUxGbHp0T0dPZ1J5enFNdWVaY1FjQ2hDdXZhenptU0R4Z1BNazYyY0srdHE4bXVWV3MxckwrZjI3VAppcElJSnlOQzQzTXJtdFZOZ0hVTWxmWElPRWU3TngzK200blZNcXNnUVFLQmdRRDVPNjNQQ05XWnBabWxvbjZCCmMvUlBENVljbm15QWQzanVmL0hrMDh2dEtkbzY0YnBwNGVVOUZXdTRRaXdubFZvcG1FYlI2UkdiN3MyRVFPV0YKNVczZnZXK2xMbVBSbHZlbkNKNUZqaU0vczR0TWw2NnY0QXFrcXQvV0o0cThmYXlzREdOTnFQcTl1RHlnQWxjaApzQ3RxZTZScnA2S3JYR0JydjlqSHFzZGZNUUtCZ1FEeDJOSklHd1NDNHpPUDR5cmttUWd6VlNyYUplYklqWkc4CkVXK1o4OExKZTlCYURVeFJoU0liSUllM2FCUEs1ZEJRQVp6eFZvWURCYUM0MmlCZFhYeTQwKzd5andmS1BJOUcKNzBmcEc5ajJubjJBQlBraFVwS1FacUN2VVc1Y0xHcVRwdVR4WC9nZjRLdlBNbFh0QVNxQURvZTQ0VnQzN0t0Vwo0cUJBU29lNS93S0JnUUNvdVpVbDlyWWNDVGJtSWdhQWZzNWpBNHM5SHFjWHBVbnlOQjIvS3Y4QU5IZ3Zxb2IzCmpWMFNxRUMvZ2RUQWkyUjVpa1JQY1BoaDF4MjhyZTUwWWVpck1tUzFyNTBWMDUwZXNEL3RtSmNXVmVjMDErOEQKMDZtQTVza1lBcmJ5ZWlYK1ozaUdwNkh2OUJ6ZXVoYmdrSklqeVVaN053WngrZHl3dFRUOW53alAwUUtCZ1FDMwp0QisrbjY4a2tOcFl3SkNUUmQ3aHh4NmV4ODF1cDRKOG5hM3MvaWtHak9MdGxFNVZXZEJYVkxWaVRrOUNmcUJtCk5XTjJPbWZmSWNZOHc0dDBBQkErQU5YdkwxQVdnVHZBQVAvWmhNcWdRakZJTGY3akhlcXdmeFF0TjZpaG9TZHYKY29WVEI3ZmMxdmNLa3N5TUU2ZXB6OSt1UXBnTkZ4dnJDb2Y1YmVOOUZ3S0JnUUR4K0JqSDExWWVEUEthTUpBSQpnRGZGWGxEQlBMditrSlpKYXAvbkVtWG1QeUY0bmJNb1BkWUVhQTEyQUQ0WFlxdTlVc25nRkNHSG12ekhsNWV5Ck5PU1pxR1lvTG5HN016Rmx5NGFMRitmRU42RklTbDRyb3pTYU1GdEVXbHlGWmxTbnlsTERsRVhma0s3ZUliSXQKS0tvVkswTWVpSEJJUk1jTVBkd2VtMGxxK1E9PQotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tCg==
@@ -12,9 +10,7 @@ data:
 ---
 apiVersion: v1
 kind: ConfigMap
-metadata:
-  name: haproxy-test-backend-config
-  namespace: echo
+metadata: {name: haproxy-test-backend-config, namespace: echo}
 data:
   haproxy.cfg: |
     global
@@ -47,20 +43,12 @@ data:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata:
-  name: haproxy-test-backend
-  namespace: echo
-  labels:
-    app: haproxy-test-backend
+metadata: {name: haproxy-test-backend, namespace: echo, labels: {app: haproxy-test-backend}}
 spec:
   replicas: 1
-  selector:
-    matchLabels:
-      app: haproxy-test-backend
+  selector: {matchLabels: {app: haproxy-test-backend}}
   template:
-    metadata:
-      labels:
-        app: haproxy-test-backend
+    metadata: {labels: {app: haproxy-test-backend}}
     spec:
       containers:
         - name: haproxy
@@ -83,36 +71,21 @@ spec:
               mountPath: /config
             - name: cert
               mountPath: /etc/ssl/haproxy
-          livenessProbe:
-            tcpSocket:
-              port: 8080
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          readinessProbe:
-            tcpSocket:
-              port: 8080
-            initialDelaySeconds: 3
-            periodSeconds: 5
+          livenessProbe: {tcpSocket: {port: 8080}, initialDelaySeconds: 5, periodSeconds: 10}
+          readinessProbe: {tcpSocket: {port: 8080}, initialDelaySeconds: 3, periodSeconds: 5}
       volumes:
         - name: config
-          configMap:
-            name: haproxy-test-backend-config
+          configMap: {name: haproxy-test-backend-config}
         - name: cert
-          secret:
-            secretName: haproxy-test-backend-cert
+          secret: {secretName: haproxy-test-backend-cert}
 
 ---
 apiVersion: v1
 kind: Service
-metadata:
-  name: haproxy-test-backend
-  namespace: echo
-  labels:
-    app: haproxy-test-backend
+metadata: {name: haproxy-test-backend, namespace: echo, labels: {app: haproxy-test-backend}}
 spec:
   type: ClusterIP
-  selector:
-    app: haproxy-test-backend
+  selector: {app: haproxy-test-backend}
   ports:
     - name: proxy
       port: 8080
