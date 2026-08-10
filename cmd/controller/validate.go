@@ -174,7 +174,6 @@ func validateAndReport(ctx context.Context, schemas schemaSource, logger *slog.L
 	}
 	defer setup.Cleanup()
 
-	// Run tests
 	results, err := runValidationTests(ctx, setup.ConfigSpec, setup.Engine, setup.ValidationPaths, setup.Capabilities, setup.HAProxyVersion, setup.TypedResourceTypes, logger)
 	if err != nil {
 		return nil, err
@@ -489,7 +488,6 @@ func runValidationTests(
 
 // outputResults formats and prints test results, and optionally dumps rendered content and trace.
 func outputResults(results *testrunner.TestResults, engine templating.Engine) error {
-	// Format output
 	output, err := testrunner.FormatResults(results, testrunner.OutputOptions{
 		Format:  testrunner.OutputFormat(validateOutputFormat),
 		Verbose: validateVerbose,

@@ -102,7 +102,6 @@ func TestCoordinator_HandleReconciliationTriggered_Success(t *testing.T) {
 	// Give coordinator time to start
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish trigger event
 	bus.Publish(events.NewReconciliationTriggeredEvent("test_trigger", true))
 
 	// Verify ReconciliationStartedEvent
@@ -153,7 +152,6 @@ func TestCoordinator_HandleReconciliationTriggered_RenderFailure(t *testing.T) {
 
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish trigger event
 	bus.Publish(events.NewReconciliationTriggeredEvent("test_trigger", true))
 
 	// Verify ReconciliationStartedEvent
@@ -200,7 +198,6 @@ func TestCoordinator_HandleReconciliationTriggered_ValidationFailure(t *testing.
 
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish trigger event
 	bus.Publish(events.NewReconciliationTriggeredEvent("test_trigger", true))
 
 	// Verify ReconciliationStartedEvent

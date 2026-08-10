@@ -739,7 +739,6 @@ func TestCorrelation(t *testing.T) {
 
 		// New event should have same correlation ID
 		assert.Equal(t, sourceCorrelationID, newEvent.CorrelationID())
-		// New event's causation ID should be source's event ID
 		assert.Equal(t, sourceEventID, newEvent.CausationID())
 		// New event should have its own unique event ID
 		assert.NotEqual(t, sourceEventID, newEvent.EventID())
@@ -755,7 +754,6 @@ func TestCorrelation(t *testing.T) {
 		assert.Empty(t, opt.correlationID)
 		assert.Empty(t, opt.causationID)
 
-		// When used, should not set any correlation
 		c := newCorrelation(opt)
 		assert.Empty(t, c.CorrelationID())
 		assert.Empty(t, c.CausationID())
@@ -787,7 +785,6 @@ func TestCorrelation(t *testing.T) {
 	t.Run("WithCorrelation_EmptyValues", func(t *testing.T) {
 		opt := WithCorrelation("", "")
 		c := newCorrelation(opt)
-		// Empty values should not be set
 		assert.Empty(t, c.CorrelationID())
 		assert.Empty(t, c.CausationID())
 	})
@@ -826,13 +823,10 @@ func TestTimestampNotZero(t *testing.T) {
 		{"HTTPResourceUpdated", NewHTTPResourceUpdatedEvent("url", "checksum", 0)},
 		{"HTTPResourceAccepted", NewHTTPResourceAcceptedEvent("url", "checksum", 0)},
 		{"HTTPResourceRejected", NewHTTPResourceRejectedEvent("url", "checksum", "error")},
-		// Template events
 		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", true)},
 		{"TemplateRenderFailed", NewTemplateRenderFailedEvent("name", "error", "stack")},
-		// Validation events
 		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0, "", nil, true)},
 		{"ValidationFailed", NewValidationFailedEvent(nil, 0, "")},
-		// Deployment events
 		{"DeploymentStarted", NewDeploymentStartedEvent(0)},
 		{"InstanceDeployed", NewInstanceDeployedEvent(nil, 0, false)},
 		{"InstanceDeploymentFailed", NewInstanceDeploymentFailedEvent(nil, "error", false)},
@@ -845,7 +839,6 @@ func TestTimestampNotZero(t *testing.T) {
 		// Publishing events
 		{"ConfigPublished", NewConfigPublishedEvent("n", "ns", 0, 0)},
 		{"ConfigAppliedToPod", NewConfigAppliedToPodEvent("n", "ns", "pod", "ns", "checksum", false, nil)},
-		// Status update events
 		{"StatusUpdateCompleted", NewStatusUpdateCompletedEvent(StatusPatchPhaseDeployed, 3, 1, 50)},
 		{"StatusUpdateFailed", NewStatusUpdateFailedEvent("ns", "name", "networking.k8s.io/v1/ingresses", "error", true)},
 	}

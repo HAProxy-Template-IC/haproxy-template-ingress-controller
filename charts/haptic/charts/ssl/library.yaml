@@ -1,7 +1,27 @@
 # Must load after base.yaml: uses frontend-routing-logic and the file registry.
 
-_helm_load:
-  enable: '{{ .Values.controller.templateLibraries.ssl.enabled }}'
+_fx:
+  fixturesTlsTriggerDefaultSsl: &fixturesTlsTriggerDefaultSsl
+    ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata: {name: tls-trigger, namespace: default}
+        spec:
+          ingressClassName: haproxy
+          tls:
+            - hosts: ["example.com"]
+              secretName: default-ssl-cert
+          rules:
+            - host: example.com
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend: {service: {name: trigger-svc, port: {number: 80}}}
+  extracontextTlsSessiontickets: &extracontextTlsSessiontickets
+    tls: {sessionTickets: {enabled: true}, sessionTicketsToday: "20260721"}
+
+_helm_load: {enable: '{{ .Values.controller.templateLibraries.ssl.enabled }}'}
 
 # The default pair is ECDSA, the *_rsa pair RSA — key type is invisible in base64.
 _test_tls_crt: &test_tls_crt LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
@@ -26,8 +46,7 @@ templatingSettings:
         includeSubdomains: false
         preload: false
 
-      sessionTickets:
-        enabled: false
+      sessionTickets: {enabled: false}
 
       # Applied to every SSL bind; "" omits a directive (HAProxy built-in default).
       # `ciphers` is one forward-secret superset over ECDSA/RSA/DHE — HAProxy offers
@@ -706,26 +725,20 @@ validationTests:
     # still overrides this.
     extraContext:
       tls:
-        defaultCertificate:
-          name: default-ssl-cert
-          namespace: haptic
-          ecdsaName: ""
+        defaultCertificate: {name: default-ssl-cert, namespace: haptic, ecdsaName: ""}
         # Pinned OFF for the same reason: with it on, the STEK file is freshly
         # crypto-random every render (no `deterministic` assertion can hold) and every
         # HTTPS bind gains tls-ticket-keys (breaking end-anchored bind assertions in
         # the gateway tests) — a load-gate crash-loop for any operator who enabled it.
         # test-ssl-session-tickets-seed opts back in explicitly.
-        sessionTickets:
-          enabled: false
+        sessionTickets: {enabled: false}
     fixtures:
       secrets:
         # Name + namespace must match the _global extraContext pin above.
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: default-ssl-cert
-            namespace: haptic
+          metadata: {name: default-ssl-cert, namespace: haptic}
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
@@ -734,9 +747,7 @@ validationTests:
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: shared-tls
-            namespace: default
+          metadata: {name: shared-tls, namespace: default}
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
@@ -754,9 +765,7 @@ validationTests:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: tls-trigger
-            namespace: default
+          metadata: {name: tls-trigger, namespace: default}
           spec:
             ingressClassName: haproxy
             tls:
@@ -768,140 +777,49 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: trigger-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: trigger-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "frontend https"
+      - {type: contains, target: haproxy.cfg, pattern: "frontend https"}
 
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^frontend https$.*?^\s+mode http$.*?^\s+option forwardfor$'
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "bind .*:443.*ssl crt"
+      - {type: contains, target: haproxy.cfg, pattern: "bind .*:443.*ssl crt"}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "alpn h2,http/1.1"
+      - {type: contains, target: haproxy.cfg, pattern: "alpn h2,http/1.1"}
 
   test-ssl-hsts-global-enabled:
     description: extraContext.tls.hsts.enabled emits a global Strict-Transport-Security header on TLS responses, plus a no-redirect warning
-    extraContext:
-      tls:
-        hsts:
-          enabled: true
-          includeSubdomains: true
-          preload: true
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: tls-trigger
-            namespace: default
-          spec:
-            ingressClassName: haproxy
-            tls:
-              - hosts: ["example.com"]
-                secretName: default-ssl-cert
-            rules:
-              - host: example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: trigger-svc
-                          port:
-                            number: 80
+    extraContext: {tls: {hsts: {enabled: true, includeSubdomains: true, preload: true}}}
+    fixtures: *fixturesTlsTriggerDefaultSsl
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: 'set-header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" if \{ ssl_fc \}'
-      - type: contains
-        target: haproxy.cfg
-        pattern: "HSTS is enabled globally but no HTTP"
+      - {type: contains, target: haproxy.cfg, pattern: "HSTS is enabled globally but no HTTP"}
 
   test-ssl-hsts-global-disabled:
     description: Without extraContext.tls.hsts.enabled, no global HSTS header is emitted (default off)
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: tls-trigger
-            namespace: default
-          spec:
-            ingressClassName: haproxy
-            tls:
-              - hosts: ["example.com"]
-                secretName: default-ssl-cert
-            rules:
-              - host: example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: trigger-svc
-                          port:
-                            number: 80
+    fixtures: *fixturesTlsTriggerDefaultSsl
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "Strict-Transport-Security"
+      - {type: not_contains, target: haproxy.cfg, pattern: "Strict-Transport-Security"}
 
   test-ssl-crtlist-basic:
     description: Verify crt-list file is generated with OCSP configuration
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: tls-trigger
-            namespace: default
-          spec:
-            ingressClassName: haproxy
-            tls:
-              - hosts: ["example.com"]
-                secretName: default-ssl-cert
-            rules:
-              - host: example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: trigger-svc
-                          port:
-                            number: 80
+    fixtures: *fixturesTlsTriggerDefaultSsl
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ssl crt-list .*/certificate-list\\.txt"
+      - {type: contains, target: haproxy.cfg, pattern: "ssl crt-list .*/certificate-list\\.txt"}
 
-      - type: contains
-        target: crt-list:certificate-list.txt
-        pattern: "default\\.pem \\[ocsp-update on\\]"
+      - {type: contains, target: crt-list:certificate-list.txt, pattern: "default\\.pem \\[ocsp-update on\\]"}
 
-      - type: not_contains
-        target: crt-list:certificate-list.txt
-        pattern: "^\\s*$"
+      - {type: not_contains, target: crt-list:certificate-list.txt, pattern: "^\\s*$"}
 
   test-ssl-certificate-dots-in-name:
     description: SSL certificate with dots in secret name must use sanitized filename
@@ -910,36 +828,28 @@ validationTests:
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: default-ssl-cert
-            namespace: haproxy-haptic
+          metadata: {name: default-ssl-cert, namespace: haproxy-haptic}
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: api.example.com-tls
-            namespace: default
+          metadata: {name: api.example.com-tls, namespace: default}
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: api-service
-            namespace: default
+          metadata: {name: api-service, namespace: default}
           spec:
             ports:
               - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: api-ingress
-            namespace: default
+          metadata: {name: api-ingress, namespace: default}
           spec:
             ingressClassName: haproxy
             tls:
@@ -952,33 +862,21 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: api-service
-                          port:
-                            number: 80
+                      backend: {service: {name: api-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: crt-list:certificate-list.txt
-        pattern: "default_api_example_com-tls\\.pem"
+      - {type: contains, target: crt-list:certificate-list.txt, pattern: "default_api_example_com-tls\\.pem"}
 
   test-ssl-certificate-custom-namespace:
     description: Default SSL certificate from a custom namespace (e.g. cert-manager) loads correctly
-    extraContext:
-      tls:
-        defaultCertificate:
-          namespace: cert-manager
-          name: cluster-cert
+    extraContext: {tls: {defaultCertificate: {namespace: cert-manager, name: cluster-cert}}}
     fixtures:
       secrets:
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: cluster-cert
-            namespace: cert-manager
+          metadata: {name: cluster-cert, namespace: cert-manager}
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
@@ -996,9 +894,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'ssl-default-bind-options ssl-min-ver TLSv1\.2'
+      - {type: contains, target: haproxy.cfg, pattern: 'ssl-default-bind-options ssl-min-ver TLSv1\.2'}
 
   test-ssl-global-cipher-policy-override:
     description: extraContext.tls overrides render (custom ciphers, lowered minVersion) and an empty value omits its directive (falls back to HAProxy's built-in default). In real charts a values.yaml override of one sub-key is Helm deep-merged with the library defaults (config template, not exercised by this harness)
@@ -1013,23 +909,15 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'ssl-default-bind-options ssl-min-ver TLSv1\.0'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'ssl-default-bind-ciphersuites'
+      - {type: contains, target: haproxy.cfg, pattern: 'ssl-default-bind-options ssl-min-ver TLSv1\.0'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'ssl-default-bind-ciphersuites'}
 
   test-ssl-global-cipher-policy-injection-guard:
     description: A cipher value containing characters outside the cipher/version charset (here a newline) is rejected by the config-injection guard
-    extraContext:
-      tls:
-        ciphers: "ECDHE-RSA-AES128-GCM-SHA256\n  evil-injected-directive"
+    extraContext: {tls: {ciphers: "ECDHE-RSA-AES128-GCM-SHA256\n  evil-injected-directive"}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "config-injection guard"
+      - {type: contains, target: rendering_error, pattern: "config-injection guard"}
 
   test-ssl-dual-cert-rsa-ecdsa:
     description: An Ingress may reference two TLS Secrets (one ECDSA, one RSA) for the same host; both certs are emitted to the crt-list under the same SNI so HAProxy serves RSA or ECDSA per client capability
@@ -1038,36 +926,28 @@ validationTests:
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: dual-ecdsa
-            namespace: default
+          metadata: {name: dual-ecdsa, namespace: default}
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: dual-rsa
-            namespace: default
+          metadata: {name: dual-rsa, namespace: default}
           data:
             tls.crt: *test_tls_crt_rsa
             tls.key: *test_tls_key_rsa
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: dual-svc
-            namespace: default
+          metadata: {name: dual-svc, namespace: default}
           spec:
             ports:
               - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: dual-cert-ingress
-            namespace: default
+          metadata: {name: dual-cert-ingress, namespace: default}
           spec:
             ingressClassName: haproxy
             tls:
@@ -1081,11 +961,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: dual-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: dual-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1104,28 +980,20 @@ validationTests:
       path. The "*" filter (not the single-cert empty suffix) is what makes the
       fallback work.
     extraContext:
-      tls:
-        defaultCertificate:
-          namespace: default
-          name: default-rsa-cert
-          ecdsaName: default-ecdsa-cert
+      tls: {defaultCertificate: {namespace: default, name: default-rsa-cert, ecdsaName: default-ecdsa-cert}}
     fixtures:
       secrets:
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: default-rsa-cert
-            namespace: default
+          metadata: {name: default-rsa-cert, namespace: default}
           data:
             tls.crt: *test_tls_crt_rsa
             tls.key: *test_tls_key_rsa
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: default-ecdsa-cert
-            namespace: default
+          metadata: {name: default-ecdsa-cert, namespace: default}
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
@@ -1134,9 +1002,7 @@ validationTests:
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'default_default-ecdsa-cert\.pem \[ocsp-update on\] \*'
-      - type: contains
-        target: crt-list:certificate-list.txt
-        pattern: 'default\.pem \[ocsp-update on\] \*'
+      - {type: contains, target: crt-list:certificate-list.txt, pattern: 'default\.pem \[ocsp-update on\] \*'}
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'default_default-ecdsa-cert\.pem \[ocsp-update on\] \*\ndefault\.pem \[ocsp-update on\] \*'
@@ -1148,172 +1014,66 @@ validationTests:
       that a single default works with any key type (RSA cert used here; the
       default.pem template is algorithm-agnostic) — so RSA-only and ECDSA-only
       defaults are unchanged.
-    extraContext:
-      tls:
-        defaultCertificate:
-          namespace: default
-          name: default-rsa-cert
+    extraContext: {tls: {defaultCertificate: {namespace: default, name: default-rsa-cert}}}
     fixtures:
       secrets:
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: default-rsa-cert
-            namespace: default
+          metadata: {name: default-rsa-cert, namespace: default}
           data:
             tls.crt: *test_tls_crt_rsa
             tls.key: *test_tls_key_rsa
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: crt-list:certificate-list.txt
-        pattern: 'default\.pem \[ocsp-update on\]'
+      - {type: contains, target: crt-list:certificate-list.txt, pattern: 'default\.pem \[ocsp-update on\]'}
       - type: not_contains
         target: crt-list:certificate-list.txt
         pattern: 'default\.pem \[ocsp-update on\] \*'
 
   test-ssl-session-tickets-seed:
     description: Session tickets enabled with no current file → three fresh STEK keys seeded (stamped today) and every HTTPS bind carries tls-ticket-keys; haproxy -c accepts them
-    extraContext:
-      tls:
-        sessionTickets:
-          enabled: true
-        sessionTicketsToday: "20260721"
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: tls-trigger
-            namespace: default
-          spec:
-            ingressClassName: haproxy
-            tls:
-              - hosts: ["example.com"]
-                secretName: default-ssl-cert
-            rules:
-              - host: example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: trigger-svc
-                          port:
-                            number: 80
+    extraContext: *extracontextTlsSessiontickets
+    fixtures: *fixturesTlsTriggerDefaultSsl
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: 'bind \*:443 ssl crt-list \S+ alpn h2,http/1\.1 tls-ticket-keys \S*general/tls-ticket-keys'
       # MjAyNjA3Mj is the base64 prefix of "20260721".
-      - type: match_count
-        target: file:tls-ticket-keys
-        pattern: 'MjAyNjA3Mj'
-        expected: "3"
+      - {type: match_count, target: file:tls-ticket-keys, pattern: 'MjAyNjA3Mj', expected: "3"}
 
   test-ssl-session-tickets-stable-same-day:
     description: When the newest current key already carries today's marker, the file is re-emitted unchanged — deterministic, so no spurious reload
-    extraContext:
-      tls:
-        sessionTickets:
-          enabled: true
-        sessionTicketsToday: "20260721"
+    extraContext: *extracontextTlsSessiontickets
     currentFiles:
       tls-ticket-keys: |
         MjAyNjA3MjF1lg4Ku7QD/4vBgigOpTeyXBWr7YEbfGGtOvJy4F2jN7yqkvzCXyeKIzSddp+/e40yxVVDQG/6K0qKBzhxUY0QUm9ZC10HVVw=
         MjAyNjA3MjErsIpmS9wItsqQf9wXky/nqJRWDAhc+gzY//LjL4rfJebcDremmtxy07HV6au8uZ5H7uYKgJ8yuUuaIGfnxoV3Kd+7FHNukBs=
         MjAyNjA3MjGrtAkIIsCl/WPGwjgU0w8y6d8ue6eLGA8sKbY+KG3lzHj/1+5f9wRXhqwE691rSVoO5nixjtvP31seO7YnZiZ8inZ34TqSw9o=
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: tls-trigger
-            namespace: default
-          spec:
-            ingressClassName: haproxy
-            tls:
-              - hosts: ["example.com"]
-                secretName: default-ssl-cert
-            rules:
-              - host: example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: trigger-svc
-                          port:
-                            number: 80
+    fixtures: *fixturesTlsTriggerDefaultSsl
     assertions:
       - type: haproxy_valid
       - type: deterministic
-      - type: contains
-        target: file:tls-ticket-keys
-        pattern: 'MjAyNjA3MjGrtAkIIsCl'
-      - type: match_count
-        target: file:tls-ticket-keys
-        pattern: 'MjAyNjA3Mj'
-        expected: "3"
+      - {type: contains, target: file:tls-ticket-keys, pattern: 'MjAyNjA3MjGrtAkIIsCl'}
+      - {type: match_count, target: file:tls-ticket-keys, pattern: 'MjAyNjA3Mj', expected: "3"}
 
   test-ssl-session-tickets-rotate:
     description: When the newest current key's marker is older than today, the 3-key window slides — drop the oldest, keep two, append one fresh key stamped today
-    extraContext:
-      tls:
-        sessionTickets:
-          enabled: true
-        sessionTicketsToday: "20260721"
+    extraContext: *extracontextTlsSessiontickets
     currentFiles:
       tls-ticket-keys: |
         MjAyMDAxMDEBk+LdT3waWq9/eMXZ/OrL72ywGnk5iFvamSsGg9ROVL23GJJfFM0wesQcVpiLgm1+3Q10nN7UPo8TKVWQi+CH05wl5v1Snu8=
         MjAyMDAxMDE6V2yKRZF80TBhAzp/xBDTh+WvO3rDEAbCuD/4slIZeNSXJxS+YxUls4akNIRICp1poNnNbVgWgxiJC6m/cnISHta0dwkjGQY=
         MjAyMDAxMDEULATG7B3W7hY19QQOMzEr1a0GmjWsfRWtyCvWhGvE4eJL0aqagzZsRgtxWrKhgouiouA9LOSFu9x7/pG8CUn+qvCyJ4tPdu0=
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: tls-trigger
-            namespace: default
-          spec:
-            ingressClassName: haproxy
-            tls:
-              - hosts: ["example.com"]
-                secretName: default-ssl-cert
-            rules:
-              - host: example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: trigger-svc
-                          port:
-                            number: 80
+    fixtures: *fixturesTlsTriggerDefaultSsl
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: file:tls-ticket-keys
-        pattern: 'MjAyMDAxMDEBk'
-      - type: contains
-        target: file:tls-ticket-keys
-        pattern: 'MjAyMDAxMDE6V2yKRZF8'
-      - type: contains
-        target: file:tls-ticket-keys
-        pattern: 'MjAyMDAxMDEULATG7B3W'
-      - type: match_count
-        target: file:tls-ticket-keys
-        pattern: 'MjAyMDAxMDE'
-        expected: "2"
-      - type: match_count
-        target: file:tls-ticket-keys
-        pattern: 'MjAyNjA3Mj'
-        expected: "1"
+      - {type: not_contains, target: file:tls-ticket-keys, pattern: 'MjAyMDAxMDEBk'}
+      - {type: contains, target: file:tls-ticket-keys, pattern: 'MjAyMDAxMDE6V2yKRZF8'}
+      - {type: contains, target: file:tls-ticket-keys, pattern: 'MjAyMDAxMDEULATG7B3W'}
+      - {type: match_count, target: file:tls-ticket-keys, pattern: 'MjAyMDAxMDE', expected: "2"}
+      - {type: match_count, target: file:tls-ticket-keys, pattern: 'MjAyNjA3Mj', expected: "1"}
 
   test-access-log-tls-fields:
     description: >-
@@ -1321,10 +1081,7 @@ validationTests:
       log-format (they render "" on the plain-HTTP frontend, which is what keeps
       one schema across frontends), and the session-ticket field appears only
       when that feature is on.
-    extraContext:
-      tls:
-        sessionTickets:
-          enabled: true
+    extraContext: {tls: {sessionTickets: {enabled: true}}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1344,12 +1101,8 @@ validationTests:
                       backend: { service: { name: echo, port: { number: 80 } } }
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(tls_version\)\[ssl_fc_protocol\]'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(tls_sni\)\[ssl_fc_sni\]'
+      - {type: contains, target: haproxy.cfg, pattern: '%\(tls_version\)\[ssl_fc_protocol\]'}
+      - {type: contains, target: haproxy.cfg, pattern: '%\(tls_sni\)\[ssl_fc_sni\]'}
       - type: contains
         target: haproxy.cfg
         pattern: '%\(tls_resumed:bool\)\[ssl_fc_is_resumed\]'
@@ -1361,34 +1114,23 @@ validationTests:
     description: >-
       Without the session-ticket feature the resumption field is absent rather
       than permanently empty — the gating rule every log-fields-* snippet follows.
-    extraContext:
-      tls:
-        sessionTickets:
-          enabled: false
+    extraContext: {tls: {sessionTickets: {enabled: false}}}
     fixtures: {}
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'tls_resumed'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'tls_resumed'}
 
   test-proxy-protocol-https-bind:
     description: >-
       With TLS termination (no passthrough backends) `frontend https` owns the
       HTTPS port, so the PROXY-protocol twin lands there and terminates TLS with
       the same crt-list and ALPN as the plain bind.
-    extraContext:
-      proxyProtocol:
-        enabled: true
-        httpPort: 8081
-        httpsPort: 8444
+    extraContext: {proxyProtocol: {enabled: true, httpPort: 8081, httpsPort: 8444}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: tls-trigger
-            namespace: default
+          metadata: {name: tls-trigger, namespace: default}
           spec:
             ingressClassName: haproxy
             tls:
@@ -1400,11 +1142,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1422,16 +1160,12 @@ validationTests:
       would otherwise fail this test and crash-loop on the load gate. Scoped to
       `bind *:<port> accept-proxy` because the ssl-loopback path binds a unix
       socket with accept-proxy on every render.
-    extraContext:
-      proxyProtocol:
-        enabled: false
+    extraContext: {proxyProtocol: {enabled: false}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: tls-trigger
-            namespace: default
+          metadata: {name: tls-trigger, namespace: default}
           spec:
             ingressClassName: haproxy
             tls:
@@ -1443,13 +1177,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'bind \*:[0-9]+ accept-proxy'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'bind \*:[0-9]+ accept-proxy'}

@@ -31,6 +31,9 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+// configMapGVR is the resource these tests watch.
+var configMapGVR = schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
 func TestNewFromClientset(t *testing.T) {
 	fakeClientset := fake.NewClientset()
 	scheme := runtime.NewScheme()
@@ -81,11 +84,7 @@ func TestClient_GetResource_Success(t *testing.T) {
 
 	client := NewFromClientset(fakeClientset, fakeDynamic, "default")
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	resource, err := client.GetResource(context.Background(), gvr, "test-config")
 
@@ -101,11 +100,7 @@ func TestClient_GetResource_NoNamespace(t *testing.T) {
 
 	client := NewFromClientset(fakeClientset, fakeDynamic, "") // Empty namespace
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	_, err := client.GetResource(context.Background(), gvr, "test-config")
 
@@ -126,11 +121,7 @@ func TestClient_GetResource_NotFound(t *testing.T) {
 
 	client := NewFromClientset(fakeClientset, fakeDynamic, "default")
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	_, err := client.GetResource(context.Background(), gvr, "nonexistent")
 
@@ -312,11 +303,7 @@ func TestClient_GetResource_WithContext(t *testing.T) {
 
 	client := NewFromClientset(fakeClientset, fakeDynamic, "default")
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	// Test with cancelled context
 	ctx, cancel := context.WithCancel(context.Background())

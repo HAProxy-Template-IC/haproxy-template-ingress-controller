@@ -296,7 +296,6 @@ func TestSimplifyError(t *testing.T) {
 func TestNew(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	// Create mock ProposalValidator
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{

@@ -1,3 +1,8 @@
+_fx:
+  tlsSecretSharedTls: &tlsSecretSharedTls
+    certificateRefs:
+      - {kind: Secret, name: shared-tls, namespace: default}
+
 validationTests:
   test-gateway-bind-per-gateway-shape:
     requires: [gateways]
@@ -13,9 +18,7 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-mixed
-            namespace: default
+          metadata: {name: gw-mixed, namespace: default}
           spec:
             gatewayClassName: haptic
             tls:
@@ -23,47 +26,29 @@ validationTests:
                 default:
                   validation:
                     caCertificateRefs:
-                      - kind: ConfigMap
-                        group: ""
-                        name: ca-cm
+                      - {kind: ConfigMap, group: "", name: ca-cm}
                 perPort:
                   - port: 8443
                     tls:
                       validation:
                         mode: AllowInsecureFallback
                         caCertificateRefs:
-                          - kind: ConfigMap
-                            group: ""
-                            name: ca-cm
+                          - {kind: ConfigMap, group: "", name: ca-cm}
             listeners:
               - name: https-default
                 port: 443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                      namespace: default
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecretSharedTls
               - name: https-perport
                 port: 8443
                 hostname: second-example.org
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                      namespace: default
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecretSharedTls
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-blocked
-            namespace: default
+          metadata: {name: gw-blocked, namespace: default}
           spec:
             gatewayClassName: haptic
             tls:
@@ -71,27 +56,17 @@ validationTests:
                 default:
                   validation:
                     caCertificateRefs:
-                      - kind: ConfigMap
-                        group: ""
-                        name: nonexistent-ca
+                      - {kind: ConfigMap, group: "", name: nonexistent-ca}
             listeners:
               - name: https
                 port: 443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                      namespace: default
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecretSharedTls
       configmaps:
         - apiVersion: v1
           kind: ConfigMap
-          metadata:
-            name: ca-cm
-            namespace: default
+          metadata: {name: ca-cm, namespace: default}
           data:
             ca.crt: |
               -----BEGIN CERTIFICATE-----

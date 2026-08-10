@@ -23,10 +23,7 @@ validationTests:
           timeoutProcessing: 500ms
           poolMaxConn: 100
           poolPurgeDelay: 30s
-        hub:
-          logLevel: info
-          maxConnections: 1000
-          blockingThreadKeepAliveSecs: 30
+        hub: {logLevel: info, maxConnections: 1000, blockingThreadKeepAliveSecs: 30}
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -58,9 +55,7 @@ validationTests:
     description: "When the ruleset cannot be fetched, the CRS already deployed to the fleet is kept and re-registered."
     extraContext:
       haproxyVersion: "3.2"
-      waf:
-        crs:
-          url: https://example.test/coreruleset.tar.gz
+      waf: {crs: {url: https://example.test/coreruleset.tar.gz}}
       spoaHub: *crsHub
     currentFiles:
       crs-REQUEST-901-INITIALIZATION.conf: |
@@ -100,9 +95,7 @@ validationTests:
     description: "A first install whose CRS fetch fails falls through to the embedded ruleset rather than rendering a WAF with no rules."
     extraContext:
       haproxyVersion: "3.2"
-      waf:
-        crs:
-          url: https://example.test/coreruleset.tar.gz
+      waf: {crs: {url: https://example.test/coreruleset.tar.gz}}
       spoaHub: *crsHub
     assertions:
       - type: contains
@@ -121,9 +114,7 @@ validationTests:
     description: "Setting waf.crs.url while the coraza directives no longer include the embedded CRS fails the render with an actionable message."
     extraContext:
       haproxyVersion: "3.2"
-      waf:
-        crs:
-          url: https://example.test/coreruleset.tar.gz
+      waf: {crs: {url: https://example.test/coreruleset.tar.gz}}
       spoaHub:
         enabled: true
         haproxy:
@@ -135,10 +126,7 @@ validationTests:
           timeoutProcessing: 500ms
           poolMaxConn: 100
           poolPurgeDelay: 30s
-        hub:
-          logLevel: info
-          maxConnections: 1000
-          blockingThreadKeepAliveSecs: 30
+        hub: {logLevel: info, maxConnections: 1000, blockingThreadKeepAliveSecs: 30}
         plugins:
           - name: coraza
             library: libcoraza_plugin.so

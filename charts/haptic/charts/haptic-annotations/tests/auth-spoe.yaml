@@ -1,5 +1,12 @@
 # HAPTIC-native annotation library — auth / mTLS / external-auth / OAuth2 / WAF
 # validation tests (haproxy-haptic.org/* prefix).
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: { name: echo, port: { number: 80 } }}
+
 validationTests:
   # ============================================================================
   # Basic auth
@@ -32,23 +39,12 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: auth.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: { name: echo, port: { number: 80 } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "userlist haptic_auth_default_haptic-auth"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "user admin password [$]2y[$]05[$]"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "user guest insecure-password plainpw"
+      - {type: contains, target: haproxy.cfg, pattern: "userlist haptic_auth_default_haptic-auth"}
+      - {type: contains, target: haproxy.cfg, pattern: "user admin password [$]2y[$]05[$]"}
+      - {type: contains, target: haproxy.cfg, pattern: "user guest insecure-password plainpw"}
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request auth realm "ProtectedArea" unless \{ http_auth\(haptic_auth_default_haptic-auth\) \}'
@@ -65,8 +61,7 @@ validationTests:
           kind: Secret
           metadata: { namespace: default, name: haptic-authmap }
           type: Opaque
-          data:
-            admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+          data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -81,20 +76,11 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: authmap.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: { name: echo, port: { number: 80 } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "userlist haptic_auth_default_haptic-authmap"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "user admin password [$]2y[$]05[$]"
+      - {type: contains, target: haproxy.cfg, pattern: "userlist haptic_auth_default_haptic-authmap"}
+      - {type: contains, target: haproxy.cfg, pattern: "user admin password [$]2y[$]05[$]"}
 
   # ============================================================================
   # satisfy=any — OR-combine allowlist + basic auth
@@ -110,8 +96,7 @@ validationTests:
           kind: Secret
           metadata: { namespace: default, name: satisfy-auth }
           type: Opaque
-          data:
-            admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+          data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -129,12 +114,7 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: satisfy.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: { name: echo, port: { number: 80 } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -149,9 +129,7 @@ validationTests:
       # The standalone allowlist deny (access-control fragment) is suppressed
       # under satisfy=any — the combined gate above owns the allowlist, so an
       # authenticated request from a non-allow-listed IP still passes.
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "haptic_allowlist_default_satisfy-any-ingress"
+      - {type: not_contains, target: haproxy.cfg, pattern: "haptic_allowlist_default_satisfy-any-ingress"}
 
   # ============================================================================
   # mTLS — client-cert verification + error page + cert passthrough
@@ -194,12 +172,7 @@ validationTests:
                 secretName: server-tls
             rules:
               - host: api.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: { name: echo, port: { number: 80 } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -251,23 +224,14 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: protected.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: { name: echo, port: { number: 80 } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:auth-url.map
-        pattern: "default/protected https://auth.example/check"
+      - {type: contains, target: map:auth-url.map, pattern: "default/protected https://auth.example/check"}
       - type: contains
         target: map:auth-signin.map
         pattern: "default/protected https://login.example/start"
-      - type: contains
-        target: map:auth-method.map
-        pattern: "default/protected POST"
+      - {type: contains, target: map:auth-method.map, pattern: "default/protected POST"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request send-spoe-group spoa-hub check-auth-group"
@@ -280,9 +244,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Auth-User %\\[var\\(txn.hub.external_auth.x_auth_user\\)\\]"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-after-response set-header WWW-Authenticate"
+      - {type: contains, target: haproxy.cfg, pattern: "http-after-response set-header WWW-Authenticate"}
 
   # ============================================================================
   # OAuth2-proxy — desugars onto external-auth
@@ -332,12 +294,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service: { name: oauth-app-svc, port: { number: 80 } }
+                      backend: {service: { name: oauth-app-svc, port: { number: 80 } }}
                     - path: /oauth2
                       pathType: Prefix
-                      backend:
-                        service: { name: oauth2-proxy, port: { number: 4180 } }
+                      backend: {service: { name: oauth2-proxy, port: { number: 4180 } }}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -346,9 +306,7 @@ validationTests:
       - type: contains
         target: map:auth-signin.map
         pattern: "default/oauthapp /oauth2/start\\?rd=%\\[path\\]"
-      - type: contains
-        target: map:auth-method.map
-        pattern: "default/oauthapp HEAD"
+      - {type: contains, target: map:auth-method.map, pattern: "default/oauthapp HEAD"}
 
   # ============================================================================
   # WAF (Coraza via SPOA hub) — waf-policy / waf-mode
@@ -372,13 +330,8 @@ validationTests:
           poolPurgeDelay: 30s
         plugins: []
       waf:
-        ingressPermissions:
-          allowPolicySelection: true
-        policies:
-          defaultPolicy: ""
-          inline:
-            baseline: {}
-          configMapRefs: { __replace__: true }
+        ingressPermissions: {allowPolicySelection: true}
+        policies: {defaultPolicy: "", inline: {baseline: {}}, configMapRefs: { __replace__: true }}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -396,8 +349,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service: { name: any, port: { number: 80 } }
+                      backend: {service: { name: any, port: { number: 80 } }}
     assertions:
       - type: contains
         target: rendering_error
@@ -487,8 +439,7 @@ validationTests:
       Writing an Ingress that asks for basic auth with a Secret that does not
       exist is refused when the resource is written, so the mistake surfaces at
       kubectl apply rather than as a 503 nobody sees until traffic arrives.
-    extraContext:
-      renderMode: admission
+    extraContext: {renderMode: admission}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -513,9 +464,7 @@ validationTests:
       # denied correct manifests applied in the correct order. The runtime 503
       # below is the protection, and it self-heals when the store catches up.
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 503"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
 
   test-haptic-basic-auth-secret-deleted-later-fails-closed:
     description: >-
@@ -552,8 +501,7 @@ validationTests:
       Writing an Ingress whose auth-tls-secret does not exist is refused when the
       resource is written. It previously rendered clean and served the host with
       client-certificate verification silently absent.
-    extraContext:
-      renderMode: admission
+    extraContext: {renderMode: admission}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -578,9 +526,7 @@ validationTests:
       # denied correct manifests applied in the correct order. The runtime 503
       # below is the protection, and it self-heals when the store catches up.
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 503"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
 
   test-haptic-auth-tls-secret-deleted-later-fails-closed:
     description: >-
@@ -614,9 +560,7 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.denied_by\\) str\\(mtls_unavailable\\)"
       # The host must NOT be silently served with verification absent.
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "ca-file [^ ]*no-such-ca"
+      - {type: not_contains, target: haproxy.cfg, pattern: "ca-file [^ ]*no-such-ca"}
 
   test-haptic-auth-tls-wildcard-host-fails-closed:
     description: >-
@@ -646,9 +590,7 @@ validationTests:
         target: haproxy.cfg
         pattern: 'http-request deny deny_status 503 if \{ var\(txn\.host\) -m reg \^\[\^\.\]\+\\\.wild\\\.example\\\.com\$ \}'
       # The literal wildcard must never reach an exact matcher — that is the bug.
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: '-m str \*\.wild\.example\.com'
+      - {type: not_contains, target: haproxy.cfg, pattern: '-m str \*\.wild\.example\.com'}
 
   test-haptic-auth-tls-secret-without-ca-crt-fails-closed:
     description: >-
@@ -660,8 +602,7 @@ validationTests:
           kind: Secret
           metadata: { namespace: default, name: empty-ca }
           type: Opaque
-          data:
-            tls.crt: Zm9v
+          data: {tls.crt: Zm9v}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -683,24 +624,20 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request deny deny_status 503 if \{ var\(txn\.host\) -m str mtls-emptyca\.example\.com \}'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'ca-file [^ ]*empty-ca'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'ca-file [^ ]*empty-ca'}
 
   test-haptic-auth-tls-secret-without-ca-crt-rejected-at-admission:
     description: >-
       Writing an Ingress whose auth-tls-secret carries no ca.crt is refused when
       the resource is written, same as a wholly missing Secret.
-    extraContext:
-      renderMode: admission
+    extraContext: {renderMode: admission}
     fixtures:
       secrets:
         - apiVersion: v1
           kind: Secret
           metadata: { namespace: default, name: empty-ca }
           type: Opaque
-          data:
-            tls.crt: Zm9v
+          data: {tls.crt: Zm9v}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -724,9 +661,7 @@ validationTests:
       # denied correct manifests applied in the correct order. The runtime 503
       # below is the protection, and it self-heals when the store catches up.
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 503"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
 
   test-haptic-auth-tls-cert-header-strip-covers-wildcard-and-hostless:
     description: >-
@@ -753,16 +688,10 @@ validationTests:
     assertions:
       - type: haproxy_valid
       # Unconditional strip — no trailing `if`.
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request del-header X-SSL-Client-CN\n'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request del-header X-SSL-Client-Cert\n'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-SSL-Client-CN\n'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-SSL-Client-Cert\n'}
       # The strip must never be gated on a host match again.
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'del-header X-SSL-Client-[A-Za-z]+ if'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'del-header X-SSL-Client-[A-Za-z]+ if'}
 
   test-haptic-basic-auth-without-secret-annotation-fails-closed:
     description: >-
@@ -788,20 +717,15 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.denied_by\\) str\\(basic_auth_unavailable\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 503"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
       # The render must still succeed: a Secret deleted after admission must not
       # abort reconcile for the whole fleet.
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend default_ba-noannot_svc_echo_80"
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_ba-noannot_svc_echo_80"}
 
   test-haptic-basic-auth-without-secret-annotation-fails-closed-at-admission:
     description: >-
       auth-type basic with no auth-secret served every request unauthenticated - no userlist, no challenge, no warning, nothing at admission. Rejected when the resource is written.
-    extraContext:
-      renderMode: admission
+    extraContext: {renderMode: admission}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -819,6 +743,4 @@ validationTests:
                   paths:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "fails closed with 503"
+      - {type: contains, target: rendering_error, pattern: "fails closed with 503"}

@@ -104,7 +104,6 @@ func clearValidationDirectories(paths *ValidationPaths) error {
 		return fmt.Errorf("creating config directory %s: %w", configDir, err)
 	}
 
-	// Remove old config file if it exists
 	if err := os.Remove(paths.ConfigFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing old config file: %w", err)
 	}

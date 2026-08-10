@@ -1,21 +1,85 @@
+_fx:
+  dataCaCrtBeginCertificate: &dataCaCrtBeginCertificate
+    ca.crt: |
+      -----BEGIN CERTIFICATE-----
+      MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
+      BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
+      MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
+      AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
+      4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
+      ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
+      DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
+      06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
+      6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
+      DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
+      NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
+      3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
+      nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
+      IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
+      kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
+      Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
+      hJoZ+gyfZqGArrz3WVM9
+      -----END CERTIFICATE-----
+  httproutesHttprouteBtlsRoute: &httproutesHttprouteBtlsRoute
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: HTTPRoute
+      metadata: {name: btls-route, namespace: gateway-conformance-infra}
+      spec:
+        parentRefs:
+          - name: gw
+        rules:
+          - backendRefs:
+              - {name: backend-svc, port: 443}
+  gatewaysGatewayGw: &gatewaysGatewayGw
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      metadata: {name: gw, namespace: gateway-conformance-infra}
+      spec:
+        gatewayClassName: haptic
+        listeners:
+          - {name: http, port: 80, protocol: HTTP}
+  servicesServiceBackendSvc: &servicesServiceBackendSvc
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: backend-svc, namespace: gateway-conformance-infra}
+      spec:
+        ports:
+          - {port: 443, targetPort: 8443}
+  gatewayclassesGatewayclass: &gatewayclassesGatewayclass
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: GatewayClass
+      metadata: {name: haproxy}
+      spec: {controllerName: "haproxy.org/haptic"}
+  gatewayclassesGatewayclass2: &gatewayclassesGatewayclass2
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: GatewayClass
+      metadata: {name: haptic}
+      spec: {controllerName: haproxy.org/haptic}
+  tlsSecret: &tlsSecret
+    certificateRefs:
+      - {group: "", kind: Secret, name: tls-validity-checks-certificate, namespace: gateway-conformance-infra}
+  namespacesNamespace: &namespacesNamespace
+    - apiVersion: v1
+      kind: Namespace
+      metadata: {name: gateway-conformance-infra}
+  cacertificaterefsConfigmap: &cacertificaterefsConfigmap
+    - {group: "", kind: ConfigMap, name: nonexistent-ca}
+  tlsSecretSharedTls: &tlsSecretSharedTls
+    certificateRefs:
+      - {kind: Secret, name: shared-tls}
+  targetrefsServiceBackendSvc: &targetrefsServiceBackendSvc
+    - {group: "", kind: Service, name: backend-svc}
+
 validationTests:
   test-gateway-https-listener-with-invalid-cert-no-bind:
     requires: [gatewayclasses, gateways]
     description: "A Gateway HTTPS listener at the chart's default httpsPort with a malformed cert (Secret exists but tls."
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haproxy
-          spec:
-            controllerName: "haproxy.org/haptic"
+      gatewayclasses: *gatewayclassesGatewayclass
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: invalid-cert-gw
-            namespace: default
+          metadata: {name: invalid-cert-gw, namespace: default}
           spec:
             gatewayClassName: haproxy
             listeners:
@@ -26,46 +90,31 @@ validationTests:
                 tls:
                   mode: Terminate
                   certificateRefs:
-                    - kind: Secret
-                      name: malformed-cert
+                    - {kind: Secret, name: malformed-cert}
       secrets:
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: malformed-cert
-            namespace: default
+          metadata: {name: malformed-cert, namespace: default}
           data:
             # Garbage that fails b64decode -> won't reach the PEM check
             tls.crt: bm90LWFjdHVhbGx5LXBlbQ==
             tls.key: bm90LWFjdHVhbGx5LXBlbQ==
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "frontend https"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "bind .*:443.*ssl crt"
+      - {type: not_contains, target: haproxy.cfg, pattern: "frontend https"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "bind .*:443.*ssl crt"}
 
   test-gateway-https-listener-mtls-unresolved-ca-no-bind:
     requires: [gatewayclasses, gateways]
     requiresFields: [gateways.spec.tls.frontend]
     description: "Closes the GatewayFrontendInvalidDefaultClientCertificateValidation conformance gap on the chart side: a Gateway HTTPS listener with a valid server cert AND `spec.tls.frontend.default."
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haproxy
-          spec:
-            controllerName: "haproxy.org/haptic"
+      gatewayclasses: *gatewayclassesGatewayclass
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: mtls-bad-ca-gw
-            namespace: default
+          metadata: {name: mtls-bad-ca-gw, namespace: default}
           spec:
             gatewayClassName: haproxy
             listeners:
@@ -76,48 +125,29 @@ validationTests:
                 tls:
                   mode: Terminate
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                    - {kind: Secret, name: shared-tls}
                   frontendValidation:
-                    caCertificateRefs:
-                      - group: ""
-                        kind: ConfigMap
-                        name: nonexistent-ca
+                    caCertificateRefs: *cacertificaterefsConfigmap
             tls:
               frontend:
                 default:
                   validation:
                     mode: AllowValidOnly
-                    caCertificateRefs:
-                      - group: ""
-                        kind: ConfigMap
-                        name: nonexistent-ca
+                    caCertificateRefs: *cacertificaterefsConfigmap
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "frontend https"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "bind .*:443.*ssl crt"
+      - {type: not_contains, target: haproxy.cfg, pattern: "frontend https"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "bind .*:443.*ssl crt"}
   test-gateway-https-listener-mtls-unresolved-ca-status-conditions:
     requires: [gatewayclasses, gateways]
     requiresFields: [gateways.spec.tls.frontend]
     description: "Status-side companion of test-gateway-https-listener-mtls- unresolved-ca-no-bind. The chart-side fix for GatewayFrontendInvalidDefaultClientCertificateValidation requires BOTH:"
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haproxy
-          spec:
-            controllerName: "haproxy.org/haptic"
+      gatewayclasses: *gatewayclassesGatewayclass
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: mtls-bad-ca-gw
-            namespace: default
+          metadata: {name: mtls-bad-ca-gw, namespace: default}
           spec:
             gatewayClassName: haproxy
             listeners:
@@ -128,17 +158,13 @@ validationTests:
                 tls:
                   mode: Terminate
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                    - {kind: Secret, name: shared-tls}
             tls:
               frontend:
                 default:
                   validation:
                     mode: AllowValidOnly
-                    caCertificateRefs:
-                      - group: ""
-                        kind: ConfigMap
-                        name: nonexistent-ca
+                    caCertificateRefs: *cacertificaterefsConfigmap
     assertions:
       - type: contains
         target: "status:default/mtls-bad-ca-gw:rendered"
@@ -146,30 +172,18 @@ validationTests:
       - type: contains
         target: "status:default/mtls-bad-ca-gw:rendered"
         pattern: '"reason":"NoValidCACertificate"'
-      - type: contains
-        target: "status:default/mtls-bad-ca-gw:rendered"
-        pattern: '"status":"False"'
-      - type: contains
-        target: "status:default/mtls-bad-ca-gw:rendered"
-        pattern: '"name":"https"'
+      - {type: contains, target: "status:default/mtls-bad-ca-gw:rendered", pattern: '"status":"False"'}
+      - {type: contains, target: "status:default/mtls-bad-ca-gw:rendered", pattern: '"name":"https"'}
 
   test-gateway-https-listener-with-valid-cert-binds:
     requires: [gatewayclasses, gateways]
     description: "The companion test to the invalid-cert case: a Gateway HTTPS listener at httpsPort with a resolvable cert sets gf [\"bindHTTPSDefault\"]=true via features-150-gateway-bind, the chart-static `bind *:443 ssl crt-list ...` renders normally, and `frontend https` exists."
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haproxy
-          spec:
-            controllerName: "haproxy.org/haptic"
+      gatewayclasses: *gatewayclassesGatewayclass
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: valid-cert-gw
-            namespace: default
+          metadata: {name: valid-cert-gw, namespace: default}
           spec:
             gatewayClassName: haproxy
             listeners:
@@ -180,60 +194,38 @@ validationTests:
                 tls:
                   mode: Terminate
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                    - {kind: Secret, name: shared-tls}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "frontend https"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "bind .*:443.*ssl crt-list"
+      - {type: contains, target: haproxy.cfg, pattern: "frontend https"}
+      - {type: contains, target: haproxy.cfg, pattern: "bind .*:443.*ssl crt-list"}
 
   test-gateway-https-misdirected-listener-claim-maps:
     requires: [gatewayclasses, gateways]
     description: HTTPS listener hostnames are emitted as listener-claim maps and the misdirected directive references them
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+      gatewayclasses: *gatewayclassesGatewayclass2
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw
-            namespace: default
+          metadata: {name: gw, namespace: default}
           spec:
             gatewayClassName: haptic
             listeners:
               - name: catch-all
                 port: 443
                 protocol: HTTPS
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                tls: *tlsSecretSharedTls
               - name: with-host
                 port: 443
                 hostname: second-example.org
                 protocol: HTTPS
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                tls: *tlsSecretSharedTls
               - name: with-wildcard
                 port: 443
                 hostname: "*.wildcard.org"
                 protocol: HTTPS
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                tls: *tlsSecretSharedTls
     assertions:
       - type: haproxy_valid
 
@@ -256,91 +248,24 @@ validationTests:
     requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
     description: BackendTLSPolicy is watched and the chart compiles when one is present
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
-      gateways:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: Gateway
-          metadata:
-            name: gw
-            namespace: gateway-conformance-infra
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: backend-svc
-            namespace: gateway-conformance-infra
-          spec:
-            ports:
-              - port: 443
-                targetPort: 8443
+      gatewayclasses: *gatewayclassesGatewayclass2
+      gateways: *gatewaysGatewayGw
+      services: *servicesServiceBackendSvc
       configmaps:
         - apiVersion: v1
           kind: ConfigMap
-          metadata:
-            name: ca-cert
-            namespace: gateway-conformance-infra
-          data:
-            ca.crt: |
-              -----BEGIN CERTIFICATE-----
-              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
-              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
-              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
-              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
-              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
-              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
-              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
-              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
-              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
-              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
-              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
-              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
-              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
-              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
-              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
-              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
-              hJoZ+gyfZqGArrz3WVM9
-              -----END CERTIFICATE-----
-      httproutes:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: HTTPRoute
-          metadata:
-            name: btls-route
-            namespace: gateway-conformance-infra
-          spec:
-            parentRefs:
-              - name: gw
-            rules:
-              - backendRefs:
-                  - name: backend-svc
-                    port: 443
+          metadata: {name: ca-cert, namespace: gateway-conformance-infra}
+          data: *dataCaCrtBeginCertificate
+      httproutes: *httproutesHttprouteBtlsRoute
       backendtlspolicies:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: BackendTLSPolicy
-          metadata:
-            name: btls-policy
-            namespace: gateway-conformance-infra
+          metadata: {name: btls-policy, namespace: gateway-conformance-infra}
           spec:
-            targetRefs:
-              - group: ""
-                kind: Service
-                name: backend-svc
+            targetRefs: *targetrefsServiceBackendSvc
             validation:
               caCertificateRefs:
-                - group: ""
-                  kind: ConfigMap
-                  name: ca-cert
+                - {group: "", kind: ConfigMap, name: ca-cert}
               hostname: backend.example.com
     assertions:
       - type: haproxy_valid
@@ -353,101 +278,30 @@ validationTests:
     requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
     description: "Sweep companion to test-gatewayclass-status-transition-time-preserved (issue #63): BackendTLSPolicy conditions live under .status.ancestors[].conditions (GEP-713 PolicyStatus), but the status snippet used RouteParentTransitionTime, which navigates .status.parents — a path that doesn't exist on policies — so every render re-stamped lastTransitionTime regardless of resource shape. The fix matches the existing ancestor entry by identity (controllerName + ancestorRef), not by index: the ancestors list read back from the apiserver can interleave entries from other controllers, so the fixture puts a foreign controller's entry FIRST (same ancestorRef, different timestamp) — positional matching would preserve the wrong entry's timestamp; identity matching must skip it and preserve ours."
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
-      gateways:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: Gateway
-          metadata:
-            name: gw
-            namespace: gateway-conformance-infra
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: backend-svc
-            namespace: gateway-conformance-infra
-          spec:
-            ports:
-              - port: 443
-                targetPort: 8443
+      gatewayclasses: *gatewayclassesGatewayclass2
+      gateways: *gatewaysGatewayGw
+      services: *servicesServiceBackendSvc
       configmaps:
         - apiVersion: v1
           kind: ConfigMap
-          metadata:
-            name: ca-cert
-            namespace: gateway-conformance-infra
-          data:
-            ca.crt: |
-              -----BEGIN CERTIFICATE-----
-              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
-              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
-              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
-              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
-              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
-              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
-              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
-              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
-              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
-              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
-              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
-              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
-              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
-              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
-              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
-              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
-              hJoZ+gyfZqGArrz3WVM9
-              -----END CERTIFICATE-----
-      httproutes:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: HTTPRoute
-          metadata:
-            name: btls-route
-            namespace: gateway-conformance-infra
-          spec:
-            parentRefs:
-              - name: gw
-            rules:
-              - backendRefs:
-                  - name: backend-svc
-                    port: 443
+          metadata: {name: ca-cert, namespace: gateway-conformance-infra}
+          data: *dataCaCrtBeginCertificate
+      httproutes: *httproutesHttprouteBtlsRoute
       backendtlspolicies:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: BackendTLSPolicy
-          metadata:
-            name: btls-policy
-            namespace: gateway-conformance-infra
-            generation: 2
+          metadata: {name: btls-policy, namespace: gateway-conformance-infra, generation: 2}
           spec:
-            targetRefs:
-              - group: ""
-                kind: Service
-                name: backend-svc
+            targetRefs: *targetrefsServiceBackendSvc
             validation:
               caCertificateRefs:
-                - group: ""
-                  kind: ConfigMap
-                  name: ca-cert
+                - {group: "", kind: ConfigMap, name: ca-cert}
               hostname: backend.example.com
           status:
             ancestors:
               # Foreign controller's entry for the SAME ancestorRef comes
               # first — index-based matching would preserve its timestamp.
-              - ancestorRef:
-                  group: gateway.networking.k8s.io
-                  kind: Gateway
-                  name: gw
+              - ancestorRef: {group: gateway.networking.k8s.io, kind: Gateway, name: gw}
                 controllerName: example.com/other-controller
                 conditions:
                   - type: Accepted
@@ -460,10 +314,7 @@ validationTests:
               # snippet emits: parentRef without namespace → ancestorRef
               # without namespace; controllerName comes from the chart's
               # extraContext.controllerName default).
-              - ancestorRef:
-                  group: gateway.networking.k8s.io
-                  kind: Gateway
-                  name: gw
+              - ancestorRef: {group: gateway.networking.k8s.io, kind: Gateway, name: gw}
                 controllerName: haproxy-haptic.org/controller
                 conditions:
                   - type: Accepted
@@ -494,136 +345,69 @@ validationTests:
     requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
     description: "BackendTLSPolicy with caCertificateRefs that don't resolve (no matching ConfigMap or Secret in the cluster) and no wellKnownCACertificates: System fallback marks the targeted backend as broken."
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
-      gateways:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: Gateway
-          metadata:
-            name: gw
-            namespace: gateway-conformance-infra
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: backend-svc
-            namespace: gateway-conformance-infra
-          spec:
-            ports:
-              - port: 443
-                targetPort: 8443
-      httproutes:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: HTTPRoute
-          metadata:
-            name: btls-route
-            namespace: gateway-conformance-infra
-          spec:
-            parentRefs:
-              - name: gw
-            rules:
-              - backendRefs:
-                  - name: backend-svc
-                    port: 443
+      gatewayclasses: *gatewayclassesGatewayclass2
+      gateways: *gatewaysGatewayGw
+      services: *servicesServiceBackendSvc
+      httproutes: *httproutesHttprouteBtlsRoute
       backendtlspolicies:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: BackendTLSPolicy
-          metadata:
-            name: btls-policy
-            namespace: gateway-conformance-infra
+          metadata: {name: btls-policy, namespace: gateway-conformance-infra}
           spec:
-            targetRefs:
-              - group: ""
-                kind: Service
-                name: backend-svc
+            targetRefs: *targetrefsServiceBackendSvc
             validation:
               caCertificateRefs:
-                - group: ""
-                  kind: ConfigMap
-                  name: nonexistent-ca-cm
+                - {group: "", kind: ConfigMap, name: nonexistent-ca-cm}
               hostname: backend.example.com
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request return status 503"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request return status 503"}
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "default-server check ssl ca-file"
+      - {type: not_contains, target: haproxy.cfg, pattern: "default-server check ssl ca-file"}
 
   test-gateway-insecure-frontend-validation-mode-default:
     requires: [gateways]
     description: Gateway with spec.tls.frontend.default.mode=AllowInsecureFallback compiles cleanly. The status patch (verified end-to-end by the GatewayInsecureFrontendValidationMode conformance test) appends Insecur...
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
-      controllerNamespace: "haptic-system"
+    extraContext: {controllerName: "haproxy-haptic.org/controller", controllerNamespace: "haptic-system"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-insecure-default
-            namespace: default
-            generation: 1
+          metadata: {name: gw-insecure-default, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
               - name: https
                 port: 443
                 protocol: HTTPS
-                tls:
-                  mode: Terminate
-            tls:
-              frontend:
-                default:
-                  mode: AllowInsecureFallback
+                tls: {mode: Terminate}
+            tls: {frontend: {default: {mode: AllowInsecureFallback}}}
     assertions:
       - type: haproxy_valid
 
   test-gateway-insecure-frontend-validation-mode-per-port:
     requires: [gateways]
     description: "Gateway with spec.tls.frontend.perPort[*].tls.validation.mode=AllowInsecureFallback compiles cleanly (GEP-91 perPort override path)."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
-      controllerNamespace: "haptic-system"
+    extraContext: {controllerName: "haproxy-haptic.org/controller", controllerNamespace: "haptic-system"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-insecure-perport
-            namespace: default
-            generation: 1
+          metadata: {name: gw-insecure-perport, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
               - name: https
                 port: 443
                 protocol: HTTPS
-                tls:
-                  mode: Terminate
+                tls: {mode: Terminate}
             tls:
               frontend:
-                default:
-                  mode: AllowValidOnly
+                default: {mode: AllowValidOnly}
                 perPort:
                   - port: 443
-                    tls:
-                      validation:
-                        mode: AllowInsecureFallback
+                    tls: {validation: {mode: AllowInsecureFallback}}
     assertions:
       - type: haproxy_valid
 
@@ -632,19 +416,11 @@ validationTests:
     requiresFields: [gateways.spec.tls.frontend]
     description: "Mirrors the upstream Gateway API GatewayFrontendClientCertificateValidation conformance fixture: a Gateway with two HTTPS listeners on different ports — one with no hostname (port 443, default fronten."
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+      gatewayclasses: *gatewayclassesGatewayclass2
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: client-validation-default
-            namespace: gateway-conformance-infra
+          metadata: {name: client-validation-default, namespace: gateway-conformance-infra}
           spec:
             gatewayClassName: haptic
             tls:
@@ -652,54 +428,30 @@ validationTests:
                 default:
                   validation:
                     caCertificateRefs:
-                      - kind: ConfigMap
-                        group: ""
-                        name: tls-validity-checks-ca-certificate
+                      - {kind: ConfigMap, group: "", name: tls-validity-checks-ca-certificate}
                 perPort:
                   - port: 8443
                     tls:
                       validation:
                         caCertificateRefs:
-                          - kind: ConfigMap
-                            group: ""
-                            name: tls-validity-checks-per-port-ca-certificate
+                          - {kind: ConfigMap, group: "", name: tls-validity-checks-per-port-ca-certificate}
             listeners:
               - name: https
                 port: 443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - group: ""
-                      kind: Secret
-                      name: tls-validity-checks-certificate
-                      namespace: gateway-conformance-infra
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecret
               - name: https-with-hostname
                 port: 8443
                 hostname: second-example.org
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - group: ""
-                      kind: Secret
-                      name: tls-validity-checks-certificate
-                      namespace: gateway-conformance-infra
-      namespaces:
-        - apiVersion: v1
-          kind: Namespace
-          metadata:
-            name: gateway-conformance-infra
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecret
+      namespaces: *namespacesNamespace
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            name: tls-validity-checks-certificate
-            namespace: gateway-conformance-infra
+          metadata: {name: tls-validity-checks-certificate, namespace: gateway-conformance-infra}
           type: kubernetes.io/tls
           data:
             tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
@@ -707,56 +459,12 @@ validationTests:
       configmaps:
         - apiVersion: v1
           kind: ConfigMap
-          metadata:
-            name: tls-validity-checks-ca-certificate
-            namespace: gateway-conformance-infra
-          data:
-            ca.crt: |
-              -----BEGIN CERTIFICATE-----
-              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
-              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
-              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
-              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
-              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
-              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
-              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
-              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
-              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
-              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
-              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
-              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
-              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
-              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
-              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
-              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
-              hJoZ+gyfZqGArrz3WVM9
-              -----END CERTIFICATE-----
+          metadata: {name: tls-validity-checks-ca-certificate, namespace: gateway-conformance-infra}
+          data: *dataCaCrtBeginCertificate
         - apiVersion: v1
           kind: ConfigMap
-          metadata:
-            name: tls-validity-checks-per-port-ca-certificate
-            namespace: gateway-conformance-infra
-          data:
-            ca.crt: |
-              -----BEGIN CERTIFICATE-----
-              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
-              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
-              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
-              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
-              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
-              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
-              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
-              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
-              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
-              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
-              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
-              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
-              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
-              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
-              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
-              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
-              hJoZ+gyfZqGArrz3WVM9
-              -----END CERTIFICATE-----
+          metadata: {name: tls-validity-checks-per-port-ca-certificate, namespace: gateway-conformance-infra}
+          data: *dataCaCrtBeginCertificate
     assertions:
       - type: haproxy_valid
 
@@ -773,19 +481,11 @@ validationTests:
     requiresFields: [gateways.spec.tls.frontend]
     description: "Variant of the previous test with mode: AllowInsecureFallback. Same Gateway shape (two listeners, one per port; default vs. perPort validation), but with InsecureFallback set on both."
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+      gatewayclasses: *gatewayclassesGatewayclass2
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: client-validation-insecure
-            namespace: gateway-conformance-infra
+          metadata: {name: client-validation-insecure, namespace: gateway-conformance-infra}
           spec:
             gatewayClassName: haptic
             tls:
@@ -794,55 +494,31 @@ validationTests:
                   validation:
                     mode: AllowInsecureFallback
                     caCertificateRefs:
-                      - kind: ConfigMap
-                        group: ""
-                        name: tls-validity-checks-ca-certificate
+                      - {kind: ConfigMap, group: "", name: tls-validity-checks-ca-certificate}
                 perPort:
                   - port: 8443
                     tls:
                       validation:
                         mode: AllowInsecureFallback
                         caCertificateRefs:
-                          - kind: ConfigMap
-                            group: ""
-                            name: tls-validity-checks-per-port-ca-certificate
+                          - {kind: ConfigMap, group: "", name: tls-validity-checks-per-port-ca-certificate}
             listeners:
               - name: https
                 port: 443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - group: ""
-                      kind: Secret
-                      name: tls-validity-checks-certificate
-                      namespace: gateway-conformance-infra
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecret
               - name: https-with-hostname
                 port: 8443
                 hostname: second-example.org
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - group: ""
-                      kind: Secret
-                      name: tls-validity-checks-certificate
-                      namespace: gateway-conformance-infra
-      namespaces:
-        - apiVersion: v1
-          kind: Namespace
-          metadata:
-            name: gateway-conformance-infra
+                allowedRoutes: {namespaces: {from: Same}}
+                tls: *tlsSecret
+      namespaces: *namespacesNamespace
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            name: tls-validity-checks-certificate
-            namespace: gateway-conformance-infra
+          metadata: {name: tls-validity-checks-certificate, namespace: gateway-conformance-infra}
           type: kubernetes.io/tls
           data:
             tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
@@ -850,56 +526,12 @@ validationTests:
       configmaps:
         - apiVersion: v1
           kind: ConfigMap
-          metadata:
-            name: tls-validity-checks-ca-certificate
-            namespace: gateway-conformance-infra
-          data:
-            ca.crt: |
-              -----BEGIN CERTIFICATE-----
-              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
-              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
-              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
-              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
-              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
-              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
-              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
-              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
-              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
-              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
-              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
-              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
-              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
-              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
-              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
-              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
-              hJoZ+gyfZqGArrz3WVM9
-              -----END CERTIFICATE-----
+          metadata: {name: tls-validity-checks-ca-certificate, namespace: gateway-conformance-infra}
+          data: *dataCaCrtBeginCertificate
         - apiVersion: v1
           kind: ConfigMap
-          metadata:
-            name: tls-validity-checks-per-port-ca-certificate
-            namespace: gateway-conformance-infra
-          data:
-            ca.crt: |
-              -----BEGIN CERTIFICATE-----
-              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
-              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
-              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
-              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
-              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
-              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
-              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
-              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
-              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
-              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
-              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
-              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
-              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
-              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
-              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
-              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
-              hJoZ+gyfZqGArrz3WVM9
-              -----END CERTIFICATE-----
+          metadata: {name: tls-validity-checks-per-port-ca-certificate, namespace: gateway-conformance-infra}
+          data: *dataCaCrtBeginCertificate
     assertions:
       - type: haproxy_valid
 
@@ -914,13 +546,7 @@ validationTests:
     requiresFields: [gateways.spec.tls.backend]
     description: "Mirrors the upstream Gateway API GatewayBackendClientCertificateFeature conformance fixture: a Gateway with HTTP listener (port 80), an HTTPRoute pointing at a Service, a BackendTLSPolicy validating t."
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+      gatewayclasses: *gatewayclassesGatewayclass2
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
@@ -934,106 +560,52 @@ validationTests:
               - name: http
                 port: 80
                 protocol: HTTP
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+                allowedRoutes: {namespaces: {from: Same}}
             tls:
-              backend:
-                clientCertificateRef:
-                  group: ""
-                  kind: Secret
-                  name: tls-checks-client-certificate
-      namespaces:
-        - apiVersion: v1
-          kind: Namespace
-          metadata:
-            name: gateway-conformance-infra
+              backend: {clientCertificateRef: {group: "", kind: Secret, name: tls-checks-client-certificate}}
+      namespaces: *namespacesNamespace
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: gateway-tls-backend-client-certificate
-            namespace: gateway-conformance-infra
+          metadata: {name: gateway-tls-backend-client-certificate, namespace: gateway-conformance-infra}
           spec:
             parentRefs:
-              - name: gateway-tls-backend-client-certificate
-                namespace: gateway-conformance-infra
+              - {name: gateway-tls-backend-client-certificate, namespace: gateway-conformance-infra}
             hostnames:
               - abc.example.com
             rules:
               - backendRefs:
-                  - group: ""
-                    kind: Service
-                    name: tls-backend-with-client-cert-validation
-                    port: 443
+                  - {group: "", kind: Service, name: tls-backend-with-client-cert-validation, port: 443}
                 matches:
-                  - path:
-                      type: Exact
-                      value: /
+                  - path: {type: Exact, value: /}
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: tls-backend-with-client-cert-validation
-            namespace: gateway-conformance-infra
+          metadata: {name: tls-backend-with-client-cert-validation, namespace: gateway-conformance-infra}
           spec:
             ports:
-              - name: https
-                protocol: TCP
-                port: 443
-                targetPort: 8443
-            selector:
-              app: tls-backend-with-client-cert-validation
+              - {name: https, protocol: TCP, port: 443, targetPort: 8443}
+            selector: {app: tls-backend-with-client-cert-validation}
       backendtlspolicies:
         - apiVersion: gateway.networking.k8s.io/v1alpha3
           kind: BackendTLSPolicy
-          metadata:
-            name: gateway-tls-backend-client-certificate-test
-            namespace: gateway-conformance-infra
+          metadata: {name: gateway-tls-backend-client-certificate-test, namespace: gateway-conformance-infra}
           spec:
             targetRefs:
-              - group: ""
-                kind: Service
-                name: tls-backend-with-client-cert-validation
+              - {group: "", kind: Service, name: tls-backend-with-client-cert-validation}
             validation:
               caCertificateRefs:
-                - group: ""
-                  kind: ConfigMap
-                  name: tls-checks-ca-certificate
+                - {group: "", kind: ConfigMap, name: tls-checks-ca-certificate}
               hostname: abc.example.com
       configmaps:
         - apiVersion: v1
           kind: ConfigMap
-          metadata:
-            name: tls-checks-ca-certificate
-            namespace: gateway-conformance-infra
-          data:
-            ca.crt: |
-              -----BEGIN CERTIFICATE-----
-              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
-              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
-              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
-              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
-              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
-              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
-              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
-              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
-              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
-              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
-              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
-              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
-              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
-              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
-              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
-              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
-              hJoZ+gyfZqGArrz3WVM9
-              -----END CERTIFICATE-----
+          metadata: {name: tls-checks-ca-certificate, namespace: gateway-conformance-infra}
+          data: *dataCaCrtBeginCertificate
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            name: tls-checks-client-certificate
-            namespace: gateway-conformance-infra
+          metadata: {name: tls-checks-client-certificate, namespace: gateway-conformance-infra}
           type: kubernetes.io/tls
           data:
             tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
@@ -1055,19 +627,11 @@ validationTests:
     requires: [gatewayclasses, gateways]
     description: "A Gateway HTTPS listener with TWO certificateRefs (ECDSA + RSA) emits both certs to the crt-list under the listener hostname, so HAProxy serves ECDSA or RSA per client capability (dual-cert via Gateway API)."
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haproxy
-          spec:
-            controllerName: "haproxy.org/haptic"
+      gatewayclasses: *gatewayclassesGatewayclass
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: dual-cert-gw
-            namespace: default
+          metadata: {name: dual-cert-gw, namespace: default}
           spec:
             gatewayClassName: haproxy
             listeners:
@@ -1078,17 +642,13 @@ validationTests:
                 tls:
                   mode: Terminate
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                    - kind: Secret
-                      name: dual-rsa-gw
+                    - {kind: Secret, name: shared-tls}
+                    - {kind: Secret, name: dual-rsa-gw}
       secrets:
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: dual-rsa-gw
-            namespace: default
+          metadata: {name: dual-rsa-gw, namespace: default}
           data:
             tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDVENDQWZHZ0F3SUJBZ0lVQ3ZIL204UHQ3QTA4c0xDMFFieTlSeW1jcndBd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQjRYRFRJMk1EY3lNREUwTlRBd05Gb1hEVE0yTURjeApOekUwTlRBd05Gb3dGREVTTUJBR0ExVUVBd3dKYkc5allXeG9iM04wTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGCkFBT0NBUThBTUlJQkNnS0NBUUVBeVpyZExKbmFnZkNOZDljRmRvMi85Wm9VVkdVam9sNHBuTzdPU1lTUTcxVEcKMDBVd3lLL21VT3V4TnVIZnJmNTVPU1kzTWI4cmlUM1BBRTUwSm1HaXFEOWNyTFFjTlE0RSt4TnRoUGc2a1dXUQpwUThRSktmT1JCLzN2b0hKa1RqR1k4WlRVaHd5UU9OSk9XeVdmK3ZsZFdEMGNCLytCUzQ3a0U3Q3lnTjNyNENoCjZHU0kxRXZBM0Y5S3hURTBRb3VXemNBU2ZoQjlLczlsMGt2c2lHaGo1YlZEVEtSUWo5Z2NORzdMcnlVMHJTN3QKVTdvVXhvc0xCRXFKNUdrNnVzOHN4NWJFc3oxem5KSnhyM3FGblBhSldNdU8wbEJPakk4US9GcXlOOU8vTTJQcAo3NHVSSDdhV1RxaUl4WjJDWkZKaDFEdUhhK2ozMFJRVWNMbEVrbGdrMndJREFRQUJvMU13VVRBZEJnTlZIUTRFCkZnUVVVa1RXeUtZSWZycVNJemhjTURVQ3JLS1M4MEV3SHdZRFZSMGpCQmd3Rm9BVVVrVFd5S1lJZnJxU0l6aGMKTURVQ3JLS1M4MEV3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFOQmdrcWhraUc5dzBCQVFzRkFBT0NBUUVBRTQzOAp2RE1yUE9zK2tXRFpMcStiUVA3WkNJTTFYam94Y1R4U0JqeDJoR3AzbmtpYWhsMXVPdlV5ZG5ySWw1V0s5cExGCmRtdHF4YWE5b3RNRjlqMFlSMVR5N1UzRk5DUDdReVFQUit5VHF5d2Z5d1hiNVV5clhQbDRxN01LRm5rbHNCVXAKakVIc0pPM1lyQnlDQmhjQ1JHUTY0a3Y1VmN0ajUzbkQrUklRaTBaTVQvdkNiQVk2REZjWFUyMWNwWCtVaU81NwpydkJoT1NHOVNJbkYzMGd1ZEJLQkN6T2g2NExNWWlnaHBZVVhpa29rM3BuNEhjSnBqR1lPcGFqZisxZnVHVEV6CnB2SlhpTEtXakVlUnVRM0h5K296ZU15Ti85U3VKMnVGY0hFWDNlLzlQVndKbWg3YmVDdTJxUG9LNklWL0NNck4KYjNIYzdTYStMRnQ1UUFIbm9RPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
             tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktrd2dnU2xBZ0VBQW9JQkFRREptdDBzbWRxQjhJMTMKMXdWMmpiLzFtaFJVWlNPaVhpbWM3czVKaEpEdlZNYlRSVERJcitaUTY3RTI0ZCt0L25rNUpqY3h2eXVKUGM4QQpUblFtWWFLb1AxeXN0QncxRGdUN0UyMkUrRHFSWlpDbER4QWtwODVFSC9lK2djbVJPTVpqeGxOU0hESkE0MGs1CmJKWi82K1YxWVBSd0gvNEZManVRVHNMS0EzZXZnS0hvWklqVVM4RGNYMHJGTVRSQ2k1Yk53QkorRUgwcXoyWFMKUyt5SWFHUGx0VU5NcEZDUDJCdzBic3V2SlRTdEx1MVR1aFRHaXdzRVNvbmthVHE2enl6SGxzU3pQWE9ja25Hdgplb1djOW9sWXk0N1NVRTZNanhEOFdySTMwNzh6WStudmk1RWZ0cFpPcUlqRm5ZSmtVbUhVTzRkcjZQZlJGQlJ3CnVVU1NXQ1RiQWdNQkFBRUNnZ0VBSUtFVzhQUUp3SVFkY1dyMHNHWnF6aVpjNmZmZ2w1UGo2a2xnUzlmUDJWeUEKUFl0eVJOanJUdWVHckJwTXFJMktNeXl6UERMenFlZStEQSttanR1NGhzQ1NrRVVxVjQvb1VIYXBnQjdvNDhWcgpicnVNWWxKaWVQWXZrNzdQejlnL2k4QjZsY3lJZWFZUG9PS3BUUlR4ODFoNDEzam1GUktSZzE2citpUXJoOVRnCi9ZUVhIUUs1OUJDSjZza3h1TklQWHdvRGRxT0FYVHNIR1ZkRXJUSWt5Wk1WNmNrdGdKUlprU1dnVm5YamRPZzAKM2xDZ0JwWHNCcUVhbFcvVGNwM1JVbXYweEY2anA0cmNvaTNzSmJ6RER3RW55TU1FMnRaWm5mSTl1ZDBsS2VQTQpHYU1VUGt0RUh2dVVuMmZCWkxMWEFlSWJmeTZrTy9DTStybXVTbGNIc1FLQmdRRDZSRHVydURLUkJib3hidjYwCmZoaEpFZnh5L0tVY1FNQ1BUVkpDMWl6M0ZBaVpsWCtONHdvMENGNVl6VWQ2RjZmTGJXSGltSjJHTk5LaEN6TjcKdE9IMFFVUVVaVytHc0xpcXB0V3NCbVh4NkQzajJwOWltTzZTTDg4NDBrYXpkaTlYbUVVeit1RmxwdWZrdGh0MQpSZUdvTVl3V2JnQUU5bXEvYS9sUkhEcUtLUUtCZ1FET09UMVcwZldqQ2pXazJuUlR2cW5Mdld1UkFrREJqcXhpCklhekszdUxmeCtjaFd4RDhwelZrOENnUXN2RTFNZUh2Q09UWXV1Q2oyOTdqZEF6ZFFPNHAzblVUbG1TRy9xbmQKZ0tFNHlPbWhhYjM5d0tzRWtxWEZHTnoyUHBta3h6OFlRVzJvbExYYVVZQk9kRDBIclhWd1JaSFh1a0dXSXpkcQp0Wkl3eitQZll3S0JnUURsQ05iM0kxNmJtL3MzVEZZclJvN2hLR1c1c2Y5RTZQbVE2L2xSazRLWktDdHFxd2VPCkNXOElDWFNXbmw5QW5DK0NtM3NPamc3emlKb09xaHFXcHdaMnE5Z3JObDJualVtalc0V0dwbUJieitmOEE5TUQKditQdHczVklraUFFRXkvbVlVTkwrOWlWVi9jM04zWFBrSUdnbEorWTAxaVBNaGlsVUtKZG1aRDFhUUtCZ1FDSQoxVWdTL0h0dE5CQUdFNEZPTTl0OE9YSlBKRnlOVWJxbDNreEZ6QUJqbGNPUnlWZ0xISE44UnpGK2F3MUxTNDdyClNVNTNWQUJNR1U3YVF4MXFEWFE1eWNhTE9hWDRRSys3TG1kTFExeHA0cnpTeTIxdU9sUE41TUp3alhicTg5MjAKblcxQ2gzSG1xMTlrTHhKenJxK1cwRUtHRHFzSUVOUHJkUkRNWEpTSm13S0JnUURwelpzSitWS0d2cTJtenM2TQpUbHpQMXBTemdpV0NyMjE5eDBqK0hmTm9sRkZtaEtETW1KVHp6RXNwck9GaFFOdXBEREJhUEFBWHNJSTRUc1hpClVHelkzWDdaQldFd0I2UWxxdTVGYW9SK0xTelpSSDhQbS9IdkdJd2ZCVEtpMEFMWElONDdlYmNleWpWNVQrNEcKV2tFUnBwdGJlN2QyOXZGNFNCNW4zQzBkR0E9PQotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tCg==

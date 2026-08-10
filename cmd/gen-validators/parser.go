@@ -88,7 +88,6 @@ func parsePropertyConstraints(name string, data json.RawMessage) (*Property, err
 		IsPointer: def.Nullable,
 	}
 
-	// Convert enum values based on type.
 	convertEnumValues(prop, &def)
 
 	// Set type-specific flags.

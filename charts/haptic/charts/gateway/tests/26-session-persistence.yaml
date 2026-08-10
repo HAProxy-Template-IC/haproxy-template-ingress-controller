@@ -1,3 +1,20 @@
+_fx:
+  specHttp: &specHttp
+    gatewayClassName: haptic
+    listeners:
+      - name: http
+        protocol: HTTP
+        port: 80
+        allowedRoutes: {namespaces: {from: Same}}
+  gatewayclassesGatewayclass: &gatewayclassesGatewayclass
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: GatewayClass
+      metadata: {name: haptic}
+      spec: {controllerName: haproxy-haptic.org/controller}
+  specHttp2: &specHttp2
+    ports:
+      - {name: http, port: 80, targetPort: 8080}
+
 validationTests:
   test-httproute-session-persistence-cookie-default:
     requires: [gatewayclasses, gateways, httproutes]
@@ -7,43 +24,19 @@ validationTests:
     # so the assertion can't pass). See haptic.gatewayExperimental.disabled.
     _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
     description: "GEP-1619: HTTPRoute rule with sessionPersistence (type unset → Cookie) emits the HAProxy cookie-insert + dynamic-cookie-key directives on the rule's backend."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy-haptic.org/controller
+      gatewayclasses: *gatewayclassesGatewayclass
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-sp
-            namespace: default
-            generation: 1
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: http
-                protocol: HTTP
-                port: 80
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+          metadata: {name: gw-sp, namespace: default, generation: 1}
+          spec: *specHttp
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: sticky-svc
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+          metadata: {name: sticky-svc, namespace: default}
+          spec: *specHttp2
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -55,205 +48,118 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.1"]
-              targetRef:
-                kind: Pod
-                name: sticky-pod-1
+              targetRef: {kind: Pod, name: sticky-pod-1}
           ports:
-            - name: http
-              port: 8080
-              protocol: TCP
+            - {name: http, port: 8080, protocol: TCP}
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: sp-route
-            namespace: default
+          metadata: {name: sp-route, namespace: default}
           spec:
             parentRefs:
-              - name: gw-sp
-                namespace: default
+              - {name: gw-sp, namespace: default}
             hostnames:
               - sticky.example.com
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /
+                  - path: {type: PathPrefix, value: /}
                 sessionPersistence:
                   sessionName: MYSESSION
                   type: Cookie
                   absoluteTimeout: 1h
                   idleTimeout: 10m
                 backendRefs:
-                  - name: sticky-svc
-                    port: 80
+                  - {name: sticky-svc, port: 80}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend gtw_default_sp-route_sticky-svc_80"
+      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_sp-route_sticky-svc_80"}
 
       - type: contains
         target: haproxy.cfg
         pattern: "cookie MYSESSION insert indirect nocache dynamic maxlife 1h maxidle 10m"
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "dynamic-cookie-key "
+      - {type: contains, target: haproxy.cfg, pattern: "dynamic-cookie-key "}
 
   test-httproute-session-persistence-cookie-defaultname:
     requires: [gatewayclasses, gateways, httproutes]
     requiresFields: [httproutes.spec.rules.sessionPersistence]
     _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
     description: "GEP-1619: HTTPRoute sessionPersistence with no sessionName defaults the cookie name to SESSION (type Cookie is the apiserver-defaulted value the stored object carries)."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy-haptic.org/controller
+      gatewayclasses: *gatewayclassesGatewayclass
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-sp2
-            namespace: default
-            generation: 1
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: http
-                protocol: HTTP
-                port: 80
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+          metadata: {name: gw-sp2, namespace: default, generation: 1}
+          spec: *specHttp
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: sticky-svc2
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+          metadata: {name: sticky-svc2, namespace: default}
+          spec: *specHttp2
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: sp-route2
-            namespace: default
+          metadata: {name: sp-route2, namespace: default}
           spec:
             parentRefs:
-              - name: gw-sp2
-                namespace: default
+              - {name: gw-sp2, namespace: default}
             hostnames:
               - sticky2.example.com
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /
-                sessionPersistence:
-                  type: Cookie
+                  - path: {type: PathPrefix, value: /}
+                sessionPersistence: {type: Cookie}
                 backendRefs:
-                  - name: sticky-svc2
-                    port: 80
+                  - {name: sticky-svc2, port: 80}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "cookie SESSION insert indirect nocache dynamic"
+      - {type: contains, target: haproxy.cfg, pattern: "cookie SESSION insert indirect nocache dynamic"}
 
   test-httproute-session-persistence-only-on-declaring-rule:
     requires: [gatewayclasses, gateways, httproutes]
     requiresFields: [httproutes.spec.rules.sessionPersistence]
     _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
     description: "GEP-1619: a sessionPersistence on one rule must NOT leak its cookie directive onto a sibling rule's distinct backend."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy-haptic.org/controller
+      gatewayclasses: *gatewayclassesGatewayclass
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-sp3
-            namespace: default
-            generation: 1
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: http
-                protocol: HTTP
-                port: 80
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+          metadata: {name: gw-sp3, namespace: default, generation: 1}
+          spec: *specHttp
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: sticky-a
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+          metadata: {name: sticky-a, namespace: default}
+          spec: *specHttp2
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: plain-b
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+          metadata: {name: plain-b, namespace: default}
+          spec: *specHttp2
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: sp-route3
-            namespace: default
+          metadata: {name: sp-route3, namespace: default}
           spec:
             parentRefs:
-              - name: gw-sp3
-                namespace: default
+              - {name: gw-sp3, namespace: default}
             hostnames:
               - mixed.example.com
             rules:
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /sticky
-                sessionPersistence:
-                  sessionName: STICKY
+                  - path: {type: PathPrefix, value: /sticky}
+                sessionPersistence: {sessionName: STICKY}
                 backendRefs:
-                  - name: sticky-a
-                    port: 80
+                  - {name: sticky-a, port: 80}
               - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /plain
+                  - path: {type: PathPrefix, value: /plain}
                 backendRefs:
-                  - name: plain-b
-                    port: 80
+                  - {name: plain-b, port: 80}
     assertions:
       - type: haproxy_valid
 
@@ -261,10 +167,7 @@ validationTests:
         target: haproxy.cfg
         pattern: "(?s)backend gtw_default_sp-route3_sticky-a_80.*?cookie STICKY insert"
 
-      - type: match_count
-        target: haproxy.cfg
-        pattern: "(?m)^  cookie .* insert "
-        expected: "1"
+      - {type: match_count, target: haproxy.cfg, pattern: "(?m)^  cookie .* insert ", expected: "1"}
 
       - type: not_contains
         target: haproxy.cfg
@@ -275,67 +178,36 @@ validationTests:
     requiresFields: [grpcroutes.spec.rules.sessionPersistence]
     _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
     description: "GEP-1619: GRPCRoute rule with sessionPersistence emits the cookie-insert directive on its backend."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy-haptic.org/controller
+      gatewayclasses: *gatewayclassesGatewayclass
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-spg
-            namespace: default
-            generation: 1
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: http
-                protocol: HTTP
-                port: 80
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+          metadata: {name: gw-spg, namespace: default, generation: 1}
+          spec: *specHttp
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: grpc-sticky
-            namespace: default
+          metadata: {name: grpc-sticky, namespace: default}
           spec:
             ports:
-              - name: grpc
-                port: 9090
-                targetPort: 9090
+              - {name: grpc, port: 9090, targetPort: 9090}
       grpcroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GRPCRoute
-          metadata:
-            name: spg-route
-            namespace: default
+          metadata: {name: spg-route, namespace: default}
           spec:
             parentRefs:
-              - name: gw-spg
-                namespace: default
+              - {name: gw-spg, namespace: default}
             hostnames:
               - grpc-sticky.example.com
             rules:
               - matches:
-                  - method:
-                      type: Exact
-                      service: com.example.API
-                      method: Method1
-                sessionPersistence:
-                  sessionName: GRPCSESSION
-                  type: Cookie
+                  - method: {type: Exact, service: com.example.API, method: Method1}
+                sessionPersistence: {sessionName: GRPCSESSION, type: Cookie}
                 backendRefs:
-                  - name: grpc-sticky
-                    port: 9090
+                  - {name: grpc-sticky, port: 9090}
     assertions:
       - type: haproxy_valid
 

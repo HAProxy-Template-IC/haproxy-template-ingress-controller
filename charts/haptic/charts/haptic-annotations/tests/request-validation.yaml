@@ -1,6 +1,20 @@
 # haptic-annotations library — API-gateway JSON request validation tests.
 # Covers schema source resolution, plugin TOML schema blocks, request-schema.map
 # production, SPOE dispatch, and render-time guardrails.
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+  configmapsConfigmapApiSchema: &configmapsConfigmapApiSchema
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata: {namespace: default, name: api-schema}
+      data:
+        schema.json: |
+          {"type":"object"}
+
 validationTests:
   test-haptic-request-validation-configmap:
     _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
@@ -9,9 +23,7 @@ validationTests:
       configmaps:
         - apiVersion: v1
           kind: ConfigMap
-          metadata:
-            namespace: default
-            name: api-schema
+          metadata: {namespace: default, name: api-schema}
           data:
             schema.json: |
               {"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}
@@ -30,15 +42,7 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: validate-cm.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -51,15 +55,7 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: validate-cm-alt.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -77,15 +73,11 @@ validationTests:
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: "schema_base64 = \"eyJ0eXBlIjoib2JqZWN0IiwicmVxdWlyZWQiOlsibmFtZSJdLCJwcm9wZXJ0aWVzIjp7Im5hbWUiOnsidHlwZSI6InN0cmluZyJ9fX0K\""
-      - type: contains
-        target: file:spoe.conf
-        pattern: "spoe-message validate-request"
+      - {type: contains, target: file:spoe.conf, pattern: "spoe-message validate-request"}
       - type: contains
         target: file:spoe.conf
         pattern: "schema_id=var\\(txn\\.req_schema_id\\).*body=req\\.body.*content_type=req\\.hdr\\(Content-Type\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "tune.bufsize 16384"
+      - {type: contains, target: haproxy.cfg, pattern: "tune.bufsize 16384"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request wait-for-body time 100ms if \\{ var\\(txn\\.req_schema_id\\) -m found \\} \\{ method POST PUT PATCH \\}"
@@ -98,9 +90,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request return status 413 if \\{ var\\(txn\\.req_schema_id\\) -m found \\} \\{ method POST PUT PATCH \\} \\{ var\\(txn\\.req_schema_body_len\\),sub\\(txn\\.req_schema_body_size\\) -m int lt 0 \\}"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "option http-buffer-request"
+      - {type: not_contains, target: haproxy.cfg, pattern: "option http-buffer-request"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request return status 413 if \\{ var\\(txn\\.req_schema_id\\) -m found \\} \\{ method POST PUT PATCH \\}"
@@ -118,11 +108,8 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: secret-schema
-          data:
-            schema.json: eyJ0eXBlIjoib2JqZWN0In0=
+          metadata: {namespace: default, name: secret-schema}
+          data: {schema.json: eyJ0eXBlIjoib2JqZWN0In0=}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -135,15 +122,7 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: validate-secret.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -160,15 +139,7 @@ validationTests:
     _helm_skip_test: '{{ if .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
     description: request-schema annotations fail loudly when request validation is not enabled
     fixtures:
-      configmaps:
-        - apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            namespace: default
-            name: api-schema
-          data:
-            schema.json: |
-              {"type":"object"}
+      configmaps: *configmapsConfigmapApiSchema
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -181,19 +152,9 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: validate-disabled.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "request validation is not enabled"
+      - {type: contains, target: rendering_error, pattern: "request validation is not enabled"}
 
   test-haptic-request-validation-rejects-two-sources:
     _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
@@ -212,19 +173,9 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: validate-two-sources.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "requires exactly one schema source"
+      - {type: contains, target: rendering_error, pattern: "requires exactly one schema source"}
 
   test-haptic-request-validation-missing-key:
     _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
@@ -233,9 +184,7 @@ validationTests:
       configmaps:
         - apiVersion: v1
           kind: ConfigMap
-          metadata:
-            namespace: default
-            name: api-schema
+          metadata: {namespace: default, name: api-schema}
           data:
             other.json: |
               {"type":"object"}
@@ -251,33 +200,15 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: validate-missing-key.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "empty or missing 'schema\\.json' data key"
+      - {type: contains, target: rendering_error, pattern: "empty or missing 'schema\\.json' data key"}
 
   test-haptic-request-validation-max-body-bounded:
     _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
     description: request-schema-max-body-size is bounded to protect HAProxy/plugin memory
     fixtures:
-      configmaps:
-        - apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            namespace: default
-            name: api-schema
-          data:
-            schema.json: |
-              {"type":"object"}
+      configmaps: *configmapsConfigmapApiSchema
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -291,33 +222,15 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: validate-huge-body.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Must be between 1 and 1048576 bytes"
+      - {type: contains, target: rendering_error, pattern: "Must be between 1 and 1048576 bytes"}
 
   test-haptic-request-validation-max-body-fits-buffer:
     _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
     description: request-schema-max-body-size must fit the HAProxy validation buffer
     fixtures:
-      configmaps:
-        - apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            namespace: default
-            name: api-schema
-          data:
-            schema.json: |
-              {"type":"object"}
+      configmaps: *configmapsConfigmapApiSchema
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -331,15 +244,7 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: validate-buffer-overflow.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: contains
         target: rendering_error

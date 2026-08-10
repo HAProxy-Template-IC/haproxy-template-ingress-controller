@@ -44,7 +44,6 @@ import (
 
 // generateTestCertificates generates a self-signed certificate for testing.
 func generateTestCertificates() (certPEM, keyPEM []byte, err error) {
-	// Generate RSA key
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generating private key: %w", err)
@@ -71,24 +70,27 @@ func generateTestCertificates() (certPEM, keyPEM []byte, err error) {
 		return nil, nil, fmt.Errorf("creating certificate: %w", err)
 	}
 
-	// Encode certificate to PEM
 	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
-	// Encode private key to PEM
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
 
 	return certPEM, keyPEM, nil
 }
 
-func TestNewServer_Defaults(t *testing.T) {
+// newTestServer builds a Server with freshly generated TLS material; cfg carries
+// whatever else the test varies.
+func newTestServer(t *testing.T, cfg *ServerConfig) *Server {
+	t.Helper()
 	certPEM, keyPEM, err := generateTestCertificates()
 	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
+	cfg.CertPEM, cfg.KeyPEM = certPEM, keyPEM
+	server, err := NewServer(cfg)
 	require.NoError(t, err)
+	return server
+}
+
+func TestNewServer_Defaults(t *testing.T) {
+	server := newTestServer(t, &ServerConfig{})
 
 	require.NotNil(t, server)
 	assert.Equal(t, 9443, server.config.Port)
@@ -103,11 +105,7 @@ func TestNewServer_Defaults(t *testing.T) {
 // A zero IdleTimeout silently inherits ReadTimeout, which closed pooled API
 // server connections after 10s and surfaced as `failed calling webhook: EOF` (#133).
 func TestNewServer_IdleTimeoutOutlivesTheAPIServersIdleConnections(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{CertPEM: certPEM, KeyPEM: keyPEM})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	// 90s is the client-go transport default; anything at or below it lets the
 	// gate close first.
@@ -141,16 +139,8 @@ func TestNewServer_CustomConfig(t *testing.T) {
 }
 
 func TestServer_RegisterValidator(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
-
-	// Register validator
 	server.RegisterValidator("networking.k8s.io/v1.Ingress", func(_ *ValidationContext) (bool, string, []string, error) {
 		return true, "", nil, nil
 	})
@@ -179,14 +169,7 @@ func TestServer_RegisterValidator(t *testing.T) {
 }
 
 func TestServer_GetGVK(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	tests := []struct {
 		name     string
@@ -237,14 +220,7 @@ func TestServer_GetGVK(t *testing.T) {
 }
 
 func TestServer_HandleHealthz(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	// Create test request
 	req := httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody)
@@ -262,14 +238,7 @@ func TestServer_HandleHealthz(t *testing.T) {
 }
 
 func TestServer_HandleValidation_MethodNotAllowed(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	// Test GET request (should be rejected)
 	req := httptest.NewRequest(http.MethodGet, "/validate", http.NoBody)
@@ -282,14 +251,7 @@ func TestServer_HandleValidation_MethodNotAllowed(t *testing.T) {
 }
 
 func TestServer_HandleValidation_InvalidBody(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	// Test with invalid JSON body
 	req := httptest.NewRequest(http.MethodPost, "/validate", bytes.NewReader([]byte("invalid json")))
@@ -302,14 +264,7 @@ func TestServer_HandleValidation_InvalidBody(t *testing.T) {
 }
 
 func TestServer_HandleValidation_NoValidatorAllowsByDefault(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	// Create a valid AdmissionReview request for a type with no validator
 	review := &admissionv1.AdmissionReview{
@@ -351,14 +306,7 @@ func TestServer_HandleValidation_NoValidatorAllowsByDefault(t *testing.T) {
 }
 
 func TestServer_HandleValidation_ValidatorAllows(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	// Register validator that allows
 	server.RegisterValidator("v1.ConfigMap", func(ctx *ValidationContext) (bool, string, []string, error) {
@@ -409,14 +357,7 @@ func TestServer_HandleValidation_ValidatorAllows(t *testing.T) {
 }
 
 func TestServer_HandleValidation_ValidatorDenies(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	// Register validator that denies
 	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, []string, error) {
@@ -465,14 +406,7 @@ func TestServer_HandleValidation_ValidatorDenies(t *testing.T) {
 }
 
 func TestServer_HandleValidation_ValidatorError(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	// Register validator that returns an error
 	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, []string, error) {
@@ -521,16 +455,8 @@ func TestServer_HandleValidation_ValidatorError(t *testing.T) {
 }
 
 func TestServer_HandleValidation_InvalidObject(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
-
-	// Register a validator
 	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, []string, error) {
 		return true, "", nil, nil
 	})
@@ -562,7 +488,7 @@ func TestServer_HandleValidation_InvalidObject(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var responseReview admissionv1.AdmissionReview
-	err = json.NewDecoder(resp.Body).Decode(&responseReview)
+	err := json.NewDecoder(resp.Body).Decode(&responseReview)
 	require.NoError(t, err)
 
 	assert.False(t, responseReview.Response.Allowed)
@@ -570,14 +496,7 @@ func TestServer_HandleValidation_InvalidObject(t *testing.T) {
 }
 
 func TestServer_HandleValidation_UpdateWithOldObject(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	// Register validator that checks old object
 	server.RegisterValidator("v1.ConfigMap", func(ctx *ValidationContext) (bool, string, []string, error) {
@@ -635,16 +554,8 @@ func TestServer_HandleValidation_UpdateWithOldObject(t *testing.T) {
 }
 
 func TestServer_HandleValidation_InvalidOldObject(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
-
-	// Register a validator
 	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, []string, error) {
 		return true, "", nil, nil
 	})
@@ -673,7 +584,7 @@ func TestServer_HandleValidation_InvalidOldObject(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var responseReview admissionv1.AdmissionReview
-	err = json.NewDecoder(resp.Body).Decode(&responseReview)
+	err := json.NewDecoder(resp.Body).Decode(&responseReview)
 	require.NoError(t, err)
 
 	assert.False(t, responseReview.Response.Allowed)
@@ -841,14 +752,7 @@ func TestServer_Start_Integration(t *testing.T) {
 }
 
 func TestServer_ExtractMetadata(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	tests := []struct {
 		name              string
@@ -894,14 +798,7 @@ func TestServer_ExtractMetadata(t *testing.T) {
 }
 
 func TestServer_ExtractMetadata_NilObject(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	namespace, name := server.extractMetadata(nil)
 	assert.Empty(t, namespace)
@@ -909,14 +806,7 @@ func TestServer_ExtractMetadata_NilObject(t *testing.T) {
 }
 
 func TestServer_ConcurrentValidation(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server, err := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-	require.NoError(t, err)
+	server := newTestServer(t, &ServerConfig{})
 
 	// Register validator
 	validationCount := 0

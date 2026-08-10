@@ -392,7 +392,6 @@ func parseSecret(resource *unstructured.Unstructured) (*coreconfig.Credentials, 
 		return nil, err
 	}
 
-	// Load credentials
 	creds, err := coreconfig.LoadCredentials(data)
 	if err != nil {
 		return nil, fmt.Errorf("loading credentials: %w", err)

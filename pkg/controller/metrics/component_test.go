@@ -29,6 +29,20 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
+// startTestComponent runs a Component over a fresh registry and event bus. The
+// bus starts after New() so the constructor's subscription is already in place.
+func startTestComponent(t *testing.T) (*Metrics, *busevents.EventBus) {
+	t.Helper()
+	metrics := NewMetrics(prometheus.NewRegistry())
+	eventBus := busevents.NewEventBus(100)
+	component := New(metrics, eventBus)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	eventBus.Start()
+	go component.Start(ctx)
+	return metrics, eventBus
+}
+
 func TestNew(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
@@ -39,17 +53,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestComponent_ConfigInvalidEvent_IncrementsRejectedCounter(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, eventBus := startTestComponent(t)
 
 	// A config rejected by the validationtests validator.
 	eventBus.Publish(events.NewConfigInvalidEvent("v1", nil, map[string][]string{
@@ -80,7 +84,6 @@ func TestComponent_ReconciliationEvents(t *testing.T) {
 	eventBus.Start()
 	go component.Start(ctx)
 
-	// Publish reconciliation completed event
 	eventBus.Publish(events.NewReconciliationCompletedEvent(1500, nil, nil))
 
 	// Give component time to process
@@ -90,7 +93,6 @@ func TestComponent_ReconciliationEvents(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.ReconciliationTotal))
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ReconciliationErrors))
 
-	// Publish reconciliation failed event
 	eventBus.Publish(events.NewReconciliationFailedEvent("template error", "render", nil))
 
 	time.Sleep(100 * time.Millisecond)
@@ -98,24 +100,11 @@ func TestComponent_ReconciliationEvents(t *testing.T) {
 	// Verify error counter incremented
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.ReconciliationTotal))
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.ReconciliationErrors))
-
-	cancel()
 }
 
 func TestComponent_DeploymentEvents(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
+	metrics, eventBus := startTestComponent(t)
 
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
-
-	// Publish deployment completed event
 	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:              2,
 		Succeeded:          2,
@@ -147,7 +136,6 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.DeploymentTotal))
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeploymentErrors))
 
-	// Publish instance deployment failed event
 	eventBus.Publish(events.NewInstanceDeploymentFailedEvent(
 		"http://instance:5555",
 		"connection refused",
@@ -159,22 +147,10 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 	// Verify error counter incremented
 	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.DeploymentTotal))
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.DeploymentErrors))
-
-	cancel()
 }
 
 func TestComponent_DeploymentCompleted_UpdatesFleetConvergence(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, eventBus := startTestComponent(t)
 
 	// Full-fleet success: size == converged, no consecutive failures.
 	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
@@ -214,17 +190,7 @@ func TestComponent_DeploymentCompleted_UpdatesFleetConvergence(t *testing.T) {
 // an ever-growing staleness. After the reset, converged < fleet_size is 0 < 0
 // (false) so followers never false-alert.
 func TestComponent_LostLeadership_ResetsFleetConvergence(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, eventBus := startTestComponent(t)
 
 	// Become leader and record a partial-failure deploy → non-zero gauges.
 	eventBus.Publish(events.NewBecameLeaderEvent("pod-1"))
@@ -249,19 +215,8 @@ func TestComponent_LostLeadership_ResetsFleetConvergence(t *testing.T) {
 }
 
 func TestComponent_ValidationEvents(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
+	metrics, eventBus := startTestComponent(t)
 
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
-
-	// Publish validation completed event
 	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", nil, true))
 
 	time.Sleep(100 * time.Millisecond)
@@ -269,29 +224,16 @@ func TestComponent_ValidationEvents(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.ValidationTotal))
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ValidationErrors))
 
-	// Publish validation failed event
 	eventBus.Publish(events.NewValidationFailedEvent([]string{"syntax error"}, 50, ""))
 
 	time.Sleep(100 * time.Millisecond)
 
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.ValidationTotal))
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.ValidationErrors))
-
-	cancel()
 }
 
 func TestComponent_ResourceEvents(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, eventBus := startTestComponent(t)
 
 	// First, publish IndexSynchronizedEvent to initialize counts
 	eventBus.Publish(events.NewIndexSynchronizedEvent(map[string]int{
@@ -345,8 +287,6 @@ func TestComponent_ResourceEvents(t *testing.T) {
 	ingresses, err = metrics.ResourceCount.GetMetricWithLabelValues("ingresses")
 	require.NoError(t, err)
 	assert.Equal(t, 8.0, testutil.ToFloat64(ingresses))
-
-	cancel()
 }
 
 // TestComponent_HAProxyPodRejected verifies that HAProxyPodRejectedEvent
@@ -359,17 +299,7 @@ func TestComponent_ResourceEvents(t *testing.T) {
 // would silently break the alert "controller refuses to talk to N
 // HAProxy pods" because dashboards filter by exact reason value.
 func TestComponent_HAProxyPodRejected(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, eventBus := startTestComponent(t)
 
 	// Two rejections with the same reason → counter at 2 for that label.
 	eventBus.Publish(events.NewHAProxyPodRejectedEvent("haproxy-a", "version_mismatch_older"))
@@ -391,17 +321,7 @@ func TestComponent_HAProxyPodRejected(t *testing.T) {
 }
 
 func TestComponent_AllEventTypes(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, eventBus := startTestComponent(t)
 
 	// Publish various event types
 	eventBus.Publish(events.NewReconciliationCompletedEvent(1000, nil, nil))
@@ -430,8 +350,6 @@ func TestComponent_AllEventTypes(t *testing.T) {
 	// Every event should increment the events published counter
 	// We published 4 events
 	assert.Equal(t, 4.0, testutil.ToFloat64(metrics.EventsPublished))
-
-	cancel()
 }
 
 func TestComponent_GracefulShutdown(t *testing.T) {
@@ -449,18 +367,15 @@ func TestComponent_GracefulShutdown(t *testing.T) {
 		errChan <- component.Start(ctx)
 	}()
 
-	// Publish some events
 	eventBus.Publish(events.NewReconciliationCompletedEvent(500, nil, nil))
 
 	time.Sleep(50 * time.Millisecond)
 
-	// Cancel context
 	cancel()
 
 	// Wait for shutdown
 	select {
 	case err := <-errChan:
-		// Should return context.Canceled
 		assert.ErrorIs(t, err, context.Canceled)
 	case <-time.After(2 * time.Second):
 		t.Fatal("component did not shut down gracefully")
@@ -471,17 +386,7 @@ func TestComponent_GracefulShutdown(t *testing.T) {
 }
 
 func TestComponent_HighEventVolume(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, eventBus := startTestComponent(t)
 
 	// Publish many events rapidly
 	for i := range 100 {
@@ -499,8 +404,6 @@ func TestComponent_HighEventVolume(t *testing.T) {
 	assert.Equal(t, 10.0, testutil.ToFloat64(metrics.ValidationTotal))
 	// 110 events total (100 reconciliation + 10 validation)
 	assert.Equal(t, 110.0, testutil.ToFloat64(metrics.EventsPublished))
-
-	cancel()
 }
 
 func TestComponent_Metrics(t *testing.T) {
@@ -516,23 +419,12 @@ func TestComponent_Metrics(t *testing.T) {
 }
 
 func TestComponent_LeaderElectionEvents(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, eventBus := startTestComponent(t)
 
 	// Initially not leader
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionIsLeader))
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionTransitionsTotal))
 
-	// Publish BecameLeaderEvent
 	eventBus.Publish(events.NewBecameLeaderEvent("pod-1"))
 
 	time.Sleep(100 * time.Millisecond)
@@ -544,7 +436,6 @@ func TestComponent_LeaderElectionEvents(t *testing.T) {
 	// Wait a bit to accumulate time as leader
 	time.Sleep(100 * time.Millisecond)
 
-	// Publish LostLeadershipEvent
 	eventBus.Publish(events.NewLostLeadershipEvent("pod-1", "context cancelled"))
 
 	time.Sleep(100 * time.Millisecond)
@@ -556,22 +447,10 @@ func TestComponent_LeaderElectionEvents(t *testing.T) {
 	// Verify time as leader was recorded (should be > 0)
 	timeAsLeader := testutil.ToFloat64(metrics.LeaderElectionTimeAsLeaderSeconds)
 	assert.Greater(t, timeAsLeader, 0.0, "time as leader should be recorded")
-
-	cancel()
 }
 
 func TestComponent_LostLeadershipWithoutBeingLeader(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, eventBus := startTestComponent(t)
 
 	// Publish LostLeadershipEvent without ever becoming leader
 	// This tests the edge case where becameLeaderAt is zero
@@ -585,22 +464,10 @@ func TestComponent_LostLeadershipWithoutBeingLeader(t *testing.T) {
 
 	// Time as leader should remain 0 since we never became leader
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionTimeAsLeaderSeconds))
-
-	cancel()
 }
 
 func TestComponent_TickerUpdatesEventSubscribers(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, _ := startTestComponent(t)
 
 	// The component itself creates at least one typed subscription, so SubscriberCount() > 0.
 	// Wait for the ticker to fire (TickerPollInterval) and update the gauge.
@@ -614,14 +481,10 @@ func TestComponent_QueueWaitRecorded(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
 	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	t.Cleanup(cancel)
 	eventBus.Start()
-	go component.Start(ctx)
+	go New(metrics, eventBus).Start(ctx)
 
 	correlationID := "test-correlation-123"
 
@@ -655,22 +518,10 @@ func TestComponent_QueueWaitRecorded(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected one observation in haptic_reconciliation_queue_wait_seconds")
-
-	cancel()
 }
 
 func TestComponent_InitialSyncSkipped(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, eventBus := startTestComponent(t)
 
 	// Initialize counts first
 	eventBus.Publish(events.NewIndexSynchronizedEvent(map[string]int{
@@ -700,8 +551,6 @@ func TestComponent_InitialSyncSkipped(t *testing.T) {
 	ingresses, err = metrics.ResourceCount.GetMetricWithLabelValues("ingresses")
 	require.NoError(t, err)
 	assert.Equal(t, 10.0, testutil.ToFloat64(ingresses))
-
-	cancel()
 }
 
 // TestComponent_RuntimeMapDivergence pins the counter that makes the
@@ -710,17 +559,7 @@ func TestComponent_InitialSyncSkipped(t *testing.T) {
 // shows up only as a WARN log line, which is how it went unnoticed in
 // production.
 func TestComponent_RuntimeMapDivergence(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	eventBus.Start()
-	go component.Start(ctx)
+	metrics, eventBus := startTestComponent(t)
 
 	eventBus.Publish(events.NewRuntimeMapDivergenceEvent("haproxy-0", "pod-names.map"))
 	eventBus.Publish(events.NewRuntimeMapDivergenceEvent("haproxy-1", "pod-names.map"))
@@ -739,6 +578,4 @@ func TestComponent_RuntimeMapDivergence(t *testing.T) {
 	// #84, a concurrent writer clobbering an activated config) and must not
 	// move — conflating them is what sent me looking at the wrong metric.
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeployRuntimeDivergence))
-
-	cancel()
 }

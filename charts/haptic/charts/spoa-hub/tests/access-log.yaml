@@ -3,6 +3,17 @@
 # The field snippets are gated on the plugin message being enabled, so these
 # tests pin both directions: the fields appear when the feature is configured,
 # and are absent (not permanently empty) when it is not.
+_fx:
+  pluginsCoraza: &pluginsCoraza
+    - name: coraza
+      library: libcoraza_plugin.so
+      messages: ["check-request"]
+      timeoutMs: 15
+      dependsOn: []
+      directives: |
+        SecRuleEngine On
+      params: ""
+
 validationTests:
   test-spoa-hub-access-log-fields:
     # The spoa-hub backend renders `mode spop` on HAProxy >= 3.1 and `mode tcp` on
@@ -25,19 +36,8 @@ validationTests:
           timeoutProcessing: 500ms
           poolMaxConn: 100
           poolPurgeDelay: 30s
-        hub:
-          logLevel: info
-          maxConnections: 1000
-          blockingThreadKeepAliveSecs: 30
-        plugins:
-          - name: coraza
-            library: libcoraza_plugin.so
-            messages: ["check-request"]
-            timeoutMs: 15
-            dependsOn: []
-            directives: |
-              SecRuleEngine On
-            params: ""
+        hub: {logLevel: info, maxConnections: 1000, blockingThreadKeepAliveSecs: 30}
+        plugins: *pluginsCoraza
     fixtures:
       # The SPOE dispatch and its deny gates live in frontend-filters-*, which
       # renders only inside an HTTP frontend — and that frontend only exists when
@@ -57,9 +57,7 @@ validationTests:
                       backend: { service: { name: echo, port: { number: 80 } } }
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(waf_action\)\[var\(txn\.hub\.coraza\.action\)\]'
+      - {type: contains, target: haproxy.cfg, pattern: '%\(waf_action\)\[var\(txn\.hub\.coraza\.action\)\]'}
       - type: contains
         target: haproxy.cfg
         pattern: '%\(waf_rule_id\)\[var\(txn\.hub\.coraza\.rule_id\)\]'
@@ -178,10 +176,7 @@ validationTests:
           timeoutProcessing: 500ms
           poolMaxConn: 100
           poolPurgeDelay: 30s
-        hub:
-          logLevel: info
-          maxConnections: 1000
-          blockingThreadKeepAliveSecs: 30
+        hub: {logLevel: info, maxConnections: 1000, blockingThreadKeepAliveSecs: 30}
         plugins: []
     fixtures: {}
     assertions:
@@ -196,10 +191,7 @@ validationTests:
       operators enforcing a contractual cap where letting a caller past the
       budget is worse than refusing them. Off by default.
     extraContext:
-      rateLimit:
-        shared:
-          enabled: true
-          failClosed: true
+      rateLimit: {shared: {enabled: true, failClosed: true}}
       spoaHub:
         haproxy:
           messages: ["check-ratelimit"]
@@ -225,9 +217,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request deny deny_status 429 hdr Retry-After 1 if .*!\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'str\(rate_limit_shared_unavailable\)'
+      - {type: contains, target: haproxy.cfg, pattern: 'str\(rate_limit_shared_unavailable\)'}
 
   test-spoa-hub-waf-unavailable-fails-open-by-default:
     description: >-
@@ -247,15 +237,7 @@ validationTests:
           timeoutProcessing: 500ms
           poolMaxConn: 100
           poolPurgeDelay: 30s
-        plugins:
-          - name: coraza
-            library: libcoraza_plugin.so
-            messages: ["check-request"]
-            timeoutMs: 15
-            dependsOn: []
-            directives: |
-              SecRuleEngine On
-            params: ""
+        plugins: *pluginsCoraza
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -299,8 +281,7 @@ validationTests:
       traffic than let it past uninspected. Off by default.
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     extraContext:
-      waf:
-        failClosed: true
+      waf: {failClosed: true}
       spoaHub:
         enabled: true
         haproxy:
@@ -312,15 +293,7 @@ validationTests:
           timeoutProcessing: 500ms
           poolMaxConn: 100
           poolPurgeDelay: 30s
-        plugins:
-          - name: coraza
-            library: libcoraza_plugin.so
-            messages: ["check-request"]
-            timeoutMs: 15
-            dependsOn: []
-            directives: |
-              SecRuleEngine On
-            params: ""
+        plugins: *pluginsCoraza
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -342,13 +315,9 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request return status 503 if \{ var\(txn\.coraza_active\) -m bool \} !\{ var\(txn\.hub\.coraza\.__status\) -m found \}'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'str\(waf_unavailable\)'
+      - {type: contains, target: haproxy.cfg, pattern: 'str\(waf_unavailable\)'}
       # Recorded in both postures, so an uninspecting WAF is never silent.
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.waf_degraded\) str\(1\)'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.waf_degraded\) str\(1\)'}
       # The `-m found` gate is posture-independent: here the 503 above already
       # caught the unanswered case, so the gate costs nothing and the two
       # postures cannot drift apart.

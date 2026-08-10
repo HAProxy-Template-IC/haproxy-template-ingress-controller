@@ -12,6 +12,9 @@ import (
 	"k8s.io/client-go/dynamic/fake"
 )
 
+// configMapGVR is the resource these tests watch.
+var configMapGVR = schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
 // createTestIndexer creates a minimal indexer for testing.
 func createTestIndexer() *indexer.Indexer {
 	return &indexer.Indexer{}
@@ -40,11 +43,7 @@ func TestNewCachedStore(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme)
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   2,
@@ -134,11 +133,7 @@ func TestCachedStore_AddAndGet(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   2,
@@ -154,7 +149,6 @@ func TestCachedStore_AddAndGet(t *testing.T) {
 		t.Fatalf("NewCachedStore failed: %v", err)
 	}
 
-	// Add resource
 	err = store.Add(resource, []string{"default", "test-cm"})
 	if err != nil {
 		t.Fatalf("Add failed: %v", err)
@@ -195,11 +189,7 @@ func TestCachedStore_NonUniqueKeys(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2])
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   1, // Index by service name only
@@ -265,11 +255,7 @@ func TestCachedStore_UpdateWithNonUniqueKeys(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, slice1, slice2)
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   1,
@@ -346,11 +332,7 @@ func TestCachedStore_DeleteWithNonUniqueKeys(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, slice1, slice2)
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   1,
@@ -418,11 +400,7 @@ func TestCachedStore_List(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2])
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   1,
@@ -482,11 +460,7 @@ func TestCachedStore_CacheTTL(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   2,
@@ -540,11 +514,7 @@ func TestCachedStore_Clear(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1])
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   2,
@@ -572,7 +542,6 @@ func TestCachedStore_Clear(t *testing.T) {
 		t.Errorf("expected size 2, got %d", store.Size())
 	}
 
-	// Clear
 	if err := store.Clear(); err != nil {
 		t.Fatalf("Clear failed: %v", err)
 	}
@@ -601,11 +570,7 @@ func TestCachedStore_PartialMatch(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2])
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   2,
@@ -655,11 +620,7 @@ func TestCachedStore_TTLReset(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	// Short TTL for testing
 	cacheTTL := 200 * time.Millisecond
@@ -756,11 +717,7 @@ func TestCachedStore_WrongKeyCount(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   2,
@@ -818,11 +775,7 @@ func TestCachedStore_UpdateAddsNewResourceToExistingKey(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, slice1, slice2)
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   1, // Index by service name only
@@ -873,11 +826,7 @@ func TestCachedStore_UpdateToNewKey(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   2,
@@ -904,11 +853,7 @@ func TestCachedStore_DeleteNonExistent(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   2,
@@ -947,11 +892,7 @@ func TestCachedStore_CacheMissLogging(t *testing.T) {
 		t.Fatalf("creating indexer: %v", err)
 	}
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:   2,
@@ -1008,11 +949,7 @@ func TestCachedStore_LRUEviction(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2], resources[3])
 	testIndexer := createTestIndexer()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
+	gvr := configMapGVR
 
 	cfg := &CachedStoreConfig{
 		NumKeys:      2,

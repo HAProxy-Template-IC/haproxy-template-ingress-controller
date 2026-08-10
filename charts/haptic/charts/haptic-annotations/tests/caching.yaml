@@ -1,4 +1,16 @@
 # HAPTIC-native annotation library — shared-cache (Varnish tier) tests.
+_fx:
+  extracontextAdmissionCache: &extracontextAdmissionCache
+    renderMode: admission
+    cache: {varnish: {enabled: true, replicas: 2}}
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: { service: { name: echo, port: { number: 80 } } }
+  extracontextCacheVarnish: &extracontextCacheVarnish
+    cache: {varnish: {enabled: true, replicas: 2}}
+
 validationTests:
   test-haptic-cache-core:
     description: >-
@@ -14,9 +26,7 @@ validationTests:
           # topology this test asserts (PDB + anti-affinity need replicas > 1)
           # instead of relying on the deployment's values.
           replicas: 2
-          podDisruptionBudget:
-            enabled: true
-            maxUnavailable: 1
+          podDisruptionBudget: {enabled: true, maxUnavailable: 1}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -35,37 +45,23 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: cache.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: echo, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: "map:haptic-cache-enable.map"
-        pattern: "default/cache-ingress 1"
-      - type: contains
-        target: "map:haptic-cache-ttl.map"
-        pattern: "default/cache-ingress 300"
+      - {type: contains, target: "map:haptic-cache-enable.map", pattern: "default/cache-ingress 1"}
+      - {type: contains, target: "map:haptic-cache-ttl.map", pattern: "default/cache-ingress 300"}
       # No source-IP loop-break map: the cache-miss loopback no longer enters the
       # client frontends (Varnish fetches the dedicated backend-fetch port), so
       # the fragile Varnish-pod-IP map is gone entirely.
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "haptic-varnish-src"
+      - {type: not_contains, target: haproxy.cfg, pattern: "haptic-varnish-src"}
       # Client-facing cache routing is unguarded by source now.
       - type: contains
         target: haproxy.cfg
         pattern: "use_backend varnish_cache if \\{ var\\(txn.resource_id\\),map\\([^)]*haptic-cache-enable\\.map\\) -m found \\}\\n"
       # Dedicated backend-fetch frontend: internal-only bind, routes by the
       # validated X-Haptic-Backend header, refuses infrastructure backends.
-      - type: contains
-        target: haproxy.cfg
-        pattern: "frontend haptic_cache_origin"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "bind \\*:8090"
+      - {type: contains, target: haproxy.cfg, pattern: "frontend haptic_cache_origin"}
+      - {type: contains, target: haproxy.cfg, pattern: "bind \\*:8090"}
       - type: contains
         target: haproxy.cfg
         pattern: "acl origin_backend_internal var\\(txn.origin_backend\\) -m str varnish_cache spoa-hub default_backend"
@@ -80,33 +76,19 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request del-header X-Haptic-Backend\\n\\s*http-request set-header X-Haptic-Backend %\\[var\\(txn.backend_name\\)\\] if \\{ var\\(txn.backend_name\\) -m found \\}"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request del-header X-Haptic-Cache-Fetch"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request del-header X-Haptic-Cache-Fetch"}
       # The forgeable-header bypass must be gone from the routing decision.
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "req.hdr\\(X-Haptic-Cache-Fetch\\)"
+      - {type: not_contains, target: haproxy.cfg, pattern: "req.hdr\\(X-Haptic-Cache-Fetch\\)"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Haptic-Cache-TTL %\\[var\\(txn.resource_id\\),map\\([^)]*haptic-cache-ttl\\.map\\)\\]"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend varnish_cache"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "balance uri"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "hash-type consistent"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "hash-balance-factor 150"
+      - {type: contains, target: haproxy.cfg, pattern: "backend varnish_cache"}
+      - {type: contains, target: haproxy.cfg, pattern: "balance uri"}
+      - {type: contains, target: haproxy.cfg, pattern: "hash-type consistent"}
+      - {type: contains, target: haproxy.cfg, pattern: "hash-balance-factor 150"}
       # Dedicated internal origin Service for the backend-fetch port (ClusterIP,
       # never a LoadBalancer; targets the HAProxy fleet on the loopback port).
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "name: haptic-cache-origin"
+      - {type: contains, target: "k8s:varnish-cache", pattern: "name: haptic-cache-origin"}
       - type: contains
         target: "k8s:varnish-cache"
         pattern: "(?s)name: haptic-cache-origin.*?type: ClusterIP.*?port: 8090"
@@ -114,65 +96,35 @@ validationTests:
       # document's apiVersion (a stripping `{#- -#}` comment between `---` and
       # `apiVersion` would produce `---apiVersion:` — invalid multi-doc YAML the
       # live SSA apply rejects even though text assertions still pass).
-      - type: not_contains
-        target: "k8s:varnish-cache"
-        pattern: "(?m)^---[A-Za-z]"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "kind: StatefulSet"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "kind: ConfigMap"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "clusterIP: None"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "malloc,256m"
+      - {type: not_contains, target: "k8s:varnish-cache", pattern: "(?m)^---[A-Za-z]"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: "kind: StatefulSet"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: "kind: ConfigMap"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: "clusterIP: None"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: "malloc,256m"}
       # A CPU request must be present so the autoscaling HPA can compute utilization.
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "cpu: 100m"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "kind: PodDisruptionBudget"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "maxUnavailable: 1"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "podAntiAffinity:"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "topologySpreadConstraints:"
+      - {type: contains, target: "k8s:varnish-cache", pattern: "cpu: 100m"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: "kind: PodDisruptionBudget"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: "maxUnavailable: 1"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: "podAntiAffinity:"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: "topologySpreadConstraints:"}
       # The VCL no longer sets a loopback marker header (source-based loop-break).
-      - type: not_contains
-        target: "k8s:varnish-cache"
-        pattern: "X-Haptic-Cache-Fetch"
+      - {type: not_contains, target: "k8s:varnish-cache", pattern: "X-Haptic-Cache-Fetch"}
       - type: contains
         target: "map:haptic-cache-skip-ct.map"
         pattern: "default/cache-ingress \\|text/html\\|text/xml\\|"
-      - type: contains
-        target: "map:haptic-cache-maxsize.map"
-        pattern: "default/cache-ingress 1048576"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request del-header X-Haptic-Cache-Vary"
+      - {type: contains, target: "map:haptic-cache-maxsize.map", pattern: "default/cache-ingress 1048576"}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request del-header X-Haptic-Cache-Vary"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Haptic-Cache-Vary %\\[var\\(txn.haptic_consumer\\)\\]\\|%\\[req.hdr\\(X-Api-Version\\)\\] if \\{ var\\(txn.resource_id\\) -m str default/cache-ingress \\}"
       - type: contains
         target: haproxy.cfg
         pattern: "use_backend %\\[var\\(txn.backend_name\\)\\] if \\{ var\\(txn.resource_id\\) -m str default/cache-ingress \\} \\{ path_beg /admin /live \\}"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "hash_data\\(req.http.X-Haptic-Cache-Vary\\)"
+      - {type: contains, target: "k8s:varnish-cache", pattern: "hash_data\\(req.http.X-Haptic-Cache-Vary\\)"}
       - type: contains
         target: "k8s:varnish-cache"
         pattern: "std.strstr\\(bereq.http.X-Haptic-Cache-Skip-CT"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "sub vcl_recv"
+      - {type: contains, target: "k8s:varnish-cache", pattern: "sub vcl_recv"}
       # The builtin refuses to serve a cached response to a request carrying
       # Authorization or Cookie. Overriding that is only safe when the key
       # identifies the caller, so the bypass demands the auth flag as well —
@@ -181,9 +133,7 @@ validationTests:
       - type: contains
         target: "k8s:varnish-cache"
         pattern: "if \\(req.http.X-Haptic-Cache-Vary && req.http.X-Haptic-Cache-Auth && \\(req.method == \"GET\" \\|\\| req.method == \"HEAD\"\\)\\) \\{"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "set resp.http.X-Cache = \"HIT\""
+      - {type: contains, target: "k8s:varnish-cache", pattern: "set resp.http.X-Cache = \"HIT\""}
 
   test-haptic-cache-shared-rate-limit-loopback:
     _helm_skip_test: '{{ if not (and .Values.cache.varnish.enabled .Values.rateLimit.shared.enabled) }}true{{ end }}'
@@ -207,11 +157,7 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: cache-rate.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: echo, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       # The client leg still dispatches the shared limiter.
@@ -219,13 +165,9 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request send-spoe-group spoa-hub check-ratelimit-group"
       # The old per-loopback unset hack is gone — no source-map rl_limit clear.
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "unset-var\\(txn\\.rl_limit\\)"
+      - {type: not_contains, target: haproxy.cfg, pattern: "unset-var\\(txn\\.rl_limit\\)"}
       # The loopback is separated onto the dedicated backend-fetch frontend.
-      - type: contains
-        target: haproxy.cfg
-        pattern: "frontend haptic_cache_origin"
+      - {type: contains, target: haproxy.cfg, pattern: "frontend haptic_cache_origin"}
 
   test-haptic-cache-autoscaling:
     description: >-
@@ -242,8 +184,7 @@ validationTests:
             maxReplicas: 9
             targetCPUUtilizationPercentage: 65
             scaleDownStabilizationSeconds: 900
-          podDisruptionBudget:
-            enabled: false
+          podDisruptionBudget: {enabled: false}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -258,37 +199,19 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: cache.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: echo, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "kind: HorizontalPodAutoscaler"
+      - {type: contains, target: "k8s:varnish-cache", pattern: "kind: HorizontalPodAutoscaler"}
       - type: contains
         target: "k8s:varnish-cache"
         pattern: "kind: StatefulSet\\s+metadata:\\s+name: [^\\s]*varnish-cache"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "minReplicas: 3"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "maxReplicas: 9"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "averageUtilization: 65"
-      - type: contains
-        target: "k8s:varnish-cache"
-        pattern: "stabilizationWindowSeconds: 900"
+      - {type: contains, target: "k8s:varnish-cache", pattern: "minReplicas: 3"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: "maxReplicas: 9"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: "averageUtilization: 65"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: "stabilizationWindowSeconds: 900"}
       # The HPA owns the replica count — the workload must not pin a static one.
-      - type: not_contains
-        target: "k8s:varnish-cache"
-        pattern: "replicas: 2"
-      - type: not_contains
-        target: "k8s:varnish-cache"
-        pattern: "kind: PodDisruptionBudget"
+      - {type: not_contains, target: "k8s:varnish-cache", pattern: "replicas: 2"}
+      - {type: not_contains, target: "k8s:varnish-cache", pattern: "kind: PodDisruptionBudget"}
 
   test-haptic-cache-ttl-unit-suffix-rejected:
     description: >-
@@ -296,12 +219,7 @@ validationTests:
       of being written verbatim into haptic-cache-ttl.map, where the Varnish VCL
       would compute std.duration("60s"+"s")=0s and silently never cache. Regression
       pin for the toint() footgun (Atoi parses "60s" to 0, passing a `< 0` guard).
-    extraContext:
-      renderMode: admission
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextAdmissionCache
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -326,12 +244,7 @@ validationTests:
     description: >-
       cache-max-object-size with a unit suffix ("1mb") is rejected at admission —
       the digits-only guard, not a reliance on toint()<=0, is what enforces it.
-    extraContext:
-      renderMode: admission
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextAdmissionCache
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -359,10 +272,7 @@ validationTests:
       headers) and contributes the cache/app_backend fields; the cache-origin
       frontend carries the JSON log-format too, so the second log line a MISS
       produces is in the same schema.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
+    extraContext: {cache: {varnish: {enabled: true}}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -376,19 +286,13 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: cache-log.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: echo, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: 'http-after-response set-var\(txn\.cache_status\) res\.hdr\(X-Cache\) if \{ res\.hdr\(X-Cache\) -m found \}'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(cache\)\[var\(txn\.cache_status\)\]'
+      - {type: contains, target: haproxy.cfg, pattern: '%\(cache\)\[var\(txn\.cache_status\)\]'}
       - type: contains
         target: haproxy.cfg
         pattern: '%\(app_backend\)\[var\(txn\.backend_name\)\]'
@@ -409,11 +313,7 @@ validationTests:
       route so the VCL abandons an erroring background fetch instead of replacing
       a good stale object. cache-revalidate sets beresp.keep and
       cache-strip-set-cookie drops Set-Cookie before the cacheability test.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -478,11 +378,7 @@ validationTests:
       cache-ttl "auto" hands the lifetime back to the origin's Cache-Control via
       std.rfc_ttl() (new in Varnish/Vinyl 9.0) instead of forcing a fixed TTL.
       The map carries the literal so the static VCL can branch on it.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -515,12 +411,7 @@ validationTests:
       The staleness windows share cache-ttl's unit-suffix footgun — the VCL builds
       the duration by appending "s", so "30s" would become std.duration("30ss")=0s
       and silently disable the window. Rejected at admission instead.
-    extraContext:
-      renderMode: admission
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextAdmissionCache
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -545,12 +436,7 @@ validationTests:
     description: >-
       cache-strip-set-cookie drops a response header, so a typo must fail loudly
       rather than being read as false and leaving the route uncached.
-    extraContext:
-      renderMode: admission
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextAdmissionCache
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -579,11 +465,7 @@ validationTests:
       synchronously and the wider grace is reachable only when that fetch fails.
       Regression pin for the collapse-into-one-window bug: with a single grace
       value, stale-if-error silently implied stale-while-revalidate.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -615,11 +497,7 @@ validationTests:
       declared to downstream caches as Vary, so a CDN or proxy in front of HAPTIC
       keys on the same dimensions Varnish does instead of serving one caller's
       response to another. add-header, so an origin's own Vary survives.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -655,11 +533,7 @@ validationTests:
       receives the discriminator, so declaring it would collapse every caller onto
       one shared variant. Those routes are marked Cache-Control: private instead,
       which keeps shared caches out while leaving the browser free to cache.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -705,11 +579,7 @@ validationTests:
       HTTP header names are case-insensitive, so two cache-key components naming
       the same header in different case are one Vary dimension, not two. The
       operator's original spelling is what gets emitted.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -739,11 +609,7 @@ validationTests:
       so scanning traffic stops reaching the origin. It is deliberately separate
       from cache-ttl: a cached 404 during a bad deploy pins the outage for its
       lifetime, so it must be shortenable without shortening everything else.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -791,12 +657,7 @@ validationTests:
       cache-negative-ttl shares cache-ttl's unit-suffix footgun — the VCL appends
       "s" to build the duration, so "30s" would yield 0s and silently disable
       negative caching rather than failing.
-    extraContext:
-      renderMode: admission
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextAdmissionCache
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -825,11 +686,7 @@ validationTests:
       its builtin refusal and never serves one caller's authenticated response to
       another. Regression pin for a cross-user leak: the bypass used to fire on
       the presence of any cache-key at all.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -891,11 +748,7 @@ validationTests:
       does not help, because it only refuses cached responses to requests
       carrying Authorization or Cookie, and an API key is neither. The deny and
       the consumer identity must therefore be emitted BEFORE the cache switch.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       secrets:
         - apiVersion: v1
@@ -952,19 +805,14 @@ validationTests:
       response from cache. The check must therefore run on the client leg,
       before the cache is consulted. This combination used to be refused
       outright; it is allowed now because the enforcement exists.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       secrets:
         - apiVersion: v1
           kind: Secret
           metadata: { namespace: default, name: hmac-keys }
           type: Opaque
-          data:
-            secret: c3VwZXJzZWNyZXQ=
+          data: {secret: c3VwZXJzZWNyZXQ=}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -992,34 +840,26 @@ validationTests:
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.haptic_hmac\) req\.body,hmac\(sha256,'
       # The route really is cache-enabled — otherwise this proves nothing.
-      - type: contains
-        target: "map:haptic-cache-enable.map"
-        pattern: 'default/cached-hmac 1'
+      - {type: contains, target: "map:haptic-cache-enable.map", pattern: 'default/cached-hmac 1'}
 
   test-haptic-cache-with-consumer-groups-enforced-on-client-leg:
     description: >-
       Same for consumer-group authorization on a cache-enabled route: the 403
       must be emitted on the client leg, after the api-key snippet has resolved
       txn.haptic_consumer there.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       secrets:
         - apiVersion: v1
           kind: Secret
           metadata: { namespace: default, name: cg-secret }
           type: Opaque
-          data:
-            groups: YWxpY2U6Z3JvdXAtYQo=
+          data: {groups: YWxpY2U6Z3JvdXAtYQo=}
         - apiVersion: v1
           kind: Secret
           metadata: { namespace: default, name: apikeys }
           type: Opaque
-          data:
-            keys: azE6YWxpY2UK
+          data: {keys: azE6YWxpY2UK}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1050,20 +890,14 @@ validationTests:
         patterns:
           - 'set-var\(txn\.haptic_consumer\) var\(txn\.haptic_apikey\),map'
           - 'deny deny_status 403 if \{ var\(txn\.resource_id\) -m str default/cached-cg \}'
-      - type: contains
-        target: "map:haptic-cache-enable.map"
-        pattern: 'default/cached-cg 1'
+      - {type: contains, target: "map:haptic-cache-enable.map", pattern: 'default/cached-cg 1'}
 
   test-haptic-cache-cert-header-without-cache-key:
     description: >-
       A route forwarding client-certificate details must vary on the certificate
       even when it sets no cache-key of its own — the injected header is a
       per-caller identity either way.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1097,19 +931,14 @@ validationTests:
       would read an unset variable and deny every caller — and taking `sub` from
       the unverified token instead would authorize on a forged claim. The pairing
       is refused rather than shipping either failure.
-    extraContext:
-      cache:
-        varnish:
-          enabled: true
-          replicas: 2
+    extraContext: *extracontextCacheVarnish
     fixtures:
       secrets:
         - apiVersion: v1
           kind: Secret
           metadata: { namespace: default, name: cg-secret }
           type: Opaque
-          data:
-            groups: YWxpY2U6Z3JvdXAtYQo=
+          data: {groups: YWxpY2U6Z3JvdXAtYQo=}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress

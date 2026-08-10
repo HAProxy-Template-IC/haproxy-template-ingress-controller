@@ -69,49 +69,40 @@ func (c *Comparator) createNestedFrontendOperationsWithIndexes(name string, fron
 		len(frontend.HTTPAfterResponseRuleList)
 	operations := make([]Operation, 0, estimatedCap)
 
-	// Compare ACLs
 	aclOps := c.compareACLs(parentTypeFrontend, name, nil, frontend.ACLList, summary)
 	operations = append(operations, aclOps...)
 
-	// Compare HTTP request rules
 	requestRuleOps := c.compareHTTPRequestRules(parentTypeFrontend, name, nil, frontend.HTTPRequestRuleList)
 	operations = append(operations, requestRuleOps...)
 
-	// Compare HTTP response rules
 	responseRuleOps := c.compareHTTPResponseRules(parentTypeFrontend, name, nil, frontend.HTTPResponseRuleList)
 	operations = append(operations, responseRuleOps...)
 
-	// Compare HTTP after-response rules (frontend-side; required for chart's
-	// SPOA-driven auth-failure header forwarding — see compareFrontendHTTPAfterResponseRules
-	// for the architectural detail)
+	// Frontend-side after-response rules carry the chart's SPOA auth-failure
+	// header forwarding — see compareFrontendHTTPAfterResponseRules.
 	afterResponseRuleOps := c.compareFrontendHTTPAfterResponseRules(name, nil, frontend.HTTPAfterResponseRuleList)
 	operations = append(operations, afterResponseRuleOps...)
 
-	// Compare TCP request rules
 	tcpRequestRuleOps := c.compareTCPRequestRules(parentTypeFrontend, name, nil, frontend.TCPRequestRuleList)
 	operations = append(operations, tcpRequestRuleOps...)
 
-	// Compare backend switching rules
 	backendSwitchingRuleOps := c.compareBackendSwitchingRules(name, nil, frontend.BackendSwitchingRuleList)
 	operations = append(operations, backendSwitchingRuleOps...)
 
-	// Compare filters
 	filterOps := c.compareFilters(parentTypeFrontend, name, nil, frontend.FilterList)
 	operations = append(operations, filterOps...)
 
-	// Compare captures
 	captureOps := c.compareCaptures(name, nil, frontend.CaptureList)
 	operations = append(operations, captureOps...)
 
-	// Compare log targets
 	logTargetOps := c.compareLogTargets(parentTypeFrontend, name, nil, frontend.LogTargetList)
 	operations = append(operations, logTargetOps...)
 
-	// Compare QUIC initial rules (v3.1+ only)
+	// QUIC initial rules exist on v3.1+ only.
 	quicInitialRuleOps := c.compareQUICInitialRules(parentTypeFrontend, name, nil, frontend.QUICInitialRuleList)
 	operations = append(operations, quicInitialRuleOps...)
 
-	// Compare binds - use pointer index for zero-copy iteration
+	// Binds walk the pointer index for zero-copy iteration.
 	bindOps := c.compareBindsWithIndex(name, nil, desiredBinds)
 	operations = append(operations, bindOps...)
 
@@ -130,39 +121,30 @@ func (c *Comparator) compareModifiedFrontendsWithIndexes(desiredFrontends, curre
 		}
 		frontendModified := false
 
-		// Compare ACLs within this frontend
 		aclOps := c.compareACLs(parentTypeFrontend, name, currentFrontend.ACLList, desiredFrontend.ACLList, summary)
 		appendOperationsIfNotEmpty(&operations, aclOps, &frontendModified)
 
-		// Compare HTTP request rules within this frontend
 		requestRuleOps := c.compareHTTPRequestRules(parentTypeFrontend, name, currentFrontend.HTTPRequestRuleList, desiredFrontend.HTTPRequestRuleList)
 		appendOperationsIfNotEmpty(&operations, requestRuleOps, &frontendModified)
 
-		// Compare HTTP response rules within this frontend
 		responseRuleOps := c.compareHTTPResponseRules(parentTypeFrontend, name, currentFrontend.HTTPResponseRuleList, desiredFrontend.HTTPResponseRuleList)
 		appendOperationsIfNotEmpty(&operations, responseRuleOps, &frontendModified)
 
-		// Compare HTTP after-response rules within this frontend
 		afterResponseRuleOps := c.compareFrontendHTTPAfterResponseRules(name, currentFrontend.HTTPAfterResponseRuleList, desiredFrontend.HTTPAfterResponseRuleList)
 		appendOperationsIfNotEmpty(&operations, afterResponseRuleOps, &frontendModified)
 
-		// Compare TCP request rules within this frontend
 		tcpRequestRuleOps := c.compareTCPRequestRules(parentTypeFrontend, name, currentFrontend.TCPRequestRuleList, desiredFrontend.TCPRequestRuleList)
 		appendOperationsIfNotEmpty(&operations, tcpRequestRuleOps, &frontendModified)
 
-		// Compare backend switching rules within this frontend
 		backendSwitchingRuleOps := c.compareBackendSwitchingRules(name, currentFrontend.BackendSwitchingRuleList, desiredFrontend.BackendSwitchingRuleList)
 		appendOperationsIfNotEmpty(&operations, backendSwitchingRuleOps, &frontendModified)
 
-		// Compare filters within this frontend
 		filterOps := c.compareFilters(parentTypeFrontend, name, currentFrontend.FilterList, desiredFrontend.FilterList)
 		appendOperationsIfNotEmpty(&operations, filterOps, &frontendModified)
 
-		// Compare captures within this frontend
 		captureOps := c.compareCaptures(name, currentFrontend.CaptureList, desiredFrontend.CaptureList)
 		appendOperationsIfNotEmpty(&operations, captureOps, &frontendModified)
 
-		// Compare log targets within this frontend
 		logTargetOps := c.compareLogTargets(parentTypeFrontend, name, currentFrontend.LogTargetList, desiredFrontend.LogTargetList)
 		appendOperationsIfNotEmpty(&operations, logTargetOps, &frontendModified)
 

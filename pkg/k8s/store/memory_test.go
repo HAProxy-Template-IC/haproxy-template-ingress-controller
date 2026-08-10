@@ -25,7 +25,6 @@ func TestMemoryStore_AddAndGet(t *testing.T) {
 		"data": "test-data",
 	}
 
-	// Add resource
 	err := store.Add(resource, []string{"default", "test-resource"})
 	if err != nil {
 		t.Fatalf("Add failed: %v", err)
@@ -91,7 +90,6 @@ func TestMemoryStore_Update(t *testing.T) {
 	resource := map[string]string{"version": "v1"}
 	keys := []string{"default", "test"}
 
-	// Add resource
 	if err := store.Add(resource, keys); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
@@ -125,7 +123,6 @@ func TestMemoryStore_Delete(t *testing.T) {
 	resource := map[string]string{"name": "test"}
 	keys := []string{"default", "test"}
 
-	// Add resource
 	if err := store.Add(resource, keys); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
@@ -198,7 +195,6 @@ func TestMemoryStore_Clear(t *testing.T) {
 		t.Errorf("expected size 3, got %d", store.Size())
 	}
 
-	// Clear
 	if err := store.Clear(); err != nil {
 		t.Fatalf("Clear failed: %v", err)
 	}

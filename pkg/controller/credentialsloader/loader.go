@@ -95,7 +95,6 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 		return
 	}
 
-	// Load the credentials
 	creds, err := config.LoadCredentials(data)
 	if err != nil {
 		c.failInvalid(version, "Failed to load credentials from Secret", err.Error(), "error", err)
@@ -104,7 +103,6 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 
 	c.Logger().Info("Credentials loaded successfully", "version", version)
 
-	// Publish CredentialsUpdatedEvent
 	c.EventBus().Publish(events.NewCredentialsUpdatedEvent(creds, version))
 }
 

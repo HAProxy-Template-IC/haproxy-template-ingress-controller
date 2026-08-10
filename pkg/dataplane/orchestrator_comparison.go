@@ -588,7 +588,6 @@ func (o *orchestrator) checkForChanges(
 		return &auxiliaryFileDiffs{hasChanges: false}, nil
 	}
 
-	// Compare auxiliary files
 	auxDiffs, err := o.compareAuxiliaryFiles(ctx, auxFiles)
 	if err != nil {
 		return nil, err

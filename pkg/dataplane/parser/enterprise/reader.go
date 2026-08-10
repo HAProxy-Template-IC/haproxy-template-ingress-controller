@@ -67,7 +67,6 @@ func (r *Reader) processLine(line string) {
 		return
 	}
 
-	// Tokenize the line
 	parts, comment := tokenizeLine(trimmedLine)
 	if len(parts) == 0 {
 		return

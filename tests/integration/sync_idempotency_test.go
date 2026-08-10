@@ -86,7 +86,6 @@ func runIdempotencyTest(t *testing.T, configFile string) {
 	client := TestDataplaneClient(env)            // Low-level client for verification
 	dpClient := TestDataplaneHighLevelClient(env) // High-level client for Sync API
 
-	// Load test config
 	configContent := LoadTestConfig(t, configFile)
 	t.Logf("Loaded config: %s", configFile)
 

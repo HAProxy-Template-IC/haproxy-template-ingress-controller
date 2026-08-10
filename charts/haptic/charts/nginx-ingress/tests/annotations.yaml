@@ -1,6 +1,13 @@
 # nginx-ingress library — annotation validation tests.
 # Backend directives, frontend filters, session affinity, basic auth, and
 # SSL passthrough.
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+
 validationTests:
   # ==========================================================================
   # Backend Directive Tests
@@ -22,23 +29,11 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: timeout.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "timeout connect 10s"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "timeout server 60s"
+      - {type: contains, target: haproxy.cfg, pattern: "timeout connect 10s"}
+      - {type: contains, target: haproxy.cfg, pattern: "timeout server 60s"}
 
   test-nginx-ingress-load-balance:
     description: Nginx Ingress load-balance annotation maps to HAProxy algorithm
@@ -55,20 +50,10 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: lb.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "balance leastconn"
+      - {type: contains, target: haproxy.cfg, pattern: "balance leastconn"}
 
   test-nginx-ingress-ssl-redirect:
     description: Nginx Ingress ssl-redirect annotation generates 308 redirect (matches ingress-nginx)
@@ -85,32 +70,17 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: redirect.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "redirect scheme https code 308"
+      - {type: contains, target: haproxy.cfg, pattern: "redirect scheme https code 308"}
       # Relocated to the shared host map (reload-free host add/remove).
-      - type: contains
-        target: map:ssl-redirect-308.map
-        pattern: "redirect.example.com 1"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "var\\(txn.host\\) -m str redirect.example.com"
+      - {type: contains, target: map:ssl-redirect-308.map, pattern: "redirect.example.com 1"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "var\\(txn.host\\) -m str redirect.example.com"}
 
   test-nginx-ingress-ssl-redirect-code-override:
     description: ssl-redirect honours the nginxHttpRedirectCode extraContext override
-    extraContext:
-      nginxHttpRedirectCode: "301"
+    extraContext: {nginxHttpRedirectCode: "301"}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -124,23 +94,11 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: redirect.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "redirect scheme https code 301"
-      - type: contains
-        target: map:ssl-redirect-301.map
-        pattern: "redirect.example.com 1"
+      - {type: contains, target: haproxy.cfg, pattern: "redirect scheme https code 301"}
+      - {type: contains, target: map:ssl-redirect-301.map, pattern: "redirect.example.com 1"}
 
   test-nginx-ingress-force-ssl-redirect:
     description: Nginx Ingress force-ssl-redirect annotation generates 308 redirect
@@ -157,23 +115,11 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: force-redirect.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "redirect scheme https code 308"
-      - type: contains
-        target: map:ssl-redirect-308.map
-        pattern: "force-redirect.example.com 1"
+      - {type: contains, target: haproxy.cfg, pattern: "redirect scheme https code 308"}
+      - {type: contains, target: map:ssl-redirect-308.map, pattern: "force-redirect.example.com 1"}
 
   test-nginx-ingress-cors:
     description: Nginx Ingress CORS annotations generate correct headers
@@ -191,15 +137,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: cors.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       # The request Origin is captured and matched against the allow-list; the
@@ -215,12 +153,8 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-after-response set-header Access-Control-Allow-Origin '%\\[var\\(txn\\.cors_origin\\)\\]'"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-after-response add-header Vary Origin"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "status 204 .*METH_OPTIONS"
+      - {type: contains, target: haproxy.cfg, pattern: "http-after-response add-header Vary Origin"}
+      - {type: contains, target: haproxy.cfg, pattern: "status 204 .*METH_OPTIONS"}
 
   test-nginx-ingress-cors-multiorigin:
     description: cors-allow-origin accepts a comma-separated allow-list with single-level wildcards; exact origins go to -m str, wildcards compile to anchored -m reg
@@ -238,15 +172,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: cors.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       # Exact origin -> -m str; single-level wildcard -> anchored -m reg; both on
@@ -276,26 +202,12 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: allow.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "acl ni_allowlist_default_allow-ingress src"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "10.0.0.0/8"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny"
+      - {type: contains, target: haproxy.cfg, pattern: "acl ni_allowlist_default_allow-ingress src"}
+      - {type: contains, target: haproxy.cfg, pattern: "10.0.0.0/8"}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny"}
 
   test-nginx-ingress-hsts:
     description: Nginx Ingress HSTS annotations generate correct header
@@ -315,15 +227,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: hsts.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -339,9 +243,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: https-service
+          metadata: {namespace: default, name: https-service}
           spec:
             ports:
               - port: 443
@@ -374,16 +276,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: https-service
-                          port:
-                            number: 443
+                      backend: {service: {name: https-service, port: {number: 443}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ssl verify none"
+      - {type: contains, target: haproxy.cfg, pattern: "ssl verify none"}
 
   test-nginx-ingress-backend-protocol-grpc:
     description: Nginx Ingress backend-protocol GRPC adds proto h2 to server options
@@ -391,9 +287,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: grpc-service
+          metadata: {namespace: default, name: grpc-service}
           spec:
             ports:
               - port: 50051
@@ -426,16 +320,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: grpc-service
-                          port:
-                            number: 50051
+                      backend: {service: {name: grpc-service, port: {number: 50051}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "proto h2"
+      - {type: contains, target: haproxy.cfg, pattern: "proto h2"}
 
   test-nginx-ingress-session-affinity:
     description: Nginx Ingress cookie affinity generates cookie directive
@@ -453,20 +341,10 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: affinity.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "cookie SERVERID insert indirect nocache dynamic"
+      - {type: contains, target: haproxy.cfg, pattern: "cookie SERVERID insert indirect nocache dynamic"}
 
   test-nginx-ingress-session-cookie-hash-ignored:
     description: session-cookie-hash is not configurable in HAProxy and surfaces a warning instead of being silently ignored
@@ -474,9 +352,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: hash-service
+          metadata: {namespace: default, name: hash-service}
           spec:
             ports:
               - port: 80
@@ -497,16 +373,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: hash-service
-                          port:
-                            number: 80
+                      backend: {service: {name: hash-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "Warning:.*session-cookie-hash"
+      - {type: contains, target: haproxy.cfg, pattern: "Warning:.*session-cookie-hash"}
 
   test-nginx-ingress-session-cookie-domain-maxage:
     description: session-cookie-domain and session-cookie-max-age map to the cookie domain / Max-Age attributes
@@ -514,9 +384,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: sc-service
+          metadata: {namespace: default, name: sc-service}
           spec:
             ports:
               - port: 80
@@ -539,19 +407,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: sc-service
-                          port:
-                            number: 80
+                      backend: {service: {name: sc-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "cookie SRVID insert.* domain example.com"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "cookie SRVID insert.* attr Max-Age=3600"
+      - {type: contains, target: haproxy.cfg, pattern: "cookie SRVID insert.* domain example.com"}
+      - {type: contains, target: haproxy.cfg, pattern: "cookie SRVID insert.* attr Max-Age=3600"}
 
   test-nginx-ingress-session-cookie-expires:
     description: legacy session-cookie-expires maps to attr Max-Age when session-cookie-max-age is absent
@@ -583,9 +443,7 @@ validationTests:
                       backend: {service: {name: sce-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "cookie SRVID insert.* attr Max-Age=7200"
+      - {type: contains, target: haproxy.cfg, pattern: "cookie SRVID insert.* attr Max-Age=7200"}
 
   test-nginx-ingress-session-cookie-maxage-precedence:
     description: session-cookie-max-age takes precedence over session-cookie-expires when both are set
@@ -618,12 +476,8 @@ validationTests:
                       backend: {service: {name: scp-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "cookie SRVID insert.* attr Max-Age=100"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "Max-Age=999"
+      - {type: contains, target: haproxy.cfg, pattern: "cookie SRVID insert.* attr Max-Age=100"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "Max-Age=999"}
 
   test-nginx-ingress-session-cookie-maxage-invalid:
     description: a non-integer session-cookie-max-age aborts the render
@@ -653,9 +507,7 @@ validationTests:
                       pathType: Prefix
                       backend: {service: {name: sci-service, port: {number: 80}}}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Must be a non-negative integer"
+      - {type: contains, target: rendering_error, pattern: "Must be a non-negative integer"}
 
   test-nginx-ingress-session-cookie-secure-samesite:
     description: session-cookie-secure and session-cookie-samesite add Secure / SameSite cookie attrs
@@ -663,9 +515,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: cookieattr-service
+          metadata: {namespace: default, name: cookieattr-service}
           spec:
             ports:
               - port: 80
@@ -688,11 +538,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: cookieattr-service
-                          port:
-                            number: 80
+                      backend: {service: {name: cookieattr-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -721,23 +567,11 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: auth-missing.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "userlist ni_auth_default_absent-secret"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "http_auth(ni_auth_default_absent-secret)"
+      - {type: not_contains, target: haproxy.cfg, pattern: "userlist ni_auth_default_absent-secret"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "http_auth(ni_auth_default_absent-secret)"}
 
   test-nginx-ingress-auth-basic:
     description: Nginx Ingress basic auth generates userlist and auth directive
@@ -745,9 +579,7 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: my-auth
+          metadata: {namespace: default, name: my-auth}
           type: Opaque
           data:
             auth: YWRtaW46JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
@@ -764,26 +596,12 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: auth.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "userlist ni_auth_default_my-auth"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "user admin password"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request auth"
+      - {type: contains, target: haproxy.cfg, pattern: "userlist ni_auth_default_my-auth"}
+      - {type: contains, target: haproxy.cfg, pattern: "user admin password"}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request auth"}
 
   test-nginx-ingress-auth-secret-type-map:
     description: auth-secret-type=auth-map reads usernames from Secret data keys (values = password hashes)
@@ -791,18 +609,13 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: authmap-secret
+          metadata: {namespace: default, name: authmap-secret}
           type: Opaque
-          data:
-            admin: JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+          data: {admin: JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: authmap-service
+          metadata: {namespace: default, name: authmap-service}
           spec:
             ports:
               - port: 80
@@ -824,19 +637,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: authmap-service
-                          port:
-                            number: 80
+                      backend: {service: {name: authmap-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "userlist ni_auth_default_authmap-secret"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "user admin password"
+      - {type: contains, target: haproxy.cfg, pattern: "userlist ni_auth_default_authmap-secret"}
+      - {type: contains, target: haproxy.cfg, pattern: "user admin password"}
 
   test-nginx-ingress-auth-secret-type-map-invalid-hash:
     description: auth-map rejects a Secret value outside the htpasswd-hash charset (config-injection guard)
@@ -844,18 +649,13 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: badmap-secret
+          metadata: {namespace: default, name: badmap-secret}
           type: Opaque
-          data:
-            admin: ZXZpbCd2YWw=
+          data: {admin: ZXZpbCd2YWw=}
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: badmap-service
+          metadata: {namespace: default, name: badmap-service}
           spec:
             ports:
               - port: 80
@@ -877,15 +677,9 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: badmap-service
-                          port:
-                            number: 80
+                      backend: {service: {name: badmap-service, port: {number: 80}}}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "invalid password hash for user 'admin'"
+      - {type: contains, target: rendering_error, pattern: "invalid password hash for user 'admin'"}
 
   test-nginx-ingress-proxy-next-upstream-invalid-tries:
     description: a non-integer proxy-next-upstream-tries aborts the render instead of being silently dropped
@@ -893,9 +687,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: nut-service
+          metadata: {namespace: default, name: nut-service}
           spec:
             ports:
               - port: 80
@@ -915,15 +707,9 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: nut-service
-                          port:
-                            number: 80
+                      backend: {service: {name: nut-service, port: {number: 80}}}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Must be a non-negative integer"
+      - {type: contains, target: rendering_error, pattern: "Must be a non-negative integer"}
 
   test-nginx-ingress-proxy-next-upstream:
     description: proxy-next-upstream maps nginx retry conditions to HAProxy retry-on + retries
@@ -931,9 +717,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: nu-service
+          metadata: {namespace: default, name: nu-service}
           spec:
             ports:
               - port: 80
@@ -954,19 +738,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: nu-service
-                          port:
-                            number: 80
+                      backend: {service: {name: nu-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "retry-on conn-failure response-timeout 502 503"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "retries 2"
+      - {type: contains, target: haproxy.cfg, pattern: "retry-on conn-failure response-timeout 502 503"}
+      - {type: contains, target: haproxy.cfg, pattern: "retries 2"}
 
   test-nginx-ingress-limit-rate:
     description: limit-rate / limit-rate-after map to a per-stream bwlim-out download throttle
@@ -974,9 +750,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: lr-service
+          metadata: {namespace: default, name: lr-service}
           spec:
             ports:
               - port: 80
@@ -997,19 +771,13 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: lr-service
-                          port:
-                            number: 80
+                      backend: {service: {name: lr-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: "filter bwlim-out ni_limitrate_default_lr-ingress default-limit 100k default-period 1s min-size 1m"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "set-bandwidth-limit ni_limitrate_default_lr-ingress"
+      - {type: contains, target: haproxy.cfg, pattern: "set-bandwidth-limit ni_limitrate_default_lr-ingress"}
 
   test-nginx-ingress-proxy-redirect:
     description: proxy-redirect-from/-to rewrites the upstream Location response header
@@ -1017,9 +785,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: pr-service
+          metadata: {namespace: default, name: pr-service}
           spec:
             ports:
               - port: 80
@@ -1040,11 +806,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: pr-service
-                          port:
-                            number: 80
+                      backend: {service: {name: pr-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1066,23 +828,13 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: ratelimit.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: "stick-table type ip size 100k expire 1s store http_req_rate\\(1s\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "deny_status 429"
+      - {type: contains, target: haproxy.cfg, pattern: "deny_status 429"}
 
   test-nginx-ingress-rate-limit-rpm:
     description: Nginx Ingress limit-rpm annotation generates per-minute stick-table and deny 429
@@ -1090,9 +842,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: rpm-service
+          metadata: {namespace: default, name: rpm-service}
           spec:
             ports:
               - port: 80
@@ -1112,11 +862,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: rpm-service
-                          port:
-                            number: 80
+                      backend: {service: {name: rpm-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1132,9 +878,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: rpsrpm-service
+          metadata: {namespace: default, name: rpsrpm-service}
           spec:
             ports:
               - port: 80
@@ -1155,11 +899,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: rpsrpm-service
-                          port:
-                            number: 80
+                      backend: {service: {name: rpsrpm-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1168,12 +908,8 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 10 \\}"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "gt 300"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "limit-rpm ignored"
+      - {type: not_contains, target: haproxy.cfg, pattern: "gt 300"}
+      - {type: contains, target: haproxy.cfg, pattern: "limit-rpm ignored"}
 
   test-nginx-ingress-rate-limit-whitelist:
     description: Nginx Ingress limit-whitelist exempts CIDRs from rate limiting
@@ -1181,9 +917,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: rlwl-service
+          metadata: {namespace: default, name: rlwl-service}
           spec:
             ports:
               - port: 80
@@ -1204,11 +938,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: rlwl-service
-                          port:
-                            number: 80
+                      backend: {service: {name: rlwl-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1231,20 +961,10 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: snippet.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "option httpchk GET /healthz"
+      - {type: contains, target: haproxy.cfg, pattern: "option httpchk GET /healthz"}
 
   test-nginx-ingress-rewrite-target:
     description: Nginx Ingress rewrite-target translates capture groups
@@ -1261,20 +981,10 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: rewrite.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "replace-path"
+      - {type: contains, target: haproxy.cfg, pattern: "replace-path"}
 
   test-nginx-ingress-rewrite-target-literal:
     description: Nginx rewrite-target with no capture group relocates to path-rewrite.map (reload-free)
@@ -1305,13 +1015,9 @@ validationTests:
     assertions:
       - type: haproxy_valid
       # Literal rewrite → path-rewrite.map entry + shared frontend set-path.
-      - type: contains
-        target: map:path-rewrite.map
-        pattern: "default_rwlit-ing_svc_rwlit-svc_80 /new"
+      - {type: contains, target: map:path-rewrite.map, pattern: "default_rwlit-ing_svc_rwlit-svc_80 /new"}
       # No per-backend replace-path for the literal case (it moved to the map).
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "replace-path \\(\\.\\*\\) /new"
+      - {type: not_contains, target: haproxy.cfg, pattern: "replace-path \\(\\.\\*\\) /new"}
 
   test-nginx-ingress-rewrite-target-injection-rejected:
     description: A control character in a literal rewrite-target aborts the render (path-rewrite.map injection guard)
@@ -1340,9 +1046,7 @@ validationTests:
                       pathType: Prefix
                       backend: {service: {name: rwinj-svc, port: {number: 80}}}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "must not contain control characters"
+      - {type: contains, target: rendering_error, pattern: "must not contain control characters"}
 
   test-nginx-ingress-app-root-map-sorted:
     description: app-root.map lines are sorted by host (deterministic output, no reload churn)
@@ -1403,20 +1107,10 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: approot.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:app-root.map
-        pattern: "approot.example.com /dashboard"
+      - {type: contains, target: map:app-root.map, pattern: "approot.example.com /dashboard"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect location %\\[var\\(txn.host\\),map\\([^)]*app-root\\.map\\)\\] code 302 if \\{ path / \\}"
@@ -1427,9 +1121,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: bodysize-service
+          metadata: {namespace: default, name: bodysize-service}
           spec:
             ports:
               - port: 80
@@ -1462,11 +1154,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: bodysize-service
-                          port:
-                            number: 80
+                      backend: {service: {name: bodysize-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1474,9 +1162,7 @@ validationTests:
         pattern: "default_bodysize-ingress_svc_bodysize-service_80 10485760"
       # The old per-backend literal deny must be gone (relocated to the
       # resource-agnostic frontend-filters-250-request-body-size scaffold).
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "req.body_size gt 10485760"
+      - {type: not_contains, target: haproxy.cfg, pattern: "req.body_size gt 10485760"}
 
   test-nginx-ingress-ssl-passthrough:
     description: Nginx Ingress ssl-passthrough creates TCP backend and SNI routing
@@ -1484,9 +1170,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: passthrough-service
+          metadata: {namespace: default, name: passthrough-service}
           spec:
             ports:
               - port: 443
@@ -1519,19 +1203,13 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: passthrough-service
-                          port:
-                            number: 443
+                      backend: {service: {name: passthrough-service, port: {number: 443}}}
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: "backend ssl-passthrough-ni-default-passthrough-ingress"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "mode tcp"
+      - {type: contains, target: haproxy.cfg, pattern: "mode tcp"}
       - type: contains
         target: haproxy.cfg
         pattern: "use_backend ssl-passthrough-ni-default-passthrough-ingress if { req_ssl_sni -m str passthrough.example.com }"
@@ -1563,14 +1241,10 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: secure-app
-            namespace: default
+          metadata: {name: secure-app, namespace: default}
           spec:
             ports:
-              - name: https
-                port: 8443
-                targetPort: https
+              - {name: https, port: 8443, targetPort: https}
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -1582,13 +1256,9 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.50"]
-              targetRef:
-                kind: Pod
-                name: secure-app-0
+              targetRef: {kind: Pod, name: secure-app-0}
           ports:
-            - name: https
-              port: 8443
-              protocol: TCP
+            - {name: https, port: 8443, protocol: TCP}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1605,19 +1275,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: secure-app
-                          port:
-                            name: https
+                      backend: {service: {name: secure-app, port: {name: https}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10.0.0.50:8443 "
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10.0.0.50:80 "
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10.0.0.50:8443 "}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_1 10.0.0.50:80 "}
 
   # ==========================================================================
   # Upstream request headers (upstream-vhost / x-forwarded-prefix / connection-proxy-header)
@@ -1629,9 +1291,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: uh-svc
+          metadata: {namespace: default, name: uh-svc}
           spec:
             ports:
               - port: 80
@@ -1653,11 +1313,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: uh-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: uh-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       # Relocated to per-header maps keyed on the backend; the shared frontend
@@ -1666,9 +1322,7 @@ validationTests:
       - type: contains
         target: map:reqhdr-host.map
         pattern: "default_uh-ingress_svc_uh-svc_80 internal.example.com"
-      - type: contains
-        target: map:reqhdr-xfwd-prefix.map
-        pattern: "default_uh-ingress_svc_uh-svc_80 /app"
+      - {type: contains, target: map:reqhdr-xfwd-prefix.map, pattern: "default_uh-ingress_svc_uh-svc_80 /app"}
       - type: contains
         target: map:reqhdr-connection.map
         pattern: "default_uh-ingress_svc_uh-svc_80 keep-alive"
@@ -1759,15 +1413,12 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(http\\|mirror-b.example.com:80\\|50000\\|3;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str shared.example.com \\}"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "mirror-2-group"
+      - {type: not_contains, target: haproxy.cfg, pattern: "mirror-2-group"}
 
   test-nginx-ingress-mirror-target-hostless-rejected:
     _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
     description: "mirror-target on a host-less Ingress is rejected (no host to gate on)."
-    extraContext:
-      renderMode: admission
+    extraContext: {renderMode: admission}
     fixtures:
       services:
         - apiVersion: v1
@@ -1820,6 +1471,4 @@ validationTests:
                   paths:
                     - {path: /, pathType: Prefix, backend: {service: {name: mbp-svc, port: {number: 80}}}}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Port must be 1-65535"
+      - {type: contains, target: rendering_error, pattern: "Port must be 1-65535"}

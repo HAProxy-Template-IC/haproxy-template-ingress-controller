@@ -1,3 +1,12 @@
+_fx:
+  specHttp: &specHttp
+    ports:
+      - {name: http, port: 80, targetPort: 8080}
+  portsHttp8080: &portsHttp8080
+    - {name: http, port: 8080, protocol: TCP}
+  matchesPathprefixRoot: &matchesPathprefixRoot
+    - path: {type: PathPrefix, value: /}
+
 validationTests:
   test-httproute-retry-attempts-and-codes:
     requires: [httproutes]
@@ -8,20 +17,13 @@ validationTests:
     # stays ungated — it asserts ABSENCE and passes on both channels.
     _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
     description: "HTTPRoute spec.rules[].retry (experimental) maps to backend `retries <attempts>` plus `retry-on <conditions>`. attempts -> retries N; codes -> retry-on <code list> (HAProxy supports per-status retry-on tokens). Exponential backoff is NOT expressible and is deferred."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: retry-svc
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+          metadata: {name: retry-svc, namespace: default}
+          spec: *specHttp
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -33,31 +35,19 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.1"]
-              targetRef:
-                kind: Pod
-                name: retry-pod-1
-          ports:
-            - name: http
-              port: 8080
-              protocol: TCP
+              targetRef: {kind: Pod, name: retry-pod-1}
+          ports: *portsHttp8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: retry-route
-            namespace: default
-            generation: 1
+          metadata: {name: retry-route, namespace: default, generation: 1}
           spec:
             parentRefs:
-              - name: gateway
-                namespace: default
+              - {name: gateway, namespace: default}
             hostnames:
               - retry.example.com
             rules:
-              - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /
+              - matches: *matchesPathprefixRoot
                 retry:
                   attempts: 4
                   codes:
@@ -65,36 +55,24 @@ validationTests:
                     - 500
                   backoff: 100ms
                 backendRefs:
-                  - name: retry-svc
-                    port: 80
+                  - {name: retry-svc, port: 80}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+retries 4$'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+retry-on 503 500$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retries 4$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retry-on 503 500$'}
 
   test-httproute-retry-attempts-only-default-codes:
     requires: [httproutes]
     requiresFields: [httproutes.spec.rules.retry]
     _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
     description: "retry.attempts set but no codes -> emit `retries N` and a `retry-on` covering the spec-mandated retriable 5xx defaults (500 502 503 504)."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: retry2-svc
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+          metadata: {name: retry2-svc, namespace: default}
+          spec: *specHttp
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -106,62 +84,37 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.2"]
-              targetRef:
-                kind: Pod
-                name: retry2-pod-1
-          ports:
-            - name: http
-              port: 8080
-              protocol: TCP
+              targetRef: {kind: Pod, name: retry2-pod-1}
+          ports: *portsHttp8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: retry2-route
-            namespace: default
-            generation: 1
+          metadata: {name: retry2-route, namespace: default, generation: 1}
           spec:
             parentRefs:
-              - name: gateway
-                namespace: default
+              - {name: gateway, namespace: default}
             hostnames:
               - retry2.example.com
             rules:
-              - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /
-                retry:
-                  attempts: 2
+              - matches: *matchesPathprefixRoot
+                retry: {attempts: 2}
                 backendRefs:
-                  - name: retry2-svc
-                    port: 80
+                  - {name: retry2-svc, port: 80}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+retries 2$'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+retry-on 500 502 503 504$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retries 2$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retry-on 500 502 503 504$'}
 
   test-httproute-no-retry-no-directive:
     requires: [httproutes]
     description: "A route rule without retry must NOT emit retries/retry-on (no regression for the common case)."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: noretry-svc
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+          metadata: {name: noretry-svc, namespace: default}
+          spec: *specHttp
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -173,34 +126,21 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.3"]
-              targetRef:
-                kind: Pod
-                name: noretry-pod-1
-          ports:
-            - name: http
-              port: 8080
-              protocol: TCP
+              targetRef: {kind: Pod, name: noretry-pod-1}
+          ports: *portsHttp8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
-          metadata:
-            name: noretry-route
-            namespace: default
-            generation: 1
+          metadata: {name: noretry-route, namespace: default, generation: 1}
           spec:
             parentRefs:
-              - name: gateway
-                namespace: default
+              - {name: gateway, namespace: default}
             hostnames:
               - noretry.example.com
             rules:
-              - matches:
-                  - path:
-                      type: PathPrefix
-                      value: /
+              - matches: *matchesPathprefixRoot
                 backendRefs:
-                  - name: noretry-svc
-                    port: 80
+                  - {name: noretry-svc, port: 80}
     assertions:
       - type: haproxy_valid
       - type: not_contains

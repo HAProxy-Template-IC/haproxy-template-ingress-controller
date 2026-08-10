@@ -97,7 +97,6 @@ func (r *Runner) assertDeterministic(
 		return result
 	}
 
-	// Compare auxiliary files
 	if diffResult := compareAuxiliaryFiles(firstAuxFiles, second.AuxiliaryFiles); diffResult != "" {
 		result.Passed = false
 		result.Error = diffResult

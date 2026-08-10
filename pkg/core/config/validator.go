@@ -28,12 +28,10 @@ func ValidateStructure(cfg *Config) error {
 	// defaults and is validated at runtime when its durations are parsed) needs
 	// no structural validation here.
 
-	// Validate Logging config
 	if err := validateLoggingConfig(&cfg.Logging); err != nil {
 		return fmt.Errorf("logging: %w", err)
 	}
 
-	// Validate Dataplane config
 	if err := validateDataplaneConfig(&cfg.Dataplane); err != nil {
 		return fmt.Errorf("dataplane: %w", err)
 	}

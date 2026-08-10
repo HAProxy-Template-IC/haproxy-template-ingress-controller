@@ -1,5 +1,12 @@
 # HAPTIC-native annotation library — rewrite / upstream-header / next-upstream /
 # session-affinity validation tests (haproxy-haptic.org/*).
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+
 validationTests:
   test-haptic-path-rewrite:
     description: haproxy-haptic.org/path-rewrite — two-token and bare forms both emit replace-path
@@ -16,17 +23,10 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: two.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: {name: echo, port: {number: 80}}
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request replace-path /foo/\(\.\*\) /bar/\\1'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request replace-path /foo/\(\.\*\) /bar/\\1'}
 
   test-haptic-proxy-body-size:
     description: haproxy-haptic.org/max-request-body-size — size with suffix lands in body-size.map as bytes
@@ -53,13 +53,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service: {name: bs-svc, port: {number: 80}}
+                      backend: {service: {name: bs-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:body-size.map
-        pattern: "default_bs-ing_svc_bs-svc_80 8388608"
+      - {type: contains, target: map:body-size.map, pattern: "default_bs-ing_svc_bs-svc_80 8388608"}
 
   test-haptic-request-buffering-off:
     description: haproxy-haptic.org/request-buffering — off lands in request-buffering.map, overriding the fleet-wide on default for this backend only
@@ -86,18 +83,14 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service: {name: rb-svc, port: {number: 80}}
+                      backend: {service: {name: rb-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:request-buffering.map
-        pattern: "default_rb-ing_svc_rb-svc_80 off"
+      - {type: contains, target: map:request-buffering.map, pattern: "default_rb-ing_svc_rb-svc_80 off"}
 
   test-haptic-request-buffering-invalid:
     description: haproxy-haptic.org/request-buffering — a value other than on/off is rejected at admission
-    extraContext:
-      renderMode: admission
+    extraContext: {renderMode: admission}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -115,8 +108,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service: {name: rb-svc, port: {number: 80}}
+                      backend: {service: {name: rb-svc, port: {number: 80}}}
     assertions:
       - type: contains
         target: rendering_error
@@ -138,20 +130,11 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: nextup.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: {name: echo, port: {number: 80}}
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "retry-on conn-failure response-timeout 503"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "retries 3"
+      - {type: contains, target: haproxy.cfg, pattern: "retry-on conn-failure response-timeout 503"}
+      - {type: contains, target: haproxy.cfg, pattern: "retries 3"}
 
   test-haptic-upstream-headers:
     description: set-host / x-forwarded-prefix / backend-connection-header relocate to reload-free reqhdr maps
@@ -180,16 +163,13 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service: {name: hdr-svc, port: {number: 80}}
+                      backend: {service: {name: hdr-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
         target: map:reqhdr-host.map
         pattern: "default_hdr-ing_svc_hdr-svc_80 internal.svc.local"
-      - type: contains
-        target: map:reqhdr-xfwd-prefix.map
-        pattern: "default_hdr-ing_svc_hdr-svc_80 /api"
+      - {type: contains, target: map:reqhdr-xfwd-prefix.map, pattern: "default_hdr-ing_svc_hdr-svc_80 /api"}
       - type: contains
         target: map:reqhdr-connection.map
         pattern: "default_hdr-ing_svc_hdr-svc_80 keep-alive"
@@ -215,17 +195,10 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: aff.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: {name: echo, port: {number: 80}}
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: "cookie HAPTICSESS insert indirect nocache dynamic httponly attr Path=/ attr Secure attr SameSite=Strict attr Max-Age=3600"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "dynamic-cookie-key "
+      - {type: contains, target: haproxy.cfg, pattern: "dynamic-cookie-key "}

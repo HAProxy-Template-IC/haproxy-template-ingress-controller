@@ -1,4 +1,21 @@
 # HAPTIC-native annotation library — compression validation test.
+_fx:
+  extracontextReconcile: &extracontextReconcile
+    renderMode: reconcile
+    governance:
+      enabled: true
+      rules:
+        haptic-compress-enable:
+          enabled: true
+          resource: ingresses
+          path: metadata.annotations['haproxy-haptic.org/compress-enable']
+          default: "true"
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: { service: { name: echo, port: { number: 80 } } }
+
 validationTests:
   test-haptic-compression:
     description: >-
@@ -19,33 +36,16 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: gz.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: echo, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "compression algo gzip"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "compression type text/html application/json"
+      - {type: contains, target: haproxy.cfg, pattern: "compression algo gzip"}
+      - {type: contains, target: haproxy.cfg, pattern: "compression type text/html application/json"}
 
   test-haptic-compression-governance-default:
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
     description: The bundled rule injects compress-enable on an Ingress that sets no annotations.
-    extraContext:
-      renderMode: reconcile
-      governance:
-        enabled: true
-        rules:
-          haptic-compress-enable:
-            enabled: true
-            resource: ingresses
-            path: metadata.annotations['haproxy-haptic.org/compress-enable']
-            default: "true"
+    extraContext: *extracontextReconcile
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -55,11 +55,7 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: gzdefault.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: echo, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - { type: contains, target: haproxy.cfg, pattern: 'backend default_gz-default_svc_echo_80' }
@@ -69,16 +65,7 @@ validationTests:
   test-haptic-compression-governance-optout:
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
     description: An explicit compress-enable=false is not overwritten by the injected default.
-    extraContext:
-      renderMode: reconcile
-      governance:
-        enabled: true
-        rules:
-          haptic-compress-enable:
-            enabled: true
-            resource: ingresses
-            path: metadata.annotations['haproxy-haptic.org/compress-enable']
-            default: "true"
+    extraContext: *extracontextReconcile
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -91,11 +78,7 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: gzoptout.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: echo, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - { type: contains, target: haproxy.cfg, pattern: 'backend default_gz-optout_svc_echo_80' }
@@ -111,16 +94,7 @@ validationTests:
       The injection mutates the memoized resource pointer in place, so a second
       render must produce byte-identical output — otherwise every reconcile would
       mint a new config checksum and the fleet would never settle.
-    extraContext:
-      renderMode: reconcile
-      governance:
-        enabled: true
-        rules:
-          haptic-compress-enable:
-            enabled: true
-            resource: ingresses
-            path: metadata.annotations['haproxy-haptic.org/compress-enable']
-            default: "true"
+    extraContext: *extracontextReconcile
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1

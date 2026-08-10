@@ -203,7 +203,6 @@ func normalizeFrontendMetadataWithIndex(f *models.Frontend, bindIndex map[string
 		return
 	}
 
-	// Frontend itself
 	f.Metadata = NormalizeMetadata(f.Metadata)
 
 	// Binds - use pointer index for zero-copy iteration
@@ -213,62 +212,50 @@ func normalizeFrontendMetadataWithIndex(f *models.Frontend, bindIndex map[string
 		}
 	}
 
-	// ACLs
 	for _, acl := range f.ACLList {
 		acl.Metadata = NormalizeMetadata(acl.Metadata)
 	}
 
-	// Backend switching rules
 	for _, rule := range f.BackendSwitchingRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// Captures
 	for _, capture := range f.CaptureList {
 		capture.Metadata = NormalizeMetadata(capture.Metadata)
 	}
 
-	// Filters
 	for _, filter := range f.FilterList {
 		filter.Metadata = NormalizeMetadata(filter.Metadata)
 	}
 
-	// HTTP after response rules
 	for _, rule := range f.HTTPAfterResponseRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// HTTP error rules
 	for _, rule := range f.HTTPErrorRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// HTTP request rules
 	for _, rule := range f.HTTPRequestRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// HTTP response rules
 	for _, rule := range f.HTTPResponseRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// Log targets
 	for _, logTarget := range f.LogTargetList {
 		logTarget.Metadata = NormalizeMetadata(logTarget.Metadata)
 	}
 
-	// QUIC initial rules
 	for _, rule := range f.QUICInitialRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// SSL front uses
 	for _, sslFrontUse := range f.SSLFrontUses {
 		sslFrontUse.Metadata = NormalizeMetadata(sslFrontUse.Metadata)
 	}
 
-	// TCP request rules
 	for _, rule := range f.TCPRequestRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
@@ -281,7 +268,6 @@ func normalizeBackendMetadataWithIndexes(b *models.Backend, serverIndex map[stri
 		return
 	}
 
-	// Backend itself
 	b.Metadata = NormalizeMetadata(b.Metadata)
 
 	// Servers - use pointer index for zero-copy iteration
@@ -298,67 +284,54 @@ func normalizeBackendMetadataWithIndexes(b *models.Backend, serverIndex map[stri
 		}
 	}
 
-	// ACLs
 	for _, acl := range b.ACLList {
 		acl.Metadata = NormalizeMetadata(acl.Metadata)
 	}
 
-	// Filters
 	for _, filter := range b.FilterList {
 		filter.Metadata = NormalizeMetadata(filter.Metadata)
 	}
 
-	// HTTP after response rules
 	for _, rule := range b.HTTPAfterResponseRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// HTTP checks
 	for _, check := range b.HTTPCheckList {
 		check.Metadata = NormalizeMetadata(check.Metadata)
 	}
 
-	// HTTP error rules
 	for _, rule := range b.HTTPErrorRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// HTTP request rules
 	for _, rule := range b.HTTPRequestRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// HTTP response rules
 	for _, rule := range b.HTTPResponseRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// Log targets
 	for _, logTarget := range b.LogTargetList {
 		logTarget.Metadata = NormalizeMetadata(logTarget.Metadata)
 	}
 
-	// Server switching rules
 	for _, rule := range b.ServerSwitchingRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// Stick rules
 	for _, rule := range b.StickRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// TCP checks
 	for _, check := range b.TCPCheckRuleList {
 		check.Metadata = NormalizeMetadata(check.Metadata)
 	}
 
-	// TCP request rules
 	for _, rule := range b.TCPRequestRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
 
-	// TCP response rules
 	for _, rule := range b.TCPResponseRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}
@@ -370,15 +343,12 @@ func normalizeDefaultsMetadata(d *models.Defaults) {
 		return
 	}
 
-	// Defaults itself
 	d.Metadata = NormalizeMetadata(d.Metadata)
 
-	// Log targets
 	for _, logTarget := range d.LogTargetList {
 		logTarget.Metadata = NormalizeMetadata(logTarget.Metadata)
 	}
 
-	// HTTP error rules
 	for _, rule := range d.HTTPErrorRuleList {
 		rule.Metadata = NormalizeMetadata(rule.Metadata)
 	}

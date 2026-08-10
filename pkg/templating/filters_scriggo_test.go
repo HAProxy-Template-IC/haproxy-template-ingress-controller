@@ -467,7 +467,6 @@ func TestScriggoDebug_WithLabel(t *testing.T) {
 
 	result := scriggoDebug(value, "test-label")
 
-	// Should contain DEBUG with label
 	assert.Contains(t, result, "# DEBUG test-label:")
 	assert.Contains(t, result, "a")
 	assert.Contains(t, result, "b")

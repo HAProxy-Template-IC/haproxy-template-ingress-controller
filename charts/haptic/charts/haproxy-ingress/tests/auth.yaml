@@ -1,6 +1,47 @@
 # haproxy-ingress library — auth validation tests.
 # Basic auth (userlist + password-hash validation), auth-tls client cert,
 # and external-auth (SPOE) flows.
+_fx:
+  extracontextSpoahubEnabled: &extracontextSpoahubEnabled
+    spoaHub:
+      enabled: true
+      haproxy:
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+  specApi: &specApi
+    ingressClassName: haproxy
+    rules:
+      - host: protected.example.com
+        http:
+          paths:
+            - path: /api
+              pathType: Prefix
+              backend: {service: {name: echo, port: {number: 80}}}
+  extracontextSpoahubEnabled2: &extracontextSpoahubEnabled2
+    spoaHub:
+      enabled: true
+      haproxy:
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: [check-auth]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+
 validationTests:
   # ============================================================================
   # Phase 7: Basic Auth Tests
@@ -12,12 +53,9 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: hi-auth-secret
+          metadata: {namespace: default, name: hi-auth-secret}
           type: Opaque
-          data:
-            admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+          data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -31,26 +69,12 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: auth.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "userlist hi_auth_default_hi-auth-secret"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "user admin password"
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request auth realm "ProtectedArea"'
+      - {type: contains, target: haproxy.cfg, pattern: "userlist hi_auth_default_hi-auth-secret"}
+      - {type: contains, target: haproxy.cfg, pattern: "user admin password"}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request auth realm "ProtectedArea"'}
 
   test-haproxy-ingress-basic-auth-htpasswd-key:
     description: An `auth`-key htpasswd Secret (haproxy-ingress / ingress-nginx native format) is parsed into the userlist; "user::plain" lines use insecure-password
@@ -59,9 +83,7 @@ validationTests:
         # data.auth = base64("admin:$2y$05$...\nguest::plainpw\n")
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: hi-htpasswd
+          metadata: {namespace: default, name: hi-htpasswd}
           type: Opaque
           data:
             auth: YWRtaW46JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCmd1ZXN0OjpwbGFpbnB3Cg==
@@ -77,23 +99,11 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: auth.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "user admin password [$]2y[$]05[$]"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "user guest insecure-password plainpw"
+      - {type: contains, target: haproxy.cfg, pattern: "user admin password [$]2y[$]05[$]"}
+      - {type: contains, target: haproxy.cfg, pattern: "user guest insecure-password plainpw"}
 
   test-haproxy-ingress-basic-auth-missing-secret:
     description: >-
@@ -119,42 +129,24 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: auth-missing.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "userlist hi_auth_default_absent-secret"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "http_auth(hi_auth_default_absent-secret)"
+      - {type: not_contains, target: haproxy.cfg, pattern: "userlist hi_auth_default_absent-secret"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "http_auth(hi_auth_default_absent-secret)"}
 
   test-haproxy-ingress-auth-password-hash-validation-reject:
     description: Password hash validation rejects non-matching hashes (haproxy-ingress)
     extraContext:
       annotationCompatibility:
-        basicAuth:
-          passwordHashValidation:
-            regex: "^\\$apr1\\$"
-            errorMessage: "Bcrypt hashes not allowed"
+        basicAuth: {passwordHashValidation: {regex: "^\\$apr1\\$", errorMessage: "Bcrypt hashes not allowed"}}
     fixtures:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: hi-auth-secret
+          metadata: {namespace: default, name: hi-auth-secret}
           type: Opaque
-          data:
-            admin: JDJ5JDEwJGJjcnlwdGhhc2g=
+          data: {admin: JDJ5JDEwJGJjcnlwdGhhc2g=}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -167,40 +159,21 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: test.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Bcrypt hashes not allowed"
-      - type: contains
-        target: rendering_error
-        pattern: "admin"
+      - {type: contains, target: rendering_error, pattern: "Bcrypt hashes not allowed"}
+      - {type: contains, target: rendering_error, pattern: "admin"}
 
   test-haproxy-ingress-auth-password-hash-validation-allow:
     description: Password hash validation allows matching hashes (haproxy-ingress)
-    extraContext:
-      annotationCompatibility:
-        basicAuth:
-          passwordHashValidation:
-            regex: "^\\$2[ayb]\\$"
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^\\$2[ayb]\\$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: hi-auth-secret
+          metadata: {namespace: default, name: hi-auth-secret}
           type: Opaque
-          data:
-            admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+          data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -213,20 +186,10 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: test.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "user admin password"
+      - {type: contains, target: haproxy.cfg, pattern: "user admin password"}
 
   test-haproxy-ingress-auth-tls-secret:
     description: haproxy-ingress.github.io/auth-tls-secret references a Secret whose `ca.crt` is written to the general file dir (not ssl/ — Dataplane validates ssl/ uploads as cert+key) and used in the crt-list line...
@@ -234,17 +197,13 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: client-ca
+          metadata: {namespace: default, name: client-ca}
           type: kubernetes.io/tls
           data:
             ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: server-tls
+          metadata: {namespace: default, name: server-tls}
           type: kubernetes.io/tls
           data:
             tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
@@ -268,15 +227,7 @@ validationTests:
                 secretName: server-tls
             rules:
               - host: api.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -308,22 +259,10 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: api.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Invalid URL"
-      - type: contains
-        target: rendering_error
-        pattern: "default/bad-redirect"
+      - {type: contains, target: rendering_error, pattern: "Invalid URL"}
+      - {type: contains, target: rendering_error, pattern: "default/bad-redirect"}
 
   test-haproxy-ingress-external-auth:
     # The auth-url.map and SPOE wiring this test asserts on are
@@ -333,19 +272,7 @@ validationTests:
     # render).
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "HAProxy-Ingress auth-url annotation populates auth-url.map and the spoa-hub frontend wiring (set-var, send-spoe-group, deny rule). Mirrors test-nginx-ingress-external-auth but uses the haproxy-ingress.github.io/auth-url annotation flavour."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -359,53 +286,27 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: hi-protected.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:auth-url.map
-        pattern: "default/hi-protected https://auth.example/check"
+      - {type: contains, target: map:auth-url.map, pattern: "default/hi-protected https://auth.example/check"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.auth_url\\).*auth-url\\.map"
       - type: contains
         target: haproxy.cfg
         pattern: "http-request send-spoe-group spoa-hub check-auth-group"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 401"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 401"}
 
   test-haproxy-ingress-auth-url-ssl-passthrough-warns:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "An Ingress that sets both haproxy-ingress.github.io/auth-url and ssl-passthrough gets an AuthIgnored Warning event: external auth can't run on undecrypted L4 passthrough traffic, so auth-url is a no-op. The chart warns rather than failing the render (the config is valid; a hard fail would block all config updates over one misconfig)."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: pt-svc
+          metadata: {namespace: default, name: pt-svc}
           spec:
             ports:
               - port: 443
@@ -426,11 +327,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: pt-svc
-                          port:
-                            number: 443
+                      backend: {service: {name: pt-svc, port: {number: 443}}}
     assertions:
       - type: contains
         target: events
@@ -439,34 +336,18 @@ validationTests:
   test-haproxy-ingress-oauth-oauth2-proxy:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "oauth: oauth2_proxy desugars onto external-auth — derives the oauth2-proxy address from the Ingress's own /oauth2 path backend; sets auth-url (/oauth2/auth), auth-signin (/oauth2/start), auth-method HEAD, extract-headers, and forwards X-Auth-Request-Email on success."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: oauth-app-svc
+          metadata: {namespace: default, name: oauth-app-svc}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: oauth2-proxy
+          metadata: {namespace: default, name: oauth2-proxy}
           spec:
             ports:
               - port: 4180
@@ -486,18 +367,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: oauth-app-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: oauth-app-svc, port: {number: 80}}}
                     - path: /oauth2
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: oauth2-proxy
-                          port:
-                            number: 4180
+                      backend: {service: {name: oauth2-proxy, port: {number: 4180}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -506,9 +379,7 @@ validationTests:
       - type: contains
         target: map:auth-signin.map
         pattern: "default/oauthapp /oauth2/start\\?rd=%\\[path\\]"
-      - type: contains
-        target: map:auth-method.map
-        pattern: "default/oauthapp HEAD"
+      - {type: contains, target: map:auth-method.map, pattern: "default/oauthapp HEAD"}
       - type: contains
         target: map:auth-extract-headers.map
         pattern: "default/oauthapp X-Auth-Request-Email"
@@ -529,18 +400,7 @@ validationTests:
   test-haproxy-ingress-oauth-invalid-value:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "oauth with an unsupported value aborts the render with a clear error naming both accepted spellings."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages: [check-auth]
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled2
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -567,18 +427,7 @@ validationTests:
   test-haproxy-ingress-oauth-no-prefix-path:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "oauth set but no Ingress path matches oauth-uri-prefix aborts the render (the oauth2-proxy backend cannot be derived)."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages: [check-auth]
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled2
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -598,25 +447,12 @@ validationTests:
                       pathType: Prefix
                       backend: {service: {name: echo, port: {number: 80}}}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "has no Ingress path '/oauth2'"
+      - {type: contains, target: rendering_error, pattern: "has no Ingress path '/oauth2'"}
 
   test-haproxy-ingress-oauth-auth-url-precedence:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "an explicit auth-url on the same Ingress as oauth takes precedence — the oauth desugaring contributes no auth-url.map entry."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages: [check-auth]
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled2
     fixtures:
       services:
         - apiVersion: v1
@@ -652,31 +488,15 @@ validationTests:
                       backend: {service: {name: oauth2-proxy, port: {number: 4180}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:auth-url.map
-        pattern: "default/oauthpr https://explicit.example/check"
-      - type: not_contains
-        target: map:auth-url.map
-        pattern: "default/oauthpr http://oauth2-proxy"
+      - {type: contains, target: map:auth-url.map, pattern: "default/oauthpr https://explicit.example/check"}
+      - {type: not_contains, target: map:auth-url.map, pattern: "default/oauthpr http://oauth2-proxy"}
 
   test-haproxy-ingress-external-auth-signin:
     # Same prerequisite as the other external-auth tests — needs the
     # spoa-hub library loaded so auth-signin.map is defined.
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "HAProxy-Ingress auth-signin annotation makes auth failures redirect (302) to the configured sign-in URL instead of returning 401. Mirrors test-nginx-ingress-external-auth-signin but uses the haproxy-ingress.github.io/auth-signin annotation."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -691,15 +511,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: hi-protected.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -711,26 +523,12 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect location %\\[var\\(txn.auth_signin\\)\\] code 302"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 401"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 401"}
 
   test-haproxy-ingress-external-auth-method:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "haproxy-ingress.github.io/auth-method annotation populates auth-method.map and threads through the SPOE check-auth message's `method` arg. Mirrors test-nginx-ingress-external-auth-method but uses the haproxy-ingress.github.io/* annotation prefix."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -741,47 +539,19 @@ validationTests:
             annotations:
               haproxy-ingress.github.io/auth-url: "https://auth.example/check"
               haproxy-ingress.github.io/auth-method: "POST"
-          spec:
-            ingressClassName: haproxy
-            rules:
-              - host: protected.example.com
-                http:
-                  paths:
-                    - path: /api
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+          spec: *specApi
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:auth-method.map
-        pattern: "default/protected POST"
+      - {type: contains, target: map:auth-method.map, pattern: "default/protected POST"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.auth_method\\).*auth-method\\.map"
-      - type: contains
-        target: file:spoe.conf
-        pattern: "method=var\\(txn.auth_method\\)"
+      - {type: contains, target: file:spoe.conf, pattern: "method=var\\(txn.auth_method\\)"}
 
   test-haproxy-ingress-external-auth-headers-request:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "haproxy-ingress.github.io/auth-headers-request annotation populates auth-forward-headers.map and threads through the SPOE check-auth message's `forward_headers` arg, narrowing (or extending — see snip..."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -792,19 +562,7 @@ validationTests:
             annotations:
               haproxy-ingress.github.io/auth-url: "https://auth.example/check"
               haproxy-ingress.github.io/auth-headers-request: "Authorization, X-Forwarded-For"
-          spec:
-            ingressClassName: haproxy
-            rules:
-              - host: protected.example.com
-                http:
-                  paths:
-                    - path: /api
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+          spec: *specApi
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -813,26 +571,12 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.auth_forward_headers\\).*auth-forward-headers\\.map"
-      - type: contains
-        target: file:spoe.conf
-        pattern: "forward_headers=var\\(txn.auth_forward_headers\\)"
+      - {type: contains, target: file:spoe.conf, pattern: "forward_headers=var\\(txn.auth_forward_headers\\)"}
 
   test-haproxy-ingress-external-auth-headers-request-extends-spoe-message:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: haproxy-ingress.github.io/auth-headers-request listing a custom header (one not in the hardcoded six) must auto-extend the SPOE check-auth message body with a `hdr_<name>=req.
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -852,11 +596,7 @@ validationTests:
                   paths:
                     - path: /api
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -874,22 +614,12 @@ validationTests:
                   paths:
                     - path: /api
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: file:spoe.conf
-        pattern: "hdr_x_tenant_id=req\\.hdr\\(X-Tenant-ID\\)"
-      - type: contains
-        target: file:spoe.conf
-        pattern: "hdr_x_request_id=req\\.hdr\\(X-Request-ID\\)"
-      - type: contains
-        target: file:spoe.conf
-        pattern: "hdr_x_trace_id=req\\.hdr\\(X-Trace-Id\\)"
+      - {type: contains, target: file:spoe.conf, pattern: "hdr_x_tenant_id=req\\.hdr\\(X-Tenant-ID\\)"}
+      - {type: contains, target: file:spoe.conf, pattern: "hdr_x_request_id=req\\.hdr\\(X-Request-ID\\)"}
+      - {type: contains, target: file:spoe.conf, pattern: "hdr_x_trace_id=req\\.hdr\\(X-Trace-Id\\)"}
       - type: not_contains
         target: file:spoe.conf
         pattern: "hdr_x_tenant_id=req\\.hdr\\(X-Tenant-ID\\) .*hdr_x_tenant_id=req\\.hdr\\(X-Tenant-ID\\)"
@@ -915,19 +645,7 @@ validationTests:
     # the request landed in.
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "auth-url + auth-headers-fail annotations must emit the deny 401 AND the http-after-response set-header directives into BOTH the HTTP/1.1 and H2C frontends. Regression for the asymmetric render that broke TestIngressAuthHeadersFail on MR !974 pipeline 2546220821."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -942,15 +660,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: protected.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
 
@@ -975,19 +685,7 @@ validationTests:
   test-haproxy-ingress-external-auth-headers-request-dash-underscore-collision:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: Two header spellings that differ only in dashes vs underscores (e.g. `X-Request-Id` and `X_Request_Id`) lower-case to different strings but collapse to the same SPOE arg name after dash→underscore rep...
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1002,15 +700,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: dashes.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -1023,15 +713,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: underscores.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: not_contains
@@ -1041,19 +723,7 @@ validationTests:
   test-haproxy-ingress-external-auth-headers-request-overlaps-builtin:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "Regression test for the HAProxy 3.0 SPOE-frame-parse failure that surfaced as pipeline 2549047264's test-e2e [3.0] TestIngressAuthHeadersFail. An Ingress annotation `auth-headers-request: X-Forwarded-Uri` overlaps a header the base spoe-hub library already captures (`hdr_x_forwarded_uri= req.hdr(X-Forwarded-Uri)` is hardcoded in spoe-message-check-auth-body). The auto-extend snippet was supposed to dedup against those built-ins, but the pre-seeded `seen` map used dash-form keys (`x-forwarded-uri`) while the check uses underscore-form (`replace(toLower(name), \"-\", \"_\")` → `x_forwarded_uri`). The two never matched and the SPOE args line ended up with the header captured twice. HAProxy 3.0's SPOE notify-frame parser rejects duplicate arg names (spop returns \"Failed to parse frame: Tag\"); 3.1+ tolerates them silently, which is why only the 3.0 e2e shard failed. Fixture: an Ingress with `auth-headers-request: X-Forwarded-Uri` (one of the six built-in captures). The rendered spoe.conf args line must mention `hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)` exactly ONCE."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1068,15 +738,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: overlaps.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: not_contains
@@ -1089,19 +751,7 @@ validationTests:
   test-haproxy-ingress-external-auth-headers-succeed-fail:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: haproxy-ingress.github.io/auth-headers-succeed and auth-headers-fail annotations both populate auth-extract-headers.
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1113,27 +763,13 @@ validationTests:
               haproxy-ingress.github.io/auth-url: "https://auth.example/check"
               haproxy-ingress.github.io/auth-headers-succeed: "X-Auth-User, X-Auth-Roles"
               haproxy-ingress.github.io/auth-headers-fail: "WWW-Authenticate, X-Error-Reason"
-          spec:
-            ingressClassName: haproxy
-            rules:
-              - host: protected.example.com
-                http:
-                  paths:
-                    - path: /api
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+          spec: *specApi
     assertions:
       - type: haproxy_valid
       - type: contains
         target: map:auth-extract-headers.map
         pattern: "default/protected X-Auth-User, X-Auth-Roles, WWW-Authenticate, X-Error-Reason"
-      - type: contains
-        target: file:spoe.conf
-        pattern: "extract_headers=var\\(txn.auth_extract_headers\\)"
+      - {type: contains, target: file:spoe.conf, pattern: "extract_headers=var\\(txn.auth_extract_headers\\)"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Auth-User %\\[var\\(txn.hub.external_auth.x_auth_user\\)\\] if \\{ var\\(txn.hub.external_auth.x_auth_user\\) -m found \\} \\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\}"
@@ -1150,19 +786,7 @@ validationTests:
   test-haproxy-ingress-external-auth-bad-header-name-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "A header name in auth-headers-succeed / auth-headers-fail that doesn't match the RFC 7230 token grammar (e.g."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1178,39 +802,15 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: bad.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Invalid HTTP header name"
-      - type: contains
-        target: rendering_error
-        pattern: "default/bad-header"
+      - {type: contains, target: rendering_error, pattern: "Invalid HTTP header name"}
+      - {type: contains, target: rendering_error, pattern: "default/bad-header"}
 
   test-haproxy-ingress-external-auth-hostless-accepted:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "Ingress with haproxy-ingress.github.io/auth-url AND a host-less rule must render successfully — auth-url.map is keyed by <ns>/<name>, so the host dimension is irrelevant. The previous fail-loud guard is obsolete."
-    extraContext:
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages:
-            - check-auth
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
+    extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1223,15 +823,7 @@ validationTests:
           spec:
             ingressClassName: haproxy
             rules:
-              - http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+              - http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1262,15 +854,9 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request del-header X-SSL-Client-CN\n'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request del-header X-SSL-Client-Cert\n'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'del-header X-SSL-Client-[A-Za-z]+ if'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-SSL-Client-CN\n'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-SSL-Client-Cert\n'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'del-header X-SSL-Client-[A-Za-z]+ if'}
       - type: match_order
         target: haproxy.cfg
         patterns:
@@ -1302,20 +888,15 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.denied_by\\) str\\(basic_auth_unavailable\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 503"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
       # The render must still succeed: a Secret deleted after admission must not
       # abort reconcile for the whole fleet.
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend default_hi-noauth_svc_echo_80"
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_hi-noauth_svc_echo_80"}
 
   test-haproxy-ingress-auth-secret-missing-fails-closed-at-admission:
     description: >-
       An unresolvable auth-secret left the backend with no authentication rule and served every request. Rejected when the resource is written.
-    extraContext:
-      renderMode: admission
+    extraContext: {renderMode: admission}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1340,6 +921,4 @@ validationTests:
       # denied correct manifests applied in the correct order. The runtime 503
       # below is the protection, and it self-heals when the store catches up.
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 503"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}

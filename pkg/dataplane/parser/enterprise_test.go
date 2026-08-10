@@ -470,6 +470,5 @@ func TestParseFromString_EnterpriseEdition(t *testing.T) {
 		}
 	})
 
-	// Run combined integration test
 	t.Run("integration", runParseTest(eeCombinedTest))
 }

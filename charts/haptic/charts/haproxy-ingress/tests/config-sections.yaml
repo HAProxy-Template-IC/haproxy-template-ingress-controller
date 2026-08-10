@@ -1,6 +1,13 @@
 # haproxy-ingress library — config-frontend / config-global / config-defaults tests.
 # Raw HAProxy directive injection into the http frontend / global / defaults
 # sections (complements the existing config-backend snippet).
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+
 validationTests:
   # ==========================================================================
   # config-frontend: raw directives into the HTTP frontend
@@ -22,23 +29,11 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: cf.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-header X-Config-Frontend injected"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "haproxy-ingress/config-frontend"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request set-header X-Config-Frontend injected"}
+      - {type: contains, target: haproxy.cfg, pattern: "haproxy-ingress/config-frontend"}
 
   # ==========================================================================
   # config-global: raw directives into the global section
@@ -60,23 +55,11 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: cg.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "tune\\.bufsize 32768"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "haproxy-ingress/config-global"
+      - {type: contains, target: haproxy.cfg, pattern: "tune\\.bufsize 32768"}
+      - {type: contains, target: haproxy.cfg, pattern: "haproxy-ingress/config-global"}
 
   # ==========================================================================
   # config-defaults: raw directives into the defaults section
@@ -98,20 +81,8 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: cd.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "(?m)^\\s+retries 5$"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "haproxy-ingress/config-defaults"
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^\\s+retries 5$"}
+      - {type: contains, target: haproxy.cfg, pattern: "haproxy-ingress/config-defaults"}

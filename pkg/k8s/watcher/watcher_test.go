@@ -35,11 +35,7 @@ import (
 	kubefake "k8s.io/client-go/kubernetes/fake"
 )
 
-var configMapGVR = schema.GroupVersionResource{
-	Group:    "",
-	Version:  "v1",
-	Resource: "configmaps",
-}
+var configMapGVR = schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
 
 func newTestClient(t *testing.T, objects ...runtime.Object) *client.Client {
 	t.Helper()
@@ -386,7 +382,6 @@ func TestWatcher_WaitForSync_Success(t *testing.T) {
 		_ = watcher.Start(ctx)
 	}()
 
-	// Wait for sync
 	count, err := watcher.WaitForSync(ctx)
 
 	require.NoError(t, err)
@@ -518,7 +513,6 @@ func TestWatcher_HandleUpdate_SkipsResyncEvent(t *testing.T) {
 		_ = watcher.Start(ctx)
 	}()
 
-	// Wait for sync
 	_, err = watcher.WaitForSync(ctx)
 	require.NoError(t, err)
 
@@ -580,7 +574,6 @@ func TestWatcher_HandleUpdate_ProcessesRealUpdate(t *testing.T) {
 		_ = watcher.Start(ctx)
 	}()
 
-	// Wait for sync
 	_, err = watcher.WaitForSync(ctx)
 	require.NoError(t, err)
 
@@ -645,7 +638,6 @@ func TestWatcher_HandleUpdate_ProcessesZeroGeneration(t *testing.T) {
 		_ = watcher.Start(ctx)
 	}()
 
-	// Wait for sync
 	_, err = watcher.WaitForSync(ctx)
 	require.NoError(t, err)
 

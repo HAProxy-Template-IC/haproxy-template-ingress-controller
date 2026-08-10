@@ -618,7 +618,6 @@ func WaitForNewPodReady(ctx context.Context, client klient.Client, namespace, la
 			var podList corev1.PodList
 			res := client.Resources(namespace)
 
-			// List pods with label selector
 			if err := res.List(ctx, &podList, resources.WithLabelSelector(labelSelector)); err != nil {
 				continue
 			}
@@ -889,7 +888,6 @@ func UpdateHAProxyTemplateConfigTemplate(ctx context.Context, client klient.Clie
 			return fmt.Errorf("existing resource has no resourceVersion")
 		}
 
-		// Set the new template at spec.haproxyConfig.template
 		if err := unstructured.SetNestedField(existing.Object, newTemplate, "spec", "haproxyConfig", "template"); err != nil {
 			return fmt.Errorf("failed to set spec.haproxyConfig.template: %w", err)
 		}
@@ -998,7 +996,6 @@ func haproxyTemplateConfigGVR() schema.GroupVersionResource {
 func EnsureDebugClientReady(ctx context.Context, t *testing.T, client klient.Client, clientset kubernetes.Interface, namespace string, timeout time.Duration) (*DebugClient, error) {
 	t.Helper()
 
-	// First wait for pod to be ready
 	err := WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("pod not ready: %w", err)

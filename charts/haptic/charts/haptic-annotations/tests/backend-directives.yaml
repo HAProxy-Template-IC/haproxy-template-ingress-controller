@@ -1,6 +1,13 @@
 # haptic-annotations library — backend-directives validation tests.
 # Timeouts, load-balance, consistent-hash, health checks, and server tuning
 # (maxconn/maxqueue/weight/scale-server-slots/proxy-protocol/fullconn).
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+
 validationTests:
   test-haptic-timeouts:
     description: haproxy-haptic.org timeout annotations render timeout directives
@@ -23,38 +30,16 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: timeout.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "timeout connect 10s"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "timeout server 60s"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "timeout queue 30s"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "timeout tunnel 1h"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "timeout http-request 15s"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "timeout http-keep-alive 20s"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "timeout check 5s"
+      - {type: contains, target: haproxy.cfg, pattern: "timeout connect 10s"}
+      - {type: contains, target: haproxy.cfg, pattern: "timeout server 60s"}
+      - {type: contains, target: haproxy.cfg, pattern: "timeout queue 30s"}
+      - {type: contains, target: haproxy.cfg, pattern: "timeout tunnel 1h"}
+      - {type: contains, target: haproxy.cfg, pattern: "timeout http-request 15s"}
+      - {type: contains, target: haproxy.cfg, pattern: "timeout http-keep-alive 20s"}
+      - {type: contains, target: haproxy.cfg, pattern: "timeout check 5s"}
 
   test-haptic-load-balance:
     description: haproxy-haptic.org/load-balance accepts exact and parameterized algorithms
@@ -71,20 +56,10 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: lb.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'balance hdr\(X-Custom\)'
+      - {type: contains, target: haproxy.cfg, pattern: 'balance hdr\(X-Custom\)'}
 
   test-haptic-upstream-hash:
     description: haproxy-haptic.org/consistent-hash-by maps to a HAProxy consistent hash
@@ -101,23 +76,11 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: hash.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "balance uri"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "hash-type consistent"
+      - {type: contains, target: haproxy.cfg, pattern: "balance uri"}
+      - {type: contains, target: haproxy.cfg, pattern: "hash-type consistent"}
 
   test-haptic-health-checks:
     description: haproxy-haptic.org health-check annotations render httpchk and default-server flags
@@ -138,32 +101,14 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: health.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "option httpchk GET /healthz"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "port 8082"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "inter 7s"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "fall 4"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "rise 5"
+      - {type: contains, target: haproxy.cfg, pattern: "option httpchk GET /healthz"}
+      - {type: contains, target: haproxy.cfg, pattern: "port 8082"}
+      - {type: contains, target: haproxy.cfg, pattern: "inter 7s"}
+      - {type: contains, target: haproxy.cfg, pattern: "fall 4"}
+      - {type: contains, target: haproxy.cfg, pattern: "rise 5"}
 
   test-haptic-server-tuning:
     description: maxconn/maxqueue/weight/proxy-protocol/scale-server-slots/fullconn render together
@@ -185,32 +130,12 @@ validationTests:
             ingressClassName: haptic
             rules:
               - host: tuning.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "maxconn 100"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "maxqueue 200"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "weight 50"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "send-proxy-v2"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "fullconn 300"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_5"
+      - {type: contains, target: haproxy.cfg, pattern: "maxconn 100"}
+      - {type: contains, target: haproxy.cfg, pattern: "maxqueue 200"}
+      - {type: contains, target: haproxy.cfg, pattern: "weight 50"}
+      - {type: contains, target: haproxy.cfg, pattern: "send-proxy-v2"}
+      - {type: contains, target: haproxy.cfg, pattern: "fullconn 300"}
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_5"}

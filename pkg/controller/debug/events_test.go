@@ -98,7 +98,6 @@ func TestEventBuffer_StartAndCapture(t *testing.T) {
 	bus.Start()
 	go buffer.Start(ctx)
 
-	// Publish test events
 	bus.Publish(&testEvent{name: "event.one"})
 	bus.Publish(&testEvent{name: "event.two"})
 	bus.Publish(&testEvent{name: "event.three"})
@@ -137,11 +136,9 @@ func TestEventBuffer_GetLast(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	// Get last 3
 	last3 := buffer.GetLast(3)
 	assert.LessOrEqual(t, len(last3), 3)
 
-	// Get all
 	all := buffer.GetLast(100)
 	assert.GreaterOrEqual(t, len(all), 5)
 }

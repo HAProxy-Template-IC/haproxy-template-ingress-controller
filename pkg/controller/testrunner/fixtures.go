@@ -46,7 +46,6 @@ func MergeFixtures(globalFixtures, testFixtures map[string][]any) map[string][]a
 	// Build identity map for test fixtures to detect overrides
 	testIdentities := buildFixtureIdentityMap(testFixtures)
 
-	// Collect all resource types from both fixtures
 	allResourceTypes := collectResourceTypes(globalFixtures, testFixtures)
 
 	// Merge fixtures for each resource type

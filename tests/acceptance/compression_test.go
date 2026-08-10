@@ -66,7 +66,6 @@ func buildCompressionFeature() types.Feature {
 			namespace := envconf.RandomName("test-compress", 16)
 			t.Logf("Using test namespace: %s", namespace)
 
-			// Store namespace in context
 			ctx = StoreNamespaceInContext(ctx, namespace)
 
 			client, err := cfg.NewClient()
@@ -212,7 +211,6 @@ func buildCompressionFeature() types.Feature {
 
 			t.Logf("Compressed content length: %d bytes", len(content))
 
-			// Decompress the content
 			decompressed, err := compression.Decompress(content)
 			if err != nil {
 				t.Fatalf("Failed to decompress content: %v", err)

@@ -78,7 +78,6 @@ type StateCache struct {
 	renderTime       time.Time
 	renderDurationMs int64
 
-	// Validation status
 	validationStatus     string // "succeeded" | "failed" | "pending"
 	validationErrors     []string
 	validationWarnings   []string
@@ -89,7 +88,6 @@ type StateCache struct {
 	lastValidatedConfig string
 	lastValidatedTime   time.Time
 
-	// Deployment status
 	deploymentStatus     string // "succeeded" | "failed" | "skipped" | "pending"
 	deploymentReason     string // why skipped (e.g., "validation_failed")
 	deploymentTime       time.Time

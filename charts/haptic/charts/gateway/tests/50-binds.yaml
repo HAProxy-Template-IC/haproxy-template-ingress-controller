@@ -6,38 +6,24 @@ validationTests:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: multi-port-gw
-            namespace: default
+          metadata: {name: multi-port-gw, namespace: default}
           spec:
             gatewayClassName: haptic
             listeners:
-              - name: l-80
-                port: 80
-                protocol: HTTP
-              - name: l-8080
-                port: 8080
-                protocol: HTTP
-              - name: l-8090
-                port: 8090
-                protocol: HTTP
+              - {name: l-80, port: 80, protocol: HTTP}
+              - {name: l-8080, port: 8080, protocol: HTTP}
+              - {name: l-8090, port: 8090, protocol: HTTP}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "(?m)^\\s*bind \\*:80$"
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^\\s*bind \\*:80$"}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "(?m)^\\s*bind \\*:8090$"
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^\\s*bind \\*:8090$"}
 
   test-gateway-https-multi-port-listener-bind:
     requires: [gatewayclasses, gateways]
@@ -46,16 +32,12 @@ validationTests:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: tls-gw
-            namespace: default
+          metadata: {name: tls-gw, namespace: default}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -72,24 +54,21 @@ validationTests:
                   # GatewayFrontendInvalidDefaultClientCertificateValidation
                   # exercises with NoValidCACertificate.
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                    - {kind: Secret, name: shared-tls}
               - name: l-https-8443
                 port: 8443
                 protocol: HTTPS
                 tls:
                   mode: Terminate
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                    - {kind: Secret, name: shared-tls}
               - name: l-https-9443
                 port: 9443
                 protocol: HTTPS
                 tls:
                   mode: Terminate
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
+                    - {kind: Secret, name: shared-tls}
     assertions:
       - type: haproxy_valid
 

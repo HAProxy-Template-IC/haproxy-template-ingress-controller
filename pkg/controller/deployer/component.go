@@ -157,7 +157,6 @@ func (c *Component) Start(ctx context.Context) error {
 	c.ctx = ctx
 	err := c.Base.Start(ctx)
 
-	// Cancel any active deployment on shutdown
 	c.cancelActiveDeployment("shutdown")
 	return err
 }

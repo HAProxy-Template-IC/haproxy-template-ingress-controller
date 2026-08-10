@@ -8,6 +8,22 @@
 # The "frontend-routing-logic-regex-last" snippet below is the alternate
 # variant of frontend-routing-logic; we conditionally swap it in and always
 # strip the alternate so it never appears in the merged HAProxyTemplateConfig.
+_fx:
+  fixturesBufferingBufferExample: &fixturesBufferingBufferExample
+    ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata: {namespace: default, name: buffering}
+        spec:
+          ingressClassName: haptic
+          rules:
+            - host: buffer.example.com
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend: { service: { name: echo, port: { number: 80 } } }
+
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.base.enabled }}'
   inject:
@@ -2892,9 +2908,7 @@ haproxyConfig:
   # Post-processing: normalize indentation to 2 spaces
   postProcessing:
     - type: regex_replace
-      params:
-        pattern: "^[ ]+"
-        replace: "  "
+      params: {pattern: "^[ ]+", replace: "  "}
     # Collapse runs of blank / whitespace-only lines (left behind by empty
     # extension-point snippets and render_glob boundaries) into a single blank
     # line. HAProxy ignores blank lines, so this is purely for readability.
@@ -2922,10 +2936,7 @@ validationTests:
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: echo-abc
-            labels: { kubernetes.io/service-name: echo }
+          metadata: {namespace: default, name: echo-abc, labels: { kubernetes.io/service-name: echo }}
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.1"]
@@ -2943,9 +2954,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "(?m)^  retry-on conn-failure empty-response response-timeout$"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "(?m)^  option redispatch$"
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^  option redispatch$"}
 
   test-retry-on-idempotent-methods-only:
     description: "An L7 retry replays the request, so POST and PATCH are excluded by default — matching nginx-ingress, which needs an explicit non_idempotent to retry them. conn-failure is L4 and stays enabled for every method."
@@ -2964,8 +2973,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service: { name: echo, port: { number: 80 } }
+                      backend: {service: { name: echo, port: { number: 80 } }}
     assertions:
       - type: contains
         target: haproxy.cfg
@@ -2973,8 +2981,7 @@ validationTests:
 
   test-retry-on-non-idempotent-opt-in:
     description: "extraContext.retryNonIdempotent drops the idempotency guard so every method may be replayed."
-    extraContext:
-      retryNonIdempotent: true
+    extraContext: {retryNonIdempotent: true}
     fixtures:
       # Trigger the http_frontend: frontend-filters-* only render inside it, and
       # the frontend is gated on a resource library declaring a listener.
@@ -2990,42 +2997,28 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service: { name: echo, port: { number: 80 } }
+                      backend: {service: { name: echo, port: { number: 80 } }}
     assertions:
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "disable-l7-retry"
+      - {type: not_contains, target: haproxy.cfg, pattern: "disable-l7-retry"}
       - type: contains
         target: haproxy.cfg
         pattern: "(?m)^  retry-on conn-failure empty-response response-timeout$"
 
   test-retry-on-override:
     description: "extraContext.retryOn replaces the retry-on condition list."
-    extraContext:
-      retryOn: "conn-failure"
+    extraContext: {retryOn: "conn-failure"}
     fixtures: {}
     assertions:
-      - type: contains
-        target: haproxy.cfg
-        pattern: "(?m)^  retry-on conn-failure$"
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^  retry-on conn-failure$"}
 
   test-k8s-haproxy-service-default-ports:
     description: "k8sResources.haproxy-service emits whatever ports the chart hands it under `extraContext.haproxyService.ports`. The chart's default builds an http / https / stats triple from `haproxy.service."
     fixtures: {}
     assertions:
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "kind: Service"
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "name: http\n"
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "name: https\n"
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "name: stats"
+      - {type: contains, target: "k8s:haproxy-service", pattern: "kind: Service"}
+      - {type: contains, target: "k8s:haproxy-service", pattern: "name: http\n"}
+      - {type: contains, target: "k8s:haproxy-service", pattern: "name: https\n"}
+      - {type: contains, target: "k8s:haproxy-service", pattern: "name: stats"}
 
   test-k8s-haproxy-service-extra-ports:
     description: Operators using haptic without Gateway API (e.g. exposing a raw TCP frontend via a custom haproxyConfig snippet) declare additional Service ports through `haproxy.service.extraPorts` in values.yaml.
@@ -3046,32 +3039,14 @@ validationTests:
         healthCheckNodePort: 0
         publishNotReadyAddresses: false
         ports:
-          - name: http
-            port: 80
-            targetPort: http
-            protocol: TCP
-          - name: https
-            port: 443
-            targetPort: https
-            protocol: TCP
-          - name: stats
-            port: 8404
-            targetPort: stats
-            protocol: TCP
-          - name: postgres
-            port: 5432
-            targetPort: 5432
-            protocol: TCP
+          - {name: http, port: 80, targetPort: http, protocol: TCP}
+          - {name: https, port: 443, targetPort: https, protocol: TCP}
+          - {name: stats, port: 8404, targetPort: stats, protocol: TCP}
+          - {name: postgres, port: 5432, targetPort: 5432, protocol: TCP}
     assertions:
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "name: postgres"
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "port: 5432"
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "name: http\n"
+      - {type: contains, target: "k8s:haproxy-service", pattern: "name: postgres"}
+      - {type: contains, target: "k8s:haproxy-service", pattern: "port: 5432"}
+      - {type: contains, target: "k8s:haproxy-service", pattern: "name: http\n"}
 
   test-address-discovery:
     description: Address discovery reads LoadBalancer status from controller service
@@ -3085,8 +3060,7 @@ validationTests:
             labels:
               app.kubernetes.io/name: haptic
               app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
+          spec: {type: LoadBalancer}
           status:
             loadBalancer:
               ingress:
@@ -3107,8 +3081,7 @@ validationTests:
             labels:
               app.kubernetes.io/name: haptic
               app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
+          spec: {type: LoadBalancer}
           status:
             loadBalancer:
               ingress:
@@ -3121,8 +3094,7 @@ validationTests:
             labels:
               app.kubernetes.io/name: haptic
               app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
+          spec: {type: LoadBalancer}
           status:
             loadBalancer:
               ingress:
@@ -3135,10 +3107,8 @@ validationTests:
             labels:
               app.kubernetes.io/name: haptic
               app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
-          status:
-            loadBalancer: {}
+          spec: {type: LoadBalancer}
+          status: {loadBalancer: {}}
     assertions:
       - type: haproxy_valid
 
@@ -3155,9 +3125,7 @@ validationTests:
     # into the global one, so a null leaf leaves the operator's sidecar enabled.
     # The load gate is fail-closed, so getting this wrong crash-loops the
     # controller rather than showing a red test.
-    extraContext:
-      vector:
-        enabled: false
+    extraContext: {vector: {enabled: false}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -3180,9 +3148,7 @@ validationTests:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: trigger
-            namespace: default
+          metadata: {name: trigger, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -3191,31 +3157,17 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: trigger-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: trigger-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "guid fe:status"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "guid fe:http_frontend"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "guid be:default_backend"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "tune\\.ssl\\.default-dh-param"
+      - {type: contains, target: haproxy.cfg, pattern: "guid fe:status"}
+      - {type: contains, target: haproxy.cfg, pattern: "guid fe:http_frontend"}
+      - {type: contains, target: haproxy.cfg, pattern: "guid be:default_backend"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "tune\\.ssl\\.default-dh-param"}
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^frontend status$.*?^\s+mode http$.*?^\s+option dontlog-normal$'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: '(?ms)^frontend status$.*?^\s+no log$'
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?ms)^frontend status$.*?^\s+no log$'}
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^frontend http-tcp$.*?^\s+mode tcp$.*?^\s+option dontlog-normal$.*?^\s+log-format "%\{\+json\}o '
@@ -3233,38 +3185,25 @@ validationTests:
   test-shm-stats-max-objects:
     description: shm-stats-file-max-objects uses configurable fixed value
     minHAProxyVersion: "3.3"
-    extraContext:
-      shmStatsEnabled: true
-      haproxyVersion: "3.3.0"
+    extraContext: {shmStatsEnabled: true, haproxyVersion: "3.3.0"}
     fixtures: {}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "shm-stats-file /dev/shm/haproxy-stats"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "shm-stats-file-max-objects 50000"
+      - {type: contains, target: haproxy.cfg, pattern: "shm-stats-file /dev/shm/haproxy-stats"}
+      - {type: contains, target: haproxy.cfg, pattern: "shm-stats-file-max-objects 50000"}
 
   test-default-backend-cross-namespace:
     description: Default backend resolves endpoints from a different namespace
     extraContext:
-      defaultBackendService:
-        namespace: ingress-default-backend
-        name: default-backend-service
-        port: 8080
+      defaultBackendService: {namespace: ingress-default-backend, name: default-backend-service, port: 8080}
     fixtures:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: default-backend-service
-            namespace: ingress-default-backend
+          metadata: {name: default-backend-service, namespace: ingress-default-backend}
           spec:
             ports:
-              - name: http
-                port: 8080
-                targetPort: 8080
+              - {name: http, port: 8080, targetPort: 8080}
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -3277,50 +3216,29 @@ validationTests:
           endpoints:
             - addresses:
                 - "10.1.0.1"
-              targetRef:
-                kind: Pod
-                name: default-backend-pod-1
+              targetRef: {kind: Pod, name: default-backend-pod-1}
             - addresses:
                 - "10.1.0.2"
-              targetRef:
-                kind: Pod
-                name: default-backend-pod-2
+              targetRef: {kind: Pod, name: default-backend-pod-2}
           ports:
-            - name: http
-              port: 8080
-              protocol: TCP
+            - {name: http, port: 8080, protocol: TCP}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10.1.0.1:8080"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_2 10.1.0.2:8080"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "http-request return status 404"
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10.1.0.1:8080"}
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_2 10.1.0.2:8080"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "http-request return status 404"}
 
   test-default-backend-named-port:
     description: Default backend resolves a Service port referenced by name (port.name) to the correct numeric pod port
-    extraContext:
-      defaultBackendService:
-        namespace: default
-        name: api-svc
-        port:
-          name: api
+    extraContext: {defaultBackendService: {namespace: default, name: api-svc, port: {name: api}}}
     fixtures:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: api-svc
-            namespace: default
+          metadata: {name: api-svc, namespace: default}
           spec:
             ports:
-              - name: api
-                port: 9000
-                targetPort: api
+              - {name: api, port: 9000, targetPort: api}
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -3332,41 +3250,25 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.2.0.1"]
-              targetRef:
-                kind: Pod
-                name: api-pod-0
+              targetRef: {kind: Pod, name: api-pod-0}
           ports:
-            - name: api
-              port: 9000
-              protocol: TCP
+            - {name: api, port: 9000, protocol: TCP}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10.2.0.1:9000 "
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10.2.0.1:80 "
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10.2.0.1:9000 "}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_1 10.2.0.1:80 "}
 
   test-default-backend-same-namespace:
     description: Default backend works with explicit namespace
-    extraContext:
-      defaultBackendService:
-        namespace: default
-        name: fallback-svc
-        port: 80
+    extraContext: {defaultBackendService: {namespace: default, name: fallback-svc, port: 80}}
     fixtures:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: fallback-svc
-            namespace: default
+          metadata: {name: fallback-svc, namespace: default}
           spec:
             ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+              - {name: http, port: 80, targetPort: 8080}
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -3379,21 +3281,13 @@ validationTests:
           endpoints:
             - addresses:
                 - "10.2.0.1"
-              targetRef:
-                kind: Pod
-                name: fallback-pod-1
+              targetRef: {kind: Pod, name: fallback-pod-1}
           ports:
-            - name: http
-              port: 8080
-              protocol: TCP
+            - {name: http, port: 8080, protocol: TCP}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10.2.0.1:8080"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "http-request return status 404"
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10.2.0.1:8080"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "http-request return status 404"}
 
   # ==========================================================================
   # Access log (structured JSON)
@@ -3408,9 +3302,7 @@ validationTests:
     # deployment's, so without this the test would assert the off-shape against an
     # operator who enabled tracing — failing the LOAD GATE and crash-looping the
     # controller on a perfectly good config.
-    extraContext:
-      tracing:
-        enabled: false
+    extraContext: {tracing: {enabled: false}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -3439,10 +3331,7 @@ validationTests:
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: dup-a
-            labels: { kubernetes.io/service-name: dup-a }
+          metadata: {namespace: default, name: dup-a, labels: { kubernetes.io/service-name: dup-a }}
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.9"]
@@ -3451,10 +3340,7 @@ validationTests:
             - port: 8080
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: dup-b
-            labels: { kubernetes.io/service-name: dup-b }
+          metadata: {namespace: default, name: dup-b, labels: { kubernetes.io/service-name: dup-b }}
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.9"]
@@ -3463,9 +3349,7 @@ validationTests:
             - port: 8080
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:pod-names.map
-        pattern: '(?m)^10\.0\.0\.9 dup-pod$'
+      - {type: contains, target: map:pod-names.map, pattern: '(?m)^10\.0\.0\.9 dup-pod$'}
       - type: not_contains
         target: map:pod-names.map
         pattern: '(?m)^10\.0\.0\.9 dup-pod\n10\.0\.0\.9 dup-pod$'
@@ -3507,9 +3391,7 @@ validationTests:
           The backend states its own Service. Deriving it from the backend NAME
           would make the log depend on a generated identifier that any library is
           free to change
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(service\)\[var\(txn\.service\)\]'
+      - {type: contains, target: haproxy.cfg, pattern: '%\(service\)\[var\(txn\.service\)\]'}
       - type: contains
         target: haproxy.cfg
         pattern: '%\(server_pod\)\[bc_dst,map\('
@@ -3551,9 +3433,7 @@ validationTests:
                     - path: /exact
                       pathType: Exact
                       backend: { service: { name: echo, port: { number: 80 } } }
-    extraContext:
-      tracing:
-        enabled: true
+    extraContext: {tracing: {enabled: true}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -3581,9 +3461,7 @@ validationTests:
     _helm_skip_test: '{{ if not (dig "tracing" "enabled" false (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end }}'
     description: tracing.enabled mints W3C-valid ids, honours an inbound parent, and propagates
     fixtures: {}
-    extraContext:
-      tracing:
-        enabled: true
+    extraContext: {tracing: {enabled: true}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -3674,9 +3552,7 @@ validationTests:
     # extraction, which is the tracing-DISABLED form. Inherited, it would fail for
     # any operator who enabled tracing — and a failing validationTest fails the
     # load gate, which crash-loops the controller.
-    extraContext:
-      tracing:
-        enabled: false
+    extraContext: {tracing: {enabled: false}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -3701,9 +3577,7 @@ validationTests:
           `log <target> [len N] [format F] <facility>` — the argument order is
           mandatory, and `format raw` is what removes the syslog header that
           would otherwise precede every JSON record.
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^  log-format "%\{\+json\}o '
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^  log-format "%\{\+json\}o '}
       - type: contains
         target: haproxy.cfg
         pattern: '%\(status:sint\)ST'
@@ -3717,9 +3591,7 @@ validationTests:
           trace spans, and every HAProxy timer is already whole milliseconds, so
           a millisecond anchor threw away the only sub-millisecond precision
           available.
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(resource\)\[var\(txn\.resource_id\)\]'
+      - {type: contains, target: haproxy.cfg, pattern: '%\(resource\)\[var\(txn\.resource_id\)\]'}
       - type: contains
         target: haproxy.cfg
         pattern: '%\(listener_port\)\[var\(txn\.listener_port\),concat\]'
@@ -3748,9 +3620,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.resource_namespace\) var\(txn\.gw_rule_id\),field\(1,_\)'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(denied_by\)\[var\(txn\.denied_by\)\]'
+      - {type: contains, target: haproxy.cfg, pattern: '%\(denied_by\)\[var\(txn\.denied_by\)\]'}
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.trace_id\) req\.hdr\(traceparent\),field\(2,-\) if \{ req\.hdr\(traceparent\) -m reg '
@@ -3814,9 +3684,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^frontend http_frontend_h2c$.*?^  log-format "%\{\+json\}o '
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?ms)^frontend https$.*?^  log-format "%\{\+json\}o '
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^frontend https$.*?^  log-format "%\{\+json\}o '}
       - type: not_contains
         target: haproxy.cfg
         pattern: '(?m)^  option tcplog$'
@@ -3836,25 +3704,16 @@ validationTests:
       txn.log_<name> at request time so request-scoped fetches work, and emitted
       in sorted-key order so the rendered config does not churn between renders.
     extraContext:
-      accessLog:
-        maxLineBytes: 8192
-        fields:
-          tenant: req.hdr(X-Tenant)
-          zulu: str(z)
-          alpha: query
+      accessLog: {maxLineBytes: 8192, fields: {tenant: req.hdr(X-Tenant), zulu: str(z), alpha: query}}
     fixtures: {}
     assertions:
       - type: haproxy_valid
       - type: deterministic
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^  log stdout len 8192 format raw local0 info$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^  log stdout len 8192 format raw local0 info$'}
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.log_tenant\) req\.hdr\(X-Tenant\)'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(tenant\)\[var\(txn\.log_tenant\)\]'
+      - {type: contains, target: haproxy.cfg, pattern: '%\(tenant\)\[var\(txn\.log_tenant\)\]'}
       - type: match_order
         target: haproxy.cfg
         patterns:
@@ -3871,19 +3730,14 @@ validationTests:
           "bad name": str(x)
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Invalid accessLog.fields key 'bad name'"
+      - {type: contains, target: rendering_error, pattern: "Invalid accessLog.fields key 'bad name'"}
 
   test-access-log-rejects-colliding-field-name:
     description: >-
       A custom field that shadows a built-in one is rejected — a duplicate JSON
       key is resolved differently by every parser and silently corrupts a log
       pipeline.
-    extraContext:
-      accessLog:
-        fields:
-          status: str(1)
+    extraContext: {accessLog: {fields: {status: str(1)}}}
     fixtures: {}
     assertions:
       - type: contains
@@ -3895,9 +3749,7 @@ validationTests:
       An absurd digit string is rejected on its shape, not by an int64 overflow
       that happens to land below the lower bound — the operator sees what they
       wrote, not -9223372036854775808.
-    extraContext:
-      accessLog:
-        maxLineBytes: 123456789012345678901234567890
+    extraContext: {accessLog: {maxLineBytes: 123456789012345678901234567890}}
     fixtures: {}
     assertions:
       - type: contains
@@ -3916,9 +3768,7 @@ validationTests:
       The maxLineBytes bound is enforced in the render as well as in Helm, because
       a hand-written HAProxyTemplateConfig never passes through Helm. Below 1024
       every record would be truncated into invalid JSON.
-    extraContext:
-      accessLog:
-        maxLineBytes: 64
+    extraContext: {accessLog: {maxLineBytes: 64}}
     fixtures: {}
     assertions:
       - type: contains
@@ -3929,15 +3779,10 @@ validationTests:
     description: >-
       Whitespace in a field expression would let the value continue the
       set-var line with a condition of its own.
-    extraContext:
-      accessLog:
-        fields:
-          evil: "str(a) if TRUE"
+    extraContext: {accessLog: {fields: {evil: "str(a) if TRUE"}}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "must not contain whitespace"
+      - {type: contains, target: rendering_error, pattern: "must not contain whitespace"}
 
   test-request-buffering-default-on:
     description: >-
@@ -3945,55 +3790,20 @@ validationTests:
       what keeps gRPC and every other streaming protocol out of it — none can
       declare a length upfront. The per-route map default carries the fleet-wide
       setting, so the rule needs no second form.
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            namespace: default
-            name: buffering
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: buffer.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: echo, port: { number: 80 } } }
+    fixtures: *fixturesBufferingBufferExample
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request wait-for-body time 10s if \{ req\.hdr\(content-length\) -m found \} \{ var\(txn\.backend_name\),map\(.*request-buffering\.map,on\) -m str on \}'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'option http-buffer-request'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'option http-buffer-request'}
 
   test-request-buffering-disabled-fleet-wide:
     description: >-
       Disabling it flips the map's default to off, leaving the same inert rule in
       place so a single route can still opt back in via the map.
-    extraContext:
-      requestBuffering:
-        enabled: false
-        waitTimeout: 2s
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            namespace: default
-            name: buffering
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: buffer.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: echo, port: { number: 80 } } }
+    extraContext: {requestBuffering: {enabled: false, waitTimeout: 2s}}
+    fixtures: *fixturesBufferingBufferExample
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -4004,29 +3814,10 @@ validationTests:
     description: >-
       An unparseable waitTimeout would land verbatim in the config; reject it at
       render time rather than at HAProxy's config check.
-    extraContext:
-      requestBuffering:
-        waitTimeout: "10 seconds"
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            namespace: default
-            name: buffering
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: buffer.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: echo, port: { number: 80 } } }
+    extraContext: {requestBuffering: {waitTimeout: "10 seconds"}}
+    fixtures: *fixturesBufferingBufferExample
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Expected an HAProxy duration"
+      - {type: contains, target: rendering_error, pattern: "Expected an HAProxy duration"}
 
   test-access-log-denied-by-body-size:
     description: >-
@@ -4073,11 +3864,7 @@ validationTests:
     # vector socket, so an unpinned test would assert whatever the current
     # sidecar default happens to be instead of the stdout path it exists to
     # cover. test-access-log-target-vector-socket covers the other default.
-    extraContext:
-      accessLog:
-        targets:
-          main:
-            address: stdout
+    extraContext: {accessLog: {targets: {main: {address: stdout}}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -4092,22 +3879,14 @@ validationTests:
         description: >-
           Replaced by an explicit target, so the access log no longer inherits
           whatever the global section happens to use.
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: '(?m)^ring '
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ring '}
 
   test-access-log-target-ring:
     description: >-
       A ring target emits its own buffered-TCP ring section and points the
       defaults log line at it, so access records leave the container instead of
       landing on stdout — while process messages still go to stdout.
-    extraContext:
-      accessLog:
-        targets:
-          main:
-            ring:
-              name: accesslog
-              address: 127.0.0.1:6514
+    extraContext: {accessLog: {targets: {main: {ring: {name: accesslog, address: 127.0.0.1:6514}}}}}
     fixtures: {}
     assertions:
       - type: haproxy_valid
@@ -4120,9 +3899,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^ring accesslog$.*?^  server accesslog 127\.0\.0\.1:6514 log-proto legacy$'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?ms)^ring accesslog$.*?^  size 65536$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^ring accesslog$.*?^  size 65536$'}
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^global$.*?^  log stdout len 16384 format raw local0 info$'
@@ -4140,13 +3917,8 @@ validationTests:
     extraContext:
       accessLog:
         targets:
-          main:
-            address: 10.0.0.5:514
-            format: rfc5424
-            facility: local6
-            level: debug
-          second:
-            address: stdout
+          main: {address: 10.0.0.5:514, format: rfc5424, facility: local6, level: debug}
+          second: {address: stdout}
     fixtures: {}
     assertions:
       - type: haproxy_valid
@@ -4207,41 +3979,22 @@ validationTests:
   test-access-log-target-rejects-address-and-ring:
     description: A target that sets both an address and a ring is ambiguous.
     extraContext:
-      accessLog:
-        targets:
-          main:
-            address: stdout
-            ring:
-              name: accesslog
-              address: 127.0.0.1:6514
+      accessLog: {targets: {main: {address: stdout, ring: {name: accesslog, address: 127.0.0.1:6514}}}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "sets both 'address' \\(stdout\\) and 'ring'"
+      - {type: contains, target: rendering_error, pattern: "sets both 'address' \\(stdout\\) and 'ring'"}
 
   test-access-log-target-rejects-bad-address:
     description: >-
       The address is spliced into a `log` directive, so it is charset-checked
       rather than trusted.
-    extraContext:
-      accessLog:
-        targets:
-          main:
-            address: "stdout local0 info\nfrontend evil"
+    extraContext: {accessLog: {targets: {main: {address: "stdout local0 info\nfrontend evil"}}}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Invalid accessLog\\.targets\\.main\\.address"
+      - {type: contains, target: rendering_error, pattern: "Invalid accessLog\\.targets\\.main\\.address"}
 
   test-access-log-target-rejects-unknown-field:
-    extraContext:
-      accessLog:
-        targets:
-          main:
-            address: stdout
-            formatt: raw
+    extraContext: {accessLog: {targets: {main: {address: stdout, formatt: raw}}}}
     fixtures: {}
     assertions:
       - type: contains
@@ -4254,33 +4007,20 @@ validationTests:
       or comment marker is what would let it inject a directive.
     extraContext:
       accessLog:
-        targets:
-          main:
-            ring:
-              name: accesslog
-              address: 127.0.0.1:6514
-              serverOptions: "ssl # sneaky"
+        targets: {main: {ring: {name: accesslog, address: 127.0.0.1:6514, serverOptions: "ssl # sneaky"}}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "must not contain control characters or '#'"
+      - {type: contains, target: rendering_error, pattern: "must not contain control characters or '#'"}
 
   test-access-log-target-rejects-dangling-ring-reference:
     description: >-
       A `log ring@<name>` with no such ring passes `haproxy -c` and then makes
       HAProxy refuse to start — validation green, data plane down. The render
       rejects it instead, because no gate downstream would catch it.
-    extraContext:
-      accessLog:
-        targets:
-          main:
-            address: ring@nowhere
+    extraContext: {accessLog: {targets: {main: {address: ring@nowhere}}}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "points at a ring no target declares"
+      - {type: contains, target: rendering_error, pattern: "points at a ring no target declares"}
 
   test-access-log-target-socket-path-may-end-in-digits:
     description: >-
@@ -4288,11 +4028,7 @@ validationTests:
       filename character, so `/var/run/log:99999` is a valid destination whose
       trailing digits are part of the name — the check applies to the host:port
       forms only.
-    extraContext:
-      accessLog:
-        targets:
-          main:
-            address: /var/run/log:99999
+    extraContext: {accessLog: {targets: {main: {address: /var/run/log:99999}}}}
     fixtures: {}
     assertions:
       - type: haproxy_valid
@@ -4306,33 +4042,19 @@ validationTests:
       65535 ("invalid port '99999'", measured on 3.0 and 3.4). Without this the
       value passes Helm and takes down the controller's config load instead of
       being rejected where the operator set it.
-    extraContext:
-      accessLog:
-        targets:
-          main:
-            address: 10.0.0.5:99999
+    extraContext: {accessLog: {targets: {main: {address: 10.0.0.5:99999}}}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "has port 99999, outside 1-65535"
+      - {type: contains, target: rendering_error, pattern: "has port 99999, outside 1-65535"}
 
   test-access-log-target-rejects-out-of-range-ring-port:
     description: >-
       Same bound on a ring server address, which reaches HAProxy through a
       different directive (`server` in the ring section, not `log`).
-    extraContext:
-      accessLog:
-        targets:
-          main:
-            ring:
-              name: shipper
-              address: 10.0.0.5:99999
+    extraContext: {accessLog: {targets: {main: {ring: {name: shipper, address: 10.0.0.5:99999}}}}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "has port 99999, outside 1-65535"
+      - {type: contains, target: rendering_error, pattern: "has port 99999, outside 1-65535"}
 
   test-access-log-target-rejects-ring-too-small-for-a-record:
     description: >-
@@ -4344,17 +4066,10 @@ validationTests:
     extraContext:
       accessLog:
         maxLineBytes: 16384
-        targets:
-          main:
-            ring:
-              name: tiny
-              address: 127.0.0.1:6514
-              size: 4096
+        targets: {main: {ring: {name: tiny, address: 127.0.0.1:6514, size: 4096}}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "too small for accessLog.maxLineBytes 16384"
+      - {type: contains, target: rendering_error, pattern: "too small for accessLog.maxLineBytes 16384"}
 
   test-access-log-suppress-off-by-default:
     description: >-
@@ -4363,16 +4078,11 @@ validationTests:
       OWN extraContext: validationTests also run as the controller's fatal load
       gate against the operator's config, so a test that assumed the default
       would crash-loop the controller of anyone who enabled suppression.
-    extraContext:
-      accessLog:
-        suppress:
-          successful: false
+    extraContext: {accessLog: {suppress: {successful: false}}}
     fixtures: {}
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'set-log-level silent'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-log-level silent'}
 
   test-access-log-suppress-successful:
     description: >-
@@ -4382,10 +4092,7 @@ validationTests:
       any other `http-request return` would never be evaluated. Measured on 3.0
       and 3.4 — with http-after-response 5/5 successes are dropped and a denial
       plus a 500 are kept; with http-response all seven are logged.
-    extraContext:
-      accessLog:
-        suppress:
-          successful: true
+    extraContext: {accessLog: {suppress: {successful: true}}}
     fixtures: {}
     assertions:
       - type: haproxy_valid
@@ -4401,10 +4108,7 @@ validationTests:
 
   test-access-log-suppress-rejects-unknown-field:
     description: A typo'd subkey would silently leave suppression off, so it is rejected.
-    extraContext:
-      accessLog:
-        suppress:
-          successfull: true
+    extraContext: {accessLog: {suppress: {successfull: true}}}
     fixtures: {}
     assertions:
       - type: contains
@@ -4413,15 +4117,10 @@ validationTests:
 
   test-access-log-suppress-rejects-non-boolean:
     description: A non-boolean would be read as false and silently disable suppression.
-    extraContext:
-      accessLog:
-        suppress:
-          successful: "maybe"
+    extraContext: {accessLog: {suppress: {successful: "maybe"}}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "accessLog.suppress.successful must be a boolean"
+      - {type: contains, target: rendering_error, pattern: "accessLog.suppress.successful must be a boolean"}
 
   test-access-log-target-rejects-duplicate-log-line:
     description: >-
@@ -4431,18 +4130,10 @@ validationTests:
       this is a ring target plus a second entry addressing that same ring.
     extraContext:
       accessLog:
-        targets:
-          main:
-            ring:
-              name: shipper
-              address: 127.0.0.1:6514
-          second:
-            address: ring@shipper
+        targets: {main: {ring: {name: shipper, address: 127.0.0.1:6514}}, second: {address: ring@shipper}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "would be logged twice"
+      - {type: contains, target: rendering_error, pattern: "would be logged twice"}
 
   test-access-log-targets-fan-out-to-one-address-with-distinct-settings:
     description: >-
@@ -4450,13 +4141,7 @@ validationTests:
       so two targets sharing an address but differing in facility are real fan-out
       and stay allowed.
     extraContext:
-      accessLog:
-        targets:
-          main:
-            address: stdout
-          second:
-            address: stdout
-            facility: local1
+      accessLog: {targets: {main: {address: stdout}, second: {address: stdout, facility: local1}}}
     fixtures: {}
     assertions:
       - type: haproxy_valid
@@ -4474,14 +4159,10 @@ validationTests:
       silently get the opposite of what they asked for. An ABSENT key still takes
       the default. __replace__ is required: a plain {} deep-merges into the
       chart's own default target and the render would never see it empty.
-    extraContext:
-      accessLog:
-        targets: { __replace__: true }
+    extraContext: {accessLog: {targets: { __replace__: true }}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "accessLog\\.targets is empty"
+      - {type: contains, target: rendering_error, pattern: "accessLog\\.targets is empty"}
 
   test-access-log-target-rejects-duplicate-ring-name:
     description: >-
@@ -4491,31 +4172,18 @@ validationTests:
     extraContext:
       accessLog:
         targets:
-          main:
-            ring:
-              name: dup
-              address: 127.0.0.1:6514
-          second:
-            ring:
-              name: dup
-              address: 127.0.0.1:6515
+          main: {ring: {name: dup, address: 127.0.0.1:6514}}
+          second: {ring: {name: dup, address: 127.0.0.1:6515}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Two ring sections cannot share a name"
+      - {type: contains, target: rendering_error, pattern: "Two ring sections cannot share a name"}
 
   test-access-log-target-rejects-unusable-level:
     description: >-
       The level is a maximum-severity filter and access records are emitted at
       info, so `notice` and above silently drop every record while haproxy -c
       still returns 0. Measured: notice/warning/err each emitted zero records.
-    extraContext:
-      accessLog:
-        targets:
-          main:
-            address: stdout
-            level: notice
+    extraContext: {accessLog: {targets: {main: {address: stdout, level: notice}}}}
     fixtures: {}
     assertions:
       - type: contains
@@ -4527,18 +4195,10 @@ validationTests:
       HAProxy 3.4 rejects a UNIX ring server while 3.0 accepts it, so the chart
       refuses the form rather than rendering a config that works on some
       supported versions only.
-    extraContext:
-      accessLog:
-        targets:
-          main:
-            ring:
-              name: accesslog
-              address: unix@/var/run/log.sock
+    extraContext: {accessLog: {targets: {main: {ring: {name: accesslog, address: unix@/var/run/log.sock}}}}}
     fixtures: {}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "HAProxy 3.4 rejects a UNIX ring server"
+      - {type: contains, target: rendering_error, pattern: "HAProxy 3.4 rejects a UNIX ring server"}
 
   test-proxy-protocol-http-bind:
     description: >-
@@ -4547,18 +4207,12 @@ validationTests:
       accept-proxy drops connections that arrive without the header, so
       replacing the port instead of adding one would cut off direct,
       in-cluster and NodePort access.
-    extraContext:
-      proxyProtocol:
-        enabled: true
-        httpPort: 8081
-        httpsPort: 8444
+    extraContext: {proxyProtocol: {enabled: true, httpPort: 8081, httpsPort: 8444}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: trigger
-            namespace: default
+          metadata: {name: trigger, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -4567,16 +4221,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?ms)^frontend http-tcp$.*?^\s+bind \*:80$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^frontend http-tcp$.*?^\s+bind \*:80$'}
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^frontend http-tcp$.*?^\s+bind \*:8081 accept-proxy$'
@@ -4589,16 +4237,12 @@ validationTests:
       would otherwise fail this test and crash-loop on the load gate. The
       pattern is scoped to `bind *:<port> accept-proxy` because the h1/h2c
       loopback frontends always carry accept-proxy on their unix sockets.
-    extraContext:
-      proxyProtocol:
-        enabled: false
+    extraContext: {proxyProtocol: {enabled: false}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: trigger
-            namespace: default
+          metadata: {name: trigger, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -4607,30 +4251,18 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'bind \*:[0-9]+ accept-proxy'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'bind \*:[0-9]+ accept-proxy'}
 
   test-access-log-route-and-request-bytes-for-metrics:
     description: >-
       `route` and `bytes_in` are wanted by the per-request metrics, not only by
       tracing, so both render with tracing off.
     extraContext:
-      tracing:
-        enabled: false
-      vector:
-        requestMetrics:
-          enabled: true
-          pathLabel: true
-          metrics:
-            request_size: true
+      tracing: {enabled: false}
+      vector: {requestMetrics: {enabled: true, pathLabel: true, metrics: {request_size: true}}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -4647,55 +4279,31 @@ validationTests:
                       backend: { service: { name: echo, port: { number: 80 } } }
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(route\)\[var\(txn\.route\)\]'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(bytes_in:sint\)U'
+      - {type: contains, target: haproxy.cfg, pattern: '%\(route\)\[var\(txn\.route\)\]'}
+      - {type: contains, target: haproxy.cfg, pattern: '%\(bytes_in:sint\)U'}
       # The field is worthless without the lookup that fills it.
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'set-var\(txn\.route\) var\(txn\.host_match\)'
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.route\) var\(txn\.host_match\)'}
 
   test-access-log-route-and-request-bytes-absent-when-unused:
     description: >-
       With neither tracing nor the request metrics asking, the route cascade and
       %U are absent — four map lookups and a field on every record.
-    extraContext:
-      tracing:
-        enabled: false
-      vector:
-        requestMetrics:
-          enabled: false
+    extraContext: {tracing: {enabled: false}, vector: {requestMetrics: {enabled: false}}}
     fixtures: {}
     assertions:
       - type: haproxy_valid
       # Positive control: the log-format is still assembled, so the absences
       # below are about these two fields rather than a log-format that vanished.
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(term\)tsc'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: '%\(route\)'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: '%\(bytes_in:sint\)U'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'set-var\(txn\.route\)'
+      - {type: contains, target: haproxy.cfg, pattern: '%\(term\)tsc'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '%\(route\)'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '%\(bytes_in:sint\)U'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.route\)'}
 
   test-access-log-route-still-follows-tracing:
     description: >-
       Moving `route` out of the tracing block must not change what tracing alone
       produces; a span without http.route loses the attribute UIs group on.
-    extraContext:
-      tracing:
-        enabled: true
-      vector:
-        requestMetrics:
-          enabled: false
+    extraContext: {tracing: {enabled: true}, vector: {requestMetrics: {enabled: false}}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -4712,13 +4320,7 @@ validationTests:
                       backend: { service: { name: echo, port: { number: 80 } } }
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(route\)\[var\(txn\.route\)\]'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'set-var\(txn\.route\) var\(txn\.host_match\)'
+      - {type: contains, target: haproxy.cfg, pattern: '%\(route\)\[var\(txn\.route\)\]'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.route\) var\(txn\.host_match\)'}
       # request_size is off, so its field must not ride along with tracing.
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: '%\(bytes_in:sint\)U'
+      - {type: not_contains, target: haproxy.cfg, pattern: '%\(bytes_in:sint\)U'}

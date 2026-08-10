@@ -285,7 +285,6 @@ func TestServer_SetRegistry(t *testing.T) {
 	counter1 := NewCounter(registry1, "registry1_metric", "Metric from registry 1")
 	counter1.Add(42)
 
-	// Start server with registry1
 	server, cancel := startServer(t, registry1)
 	defer cancel()
 

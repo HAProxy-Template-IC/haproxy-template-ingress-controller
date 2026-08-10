@@ -11,9 +11,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: btls-service
+          metadata: {namespace: default, name: btls-service}
           spec:
             ports:
               - port: 443
@@ -33,16 +31,12 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: be-ca
+          metadata: {namespace: default, name: be-ca}
           data:
             ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: be-crt
+          metadata: {namespace: default, name: be-crt}
           type: kubernetes.io/tls
           data:
             tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
@@ -71,48 +65,26 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: btls-service
-                          port:
-                            number: 443
+                      backend: {service: {name: btls-service, port: {number: 443}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ssl verify required"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ca-file [^ ]*default-be-ca-backend-tls-ca\\.pem"
+      - {type: contains, target: haproxy.cfg, pattern: "ssl verify required"}
+      - {type: contains, target: haproxy.cfg, pattern: "ca-file [^ ]*default-be-ca-backend-tls-ca\\.pem"}
       # `crt` resolves against crt-base (the ssl dir), so the value MUST be the
       # bare filename. A ssl/-prefixed value doubles to ssl/ssl/<name> at
       # runtime and fails `haproxy -c` on a real deploy (regression pinned here:
       # offline validation writes the cert to whatever path the config names, so
       # only this exact-value assertion — not haproxy_valid — catches the double).
-      - type: contains
-        target: haproxy.cfg
-        pattern: " crt default-be-crt-backend-tls-client\\.pem"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "crt ssl/"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "sni str\\(upstream\\.internal\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "verifyhost upstream\\.internal"
+      - {type: contains, target: haproxy.cfg, pattern: " crt default-be-crt-backend-tls-client\\.pem"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "crt ssl/"}
+      - {type: contains, target: haproxy.cfg, pattern: "sni str\\(upstream\\.internal\\)"}
+      - {type: contains, target: haproxy.cfg, pattern: "verifyhost upstream\\.internal"}
       - type: contains
         target: haproxy.cfg
         pattern: "ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ciphersuites TLS_AES_128_GCM_SHA256"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ssl-min-ver TLSv1\\.2"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ssl-max-ver TLSv1\\.3"
+      - {type: contains, target: haproxy.cfg, pattern: "ciphersuites TLS_AES_128_GCM_SHA256"}
+      - {type: contains, target: haproxy.cfg, pattern: "ssl-min-ver TLSv1\\.2"}
+      - {type: contains, target: haproxy.cfg, pattern: "ssl-max-ver TLSv1\\.3"}
 
   test-haptic-backend-protocol-grpcs:
     description: backend-protocol grpcs enables TLS to the upstream and negotiates h2 (proto h2 + ssl).
@@ -120,9 +92,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: grpcs-service
+          metadata: {namespace: default, name: grpcs-service}
           spec:
             ports:
               - port: 443
@@ -155,19 +125,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: grpcs-service
-                          port:
-                            number: 443
+                      backend: {service: {name: grpcs-service, port: {number: 443}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "proto h2"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ssl verify none"
+      - {type: contains, target: haproxy.cfg, pattern: "proto h2"}
+      - {type: contains, target: haproxy.cfg, pattern: "ssl verify none"}
 
   test-haptic-backend-protocol-grpc-plaintext:
     description: backend-protocol grpc negotiates cleartext h2 (proto h2) without enabling TLS to the upstream.
@@ -188,27 +150,18 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "proto h2"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "ssl verify"
+      - {type: contains, target: haproxy.cfg, pattern: "proto h2"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "ssl verify"}
 
   test-haptic-backend-verify-without-ca-rejected:
     description: >-
       backend-verify on with no backend-ca-secret is a static misconfiguration —
       it cannot race the resource store — so admission still rejects it rather
       than silently downgrading to verify none.
-    extraContext:
-      renderMode: admission
+    extraContext: {renderMode: admission}
     fixtures:
       services:
         - apiVersion: v1
@@ -270,9 +223,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.denied_by\\) str\\(backend_tls_unavailable\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 503"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
 
   test-haptic-backend-ca-secret-present-still-verifies:
     description: >-
@@ -304,6 +255,4 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "ssl verify required ca-file"
+      - {type: contains, target: haproxy.cfg, pattern: "ssl verify required ca-file"}

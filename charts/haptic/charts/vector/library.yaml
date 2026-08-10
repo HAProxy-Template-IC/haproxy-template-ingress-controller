@@ -965,12 +965,8 @@ validationTests:
       # resolved at helm time, so a validationTest cannot switch them back on —
       # scripts/check-shipped-log-metrics.sh guards those. This pins the entry
       # that has no `requires` and would have been dropped just as silently.
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'name: denied_total'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'rate_limit_shared_unavailable'
+      - {type: contains, target: file:vector.yaml, pattern: 'name: denied_total'}
+      - {type: contains, target: file:vector.yaml, pattern: 'rate_limit_shared_unavailable'}
 
   test-vector-config-rendered:
     description: Vector config renders with the log socket, both scrape sources, and the exporter
@@ -984,8 +980,7 @@ validationTests:
         spoaHubMetricsPort: 9101
         dataDir: /var/lib/vector
     assertions:
-      - type: haproxy_valid
-        description: HAProxy config must still be valid with vector enabled
+      - {type: haproxy_valid, description: HAProxy config must still be valid with vector enabled}
       - type: contains
         target: file:vector.yaml
         pattern: 'mode: unix_datagram'
@@ -1034,8 +1029,7 @@ validationTests:
           - '^haproxy_(server|backend)_max_'
           - '^haproxy_backend_agg_'
     assertions:
-      - type: haproxy_valid
-        description: HAProxy config must still be valid
+      - {type: haproxy_valid, description: HAProxy config must still be valid}
       - type: contains
         target: file:vector.yaml
         pattern: 'type: filter'
@@ -1078,12 +1072,8 @@ validationTests:
       vector: { socketPath: /run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15, haproxyStatsPort: 0, spoaHubMetricsPort: 0, dataDir: /var/lib/vector, excludeMetrics: [] }
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^\s+spans:'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'uri: "http://tempo:4318/v1/traces"'
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^\s+spans:'}
+      - {type: contains, target: file:vector.yaml, pattern: 'uri: "http://tempo:4318/v1/traces"'}
       - type: contains
         target: file:vector.yaml
         pattern: '"key":"service\.namespace","value":\{"stringValue":"[^"]+"\}'
@@ -1138,15 +1128,11 @@ validationTests:
     # fail, and a failing validationTest fails the LOAD GATE and crash-loops the
     # controller.
     extraContext:
-      tracing:
-        otlp:
-          endpoint: ""
+      tracing: {otlp: {endpoint: ""}}
       vector: { socketPath: /run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15, haproxyStatsPort: 0, spoaHubMetricsPort: 0, dataDir: /var/lib/vector, excludeMetrics: [] }
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: file:vector.yaml
-        pattern: 'otlp_traces'
+      - {type: not_contains, target: file:vector.yaml, pattern: 'otlp_traces'}
       - type: not_contains
         target: file:vector.yaml
         pattern: '(?m)^\s+spans:'
@@ -1166,8 +1152,7 @@ validationTests:
         excludeMetrics: []
         omitEmptyLogFields: true
     assertions:
-      - type: haproxy_valid
-        description: HAProxy config must still be valid
+      - {type: haproxy_valid, description: HAProxy config must still be valid}
       - type: contains
         target: file:vector.yaml
         pattern: '(?m)^\s+log_drop_empty:'
@@ -1211,8 +1196,7 @@ validationTests:
         excludeMetrics: []
         omitEmptyLogFields: false
     assertions:
-      - type: haproxy_valid
-        description: HAProxy config must still be valid
+      - {type: haproxy_valid, description: HAProxy config must still be valid}
       - type: not_contains
         target: file:vector.yaml
         pattern: 'log_drop_empty'
@@ -1258,8 +1242,7 @@ validationTests:
         excludeMetricFamilies: []
         excludeMaintServerMetrics: true
     assertions:
-      - type: haproxy_valid
-        description: HAProxy config must still be valid
+      - {type: haproxy_valid, description: HAProxy config must still be valid}
       - type: contains
         target: file:vector.yaml
         # Anchored to the endpoint LINE and to the port, so a stray `?no-maint`
@@ -1292,8 +1275,7 @@ validationTests:
         excludeMetricFamilies: []
         excludeMaintServerMetrics: false
     assertions:
-      - type: haproxy_valid
-        description: HAProxy config must still be valid
+      - {type: haproxy_valid, description: HAProxy config must still be valid}
       - type: contains
         target: file:vector.yaml
         pattern: '(?m)^\s+- http://127\.0\.0\.1:8404/metrics$'
@@ -1318,8 +1300,7 @@ validationTests:
         dataDir: /var/lib/vector
         excludeMetrics: []
     assertions:
-      - type: haproxy_valid
-        description: HAProxy config must still be valid
+      - {type: haproxy_valid, description: HAProxy config must still be valid}
       # Named, not `type: filter`: the request-metrics pipeline uses filters for
       # its validity gates, and those are unrelated to exclusions.
       - type: not_contains
@@ -1385,8 +1366,7 @@ validationTests:
         spoaHubMetricsPort: 0
         dataDir: /var/lib/vector
     assertions:
-      - type: haproxy_valid
-        description: HAProxy config must be valid
+      - {type: haproxy_valid, description: HAProxy config must be valid}
       - type: not_contains
         target: file:vector.yaml
         pattern: 'spoa_hub_metrics'
@@ -1409,9 +1389,7 @@ validationTests:
         targets:
           # Same key the chart's own default uses, so this overrides it rather
           # than fanning out to a second identical target.
-          vector:
-            address: /run/vector/haproxy.sock
-            format: raw
+          vector: {address: /run/vector/haproxy.sock, format: raw}
     assertions:
       - type: haproxy_valid
         description: A plain-path log target must pass HAProxy's config check
@@ -1462,11 +1440,7 @@ validationTests:
   test-vector-socket-path-must-be-absolute:
     description: A relative socketPath is rejected at render time
     fixtures: {}
-    extraContext:
-      vector:
-        socketPath: run/vector/haproxy.sock
-        metricsPort: 9598
-        scrapeIntervalSecs: 15
+    extraContext: {vector: {socketPath: run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15}}
     assertions:
       - type: contains
         target: rendering_error
@@ -1531,11 +1505,7 @@ validationTests:
             values: ["HIT", "MISS", "STALE"]
             metric: cache_status_total
             tag: status
-          cacheAge:
-            enabled: true
-            field: cache_age
-            kind: numeric
-            metric: cache_age_seconds_total
+          cacheAge: {enabled: true, field: cache_age, kind: numeric, metric: cache_age_seconds_total}
           switchedOff:
             enabled: false
             field: never
@@ -1548,36 +1518,22 @@ validationTests:
       - type: contains
         target: file:vector.yaml
         pattern: 'parse_regex\(m, r''"cache": "\(\?P<v>HIT\|MISS\|STALE\)"''\)'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'name: cache_status_total'
+      - {type: contains, target: file:vector.yaml, pattern: 'name: cache_status_total'}
       # vector's own {{...}} interpolation must survive Scriggo, which shares the
       # delimiters — an evaluated tag renders empty and silently collapses every
       # value onto one series.
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'status: "\{\{haptic_metric_value\}\}"'
+      - {type: contains, target: file:vector.yaml, pattern: 'status: "\{\{haptic_metric_value\}\}"'}
       # numeric: no tag, incremented by the value itself.
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'name: cache_age_seconds_total'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'increment_by_value: true'
+      - {type: contains, target: file:vector.yaml, pattern: 'name: cache_age_seconds_total'}
+      - {type: contains, target: file:vector.yaml, pattern: 'increment_by_value: true'}
       - type: contains
         target: file:vector.yaml
         pattern: 'parse_regex\(m, r''"cache_age": "\(\?P<v>\[0-9\]\+\)"''\)'
       # Both reach the scrape endpoint, not just exist.
-      - type: contains
-        target: file:vector.yaml
-        pattern: '- cacheStatus_metric'
-      - type: contains
-        target: file:vector.yaml
-        pattern: '- cacheAge_metric'
+      - {type: contains, target: file:vector.yaml, pattern: '- cacheStatus_metric'}
+      - {type: contains, target: file:vector.yaml, pattern: '- cacheAge_metric'}
       # A disabled entry costs no per-record work at all.
-      - type: not_contains
-        target: file:vector.yaml
-        pattern: 'switchedOff'
+      - {type: not_contains, target: file:vector.yaml, pattern: 'switchedOff'}
       # Scoped: parse_json is legitimate in the span branch and named in this
       # block's own comment. Only a real call inside an extract is a defect.
       - type: not_contains
@@ -1601,13 +1557,7 @@ validationTests:
         spoaHubMetricsPort: 0
         dataDir: /var/lib/vector
         excludeMetrics: []
-        logMetrics:
-          __replace__: true
-          bad:
-            enabled: true
-            field: something
-            kind: enum
-            metric: bad_total
+        logMetrics: {__replace__: true, bad: {enabled: true, field: something, kind: enum, metric: bad_total}}
     assertions:
       - type: contains
         target: rendering_error
@@ -1624,8 +1574,7 @@ validationTests:
         sizeMetricsPort: 9599
         haproxyStatsPort: 8404
         excludeMetrics: []
-        logMetrics:
-          __replace__: true
+        logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true
           prefix: haptic_ingress_controller
@@ -1636,10 +1585,7 @@ validationTests:
           hostLabel: true
           durationBuckets: [0.001, 0.005, 10, 30, 60]
           sizeBuckets: [100, 1000, 100000000]
-          cardinalityLimit:
-            enabled: true
-            valueLimit: 500
-            action: drop_tag
+          cardinalityLimit: {enabled: true, valueLimit: 500, action: drop_tag}
           metrics:
             __replace__: true
             requests: true
@@ -1652,68 +1598,38 @@ validationTests:
     assertions:
       - type: haproxy_valid
       # Every family, under the configured prefix.
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^        name: requests$'
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^        name: request_duration_seconds$'
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^        name: response_duration_seconds$'
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^        name: connect_duration_seconds$'
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^        name: header_duration_seconds$'
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^        name: request_size$'
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^        name: response_size$'
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^        name: requests$'}
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^        name: request_duration_seconds$'}
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^        name: response_duration_seconds$'}
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^        name: connect_duration_seconds$'}
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^        name: header_duration_seconds$'}
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^        name: request_size$'}
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^        name: response_size$'}
       - type: contains
         target: file:vector.yaml
         pattern: '(?m)^        namespace: haptic_ingress_controller$'
       # vector's own {{...}} interpolation shares Scriggo's delimiters. Evaluated
       # here, every tag would render empty and collapse the whole family onto one
       # series — silently, since the config would still load.
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'status: "\{\{rm_status\}\}"'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'term: "\{\{rm_term\}\}"'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'path: "\{\{rm_path\}\}"'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'host: "\{\{rm_host\}\}"'
+      - {type: contains, target: file:vector.yaml, pattern: 'status: "\{\{rm_status\}\}"'}
+      - {type: contains, target: file:vector.yaml, pattern: 'term: "\{\{rm_term\}\}"'}
+      - {type: contains, target: file:vector.yaml, pattern: 'path: "\{\{rm_path\}\}"'}
+      - {type: contains, target: file:vector.yaml, pattern: 'host: "\{\{rm_host\}\}"'}
       # Constants, resolved at render time rather than per record.
       - type: contains
         target: file:vector.yaml
         pattern: 'controller_class: "haproxy-haptic\.org/controller"'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'controller_namespace: "haptic"'
+      - {type: contains, target: file:vector.yaml, pattern: 'controller_namespace: "haptic"'}
       # Two exporters, each with its own domain's boundaries. A shared list would
       # give latency byte buckets and bytes sub-second ones.
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^    address: 0\.0\.0\.0:9598$'
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^    address: 0\.0\.0\.0:9599$'
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^    address: 0\.0\.0\.0:9598$'}
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^    address: 0\.0\.0\.0:9599$'}
       - type: contains
         target: file:vector.yaml
         pattern: '(?m)^    buckets: \[0\.001, 0\.005, 10, 30, 60\]$'
       # 1e8 must render as an integer: YAML 1.1 reads "1e+08" as a STRING, which
       # vector rejects at config load.
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^    buckets: \[100, 1000, 100000000\]$'
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^    buckets: \[100, 1000, 100000000\]$'}
       # The size families must not reach the primary sink, whose buckets are
       # seconds — scoped to the sizes sink block so it cannot pass vacuously.
       - type: contains
@@ -1732,8 +1648,7 @@ validationTests:
         sizeMetricsPort: 9599
         haproxyStatsPort: 8404
         excludeMetrics: []
-        logMetrics:
-          __replace__: true
+        logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true
           prefix: haptic_ingress_controller
@@ -1744,10 +1659,7 @@ validationTests:
           hostLabel: true
           durationBuckets: [0.001, 1]
           sizeBuckets: [100, 1000]
-          cardinalityLimit:
-            enabled: true
-            valueLimit: 500
-            action: drop_tag
+          cardinalityLimit: {enabled: true, valueLimit: 500, action: drop_tag}
           metrics:
             __replace__: true
             requests: true
@@ -1790,9 +1702,7 @@ validationTests:
         target: file:vector.yaml
         pattern: '(?s)inputs: \[request_metrics_base\][^\[]*name: response_duration_seconds'
       # The upstream total is Tc+Tr+Td expressed without a tracing-gated field.
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'up = ta - trq - tw'
+      - {type: contains, target: file:vector.yaml, pattern: 'up = ta - trq - tw'}
       # One JSON parse for all eleven fields, not one regex per field.
       - type: contains
         target: file:vector.yaml
@@ -1809,8 +1719,7 @@ validationTests:
         sizeMetricsPort: 9599
         haproxyStatsPort: 8404
         excludeMetrics: []
-        logMetrics:
-          __replace__: true
+        logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true
           prefix: nginx_ingress_controller
@@ -1821,58 +1730,37 @@ validationTests:
           hostLabel: false
           durationBuckets: [0.001, 1]
           sizeBuckets: [100, 1000]
-          cardinalityLimit:
-            enabled: false
-          metrics:
-            __replace__: true
-            requests: true
+          cardinalityLimit: {enabled: false}
+          metrics: {__replace__: true, requests: true}
     assertions:
       - type: haproxy_valid
       # The prefix is what makes these a drop-in for an ingress-nginx install.
       - type: contains
         target: file:vector.yaml
         pattern: '(?m)^        namespace: nginx_ingress_controller$'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'controller_class: "k8s\.io/ingress-nginx"'
+      - {type: contains, target: file:vector.yaml, pattern: 'controller_class: "k8s\.io/ingress-nginx"'}
       # Positive control: the labels that stay are still emitted, so the absence
       # assertions below are testing the opt-outs rather than a broken render.
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'status: "\{\{rm_status\}\}"'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'service: "\{\{rm_svc\}\}"'
+      - {type: contains, target: file:vector.yaml, pattern: 'status: "\{\{rm_status\}\}"'}
+      - {type: contains, target: file:vector.yaml, pattern: 'service: "\{\{rm_svc\}\}"'}
       - type: not_contains
         target: file:vector.yaml
         pattern: 'term: "\{\{rm_term\}\}"'
         description: terminationStateLabel false must drop the tag, not blank it
-      - type: not_contains
-        target: file:vector.yaml
-        pattern: 'path: "\{\{rm_path\}\}"'
-      - type: not_contains
-        target: file:vector.yaml
-        pattern: 'host: "\{\{rm_host\}\}"'
+      - {type: not_contains, target: file:vector.yaml, pattern: 'path: "\{\{rm_path\}\}"'}
+      - {type: not_contains, target: file:vector.yaml, pattern: 'host: "\{\{rm_host\}\}"'}
       # Only `requests` is on, so neither the size exporter nor the upstream
       # branches should exist at all.
       - type: not_contains
         target: file:vector.yaml
         pattern: 'metrics_sizes:'
         description: No size family enabled means no second exporter to scrape
-      - type: not_contains
-        target: file:vector.yaml
-        pattern: '(?m)^    address: 0\.0\.0\.0:9599$'
-      - type: not_contains
-        target: file:vector.yaml
-        pattern: 'request_metrics_connected:'
+      - {type: not_contains, target: file:vector.yaml, pattern: '(?m)^    address: 0\.0\.0\.0:9599$'}
+      - {type: not_contains, target: file:vector.yaml, pattern: 'request_metrics_connected:'}
       # cardinalityLimit off: the guard disappears and the sink reads the
       # log_to_metric transform directly.
-      - type: not_contains
-        target: file:vector.yaml
-        pattern: 'tag_cardinality_limit'
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^      - request_metrics_core$'
+      - {type: not_contains, target: file:vector.yaml, pattern: 'tag_cardinality_limit'}
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^      - request_metrics_core$'}
 
   test-vector-request-metrics-sink-wiring:
     description: >-
@@ -1886,8 +1774,7 @@ validationTests:
         haproxyStatsPort: 8404
         excludeMetrics:
           - '^haproxy_backend_max_'
-        logMetrics:
-          __replace__: true
+        logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true
           prefix: haptic_ingress_controller
@@ -1898,15 +1785,8 @@ validationTests:
           hostLabel: true
           durationBuckets: [0.001, 1]
           sizeBuckets: [100, 1000]
-          cardinalityLimit:
-            enabled: true
-            valueLimit: 250
-            action: drop_event
-          metrics:
-            __replace__: true
-            requests: true
-            connect_duration_seconds: true
-            response_size: true
+          cardinalityLimit: {enabled: true, valueLimit: 250, action: drop_event}
+          metrics: {__replace__: true, requests: true, connect_duration_seconds: true, response_size: true}
     assertions:
       - type: haproxy_valid
       # Guard on: it is the terminal stage, so the sink must read IT, never the
@@ -1914,12 +1794,8 @@ validationTests:
       - type: contains
         target: file:vector.yaml
         pattern: '(?s)request_metrics_guard:\s+type: tag_cardinality_limit\s+inputs: \[request_metrics_core, request_metrics_connect\]'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'value_limit: 250'
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'limit_exceeded_action: drop_event'
+      - {type: contains, target: file:vector.yaml, pattern: 'value_limit: 250'}
+      - {type: contains, target: file:vector.yaml, pattern: 'limit_exceeded_action: drop_event'}
       # With exclusions configured, both branches route through a filter — the
       # sizes branch included. Without its own filter an operator's exclusion
       # pattern would silently apply to every metric except the size families.
@@ -1950,25 +1826,15 @@ validationTests:
         sizeMetricsPort: 9599
         haproxyStatsPort: 8404
         excludeMetrics: []
-        logMetrics:
-          __replace__: true
-        requestMetrics:
-          enabled: false
+        logMetrics: {__replace__: true}
+        requestMetrics: {enabled: false}
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: file:vector.yaml
-        pattern: 'request_metrics_'
-      - type: not_contains
-        target: file:vector.yaml
-        pattern: '(?m)^    buckets:'
-      - type: not_contains
-        target: file:vector.yaml
-        pattern: 'metrics_sizes:'
+      - {type: not_contains, target: file:vector.yaml, pattern: 'request_metrics_'}
+      - {type: not_contains, target: file:vector.yaml, pattern: '(?m)^    buckets:'}
+      - {type: not_contains, target: file:vector.yaml, pattern: 'metrics_sizes:'}
       # Positive control: the rest of the pipeline is untouched.
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^    address: 0\.0\.0\.0:9598$'
+      - {type: contains, target: file:vector.yaml, pattern: '(?m)^    address: 0\.0\.0\.0:9598$'}
 
   test-vector-request-metrics-rejects-bad-prefix:
     description: >-
@@ -1982,16 +1848,13 @@ validationTests:
         sizeMetricsPort: 9599
         haproxyStatsPort: 8404
         excludeMetrics: []
-        logMetrics:
-          __replace__: true
+        logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true
           prefix: '9nope-'
           durationBuckets: [0.001, 1]
           sizeBuckets: [100, 1000]
-          metrics:
-            __replace__: true
-            requests: true
+          metrics: {__replace__: true, requests: true}
     assertions:
       - type: contains
         target: rendering_error
@@ -2015,9 +1878,7 @@ validationTests:
           prefix: haptic_ingress_controller
           durationBuckets: [0.0000000001, 0.0000000002, 1]
           sizeBuckets: [100, 1000]
-          metrics:
-            __replace__: true
-            request_duration_seconds: true
+          metrics: {__replace__: true, request_duration_seconds: true}
     assertions:
       - type: contains
         target: rendering_error
@@ -2035,17 +1896,12 @@ validationTests:
         sizeMetricsPort: 9599
         haproxyStatsPort: 8404
         excludeMetrics: []
-        logMetrics:
-          __replace__: true
+        logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true
           prefix: haptic_ingress_controller
           durationBuckets: [1, 0.5, 2]
           sizeBuckets: [100, 1000]
-          metrics:
-            __replace__: true
-            request_duration_seconds: true
+          metrics: {__replace__: true, request_duration_seconds: true}
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: 'durationBuckets must be strictly ascending'
+      - {type: contains, target: rendering_error, pattern: 'durationBuckets must be strictly ascending'}

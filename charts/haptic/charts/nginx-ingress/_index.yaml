@@ -82,8 +82,7 @@
 #   - modsecurity-snippet, enable-modsecurity
 
 # Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
-_helm_load:
-  enable: '{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'
+_helm_load: {enable: '{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'}
 
 # Library-declared extraContext defaults. These flow into the rendered config's
 # templatingSettings.extraContext as low-precedence defaults — an operator can

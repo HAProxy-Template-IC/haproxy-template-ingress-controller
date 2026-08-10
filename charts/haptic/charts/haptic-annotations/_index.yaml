@@ -68,8 +68,7 @@ templatingSettings:
     # rateLimit trees here and enriches them with release-derived names. These
     # defaults keep the annotation library independently renderable.
     cache:
-      haproxy:
-        hashBalanceFactor: 150
+      haproxy: {hashBalanceFactor: 150}
       varnish:
         enabled: false
         serviceName: haptic-varnish-cache
@@ -83,15 +82,8 @@ templatingSettings:
         image: varnish:9.0
         imagePullPolicy: IfNotPresent
         malloc: 256m
-        resources:
-          requests:
-            cpu: 100m
-            memory: 384Mi
-          limits:
-            memory: 384Mi
-        podDisruptionBudget:
-          enabled: true
-          maxUnavailable: 1
+        resources: {requests: {cpu: 100m, memory: 384Mi}, limits: {memory: 384Mi}}
+        podDisruptionBudget: {enabled: true, maxUnavailable: 1}
         autoscaling:
           enabled: false
           minReplicas: 2
@@ -112,12 +104,7 @@ templatingSettings:
           replicas: 3
           maxMemory: 96mb
           maxMemoryPolicy: volatile-ttl
-          resources:
-            requests:
-              cpu: 50m
-              memory: 128Mi
-            limits:
-              memory: 128Mi
+          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 128Mi}}
           sentinel:
             masterName: haptic-rate-limit
             port: 26379
@@ -125,53 +112,30 @@ templatingSettings:
             downAfterMilliseconds: 2000
             failoverTimeoutMilliseconds: 10000
             parallelSyncs: 1
-            resources:
-              requests:
-                cpu: 25m
-                memory: 64Mi
-              limits:
-                memory: 64Mi
-          podDisruptionBudget:
-            enabled: true
-            maxUnavailable: 1
+            resources: {requests: {cpu: 25m, memory: 64Mi}, limits: {memory: 64Mi}}
+          podDisruptionBudget: {enabled: true, maxUnavailable: 1}
     # Shared process-wide HAProxy buffer for request-body inspectors.
-    requestBodyInspection:
-      haproxyBuffer:
-        sizeBytes: "16384"
-        reservedBytes: "8192"
+    requestBodyInspection: {haproxyBuffer: {sizeBytes: "16384", reservedBytes: "8192"}}
     # API-gateway JSON request validation (SPOA api-gateway plugin).
     apiGateway:
       requestSchemaValidation:
         enabled: false
-        requestBody:
-          waitTimeout: "100ms"
-          defaultMaxBytes: "8192"
+        requestBody: {waitTimeout: "100ms", defaultMaxBytes: "8192"}
         defaultFailOpen: false
     # WAF dispatch, custom-rule resource bounds, and reusable policies.
     waf:
-      dispatch:
-        mode: opt-in
-        defaultEnforcement: deny
+      dispatch: {mode: opt-in, defaultEnforcement: deny}
       ingressPermissions:
         allowPolicySelection: true
         allowEnforcementOverride: false
         allowWafDisable: false
         allowCustomRules: false
         allowRawHAProxyConfig: false
-      customRules:
-        limits:
-          maxIngresses: "32"
-          maxBytesPerIngress: "16384"
+      customRules: {limits: {maxIngresses: "32", maxBytesPerIngress: "16384"}}
       policies:
         defaultPolicy: ""
-        requestBody:
-          waitTimeout: "100ms"
-          defaultMaxBytes: "8192"
-          maxBytes: "8192"
-        limits:
-          maxCount: "16"
-          maxSecLangBytes: "65536"
-          maxRuleExclusions: "256"
+        requestBody: {waitTimeout: "100ms", defaultMaxBytes: "8192", maxBytes: "8192"}
+        limits: {maxCount: "16", maxSecLangBytes: "65536", maxRuleExclusions: "256"}
         inline: {}
         configMapRefs: {}
         selfService:
@@ -179,9 +143,7 @@ templatingSettings:
           configMapName: waf-policies
           key: policies.yaml
           allowSecLang: false
-          limits:
-            maxPoliciesPerNamespace: "4"
-            maxTotalPolicies: "64"
+          limits: {maxPoliciesPerNamespace: "4", maxTotalPolicies: "64"}
 
 watchedResources:
   secrets:

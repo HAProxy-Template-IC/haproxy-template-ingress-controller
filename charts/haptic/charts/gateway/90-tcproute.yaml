@@ -31,6 +31,45 @@
 # roundrobin` mode-tcp backend, each Service in a disjoint slot range
 # (SRV<i>_) carrying its weight (weight 0 → no traffic). When several
 # TCPRoutes claim the same port, the oldest (creationTimestamp) wins.
+_fx:
+  endpointsEndpointsliceTcp: &endpointsEndpointsliceTcp
+    - apiVersion: discovery.k8s.io/v1
+      kind: EndpointSlice
+      metadata:
+        name: tcp-backend-abc
+        namespace: default
+        labels:
+          kubernetes.io/service-name: tcp-backend
+      addressType: IPv4
+      endpoints:
+        - addresses: ["10.0.0.42"]
+          targetRef: {kind: Pod, name: tcp-backend-pod-1}
+      ports:
+        - {port: 9100, protocol: TCP}
+  specTcp9100: &specTcp9100
+    gatewayClassName: haptic
+    listeners:
+      - name: tcp
+        protocol: TCP
+        port: 9100
+        allowedRoutes:
+          namespaces: {from: Same}
+          kinds:
+            - kind: TCPRoute
+  servicesServiceTcpBackend: &servicesServiceTcpBackend
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: tcp-backend, namespace: default}
+      spec:
+        ports:
+          - {port: 9100, targetPort: 9100}
+  specGwTcpTcpBackend: &specGwTcpTcpBackend
+    parentRefs:
+      - name: gw-tcp
+    rules:
+      - backendRefs:
+          - {name: tcp-backend, port: 9100}
+
 templateSnippets:
   # util-gateway-tcproute-analysis
   #
@@ -425,91 +464,33 @@ validationTests:
   test-tcproute-basic-l4-forward:
     requires: [gateways, tcproutes]
     description: "Gateway API TCPRoute (L4): a Gateway listener with protocol TCP on port 9100 has a TCPRoute attached whose single backendRef points at a Service. The chart must emit a mode-tcp frontend bound to 9100 with default_backend to a mode-tcp backend carrying the Service's endpoint as a server line."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tcp
-            namespace: default
-            generation: 1
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: tcp
-                protocol: TCP
-                port: 9100
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                  kinds:
-                    - kind: TCPRoute
+          metadata: {name: gw-tcp, namespace: default, generation: 1}
+          spec: *specTcp9100
       tcproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TCPRoute
-          metadata:
-            name: tcp-app
-            namespace: default
-            generation: 1
-          spec:
-            parentRefs:
-              - name: gw-tcp
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 9100
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 9100
-                targetPort: 9100
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: tcp-backend-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: tcp-backend
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.42"]
-              targetRef:
-                kind: Pod
-                name: tcp-backend-pod-1
-          ports:
-            - port: 9100
-              protocol: TCP
+          metadata: {name: tcp-app, namespace: default, generation: 1}
+          spec: *specGwTcpTcpBackend
+      services: *servicesServiceTcpBackend
+      endpoints: *endpointsEndpointsliceTcp
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend gateway-tcp-port-9100$'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+bind \*:9100$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tcp-port-9100$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+bind \*:9100$'}
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^frontend gateway-tcp-port-9100$.*?^\s+mode tcp$.*?^\s+log-format "%\{\+json\}o '
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+default_backend gtw_tcp_default_tcp-app_0$'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^backend gtw_tcp_default_tcp-app_0$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+default_backend gtw_tcp_default_tcp-app_0$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend gtw_tcp_default_tcp-app_0$'}
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^backend gtw_tcp_default_tcp-app_0$.*?^\s+mode tcp$'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'server SRV_1 10\.0\.0\.42:9100'
+      - {type: contains, target: haproxy.cfg, pattern: 'server SRV_1 10\.0\.0\.42:9100'}
 
   test-tcproute-oldest-route-wins-port:
     requires: [gateways, tcproutes]
@@ -520,27 +501,13 @@ validationTests:
       List()-order first-claim would pick it; the sort must instead bind
       tcp-b-older. Mirrors the TCPRouteMultipleRoutesAttachment conformance
       test's traffic-binding assertion.
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tcp
-            namespace: default
-            generation: 1
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: tcp
-                protocol: TCP
-                port: 9100
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                  kinds:
-                    - kind: TCPRoute
+          metadata: {name: gw-tcp, namespace: default, generation: 1}
+          spec: *specTcp9100
       tcproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TCPRoute
@@ -549,13 +516,7 @@ validationTests:
             namespace: default
             generation: 1
             creationTimestamp: "2026-02-01T00:00:00Z"
-          spec:
-            parentRefs:
-              - name: gw-tcp
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 9100
+          spec: *specGwTcpTcpBackend
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TCPRoute
           metadata:
@@ -563,40 +524,9 @@ validationTests:
             namespace: default
             generation: 1
             creationTimestamp: "2026-01-01T00:00:00Z"
-          spec:
-            parentRefs:
-              - name: gw-tcp
-            rules:
-              - backendRefs:
-                  - name: tcp-backend
-                    port: 9100
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 9100
-                targetPort: 9100
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: tcp-backend-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: tcp-backend
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.42"]
-              targetRef:
-                kind: Pod
-                name: tcp-backend-pod-1
-          ports:
-            - port: 9100
-              protocol: TCP
+          spec: *specGwTcpTcpBackend
+      services: *servicesServiceTcpBackend
+      endpoints: *endpointsEndpointsliceTcp
     assertions:
       - type: haproxy_valid
       # The older route is bound as the port's default_backend.
@@ -604,9 +534,7 @@ validationTests:
         target: haproxy.cfg
         pattern: '(?m)^\s+default_backend gtw_tcp_default_tcp-b-older_0$'
       # The newer route is NOT bound to the port.
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'default_backend gtw_tcp_default_tcp-a-newer_0'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'default_backend gtw_tcp_default_tcp-a-newer_0'}
 
   test-tcproute-weighted-routing:
     requires: [gateways, tcproutes]
@@ -616,46 +544,25 @@ validationTests:
       a disjoint slot range (SRV0_/SRV1_/SRV2_) carrying its weight; a
       weight-0 backend is emitted with `weight 0` (no traffic). Mirrors the
       TCPRouteWeightedRouting conformance test.
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tcp
-            namespace: default
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: tcp
-                protocol: TCP
-                port: 9100
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                  kinds:
-                    - kind: TCPRoute
+          metadata: {name: gw-tcp, namespace: default}
+          spec: *specTcp9100
       tcproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TCPRoute
-          metadata:
-            name: tcp-weighted
-            namespace: default
+          metadata: {name: tcp-weighted, namespace: default}
           spec:
             parentRefs:
               - name: gw-tcp
             rules:
               - backendRefs:
-                  - name: tcp-v1
-                    port: 9100
-                    weight: 70
-                  - name: tcp-v2
-                    port: 9100
-                    weight: 30
-                  - name: tcp-v3
-                    port: 9100
-                    weight: 0
+                  - {name: tcp-v1, port: 9100, weight: 70}
+                  - {name: tcp-v2, port: 9100, weight: 30}
+                  - {name: tcp-v3, port: 9100, weight: 0}
       services:
         - apiVersion: v1
           kind: Service
@@ -675,10 +582,7 @@ validationTests:
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
-          metadata:
-            name: tcp-v1-a
-            namespace: default
-            labels: { kubernetes.io/service-name: tcp-v1 }
+          metadata: {name: tcp-v1-a, namespace: default, labels: { kubernetes.io/service-name: tcp-v1 }}
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.1"]
@@ -686,10 +590,7 @@ validationTests:
           ports: [ { port: 9100, protocol: TCP } ]
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
-          metadata:
-            name: tcp-v2-a
-            namespace: default
-            labels: { kubernetes.io/service-name: tcp-v2 }
+          metadata: {name: tcp-v2-a, namespace: default, labels: { kubernetes.io/service-name: tcp-v2 }}
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.2"]
@@ -697,10 +598,7 @@ validationTests:
           ports: [ { port: 9100, protocol: TCP } ]
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
-          metadata:
-            name: tcp-v3-a
-            namespace: default
-            labels: { kubernetes.io/service-name: tcp-v3 }
+          metadata: {name: tcp-v3-a, namespace: default, labels: { kubernetes.io/service-name: tcp-v3 }}
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.3"]
@@ -708,9 +606,7 @@ validationTests:
           ports: [ { port: 9100, protocol: TCP } ]
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+balance roundrobin$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+balance roundrobin$'}
       # v1 weight 70 in slot range SRV0_
       - type: contains
         target: haproxy.cfg
@@ -727,16 +623,12 @@ validationTests:
   test-tcproute-multi-listener-single-backend:
     requires: [gateways, tcproutes]
     description: "A TCPRoute with a no-sectionName parentRef attaches to EVERY TCP listener on the Gateway (here ports 9100 and 9101). Both listener ports resolve to the same (route, rule) backend name gtw_tcp_default_tcp-multi_0. The chart must emit that backend exactly ONCE (a per-port frontend each, both forwarding to the shared backend) — emitting it per-port would declare a duplicate `backend` name, which HAProxy 3.3+ rejects as a fatal parse error."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tcp-multi
-            namespace: default
-            generation: 1
+          metadata: {name: gw-tcp-multi, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -744,70 +636,35 @@ validationTests:
                 protocol: TCP
                 port: 9100
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TCPRoute
               - name: tcp2
                 protocol: TCP
                 port: 9101
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TCPRoute
       tcproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TCPRoute
-          metadata:
-            name: tcp-multi
-            namespace: default
-            generation: 1
+          metadata: {name: tcp-multi, namespace: default, generation: 1}
           spec:
             parentRefs:
               - name: gw-tcp-multi
             rules:
               - backendRefs:
-                  - name: tcp-backend
-                    port: 9100
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
-          spec:
-            ports:
-              - port: 9100
-                targetPort: 9100
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: tcp-backend-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: tcp-backend
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.42"]
-              targetRef:
-                kind: Pod
-                name: tcp-backend-pod-1
-          ports:
-            - port: 9100
-              protocol: TCP
+                  - {name: tcp-backend, port: 9100}
+      services: *servicesServiceTcpBackend
+      endpoints: *endpointsEndpointsliceTcp
     assertions:
       # haproxy -c is the decisive check: a duplicate `backend` name is a
       # fatal parse error, so this fails if the dedup regresses.
       - type: haproxy_valid
       # Both listener ports get their own frontend...
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend gateway-tcp-port-9100$'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend gateway-tcp-port-9101$'
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tcp-port-9100$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tcp-port-9101$'}
       # ...forwarding to the one shared backend.
       - type: match_count
         target: haproxy.cfg
@@ -817,16 +674,12 @@ validationTests:
   test-tcproute-unattached-no-frontend:
     requires: [gateways, tcproutes]
     description: "A TCPRoute whose parentRef points at a Gateway with no matching TCP listener (wrong port) produces no tcp frontend/backend — attachment gating must hold."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tcp-mismatch
-            namespace: default
-            generation: 1
+          metadata: {name: gw-tcp-mismatch, namespace: default, generation: 1}
           spec:
             gatewayClassName: haptic
             listeners:
@@ -834,41 +687,28 @@ validationTests:
                 protocol: TCP
                 port: 9200
                 allowedRoutes:
-                  namespaces:
-                    from: Same
+                  namespaces: {from: Same}
                   kinds:
                     - kind: TCPRoute
       tcproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: TCPRoute
-          metadata:
-            name: tcp-app-mismatch
-            namespace: default
-            generation: 1
+          metadata: {name: tcp-app-mismatch, namespace: default, generation: 1}
           spec:
             parentRefs:
               # sectionName targets a listener name that does not exist
-              - name: gw-tcp-mismatch
-                sectionName: nonexistent
+              - {name: gw-tcp-mismatch, sectionName: nonexistent}
             rules:
               - backendRefs:
-                  - name: tcp-backend
-                    port: 9200
+                  - {name: tcp-backend, port: 9200}
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: tcp-backend
-            namespace: default
+          metadata: {name: tcp-backend, namespace: default}
           spec:
             ports:
-              - port: 9200
-                targetPort: 9200
+              - {port: 9200, targetPort: 9200}
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: '(?m)^frontend gateway-tcp-port-9200$'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: '(?m)^backend gtw_tcp_default_tcp-app-mismatch_0$'
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tcp-port-9200$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^backend gtw_tcp_default_tcp-app-mismatch_0$'}

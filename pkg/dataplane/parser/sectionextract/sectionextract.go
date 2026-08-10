@@ -376,7 +376,6 @@ func extractBackendsWithIndexes(p parser.Parser, conf *parserconfig.StructuredCo
 // parseBackendNestedStructuresWithIndexes parses all nested structures for a backend
 // and builds pointer indexes for servers and server templates.
 func parseBackendNestedStructuresWithIndexes(p parser.Parser, sectionName string, be *models.Backend, conf *parserconfig.StructuredConfig) {
-	// Parse ACLs.
 	be.ACLList, _ = configuration.ParseACLs(parser.Backends, sectionName, p)
 
 	// Parse servers and build pointer index for zero-copy iteration.
@@ -553,7 +552,6 @@ func extractUserlistsWithIndexes(p parser.Parser, conf *parserconfig.StructuredC
 		userlist := &models.Userlist{}
 		userlist.Name = sectionName
 
-		// Parse userlist base section.
 		if err := configuration.ParseSection(&userlist.UserlistBase, parser.UserList, sectionName, p); err != nil {
 			logSectionParseError("userlist", sectionName, err)
 			continue

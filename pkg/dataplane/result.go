@@ -233,7 +233,6 @@ func (r *SyncResult) String() string {
 		parts = append(parts, fmt.Sprintf("\n%s", r.Details.String()))
 	}
 
-	// Message
 	if r.Message != "" {
 		parts = append(parts, fmt.Sprintf("\nMessage: %s", r.Message))
 	}
@@ -261,7 +260,6 @@ func (d *DiffDetails) String() string {
 	parts = d.appendResourceChanges(parts, d.FrontendsAdded, d.FrontendsModified, d.FrontendsDeleted, "Frontends")
 	parts = d.appendResourceChanges(parts, d.BackendsAdded, d.BackendsModified, d.BackendsDeleted, "Backends")
 
-	// Map-based changes (servers)
 	parts = d.appendMapCountChanges(parts, d.ServersAdded, d.ServersModified, d.ServersDeleted, "Servers")
 
 	// Auxiliary file changes

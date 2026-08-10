@@ -50,7 +50,6 @@ func TestRegisterVariables(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	eventBuffer := NewEventBuffer(100, bus)
 
-	// Register all variables
 	RegisterVariables(registry, provider, eventBuffer)
 
 	// Verify all expected variables are registered by trying to get them
@@ -99,7 +98,6 @@ func TestRegisterVariables_UptimeIncreases(t *testing.T) {
 	// Wait a bit
 	time.Sleep(50 * time.Millisecond)
 
-	// Get uptime again
 	value2, err := registry.Get("uptime")
 	require.NoError(t, err)
 	data2 := value2.(map[string]any)

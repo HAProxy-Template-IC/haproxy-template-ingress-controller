@@ -3,8 +3,24 @@
 # ingress/gateway, before those libraries. A vendor library for a non-Ingress
 # CRD writes its own. See docs/adr/0003-annotation-compat-scaffold-level-2-5.md
 
-_helm_load:
-  enable: '{{ .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}'
+_fx:
+  annotationlibrariesHapticNginx: &annotationlibrariesHapticNginx
+    haptic: true
+    nginx: true
+    haproxyIngress: false
+    haproxytech: false
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: { service: { name: app, port: { number: 80 } } }
+  annotationlibrariesHapticNginx2: &annotationlibrariesHapticNginx2
+    haptic: true
+    nginx: false
+    haproxyIngress: false
+    haproxytech: true
+
+_helm_load: {enable: '{{ .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}'}
 
 templateSnippets:
 
@@ -625,11 +641,7 @@ validationTests:
       is order-dependent.
     extraContext:
       renderMode: admission
-      annotationLibraries:
-        haptic: true
-        nginx: true
-        haproxyIngress: false
-        haproxytech: false
+      annotationLibraries: *annotationlibrariesHapticNginx
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -644,34 +656,20 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: mixed-cors.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: app, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: contains
         target: rendering_error
         pattern: "configures the CORS feature through annotations from multiple families"
-      - type: contains
-        target: rendering_error
-        pattern: "haproxy-haptic.org/cors-enable"
-      - type: contains
-        target: rendering_error
-        pattern: "nginx.ingress.kubernetes.io/enable-cors"
-      - type: contains
-        target: rendering_error
-        pattern: "rejected even when the values agree"
+      - {type: contains, target: rendering_error, pattern: "haproxy-haptic.org/cors-enable"}
+      - {type: contains, target: rendering_error, pattern: "nginx.ingress.kubernetes.io/enable-cors"}
+      - {type: contains, target: rendering_error, pattern: "rejected even when the values agree"}
 
   test-annotation-family-conflict-different-features-allowed:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: Two families configuring DIFFERENT features on one Ingress (CORS vs backend-protocol) is allowed.
     extraContext:
-      annotationLibraries:
-        haptic: true
-        nginx: true
-        haproxyIngress: false
-        haproxytech: false
+      annotationLibraries: *annotationlibrariesHapticNginx
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -686,11 +684,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: diff-features.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: app, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
 
@@ -698,11 +692,7 @@ validationTests:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: Two families setting DIFFERENT timeout parameters (connect vs server) is allowed — timeouts are per-parameter, not one feature.
     extraContext:
-      annotationLibraries:
-        haptic: true
-        nginx: false
-        haproxyIngress: false
-        haproxytech: true
+      annotationLibraries: *annotationlibrariesHapticNginx2
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -717,11 +707,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: diff-timeouts.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: app, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
 
@@ -730,11 +716,7 @@ validationTests:
     description: Under the admission webhook, the SAME timeout parameter (server) from two families collides and is rejected.
     extraContext:
       renderMode: admission
-      annotationLibraries:
-        haptic: true
-        nginx: false
-        haproxyIngress: false
-        haproxytech: true
+      annotationLibraries: *annotationlibrariesHapticNginx2
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -749,11 +731,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: same-timeout.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: app, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: contains
         target: rendering_error
@@ -764,11 +742,7 @@ validationTests:
     description: The queue timeout (not just connect/server) is registered per-parameter, so the same timeout from two families collides and is rejected under the webhook.
     extraContext:
       renderMode: admission
-      annotationLibraries:
-        haptic: true
-        nginx: false
-        haproxyIngress: false
-        haproxytech: true
+      annotationLibraries: *annotationlibrariesHapticNginx2
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -783,11 +757,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: same-queue-timeout.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: app, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: contains
         target: rendering_error
@@ -797,11 +767,7 @@ validationTests:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: A disabled family's annotation is inert, so native CORS plus a disabled-nginx CORS annotation does NOT collide.
     extraContext:
-      annotationLibraries:
-        haptic: true
-        nginx: false
-        haproxyIngress: false
-        haproxytech: false
+      annotationLibraries: {haptic: true, nginx: false, haproxyIngress: false, haproxytech: false}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -816,11 +782,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: disabled-family.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: app, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
 
@@ -828,11 +790,7 @@ validationTests:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: Multiple CORS keys from ONE family on one Ingress is allowed (not a cross-family mix).
     extraContext:
-      annotationLibraries:
-        haptic: true
-        nginx: true
-        haproxyIngress: false
-        haproxytech: false
+      annotationLibraries: *annotationlibrariesHapticNginx
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -847,11 +805,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: single-family.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: app, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
 
@@ -861,18 +815,10 @@ validationTests:
     description: Under the admission webhook, an Ingress with both haproxy-haptic.org/waf-policy and haproxy-ingress.github.io/waf is rejected — the deny-vs-detect downgrade this guard prevents.
     extraContext:
       renderMode: admission
-      annotationLibraries:
-        haptic: true
-        nginx: false
-        haproxyIngress: true
-        haproxytech: false
+      annotationLibraries: {haptic: true, nginx: false, haproxyIngress: true, haproxytech: false}
       waf:
-        ingressPermissions:
-          allowPolicySelection: true
-        policies:
-          inline:
-            baseline:
-              enforcement: deny
+        ingressPermissions: {allowPolicySelection: true}
+        policies: {inline: {baseline: {enforcement: deny}}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -888,21 +834,13 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: mixed-waf.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: app, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: contains
         target: rendering_error
         pattern: "configures the WAF feature through annotations from multiple families"
-      - type: contains
-        target: rendering_error
-        pattern: "haproxy-haptic.org/waf-policy"
-      - type: contains
-        target: rendering_error
-        pattern: "haproxy-ingress.github.io/waf"
+      - {type: contains, target: rendering_error, pattern: "haproxy-haptic.org/waf-policy"}
+      - {type: contains, target: rendering_error, pattern: "haproxy-ingress.github.io/waf"}
 
   test-annotation-family-conflict-cors-reconcile-warns:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
@@ -913,11 +851,7 @@ validationTests:
       can't brick the whole config.
     extraContext:
       renderMode: reconcile
-      annotationLibraries:
-        haptic: true
-        nginx: true
-        haproxyIngress: false
-        haproxytech: false
+      annotationLibraries: *annotationlibrariesHapticNginx
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -932,11 +866,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: mixed-cors.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: app, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -953,11 +883,7 @@ validationTests:
       timeout conflict warns rather than failing, so a pre-existing conflict
       can't crash-loop the controller at startup.
     extraContext:
-      annotationLibraries:
-        haptic: true
-        nginx: false
-        haproxyIngress: false
-        haproxytech: true
+      annotationLibraries: *annotationlibrariesHapticNginx2
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -972,11 +898,7 @@ validationTests:
             ingressClassName: haproxy
             rules:
               - host: same-timeout.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend: { service: { name: app, port: { number: 80 } } }
+                http: *httpRoot
     assertions:
       # haproxy_valid is deliberately not asserted: with both families merged the
       # same timeout may be emitted twice — a separate concern from warn-vs-fail.

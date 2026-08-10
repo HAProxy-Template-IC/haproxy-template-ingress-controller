@@ -62,7 +62,6 @@ func (f *DefaultFactory) CreateGlobalParsers() *parser.Parsers {
 	parserMap := make(map[string]parser.ParserInterface)
 	sequence := []parser.Section{}
 
-	// Add CE parsers
 	addParser(parserMap, &sequence, &parsers.Daemon{})
 	addParser(parserMap, &sequence, &parsers.MasterWorker{})
 	addParser(parserMap, &sequence, &parsers.NbProc{})

@@ -55,7 +55,6 @@ func TestDriftPreventionMonitor_ResetDriftTimer(t *testing.T) {
 	bus := testutil.NewTestBus()
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
-	// Reset timer
 	monitor.resetDriftTimer()
 
 	monitor.mu.Lock()
@@ -74,7 +73,6 @@ func TestDriftPreventionMonitor_StopDriftTimer(t *testing.T) {
 	// Start timer first
 	monitor.resetDriftTimer()
 
-	// Stop timer
 	monitor.stopDriftTimer()
 
 	monitor.mu.Lock()
@@ -125,7 +123,6 @@ func TestDriftPreventionMonitor_HandleDeploymentCompleted(t *testing.T) {
 	// Small delay
 	time.Sleep(10 * time.Millisecond)
 
-	// Handle deployment completed
 	monitor.handleDeploymentCompleted()
 
 	monitor.mu.Lock()

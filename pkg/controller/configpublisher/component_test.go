@@ -40,27 +40,42 @@ import (
 // 3. Component receives ValidationCompletedEvent (HAProxy validation success).
 // 4. Component publishes runtime config CRs via Publisher.
 // 5. Component publishes ConfigPublishedEvent with correct metadata.
-func TestComponent_ConfigPublishedEvent(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+// testEnv is a config-publisher Component wired over fake clients. The SSA
+// list-map merge reactor makes per-pod status patches accumulate the way a real
+// apiserver applies them. Subscribe to bus before calling start.
+type testEnv struct {
+	ctx       context.Context
+	crdClient *crdclientfake.Clientset
+	bus       *busevents.EventBus
+	publisher *configpublisher.Publisher
+	start     func()
+}
 
-	// Setup
-	k8sClient := k8sfake.NewClientset()
+func newTestComponent(t *testing.T) testEnv {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
 	crdClient := crdclientfake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
-	eventBus := busevents.NewEventBus(100)
+	bus := busevents.NewEventBus(100)
+	publisher := configpublisher.NewWithListers(k8sfake.NewClientset(), crdClient, nil, testutil.NewTestLogger())
+	component := New(publisher, bus, testutil.NewTestLogger())
 
-	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
-	component := New(publisher, eventBus, testutil.NewTestLogger())
+	return testEnv{ctx, crdClient, bus, publisher, func() {
+		bus.Start()
+		go component.Start(ctx)
+	}}
+}
+
+func TestComponent_ConfigPublishedEvent(t *testing.T) {
+	env := newTestComponent(t)
 
 	// Subscribe to capture ConfigPublishedEvent
-	eventChan := eventBus.Subscribe("test-sub", 50)
+	eventChan := env.bus.Subscribe("test-sub", 50)
 
-	// Start event bus and component
-	eventBus.Start()
-	go component.Start(ctx)
+	env.start()
 
-	// Give component time to start
 	time.Sleep(100 * time.Millisecond)
 
 	// Create template config for ConfigValidatedEvent
@@ -73,7 +88,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	}
 
 	// Step 1: Publish ConfigValidatedEvent to cache template config
-	eventBus.Publish(events.NewConfigValidatedEvent(
+	env.bus.Publish(events.NewConfigValidatedEvent(
 		nil, // Config (not used by component)
 		templateConfig,
 		"v1",
@@ -84,7 +99,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	// Generate a correlation ID to link TemplateRenderedEvent and ValidationCompletedEvent
 	correlationID := t.Name()
 	testHAProxyConfig := "global\n  daemon\n\ndefaults\n  mode http\n"
-	eventBus.Publish(events.NewTemplateRenderedEvent(
+	env.bus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
 		nil,  // auxiliary files
 		nil,  // statusPatches
@@ -98,7 +113,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	))
 
 	// Step 3: Publish ValidationCompletedEvent to trigger publishing (with matching correlation ID)
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
+	env.bus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
 		nil,  // parsedConfig
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
@@ -129,9 +144,9 @@ eventLoop:
 	assert.Equal(t, 0, receivedEvent.SecretCount)
 
 	// Verify runtime config was created in Kubernetes
-	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+	runtimeConfig, err := env.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		Get(env.ctx, "test-config-haproxycfg", metav1.GetOptions{})
 
 	require.NoError(t, err)
 	assert.Equal(t, "test-config-haproxycfg", runtimeConfig.Name)
@@ -147,20 +162,10 @@ eventLoop:
 // published spec.Checksum — even though no validation-driven publish ran for it
 // in this test (mirroring a render coalesced away under churn).
 func TestComponent_DeployedConfigPublishRequest(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newTestComponent(t)
 
-	k8sClient := k8sfake.NewClientset()
-	crdClient := crdclientfake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-	eventBus := busevents.NewEventBus(100)
-
-	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
-	component := New(publisher, eventBus, testutil.NewTestLogger())
-
-	eventChan := eventBus.Subscribe("test-sub", 50)
-	eventBus.Start()
-	go component.Start(ctx)
+	eventChan := env.bus.Subscribe("test-sub", 50)
+	env.start()
 	time.Sleep(100 * time.Millisecond)
 
 	// Cache the template config — handleDeployedConfigPublishRequest drops the
@@ -168,12 +173,12 @@ func TestComponent_DeployedConfigPublishRequest(t *testing.T) {
 	templateConfig := &v1alpha1.HAProxyTemplateConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config", Namespace: "default", UID: "uid-deployed"},
 	}
-	eventBus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
+	env.bus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
 	time.Sleep(50 * time.Millisecond)
 
 	// A render the deployer applied but whose validation-driven publish never ran.
 	deployedConfig := "global\n  daemon\n\nbackend marker-be\n  server s1 1.2.3.4:80\n"
-	eventBus.Publish(events.NewDeployedConfigPublishRequest(
+	env.bus.Publish(events.NewDeployedConfigPublishRequest(
 		"test-config-haproxycfg", "default", deployedConfig, nil, "deployed-checksum-abc",
 	))
 
@@ -194,8 +199,8 @@ eventLoop:
 	require.NotNil(t, published)
 	assert.Equal(t, "test-config-haproxycfg", published.RuntimeConfigName)
 
-	cr, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	cr, err := env.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(env.ctx, "test-config-haproxycfg", metav1.GetOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, deployedConfig, cr.Spec.Content,
 		"the deployer's exact bytes must be published as spec.Content")
@@ -204,27 +209,15 @@ eventLoop:
 }
 
 func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newTestComponent(t)
 
-	// Setup
-	k8sClient := k8sfake.NewClientset()
-	crdClient := crdclientfake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-	eventBus := busevents.NewEventBus(100)
-
-	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
-	component := New(publisher, eventBus, testutil.NewTestLogger())
-
-	// Start event bus and component
-	eventBus.Start()
-	go component.Start(ctx)
+	env.start()
 
 	// Give component time to subscribe
 	time.Sleep(100 * time.Millisecond)
 
 	// First create a runtime config manually (since we're not testing the full event flow)
-	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
+	_, err := env.publisher.PublishConfig(env.ctx, &configpublisher.PublishRequest{
 		TemplateConfigName:      "test-config",
 		TemplateConfigNamespace: "default",
 		TemplateConfigUID:       "test-uid-123",
@@ -235,8 +228,7 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Now publish ConfigAppliedToPodEvent
-	eventBus.Publish(events.NewConfigAppliedToPodEvent(
+	env.bus.Publish(events.NewConfigAppliedToPodEvent(
 		"test-config-haproxycfg",
 		"default",
 		"haproxy-pod-1",
@@ -249,9 +241,9 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify deployment status was updated
-	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+	runtimeConfig, err := env.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		Get(env.ctx, "test-config-haproxycfg", metav1.GetOptions{})
 
 	require.NoError(t, err)
 	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
@@ -262,21 +254,9 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 }
 
 func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newTestComponent(t)
 
-	// Setup
-	k8sClient := k8sfake.NewClientset()
-	crdClient := crdclientfake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-	eventBus := busevents.NewEventBus(100)
-
-	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
-	component := New(publisher, eventBus, testutil.NewTestLogger())
-
-	// Start event bus and component
-	eventBus.Start()
-	go component.Start(ctx)
+	env.start()
 
 	// Give component time to subscribe
 	time.Sleep(100 * time.Millisecond)
@@ -289,11 +269,11 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 			UID:       "test-uid-123",
 		},
 	}
-	eventBus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
+	env.bus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
 	time.Sleep(50 * time.Millisecond)
 
 	// Create a runtime config manually
-	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
+	_, err := env.publisher.PublishConfig(env.ctx, &configpublisher.PublishRequest{
 		TemplateConfigName:      "test-config",
 		TemplateConfigNamespace: "default",
 		TemplateConfigUID:       "test-uid-123",
@@ -305,7 +285,7 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add a pod to deployment status
-	eventBus.Publish(events.NewConfigAppliedToPodEvent(
+	env.bus.Publish(events.NewConfigAppliedToPodEvent(
 		"test-config-haproxycfg",
 		"default",
 		"haproxy-pod-1",
@@ -318,43 +298,30 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify pod was added
-	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+	runtimeConfig, err := env.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		Get(env.ctx, "test-config-haproxycfg", metav1.GetOptions{})
 
 	require.NoError(t, err)
 	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
 
-	// Publish HAProxyPodTerminatedEvent
-	eventBus.Publish(events.NewHAProxyPodTerminatedEvent("haproxy-pod-1", "haproxy-ns"))
+	env.bus.Publish(events.NewHAProxyPodTerminatedEvent("haproxy-pod-1", "haproxy-ns"))
 
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify pod was removed from deployment status
-	runtimeConfig, err = crdClient.HaproxyTemplateICV1alpha1().
+	runtimeConfig, err = env.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		Get(env.ctx, "test-config-haproxycfg", metav1.GetOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, runtimeConfig.Status.DeployedToPods, 0, "pod should be removed from deployment status")
 }
 
 func TestComponent_MultiplePods(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newTestComponent(t)
 
-	// Setup
-	k8sClient := k8sfake.NewClientset()
-	crdClient := crdclientfake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-	eventBus := busevents.NewEventBus(100)
-
-	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
-	component := New(publisher, eventBus, testutil.NewTestLogger())
-
-	// Start event bus and component
-	eventBus.Start()
-	go component.Start(ctx)
+	env.start()
 
 	// Give component time to subscribe
 	time.Sleep(100 * time.Millisecond)
@@ -367,11 +334,11 @@ func TestComponent_MultiplePods(t *testing.T) {
 			UID:       "test-uid-123",
 		},
 	}
-	eventBus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
+	env.bus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
 	time.Sleep(50 * time.Millisecond)
 
 	// Create a runtime config manually
-	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
+	_, err := env.publisher.PublishConfig(env.ctx, &configpublisher.PublishRequest{
 		TemplateConfigName:      "test-config",
 		TemplateConfigNamespace: "default",
 		TemplateConfigUID:       "test-uid-123",
@@ -384,7 +351,7 @@ func TestComponent_MultiplePods(t *testing.T) {
 
 	// Add multiple pods
 	for i := 1; i <= 3; i++ {
-		eventBus.Publish(events.NewConfigAppliedToPodEvent(
+		env.bus.Publish(events.NewConfigAppliedToPodEvent(
 			"test-config-haproxycfg",
 			"default",
 			fmt.Sprintf("haproxy-pod-%d", i),
@@ -398,22 +365,22 @@ func TestComponent_MultiplePods(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify all pods were added
-	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+	runtimeConfig, err := env.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		Get(env.ctx, "test-config-haproxycfg", metav1.GetOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, runtimeConfig.Status.DeployedToPods, 3)
 
 	// Remove one pod
-	eventBus.Publish(events.NewHAProxyPodTerminatedEvent("haproxy-pod-2", "haproxy-ns"))
+	env.bus.Publish(events.NewHAProxyPodTerminatedEvent("haproxy-pod-2", "haproxy-ns"))
 
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify only one pod was removed
-	runtimeConfig, err = crdClient.HaproxyTemplateICV1alpha1().
+	runtimeConfig, err = env.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		Get(env.ctx, "test-config-haproxycfg", metav1.GetOptions{})
 
 	require.NoError(t, err)
 	assert.Len(t, runtimeConfig.Status.DeployedToPods, 2)
@@ -444,26 +411,13 @@ func TestComponent_Name(t *testing.T) {
 }
 
 func TestComponent_LostLeadership(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Setup
-	k8sClient := k8sfake.NewClientset()
-	crdClient := crdclientfake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-	eventBus := busevents.NewEventBus(100)
-
-	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
-	component := New(publisher, eventBus, testutil.NewTestLogger())
+	env := newTestComponent(t)
 
 	// Subscribe to capture events
-	eventChan := eventBus.Subscribe("test-sub", 50)
+	eventChan := env.bus.Subscribe("test-sub", 50)
 
-	// Start event bus and component
-	eventBus.Start()
-	go component.Start(ctx)
+	env.start()
 
-	// Give component time to start
 	time.Sleep(100 * time.Millisecond)
 
 	// Create template config for ConfigValidatedEvent
@@ -476,7 +430,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 	}
 
 	// Step 1: Publish ConfigValidatedEvent to cache template config
-	eventBus.Publish(events.NewConfigValidatedEvent(
+	env.bus.Publish(events.NewConfigValidatedEvent(
 		nil, // Config (not used by component)
 		templateConfig,
 		"v1",
@@ -487,7 +441,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 	// Generate a correlation ID to link TemplateRenderedEvent and ValidationCompletedEvent
 	correlationID := t.Name()
 	testHAProxyConfig := "global\n  daemon\n"
-	eventBus.Publish(events.NewTemplateRenderedEvent(
+	env.bus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
 		nil,
 		nil, // statusPatches
@@ -504,14 +458,14 @@ func TestComponent_LostLeadership(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Step 3: Publish LostLeadershipEvent to clear cached state
-	eventBus.Publish(events.NewLostLeadershipEvent("lost-leader-id", "test_reason"))
+	env.bus.Publish(events.NewLostLeadershipEvent("lost-leader-id", "test_reason"))
 
 	// Give component time to process event
 	time.Sleep(200 * time.Millisecond)
 
 	// Step 4: Now publish ValidationCompletedEvent - should NOT publish config
 	// because cached state was cleared (with matching correlation ID)
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
+	env.bus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
 		nil,  // parsedConfig
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
@@ -538,23 +492,10 @@ drainLoop:
 }
 
 func TestComponent_ValidationFailed(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newTestComponent(t)
 
-	// Setup
-	k8sClient := k8sfake.NewClientset()
-	crdClient := crdclientfake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-	eventBus := busevents.NewEventBus(100)
+	env.start()
 
-	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
-	component := New(publisher, eventBus, testutil.NewTestLogger())
-
-	// Start event bus and component
-	eventBus.Start()
-	go component.Start(ctx)
-
-	// Give component time to start
 	time.Sleep(100 * time.Millisecond)
 
 	// Create template config for ConfigValidatedEvent
@@ -567,7 +508,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	}
 
 	// Step 1: Publish ConfigValidatedEvent to cache template config
-	eventBus.Publish(events.NewConfigValidatedEvent(
+	env.bus.Publish(events.NewConfigValidatedEvent(
 		nil,
 		templateConfig,
 		"v1",
@@ -578,7 +519,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	// Generate a correlation ID to link TemplateRenderedEvent and ValidationFailedEvent
 	correlationID := t.Name()
 	testHAProxyConfig := "global\n  daemon\n  maxconn invalid\n"
-	eventBus.Publish(events.NewTemplateRenderedEvent(
+	env.bus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
 		nil,
 		nil, // statusPatches
@@ -595,7 +536,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Step 3: Publish ValidationFailedEvent (with matching correlation ID)
-	eventBus.Publish(events.NewValidationFailedEvent(
+	env.bus.Publish(events.NewValidationFailedEvent(
 		[]string{"maxconn must be numeric", "invalid configuration directive"},
 		100,
 		"",
@@ -606,9 +547,9 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify invalid config was published (for observability) - note the -invalid suffix
-	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+	runtimeConfig, err := env.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg-invalid", metav1.GetOptions{})
+		Get(env.ctx, "test-config-haproxycfg-invalid", metav1.GetOptions{})
 
 	require.NoError(t, err)
 	assert.Equal(t, "test-config-haproxycfg-invalid", runtimeConfig.Name)
@@ -618,29 +559,16 @@ func TestComponent_ValidationFailed(t *testing.T) {
 }
 
 func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newTestComponent(t)
 
-	// Setup
-	k8sClient := k8sfake.NewClientset()
-	crdClient := crdclientfake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-	eventBus := busevents.NewEventBus(100)
+	env.start()
 
-	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
-	component := New(publisher, eventBus, testutil.NewTestLogger())
-
-	// Start event bus and component
-	eventBus.Start()
-	go component.Start(ctx)
-
-	// Give component time to start
 	time.Sleep(100 * time.Millisecond)
 
 	// Publish ValidationFailedEvent without any prior cached state
 	// Even with a correlation ID, there's no matching TemplateRenderedEvent
 	correlationID := t.Name()
-	eventBus.Publish(events.NewValidationFailedEvent(
+	env.bus.Publish(events.NewValidationFailedEvent(
 		[]string{"some error"},
 		100,
 		"",
@@ -651,35 +579,23 @@ func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 
 	// Verify no config was created (should have been skipped due to missing cached state)
-	_, err := crdClient.HaproxyTemplateICV1alpha1().
+	_, err := env.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		Get(env.ctx, "test-config-haproxycfg", metav1.GetOptions{})
 
 	require.Error(t, err, "Should get error because no config should be created")
 }
 
 func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newTestComponent(t)
 
-	// Setup
-	k8sClient := k8sfake.NewClientset()
-	crdClient := crdclientfake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-	eventBus := busevents.NewEventBus(100)
-
-	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
-	component := New(publisher, eventBus, testutil.NewTestLogger())
-
-	// Start event bus and component
-	eventBus.Start()
-	go component.Start(ctx)
+	env.start()
 
 	// Give component time to subscribe
 	time.Sleep(100 * time.Millisecond)
 
 	// First create a runtime config manually
-	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
+	_, err := env.publisher.PublishConfig(env.ctx, &configpublisher.PublishRequest{
 		TemplateConfigName:      "test-config",
 		TemplateConfigNamespace: "default",
 		TemplateConfigUID:       "test-uid-123",
@@ -703,7 +619,7 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 		Error: "",
 	}
 
-	eventBus.Publish(events.NewConfigAppliedToPodEvent(
+	env.bus.Publish(events.NewConfigAppliedToPodEvent(
 		"test-config-haproxycfg",
 		"default",
 		"haproxy-pod-sync",
@@ -716,9 +632,9 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify deployment status was updated with sync metadata
-	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+	runtimeConfig, err := env.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		Get(env.ctx, "test-config-haproxycfg", metav1.GetOptions{})
 
 	require.NoError(t, err)
 	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
@@ -730,27 +646,15 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 
 // Note: No-op drift checks are filtered at the Deployer level and never publish ConfigAppliedToPodEvent.
 func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newTestComponent(t)
 
-	// Setup
-	k8sClient := k8sfake.NewClientset()
-	crdClient := crdclientfake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-	eventBus := busevents.NewEventBus(100)
-
-	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
-	component := New(publisher, eventBus, testutil.NewTestLogger())
-
-	// Start event bus and component
-	eventBus.Start()
-	go component.Start(ctx)
+	env.start()
 
 	// Give component time to subscribe
 	time.Sleep(100 * time.Millisecond)
 
 	// First create a runtime config manually
-	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
+	_, err := env.publisher.PublishConfig(env.ctx, &configpublisher.PublishRequest{
 		TemplateConfigName:      "test-config",
 		TemplateConfigNamespace: "default",
 		TemplateConfigUID:       "test-uid-drift",
@@ -762,7 +666,7 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 	require.NoError(t, err)
 
 	// Publish ConfigAppliedToPodEvent as drift check WITH operations (drift detected)
-	eventBus.Publish(events.NewConfigAppliedToPodEvent(
+	env.bus.Publish(events.NewConfigAppliedToPodEvent(
 		"test-config-haproxycfg",
 		"default",
 		"haproxy-pod-drift",
@@ -781,9 +685,9 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify deployment status WAS updated (drift with changes should update)
-	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+	runtimeConfig, err := env.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		Get(env.ctx, "test-config-haproxycfg", metav1.GetOptions{})
 
 	require.NoError(t, err)
 	require.Len(t, runtimeConfig.Status.DeployedToPods, 1, "drift check with changes should update status")
@@ -796,27 +700,15 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 // do not update performance metrics like SyncDuration. This prevents status updates when no actual
 
 func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newTestComponent(t)
 
-	// Setup
-	k8sClient := k8sfake.NewClientset()
-	crdClient := crdclientfake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-	eventBus := busevents.NewEventBus(100)
-
-	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
-	component := New(publisher, eventBus, testutil.NewTestLogger())
-
-	// Start event bus and component
-	eventBus.Start()
-	go component.Start(ctx)
+	env.start()
 
 	// Give component time to subscribe
 	time.Sleep(100 * time.Millisecond)
 
 	// First create a runtime config manually
-	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
+	_, err := env.publisher.PublishConfig(env.ctx, &configpublisher.PublishRequest{
 		TemplateConfigName:      "test-config",
 		TemplateConfigNamespace: "default",
 		TemplateConfigUID:       "test-uid-error",
@@ -837,7 +729,7 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 		Error: "connection refused to dataplane API",
 	}
 
-	eventBus.Publish(events.NewConfigAppliedToPodEvent(
+	env.bus.Publish(events.NewConfigAppliedToPodEvent(
 		"test-config-haproxycfg",
 		"default",
 		"haproxy-pod-error",
@@ -850,9 +742,9 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify deployment status was updated with error
-	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+	runtimeConfig, err := env.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		Get(env.ctx, "test-config-haproxycfg", metav1.GetOptions{})
 
 	require.NoError(t, err)
 	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)

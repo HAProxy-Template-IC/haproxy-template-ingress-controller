@@ -24,6 +24,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
+// configMapGVR is the resource these tests watch.
+var configMapGVR = schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
 func TestStoreType_String(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -300,11 +303,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 		{
 			name: "valid config",
 			config: SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:       configMapGVR,
 				Namespace: "default",
 				Name:      "my-config",
 				OnChange:  validCallback,
@@ -329,11 +328,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 		{
 			name: "missing Namespace",
 			config: SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:       configMapGVR,
 				Namespace: "",
 				Name:      "my-config",
 				OnChange:  validCallback,
@@ -344,11 +339,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 		{
 			name: "missing Name",
 			config: SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:       configMapGVR,
 				Namespace: "default",
 				Name:      "",
 				OnChange:  validCallback,
@@ -359,11 +350,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 		{
 			name: "nil OnChange callback",
 			config: SingleWatcherConfig{
-				GVR: schema.GroupVersionResource{
-					Group:    "",
-					Version:  "v1",
-					Resource: "configmaps",
-				},
+				GVR:       configMapGVR,
 				Namespace: "default",
 				Name:      "my-config",
 				OnChange:  nil,

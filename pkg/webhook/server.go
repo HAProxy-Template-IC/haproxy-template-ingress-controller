@@ -313,7 +313,6 @@ func (s *Server) handleValidation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the request
 	response := s.validate(review.Request)
 
 	// Create AdmissionReview response
@@ -373,7 +372,6 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 		}
 	}
 
-	// Extract namespace and name from object metadata
 	namespace, name := s.extractMetadata(obj)
 
 	// Build validation context
@@ -391,7 +389,6 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 	allowed, reason, warnings, err := validator(ctx)
 
 	if err != nil {
-		// Validation error (internal server error)
 		return deniedResponse(fmt.Sprintf("validation error: %v", err), http.StatusInternalServerError)
 	}
 

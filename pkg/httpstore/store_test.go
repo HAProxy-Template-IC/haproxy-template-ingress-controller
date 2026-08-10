@@ -210,7 +210,6 @@ func TestHTTPStore_RejectPending(t *testing.T) {
 	_, err = store.RefreshURL(ctx, server.URL)
 	require.NoError(t, err)
 
-	// Reject pending
 	rejected := store.RejectPending(server.URL)
 	assert.True(t, rejected)
 
@@ -254,7 +253,6 @@ func TestHTTPStore_GetPendingURLs(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Fetch both URLs
 	_, _ = store.Fetch(ctx, server1.URL, FetchOptions{Delay: time.Minute}, nil)
 	_, _ = store.Fetch(ctx, server2.URL, FetchOptions{Delay: time.Minute}, nil)
 
@@ -526,7 +524,6 @@ func TestHTTPStore_AccessResetsEvictionTime(t *testing.T) {
 	// Wait for the full maxAge from last access
 	time.Sleep(40 * time.Millisecond)
 
-	// Now it should be evicted
 	evictedURLs = store.EvictUnused()
 	assert.Equal(t, 1, len(evictedURLs))
 	assert.Equal(t, "http://example.com/test", evictedURLs[0])

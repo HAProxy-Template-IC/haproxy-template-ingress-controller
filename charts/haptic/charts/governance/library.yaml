@@ -3,8 +3,23 @@
 # target, so it applies to ingresses, httproutes or a custom CRD alike.
 # Rule shape and worked examples: docs/site/docs/operations/governance.md
 
-_helm_load:
-  enable: '{{ .Values.controller.templateLibraries.governance.enabled }}'
+_fx:
+  fixturesAnyExampleCom: &fixturesAnyExampleCom
+    ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata: { namespace: default, name: any, annotations: {} }
+        spec:
+          ingressClassName: haptic
+          rules:
+            - host: any.example.com
+              http:
+                paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+  governanceEnabledRules: &governanceEnabledRules
+    enabled: true
+    rules: {main: {enabled: true, resource: ingresses, satisfiedBy: tls}}
+
+_helm_load: {enable: '{{ .Values.controller.templateLibraries.governance.enabled }}'}
 
 # Governance rule shape and worked examples:
 # docs/site/docs/operations/governance.md (enforced by features-960-governance).
@@ -323,10 +338,7 @@ validationTests:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            namespace: default
-            name: over-limit
-            labels: { ratelimit: "9999" }
+          metadata: {namespace: default, name: over-limit, labels: { ratelimit: "9999" }}
           spec:
             ingressClassName: haptic
             rules:
@@ -429,13 +441,7 @@ validationTests:
       renderMode: admission
       admissionSubject: { store: ingresses, namespace: default, name: compliant-subject }
       ingressDefaultHTTPS: false
-      governance:
-        enabled: true
-        rules:
-          main:
-            enabled: true
-            resource: ingresses
-            satisfiedBy: tls
+      governance: *governanceEnabledRules
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -525,13 +531,7 @@ validationTests:
       renderMode: admission
       admissionSubject: { store: ingresses, namespace: default, name: no-tls }
       ingressDefaultHTTPS: false
-      governance:
-        enabled: true
-        rules:
-          main:
-            enabled: true
-            resource: ingresses
-            satisfiedBy: tls
+      governance: *governanceEnabledRules
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -553,13 +553,7 @@ validationTests:
       renderMode: admission
       admissionSubject: { store: ingresses, namespace: default, name: no-tls-but-default }
       ingressDefaultHTTPS: true
-      governance:
-        enabled: true
-        rules:
-          main:
-            enabled: true
-            resource: ingresses
-            satisfiedBy: tls
+      governance: *governanceEnabledRules
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -670,17 +664,7 @@ validationTests:
             path: metadata.labels['tier']
             required: true
             enforcement: block
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata: { namespace: default, name: any, annotations: {} }
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: any.example.com
-                http:
-                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    fixtures: *fixturesAnyExampleCom
     assertions:
       - { type: contains, target: rendering_error, pattern: 'governance\.rules\.main\.enforcement must be' }
 
@@ -696,17 +680,7 @@ validationTests:
             resource: ingresses
             path: spec.rules[*].host
             default: "example.com"
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata: { namespace: default, name: any, annotations: {} }
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: any.example.com
-                http:
-                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    fixtures: *fixturesAnyExampleCom
     assertions:
       - { type: contains, target: rendering_error, pattern: 'governance\.rules\.main\.default requires a concrete path' }
 
@@ -721,17 +695,7 @@ validationTests:
             resource: ingresses
             path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
             default: "100"
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata: { namespace: default, name: any, annotations: {} }
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: any.example.com
-                http:
-                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    fixtures: *fixturesAnyExampleCom
     assertions:
       - { type: contains, target: rendering_error, pattern: 'governance\.rules\.no-flag\.enabled is required and must be true or false' }
 

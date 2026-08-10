@@ -54,7 +54,6 @@ func buildMetricsFeature() types.Feature {
 			namespace := envconf.RandomName("test-metrics", 16)
 			t.Logf("Using test namespace: %s", namespace)
 
-			// Store namespace in context
 			ctx = StoreNamespaceInContext(ctx, namespace)
 
 			client, err := cfg.NewClient()
@@ -326,7 +325,6 @@ func parsePrometheusMetrics(metrics string) map[string]float64 {
 			metricName = metricName[:idx]
 		}
 
-		// Parse value (last part)
 		value, err := strconv.ParseFloat(parts[len(parts)-1], 64)
 		if err != nil {
 			continue

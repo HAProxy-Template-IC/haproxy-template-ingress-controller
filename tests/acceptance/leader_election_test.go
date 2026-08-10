@@ -57,7 +57,6 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 			namespace := envconf.RandomName("test-leader-2rep", 32)
 			t.Logf("Using test namespace: %s", namespace)
 
-			// Store namespace in context
 			ctx = StoreNamespaceInContext(ctx, namespace)
 
 			client, err := cfg.NewClient()
@@ -117,7 +116,6 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 			}
 			t.Log("Leader election completed")
 
-			// Get all controller pods
 			pods, err := GetAllControllerPods(ctx, client, namespace)
 			if err != nil {
 				t.Fatal("Failed to get controller pods:", err)
@@ -334,7 +332,6 @@ func buildLeaderElectionFailoverFeature() types.Feature {
 			// Use shared clientset (rate limiting disabled) to avoid exhaustion
 			clientset := Clientset()
 
-			// Wait for pods ready
 			if err := WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 2*time.Minute); err != nil {
 				t.Fatal("Controller pods did not become ready:", err)
 			}
@@ -475,7 +472,6 @@ func buildLeaderElectionDisabledModeFeature() types.Feature {
 				t.Fatal("Failed to create client:", err)
 			}
 
-			// Wait for pod ready
 			if err := WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 2*time.Minute); err != nil {
 				t.Fatal("Controller pod did not become ready:", err)
 			}

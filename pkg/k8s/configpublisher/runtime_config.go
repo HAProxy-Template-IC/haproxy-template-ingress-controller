@@ -181,7 +181,6 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 		return fmt.Errorf("getting runtime config: %w", err)
 	}
 
-	// Build new auxiliary file references
 	newAux := buildAuxiliaryFileReferences(runtimeConfig.Namespace, result)
 
 	// Skip UpdateStatus if nothing changed

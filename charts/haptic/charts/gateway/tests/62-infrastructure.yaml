@@ -1,47 +1,43 @@
+_fx:
+  controllerServicesService: &controllerServicesService
+    - apiVersion: v1
+      kind: Service
+      metadata:
+        name: haptic-haproxy
+        namespace: haptic-system
+        labels:
+          app.kubernetes.io/name: haptic
+          app.kubernetes.io/component: loadbalancer
+      spec: {type: LoadBalancer}
+      status:
+        loadBalancer:
+          ingress:
+            - ip: "203.0.113.10"
+  extracontextHapticSystem: &extracontextHapticSystem
+    controllerName: "haproxy-haptic.org/controller"
+    controllerNamespace: "haptic-system"
+    haproxyPodSelector:
+      app.kubernetes.io/name: haptic
+      app.kubernetes.io/component: haproxy
+  listenersHttp8080: &listenersHttp8080
+    - {name: http, port: 8080, protocol: HTTP}
+
 validationTests:
   test-gateway-infrastructure-propagation-labels-only:
     requires: [gateways]
     requiresFields: [gateways.spec.infrastructure]
     description: Gateway with spec.infrastructure.labels triggers marker Service emission and renders cleanly
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
-      controllerNamespace: "haptic-system"
-      haproxyPodSelector:
-        app.kubernetes.io/name: haptic
-        app.kubernetes.io/component: haproxy
+    extraContext: *extracontextHapticSystem
     fixtures:
-      controller_services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: haptic-haproxy
-            namespace: haptic-system
-            labels:
-              app.kubernetes.io/name: haptic
-              app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
-          status:
-            loadBalancer:
-              ingress:
-                - ip: "203.0.113.10"
+      controller_services: *controllerServicesService
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gateway-with-labels
-            namespace: gateway-conformance-infra
-            generation: 1
+          metadata: {name: gateway-with-labels, namespace: gateway-conformance-infra, generation: 1}
           spec:
             gatewayClassName: haproxy
-            infrastructure:
-              labels:
-                key2: value2
-                team: platform
-            listeners:
-              - name: http
-                port: 8080
-                protocol: HTTP
+            infrastructure: {labels: {key2: value2, team: platform}}
+            listeners: *listenersHttp8080
     assertions:
       - type: haproxy_valid
 
@@ -58,57 +54,28 @@ validationTests:
       - type: contains
         target: "k8s:gateway-infrastructure-propagation"
         pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-with-labels'
-      - type: contains
-        target: "k8s:gateway-infrastructure-propagation"
-        pattern: 'team: platform'
+      - {type: contains, target: "k8s:gateway-infrastructure-propagation", pattern: 'team: platform'}
 
-      - type: contains
-        target: "k8s:gateway-infrastructure-propagation"
-        pattern: 'key2: value2'
+      - {type: contains, target: "k8s:gateway-infrastructure-propagation", pattern: 'key2: value2'}
 
   test-gateway-infrastructure-propagation-annotations-only:
     requires: [gateways]
     requiresFields: [gateways.spec.infrastructure]
     description: Gateway with spec.infrastructure.annotations triggers marker Service emission and renders cleanly
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
-      controllerNamespace: "haptic-system"
-      haproxyPodSelector:
-        app.kubernetes.io/name: haptic
-        app.kubernetes.io/component: haproxy
+    extraContext: *extracontextHapticSystem
     fixtures:
-      controller_services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: haptic-haproxy
-            namespace: haptic-system
-            labels:
-              app.kubernetes.io/name: haptic
-              app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
-          status:
-            loadBalancer:
-              ingress:
-                - ip: "203.0.113.10"
+      controller_services: *controllerServicesService
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gateway-with-annotations
-            namespace: gateway-conformance-infra
-            generation: 1
+          metadata: {name: gateway-with-annotations, namespace: gateway-conformance-infra, generation: 1}
           spec:
             gatewayClassName: haproxy
             infrastructure:
               annotations:
                 key1: value1
                 example.com/managed-by: gateway-controller
-            listeners:
-              - name: http
-                port: 8080
-                protocol: HTTP
+            listeners: *listenersHttp8080
     assertions:
       - type: haproxy_valid
 
@@ -119,9 +86,7 @@ validationTests:
         target: "k8s:gateway-infrastructure-propagation"
         pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-with-annotations'
 
-      - type: contains
-        target: "k8s:gateway-infrastructure-propagation"
-        pattern: 'key1: value1'
+      - {type: contains, target: "k8s:gateway-infrastructure-propagation", pattern: 'key1: value1'}
 
       - type: contains
         target: "k8s:gateway-infrastructure-propagation"
@@ -131,12 +96,7 @@ validationTests:
     requires: [gateways]
     requiresFields: [gateways.spec.infrastructure]
     description: "Marker Service emission stays within the 63-char K8s name limit even when the natural `gw-<ns>-<name>` join exceeds it. Regression for the conformance fixture `gateway-with-infrastructure-metadata` in namespace `gateway-conformance-infra` (65 chars unbounded — the API server rejected it as `metadata.name: must be no more than 63 characters`)."
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
-      controllerNamespace: "haptic-system"
-      haproxyPodSelector:
-        app.kubernetes.io/name: haptic
-        app.kubernetes.io/component: haproxy
+    extraContext: *extracontextHapticSystem
     fixtures:
       controller_services: []
       gateways:
@@ -151,10 +111,7 @@ validationTests:
             infrastructure:
               labels:
                 must.propagate/label: "yes"
-            listeners:
-              - name: http
-                port: 8080
-                protocol: HTTP
+            listeners: *listenersHttp8080
     assertions:
       - type: haproxy_valid
 
@@ -171,37 +128,14 @@ validationTests:
     requires: [gateways]
     requiresFields: [gateways.spec.infrastructure]
     description: Gateway with both spec.infrastructure and spec.addresses propagates labels/annotations onto the static-addresses Service
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
-      controllerNamespace: "haptic-system"
-      haproxyPodSelector:
-        app.kubernetes.io/name: haptic
-        app.kubernetes.io/component: haproxy
+    extraContext: *extracontextHapticSystem
     fixtures:
-      controller_services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: haptic-haproxy
-            namespace: haptic-system
-            labels:
-              app.kubernetes.io/name: haptic
-              app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
-          status:
-            loadBalancer:
-              ingress:
-                - ip: "203.0.113.10"
+      controller_services: *controllerServicesService
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: gw-default-pinned-gw
-            namespace: haptic-system
-          spec:
-            type: LoadBalancer
-            loadBalancerIP: "192.0.2.10"
+          metadata: {name: gw-default-pinned-gw, namespace: haptic-system}
+          spec: {type: LoadBalancer, loadBalancerIP: "192.0.2.10"}
           status:
             loadBalancer:
               ingress:
@@ -209,74 +143,39 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: pinned-gw
-            namespace: default
-            generation: 1
+          metadata: {name: pinned-gw, namespace: default, generation: 1}
           spec:
             gatewayClassName: haproxy
             addresses:
-              - type: IPAddress
-                value: "192.0.2.10"
+              - {type: IPAddress, value: "192.0.2.10"}
             infrastructure:
-              labels:
-                team: platform
+              labels: {team: platform}
               annotations:
                 example.com/managed-by: gateway-controller
             listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
+              - {name: http, port: 80, protocol: HTTP}
     assertions:
       - type: haproxy_valid
 
       - type: contains
         target: "k8s:gateway-infrastructure-propagation"
         pattern: 'name: gw-default-pinned-gw'
-      - type: contains
-        target: "k8s:gateway-infrastructure-propagation"
-        pattern: 'namespace: default'
+      - {type: contains, target: "k8s:gateway-infrastructure-propagation", pattern: 'namespace: default'}
 
-      - type: contains
-        target: "k8s:gateway-static-addresses"
-        pattern: 'namespace: haptic-system'
+      - {type: contains, target: "k8s:gateway-static-addresses", pattern: 'namespace: haptic-system'}
   test-gateway-infrastructure-propagation-empty:
     requires: [gateways]
     description: Gateway without spec.infrastructure or spec.addresses skips marker Service emission and renders cleanly
-    extraContext:
-      controllerName: "haproxy-haptic.org/controller"
-      controllerNamespace: "haptic-system"
-      haproxyPodSelector:
-        app.kubernetes.io/name: haptic
-        app.kubernetes.io/component: haproxy
+    extraContext: *extracontextHapticSystem
     fixtures:
-      controller_services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: haptic-haproxy
-            namespace: haptic-system
-            labels:
-              app.kubernetes.io/name: haptic
-              app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
-          status:
-            loadBalancer:
-              ingress:
-                - ip: "203.0.113.10"
+      controller_services: *controllerServicesService
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: bare-gw
-            namespace: default
-            generation: 1
+          metadata: {name: bare-gw, namespace: default, generation: 1}
           spec:
             gatewayClassName: haproxy
             listeners:
-              - name: http
-                port: 80
-                protocol: HTTP
+              - {name: http, port: 80, protocol: HTTP}
     assertions:
       - type: haproxy_valid

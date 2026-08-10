@@ -12,23 +12,17 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsopts
-            namespace: default
+          metadata: {name: gw-tlsopts, namespace: default}
           spec:
             gatewayClassName: haptic
             listeners:
               - name: https
                 port: 443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+                allowedRoutes: {namespaces: {from: Same}}
                 tls:
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                      namespace: default
+                    - {kind: Secret, name: shared-tls, namespace: default}
                   options:
                     gateway.networking.k8s.io/tls-min-version: "1.2"
                     gateway.networking.k8s.io/tls-max-version: "1.3"
@@ -52,23 +46,17 @@ validationTests:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
-          metadata:
-            name: gw-tlsmin
-            namespace: default
+          metadata: {name: gw-tlsmin, namespace: default}
           spec:
             gatewayClassName: haptic
             listeners:
               - name: https
                 port: 443
                 protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
+                allowedRoutes: {namespaces: {from: Same}}
                 tls:
                   certificateRefs:
-                    - kind: Secret
-                      name: shared-tls
-                      namespace: default
+                    - {kind: Secret, name: shared-tls, namespace: default}
                   options:
                     gateway.networking.k8s.io/tls-min-version: "1.3"
     assertions:

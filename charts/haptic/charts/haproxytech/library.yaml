@@ -1,6 +1,19 @@
 # Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
-_helm_load:
-  enable: '{{ .Values.controller.templateLibraries.haproxytech.enabled }}'
+_fx:
+  specTestExampleComRoot: &specTestExampleComRoot
+    rules:
+      - host: test.example.com
+        http:
+          paths:
+            - path: /
+              pathType: Prefix
+              backend: {service: {name: echo, port: {number: 80}}}
+  statusReady: &statusReady
+    phase: Running
+    conditions:
+      - {type: Ready, status: "True"}
+
+_helm_load: {enable: '{{ .Values.controller.templateLibraries.haproxytech.enabled }}'}
 
 watchedResources:
   secrets:
@@ -764,19 +777,13 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: sethost-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: sethost-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
         target: map:reqhdr-host.map
         pattern: "default_sethost-ing_svc_sethost-svc_80 internal.svc.local"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "set-header Host 'internal.svc.local'"
+      - {type: not_contains, target: haproxy.cfg, pattern: "set-header Host 'internal.svc.local'"}
 
   test-auth-basic-cross-namespace:
     description: Basic authentication with secret in different namespace
@@ -784,12 +791,9 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: auth-system
-            name: shared-auth
+          metadata: {namespace: auth-system, name: shared-auth}
           type: Opaque
-          data:
-            admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+          data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -806,32 +810,19 @@ validationTests:
                   paths:
                     - path: /api
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: api-service
-                          port:
-                            number: 443
+                      backend: {service: {name: api-service, port: {number: 443}}}
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: production
-            name: api-service
+          metadata: {namespace: production, name: api-service}
           spec:
             ports:
-              - port: 443
-                targetPort: 8443
+              - {port: 443, targetPort: 8443}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "userlist auth_auth-system_shared-auth"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "user admin password"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http_auth\\(auth_auth-system_shared-auth\\)"
+      - {type: contains, target: haproxy.cfg, pattern: "userlist auth_auth-system_shared-auth"}
+      - {type: contains, target: haproxy.cfg, pattern: "user admin password"}
+      - {type: contains, target: haproxy.cfg, pattern: "http_auth\\(auth_auth-system_shared-auth\\)"}
 
   test-auth-custom-realm:
     description: Basic authentication with custom realm
@@ -839,12 +830,9 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: api-auth
+          metadata: {namespace: default, name: api-auth}
           type: Opaque
-          data:
-            apiuser: JDJ5JDA1JDJlV1VoQVU5Z0VlZ2FDZkY4Uk4xZHV1WUNrdlhoUGtpS1BDL3pkTFBvN2xNYlkxcWlUQXRP
+          data: {apiuser: JDJ5JDA1JDJlV1VoQVU5Z0VlZ2FDZkY4Uk4xZHV1WUNrdlhoUGtpS1BDL3pkTFBvN2xNYlkxcWlUQXRP}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -862,28 +850,18 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: api-service
-                          port:
-                            number: 8080
+                      backend: {service: {name: api-service, port: {number: 8080}}}
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: api-service
+          metadata: {namespace: default, name: api-service}
           spec:
             ports:
               - port: 8080
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request auth realm "API-Access"'
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'realm "Protected-Content"'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request auth realm "API-Access"'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'realm "Protected-Content"'}
 
   test-haproxytech-basic-auth-missing-secret:
     description: >-
@@ -897,9 +875,7 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: api-service
+          metadata: {namespace: default, name: api-service}
           spec:
             ports:
               - port: 8080
@@ -920,19 +896,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: api-service
-                          port:
-                            number: 8080
+                      backend: {service: {name: api-service, port: {number: 8080}}}
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "userlist auth_default_absent-secret"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "http_auth(auth_default_absent-secret)"
+      - {type: not_contains, target: haproxy.cfg, pattern: "userlist auth_default_absent-secret"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "http_auth(auth_default_absent-secret)"}
 
   test-auth-realm-with-spaces:
     description: Auth realm with spaces is normalized to dashes (matching upstream), not a render failure
@@ -940,12 +908,9 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: api-auth
+          metadata: {namespace: default, name: api-auth}
           type: Opaque
-          data:
-            user1: JDJ5JDA1JDJlV1VoQVU5Z0VlZ2FDZkY4Uk4xZHV1WUNrdlhoUGtpS1BDL3pkTFBvN2xNYlkxcWlUQXRP
+          data: {user1: JDJ5JDA1JDJlV1VoQVU5Z0VlZ2FDZkY4Uk4xZHV1WUNrdlhoUGtpS1BDL3pkTFBvN2xNYlkxcWlUQXRP}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -963,19 +928,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'realm "DeepL-demo"'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request auth realm "DeepL-demo"'
+      - {type: contains, target: haproxy.cfg, pattern: 'realm "DeepL-demo"'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request auth realm "DeepL-demo"'}
 
   test-auth-per-secret-userlists:
     description: Ingresses sharing the same secret share the same userlist (deduplication for performance)
@@ -983,12 +940,9 @@ validationTests:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: shared-credentials
+          metadata: {namespace: default, name: shared-credentials}
           type: Opaque
-          data:
-            admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+          data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1005,11 +959,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: app1-service
-                          port:
-                            number: 80
+                      backend: {service: {name: app1-service, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -1025,42 +975,26 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: app2-service
-                          port:
-                            number: 80
+                      backend: {service: {name: app2-service, port: {number: 80}}}
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: app1-service
+          metadata: {namespace: default, name: app1-service}
           spec:
             ports:
               - port: 80
         - apiVersion: v1
           kind: Service
-          metadata:
-            namespace: default
-            name: app2-service
+          metadata: {namespace: default, name: app2-service}
           spec:
             ports:
               - port: 80
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "userlist auth_default_shared-credentials"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "userlist default-app1-ingress"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "userlist default-app2-ingress"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http_auth\\(auth_default_shared-credentials\\)"
+      - {type: contains, target: haproxy.cfg, pattern: "userlist auth_default_shared-credentials"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "userlist default-app1-ingress"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "userlist default-app2-ingress"}
+      - {type: contains, target: haproxy.cfg, pattern: "http_auth\\(auth_default_shared-credentials\\)"}
 
   test-load-balance-hdr-parameter:
     description: Load balance with hdr(header-name) parameter for header-based routing
@@ -1080,16 +1014,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "balance hdr\\(x-session-id\\)"
+      - {type: contains, target: haproxy.cfg, pattern: "balance hdr\\(x-session-id\\)"}
 
   test-haproxytech-cors-regex-anchor:
     description: CORS non-wildcard origin regex-matches the request Origin and echoes it back (upstream model), and a regex $ anchor must not cause a parse error
@@ -1112,16 +1040,10 @@ validationTests:
                   paths:
                     - path: /api
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "var\\(txn\\.cors_origin\\) -m reg \\^https://"
+      - {type: contains, target: haproxy.cfg, pattern: "var\\(txn\\.cors_origin\\) -m reg \\^https://"}
       - type: contains
         target: haproxy.cfg
         pattern: "Access-Control-Allow-Origin '%\\[var\\(txn\\.cors_origin\\)\\]'"
@@ -1151,16 +1073,10 @@ validationTests:
                   paths:
                     - path: /api
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request return status 204 if .* METH_OPTIONS"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request return status 204 if .* METH_OPTIONS"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-after-response set-header Access-Control-Allow-Credentials 'true'"
@@ -1169,20 +1085,14 @@ validationTests:
     description: Password hash validation rejects non-matching hashes
     extraContext:
       annotationCompatibility:
-        basicAuth:
-          passwordHashValidation:
-            regex: "^\\$apr1\\$"
-            errorMessage: "Bcrypt hashes not allowed"
+        basicAuth: {passwordHashValidation: {regex: "^\\$apr1\\$", errorMessage: "Bcrypt hashes not allowed"}}
     fixtures:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: auth-secret
+          metadata: {namespace: default, name: auth-secret}
           type: Opaque
-          data:
-            admin: JDJ5JDEwJGJjcnlwdGhhc2g=
+          data: {admin: JDJ5JDEwJGJjcnlwdGhhc2g=}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1192,46 +1102,22 @@ validationTests:
             annotations:
               haproxy.org/auth-type: basic-auth
               haproxy.org/auth-secret: auth-secret
-          spec:
-            rules:
-              - host: test.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+          spec: *specTestExampleComRoot
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "Bcrypt hashes not allowed"
-      - type: contains
-        target: rendering_error
-        pattern: "admin"
-      - type: contains
-        target: rendering_error
-        pattern: "pattern"
+      - {type: contains, target: rendering_error, pattern: "Bcrypt hashes not allowed"}
+      - {type: contains, target: rendering_error, pattern: "admin"}
+      - {type: contains, target: rendering_error, pattern: "pattern"}
 
   test-haproxytech-auth-password-hash-validation-allow:
     description: Password hash validation allows matching hashes
-    extraContext:
-      annotationCompatibility:
-        basicAuth:
-          passwordHashValidation:
-            regex: "^\\$2[ayb]\\$"
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^\\$2[ayb]\\$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
           kind: Secret
-          metadata:
-            namespace: default
-            name: auth-secret
+          metadata: {namespace: default, name: auth-secret}
           type: Opaque
-          data:
-            admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+          data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1241,52 +1127,23 @@ validationTests:
             annotations:
               haproxy.org/auth-type: basic-auth
               haproxy.org/auth-secret: auth-secret
-          spec:
-            rules:
-              - host: test.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+          spec: *specTestExampleComRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "user admin password"
+      - {type: contains, target: haproxy.cfg, pattern: "user admin password"}
 
   test-haproxytech-ssl-redirect-default-enabled:
     description: SSL redirect applies when annotation absent and ssl_redirect_default is "true"
-    extraContext:
-      ssl_redirect_default: "true"
+    extraContext: {ssl_redirect_default: "true"}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            namespace: default
-            name: no-annotation
-          spec:
-            rules:
-              - host: test.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+          metadata: {namespace: default, name: no-annotation}
+          spec: *specTestExampleComRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request redirect scheme https"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request redirect scheme https"}
 
   # Two DIFFERENT redirect codes on purpose. The rule block is emitted one
   # rule per code, and with a single code Go cannot reorder a one-element map,
@@ -1312,11 +1169,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -1332,11 +1185,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: match_order
@@ -1348,8 +1197,7 @@ validationTests:
 
   test-haproxytech-ssl-redirect-default-opt-out:
     description: SSL redirect does not apply when annotation is "false" even with default
-    extraContext:
-      ssl_redirect_default: "true"
+    extraContext: {ssl_redirect_default: "true"}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1359,23 +1207,10 @@ validationTests:
             name: opt-out
             annotations:
               haproxy.org/ssl-redirect: "false"
-          spec:
-            rules:
-              - host: test.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+          spec: *specTestExampleComRoot
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "http-request redirect scheme https"
+      - {type: not_contains, target: haproxy.cfg, pattern: "http-request redirect scheme https"}
 
   test-haproxytech-ssl-redirect-no-default:
     description: SSL redirect does not apply when annotation absent and no default
@@ -1383,38 +1218,20 @@ validationTests:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            namespace: default
-            name: no-annotation
-          spec:
-            rules:
-              - host: test.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+          metadata: {namespace: default, name: no-annotation}
+          spec: *specTestExampleComRoot
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "http-request redirect scheme https"
+      - {type: not_contains, target: haproxy.cfg, pattern: "http-request redirect scheme https"}
 
   test-haproxytech-ssl-redirect-many-hosts:
     description: SSL redirect works with many hosts using map-based matching
-    extraContext:
-      ssl_redirect_default: "true"
+    extraContext: {ssl_redirect_default: "true"}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            namespace: default
-            name: many-hosts
+          metadata: {namespace: default, name: many-hosts}
           spec:
             rules:
               - host: host01.example.com
@@ -1442,9 +1259,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect scheme https code 302 if.*map_str.*ssl-redirect-302\\.map.*-m found"
-      - type: contains
-        target: map:ssl-redirect-302.map
-        pattern: "host01\\.example\\.com 1"
+      - {type: contains, target: map:ssl-redirect-302.map, pattern: "host01\\.example\\.com 1"}
 
   test-haproxytech-rate-limit-whitelist:
     description: >-
@@ -1469,11 +1284,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1504,19 +1315,13 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: "http-request deny deny_status 403 if \\{ sc_http_req_rate\\(0\\) gt 10 \\}"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "gt 10 \\} !\\{ src"
+      - {type: not_contains, target: haproxy.cfg, pattern: "gt 10 \\} !\\{ src"}
 
   test-haproxytech-access-control-allow-list:
     description: >-
@@ -1538,11 +1343,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1569,11 +1370,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1601,11 +1398,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1634,16 +1427,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:ssl-redirect-port-302.map
-        pattern: "secure.example.com 8443"
+      - {type: contains, target: map:ssl-redirect-port-302.map, pattern: "secure.example.com 8443"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect location https://%\\[hdr\\(host\\),field\\(1,:\\)\\]:%\\[var\\(txn.host\\),map\\([^)]*ssl-redirect-port-302\\.map\\)\\]%\\[capture.req.uri\\] code 302 if !\\{ ssl_fc \\}"
@@ -1655,15 +1442,12 @@ validationTests:
     description: >-
       Without haproxy.org/ssl-redirect-port the default scheme redirect path is used
       (regression guard for the port variant).
-    extraContext:
-      ssl_redirect_default: "true"
+    extraContext: {ssl_redirect_default: "true"}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            namespace: default
-            name: ssl-redirect-no-port-ingress
+          metadata: {namespace: default, name: ssl-redirect-no-port-ingress}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1672,19 +1456,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request redirect scheme https code 302 if"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "redirect location https://%\\[hdr\\(host\\)"
+      - {type: contains, target: haproxy.cfg, pattern: "http-request redirect scheme https code 302 if"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "redirect location https://%\\[hdr\\(host\\)"}
 
   test-pod-maxconn-basic:
     description: pod-maxconn divides total by ready HAProxy pod count with power-of-2 quantization
@@ -1704,40 +1480,20 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
       haproxy-pods:
         - apiVersion: v1
           kind: Pod
-          metadata:
-            namespace: haptic-system
-            name: haproxy-pod-1
-          status:
-            phase: Running
-            conditions:
-              - type: Ready
-                status: "True"
+          metadata: {namespace: haptic-system, name: haproxy-pod-1}
+          status: *statusReady
         - apiVersion: v1
           kind: Pod
-          metadata:
-            namespace: haptic-system
-            name: haproxy-pod-2
-          status:
-            phase: Running
-            conditions:
-              - type: Ready
-                status: "True"
+          metadata: {namespace: haptic-system, name: haproxy-pod-2}
+          status: *statusReady
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "maxconn 50"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "pod-maxconn: 100 total / 2 ready pods"
+      - {type: contains, target: haproxy.cfg, pattern: "maxconn 50"}
+      - {type: contains, target: haproxy.cfg, pattern: "pod-maxconn: 100 total / 2 ready pods"}
 
   test-pod-maxconn-only-counts-ready-pods:
     description: pod-maxconn ignores non-Running and non-Ready pods
@@ -1757,60 +1513,32 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
       haproxy-pods:
         - apiVersion: v1
           kind: Pod
-          metadata:
-            namespace: haptic-system
-            name: haproxy-pod-1
+          metadata: {namespace: haptic-system, name: haproxy-pod-1}
+          status: *statusReady
+        - apiVersion: v1
+          kind: Pod
+          metadata: {namespace: haptic-system, name: haproxy-pod-2}
+          status: *statusReady
+        - apiVersion: v1
+          kind: Pod
+          metadata: {namespace: haptic-system, name: haproxy-pod-3-pending}
+          status: {phase: Pending}
+        - apiVersion: v1
+          kind: Pod
+          metadata: {namespace: haptic-system, name: haproxy-pod-4-not-ready}
           status:
             phase: Running
             conditions:
-              - type: Ready
-                status: "True"
-        - apiVersion: v1
-          kind: Pod
-          metadata:
-            namespace: haptic-system
-            name: haproxy-pod-2
-          status:
-            phase: Running
-            conditions:
-              - type: Ready
-                status: "True"
-        - apiVersion: v1
-          kind: Pod
-          metadata:
-            namespace: haptic-system
-            name: haproxy-pod-3-pending
-          status:
-            phase: Pending
-        - apiVersion: v1
-          kind: Pod
-          metadata:
-            namespace: haptic-system
-            name: haproxy-pod-4-not-ready
-          status:
-            phase: Running
-            conditions:
-              - type: Ready
-                status: "False"
+              - {type: Ready, status: "False"}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "maxconn 50"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "2 ready pods"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "4 ready pods"
+      - {type: contains, target: haproxy.cfg, pattern: "maxconn 50"}
+      - {type: contains, target: haproxy.cfg, pattern: "2 ready pods"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "4 ready pods"}
 
   test-haproxytech-ssl-passthrough-named-port:
     description: haproxy.org/ssl-passthrough annotation must resolve a backend referenced by port.name to the correct numeric pod port (mirrors the original unifi-controller bug scenario)
@@ -1818,14 +1546,10 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: unifi
-            namespace: default
+          metadata: {name: unifi, namespace: default}
           spec:
             ports:
-              - name: https-gui
-                port: 8443
-                targetPort: https-gui
+              - {name: https-gui, port: 8443, targetPort: https-gui}
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -1837,13 +1561,9 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.42"]
-              targetRef:
-                kind: Pod
-                name: unifi-0
+              targetRef: {kind: Pod, name: unifi-0}
           ports:
-            - name: https-gui
-              port: 8443
-              protocol: TCP
+            - {name: https-gui, port: 8443, protocol: TCP}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1860,19 +1580,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: unifi
-                          port:
-                            name: https-gui
+                      backend: {service: {name: unifi, port: {name: https-gui}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10.0.0.42:8443 "
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10.0.0.42:80 "
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10.0.0.42:8443 "}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_1 10.0.0.42:80 "}
 
   test-haproxytech-check-disable:
     description: haproxy.org/check=false disables health checks via default-server no-check
@@ -1893,16 +1605,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "default-server no-check"
+      - {type: contains, target: haproxy.cfg, pattern: "default-server no-check"}
       # Scoped to this test's own backend. A bare `default-server check` matches
       # any OTHER backend that legitimately health-checks — the Varnish cache
       # tier does — which made this assertion true only while the cache tier
@@ -1930,16 +1636,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "default-server check inter 10s"
+      - {type: contains, target: haproxy.cfg, pattern: "default-server check inter 10s"}
 
   test-haproxytech-scale-server-slots:
     description: haproxy.org/scale-server-slots overrides the pre-allocated slot count
@@ -1948,8 +1648,7 @@ validationTests:
     # absence assertion depends on: any other backend with more slots — the
     # Varnish cache tier has them — would otherwise falsify it, and the load
     # gate turns that into a crash-loop.
-    extraContext:
-      cache: { varnish: { enabled: false } }
+    extraContext: {cache: { varnish: { enabled: false } }}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1967,19 +1666,11 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_5 "
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "server SRV_6 "
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_5 "}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_6 "}
 
 # Consumed by the playground's migration report and the generated tables in
 # docs/site/docs/migrating.md; scripts/check-migration-coverage.sh pins drift.

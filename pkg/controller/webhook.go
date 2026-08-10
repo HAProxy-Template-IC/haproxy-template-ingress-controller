@@ -332,7 +332,6 @@ func setupReconciliation(
 	storeProvider stores.StoreProvider,
 	logger *slog.Logger,
 ) (*reconciliationWiring, error) {
-	// Create all components
 	wiring, err := createReconciliationComponents(setup, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, currentAuxFiles, storeProvider, logger)
 	if err != nil {
 		return nil, err

@@ -1,3 +1,42 @@
+_fx:
+  servicesServiceSvcA: &servicesServiceSvcA
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: svc-a, namespace: team-a}
+      spec:
+        ports:
+          - {name: http, port: 80, targetPort: 8080}
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: svc-b, namespace: team-b}
+      spec:
+        ports:
+          - {name: http, port: 80, targetPort: 8080}
+  fixturesPlainPlainExampleCom: &fixturesPlainPlainExampleCom
+    ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata: {name: plain, namespace: default}
+        spec:
+          ingressClassName: haproxy
+          rules:
+            - host: plain.example.com
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend: {service: {name: echo, port: {number: 80}}}
+  specHttp8080: &specHttp8080
+    ports:
+      - {name: http, port: 8080, targetPort: 8080}
+  backendSvcA: &backendSvcA
+    service: {name: svc-a, port: {number: 80}}
+  backendSvcB: &backendSvcB
+    service: {name: svc-b, port: {number: 80}}
+  specPortsPort: &specPortsPort
+    ports:
+      - {port: 80, targetPort: 8080}
+
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.ingress.enabled }}'
   inject:
@@ -639,23 +678,15 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: api-svc
-            namespace: default
+          metadata: {name: api-svc, namespace: default}
           spec:
             ports:
-              - name: http
-                port: 80
-                targetPort: 8080
-              - name: admin
-                port: 81
-                targetPort: 8081
+              - {name: http, port: 80, targetPort: 8080}
+              - {name: admin, port: 81, targetPort: 8081}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: multi-port
-            namespace: default
+          metadata: {name: multi-port, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -664,35 +695,19 @@ validationTests:
                   paths:
                     - path: /api
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: api-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: api-svc, port: {number: 80}}}
                     - path: /admin
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: api-svc
-                          port:
-                            number: 81
+                      backend: {service: {name: api-svc, port: {number: 81}}}
                     - path: /app
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: api-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: api-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend default_multi-port_svc_api-svc_http"
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_multi-port_svc_api-svc_http"}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend default_multi-port_svc_api-svc_admin"
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_multi-port_svc_api-svc_admin"}
 
       - type: match_count
         target: haproxy.cfg
@@ -723,29 +738,17 @@ validationTests:
         target: map:path-prefix-exact.map
         pattern: "example.com/app BACKEND:default_multi-port_svc_api-svc_http"
 
-      - type: not_contains
-        target: map:host.map
-        pattern: "hosts\\)\\S"
+      - {type: not_contains, target: map:host.map, pattern: "hosts\\)\\S"}
 
-      - type: not_contains
-        target: map:path-prefix.map
-        pattern: "paths\\)\\S"
+      - {type: not_contains, target: map:path-prefix.map, pattern: "paths\\)\\S"}
 
-      - type: not_contains
-        target: map:path-prefix-exact.map
-        pattern: "paths\\)\\S"
+      - {type: not_contains, target: map:path-prefix-exact.map, pattern: "paths\\)\\S"}
 
-      - type: contains
-        target: map:host.map
-        pattern: "(?m)^example\\.com example\\.com$"
+      - {type: contains, target: map:host.map, pattern: "(?m)^example\\.com example\\.com$"}
 
-      - type: contains
-        target: map:path-prefix.map
-        pattern: "(?m)^example\\.com/api/ BACKEND:"
+      - {type: contains, target: map:path-prefix.map, pattern: "(?m)^example\\.com/api/ BACKEND:"}
 
-      - type: contains
-        target: map:path-prefix-exact.map
-        pattern: "(?m)^example\\.com/api BACKEND:"
+      - {type: contains, target: map:path-prefix-exact.map, pattern: "(?m)^example\\.com/api BACKEND:"}
 
   test-ingress-tls-basic:
     description: Ingress with spec.tls should register TLS certificates
@@ -754,18 +757,14 @@ validationTests:
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
-          metadata:
-            name: example-tls
-            namespace: default
+          metadata: {name: example-tls, namespace: default}
           data:
             tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
             tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: tls-ingress
-            namespace: default
+          metadata: {name: tls-ingress, namespace: default}
           spec:
             ingressClassName: haproxy
             tls:
@@ -779,11 +778,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
 
@@ -791,144 +786,50 @@ validationTests:
         target: crt-list:certificate-list.txt
         pattern: "default_example-tls\\.pem \\[ocsp-update on\\] example\\.com www\\.example\\.com"
 
-      - type: contains
-        target: cert:default_example-tls.pem
-        pattern: "BEGIN CERTIFICATE"
+      - {type: contains, target: cert:default_example-tls.pem, pattern: "BEGIN CERTIFICATE"}
 
   test-ingress-default-https:
     description: "A plain Ingress with no spec.tls is served over HTTPS by default — the chart binds its https port and terminates TLS with the default certificate (extraContext.ingressDefaultHTTPS defaults true). See features-100-ingress-bind."
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: plain
-            namespace: default
-          spec:
-            ingressClassName: haproxy
-            rules:
-              - host: plain.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+    fixtures: *fixturesPlainPlainExampleCom
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "(?m)^frontend https$"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "bind \\*:443 ssl crt-list"
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^frontend https$"}
+      - {type: contains, target: haproxy.cfg, pattern: "bind \\*:443 ssl crt-list"}
 
   test-ingress-default-https-disabled:
     description: "extraContext.ingressDefaultHTTPS=false keeps a plain Ingress (no spec.tls) plaintext-only — no https frontend is emitted even though the default certificate is configured. See features-100-ingress-bind."
-    extraContext:
-      ingressDefaultHTTPS: false
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: plain
-            namespace: default
-          spec:
-            ingressClassName: haproxy
-            rules:
-              - host: plain.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+    extraContext: {ingressDefaultHTTPS: false}
+    fixtures: *fixturesPlainPlainExampleCom
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "(?m)^frontend https$"
+      - {type: not_contains, target: haproxy.cfg, pattern: "(?m)^frontend https$"}
 
   test-ingress-default-ssl-redirect:
     description: "extraContext.ingressDefaultSSLRedirect=true redirects every HTTPS-served Ingress host from HTTP to HTTPS with the configured code (default 308), reusing the shared ssl-redirect map. See features-105-ingress-ssl-redirect."
-    extraContext:
-      ingressDefaultSSLRedirect: true
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: plain
-            namespace: default
-          spec:
-            ingressClassName: haproxy
-            rules:
-              - host: plain.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+    extraContext: {ingressDefaultSSLRedirect: true}
+    fixtures: *fixturesPlainPlainExampleCom
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect scheme https code 308 if !\\{ ssl_fc \\}"
-      - type: contains
-        target: map:ssl-redirect-308.map
-        pattern: "(?m)^plain\\.example\\.com 1$"
+      - {type: contains, target: map:ssl-redirect-308.map, pattern: "(?m)^plain\\.example\\.com 1$"}
 
   test-ingress-default-ssl-redirect-disabled:
     description: "By default (ingressDefaultSSLRedirect unset) an HTTPS-served Ingress emits no global HTTP→HTTPS redirect — the feature is opt-in. See features-105-ingress-ssl-redirect."
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: plain
-            namespace: default
-          spec:
-            ingressClassName: haproxy
-            rules:
-              - host: plain.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+    fixtures: *fixturesPlainPlainExampleCom
     assertions:
       - type: haproxy_valid
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "redirect scheme https"
+      - {type: not_contains, target: haproxy.cfg, pattern: "redirect scheme https"}
 
   test-ingress-default-ssl-redirect-per-host:
     description: "With the default-HTTPS bind off (ingressDefaultHTTPS=false), the global redirect only registers hosts that carry their own certificate: a partly-TLS Ingress redirects its spec.tls host but not its bare host, which isn't served over HTTPS. See features-105-ingress-ssl-redirect."
-    extraContext:
-      ingressDefaultHTTPS: false
-      ingressDefaultSSLRedirect: true
+    extraContext: {ingressDefaultHTTPS: false, ingressDefaultSSLRedirect: true}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: partial-tls
-            namespace: default
+          metadata: {name: partial-tls, namespace: default}
           spec:
             ingressClassName: haproxy
             tls:
@@ -941,29 +842,17 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
               - host: plain.example.com
                 http:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: echo
-                          port:
-                            number: 80
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: map:ssl-redirect-308.map
-        pattern: "(?m)^secure\\.example\\.com 1$"
-      - type: not_contains
-        target: map:ssl-redirect-308.map
-        pattern: "plain\\.example\\.com"
+      - {type: contains, target: map:ssl-redirect-308.map, pattern: "(?m)^secure\\.example\\.com 1$"}
+      - {type: not_contains, target: map:ssl-redirect-308.map, pattern: "plain\\.example\\.com"}
 
   test-ingress-slot-preservation:
     description: |
@@ -989,13 +878,8 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: slot-svc
-            namespace: default
-          spec:
-            ports:
-              - port: 80
-                targetPort: 8080
+          metadata: {name: slot-svc, namespace: default}
+          spec: *specPortsPort
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -1007,22 +891,15 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.1"]
-              targetRef:
-                kind: Pod
-                name: slot-pod-1
+              targetRef: {kind: Pod, name: slot-pod-1}
             - addresses: ["10.0.0.3"]
-              targetRef:
-                kind: Pod
-                name: slot-pod-3
+              targetRef: {kind: Pod, name: slot-pod-3}
           ports:
-            - port: 8080
-              protocol: TCP
+            - {port: 8080, protocol: TCP}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: slot-test
-            namespace: default
+          metadata: {name: slot-test, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1031,33 +908,17 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: slot-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: slot-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend default_slot-test_svc_slot-svc_80"
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_slot-test_svc_slot-svc_80"}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_3 10\\.0\\.0\\.1:8080"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.0\\.1:8080"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_5 10\\.0\\.0\\.3:8080"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "server SRV_[12] 10\\.0\\.0\\.3:8080"
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_3 10\\.0\\.0\\.1:8080"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_1 10\\.0\\.0\\.1:8080"}
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"}
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_5 10\\.0\\.0\\.3:8080"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_[12] 10\\.0\\.0\\.3:8080"}
 
   test-ingress-slot-preservation-lower-ip:
     description: |
@@ -1082,13 +943,8 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: slot-svc
-            namespace: default
-          spec:
-            ports:
-              - port: 80
-                targetPort: 8080
+          metadata: {name: slot-svc, namespace: default}
+          spec: *specPortsPort
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -1100,22 +956,15 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.5"]
-              targetRef:
-                kind: Pod
-                name: slot-pod-5
+              targetRef: {kind: Pod, name: slot-pod-5}
             - addresses: ["10.0.0.2"]
-              targetRef:
-                kind: Pod
-                name: slot-pod-2
+              targetRef: {kind: Pod, name: slot-pod-2}
           ports:
-            - port: 8080
-              protocol: TCP
+            - {port: 8080, protocol: TCP}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: slot-lower
-            namespace: default
+          metadata: {name: slot-lower, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1124,26 +973,14 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: slot-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: slot-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_3 10\\.0\\.0\\.5:8080"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "server SRV_[12] 10\\.0\\.0\\.2:8080"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_5 10\\.0\\.0\\.2:8080"
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_3 10\\.0\\.0\\.5:8080"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_[12] 10\\.0\\.0\\.2:8080"}
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"}
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_5 10\\.0\\.0\\.2:8080"}
 
   test-ingress-endpoint-conditions-filter:
     description: |
@@ -1159,13 +996,8 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: cond-svc
-            namespace: default
-          spec:
-            ports:
-              - port: 80
-                targetPort: 8080
+          metadata: {name: cond-svc, namespace: default}
+          spec: *specPortsPort
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -1189,14 +1021,11 @@ validationTests:
             - addresses: ["10.0.0.4"]
               targetRef: {kind: Pod, name: cond-pod-noconds}
           ports:
-            - port: 8080
-              protocol: TCP
+            - {port: 8080, protocol: TCP}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: cond-test
-            namespace: default
+          metadata: {name: cond-test, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1205,29 +1034,17 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: cond-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: cond-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.0\\.1:8080 .*enabled"
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10\\.0\\.0\\.1:8080 .*enabled"}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_2 10\\.0\\.0\\.4:8080 .*enabled"
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_2 10\\.0\\.0\\.4:8080 .*enabled"}
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "10\\.0\\.0\\.2:8080"
+      - {type: not_contains, target: haproxy.cfg, pattern: "10\\.0\\.0\\.2:8080"}
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "10\\.0\\.0\\.3:8080"
+      - {type: not_contains, target: haproxy.cfg, pattern: "10\\.0\\.0\\.3:8080"}
 
   test-ingress-status-patches:
     description: Ingress status patches register LoadBalancer addresses from controller service
@@ -1241,8 +1058,7 @@ validationTests:
             labels:
               app.kubernetes.io/name: haptic
               app.kubernetes.io/component: loadbalancer
-          spec:
-            type: LoadBalancer
+          spec: {type: LoadBalancer}
           status:
             loadBalancer:
               ingress:
@@ -1250,18 +1066,14 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: web-svc
-            namespace: default
+          metadata: {name: web-svc, namespace: default}
           spec:
             ports:
               - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: web-ingress
-            namespace: default
+          metadata: {name: web-ingress, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1270,16 +1082,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: web-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: web-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend default_web-ingress_svc_web-svc_80"
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_web-ingress_svc_web-svc_80"}
 
   test-ingress-named-port:
     description: Ingress backend referencing the service port by name (port.name) must resolve to the correct numeric pod port, not fall back to 80
@@ -1287,17 +1093,11 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: unifi
-            namespace: default
+          metadata: {name: unifi, namespace: default}
           spec:
             ports:
-              - name: https-gui
-                port: 8443
-                targetPort: https-gui
-              - name: controller
-                port: 8080
-                targetPort: controller
+              - {name: https-gui, port: 8443, targetPort: https-gui}
+              - {name: controller, port: 8080, targetPort: controller}
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -1309,22 +1109,14 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.42"]
-              targetRef:
-                kind: Pod
-                name: unifi-0
+              targetRef: {kind: Pod, name: unifi-0}
           ports:
-            - name: https-gui
-              port: 8443
-              protocol: TCP
-            - name: controller
-              port: 8080
-              protocol: TCP
+            - {name: https-gui, port: 8443, protocol: TCP}
+            - {name: controller, port: 8080, protocol: TCP}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: unifi
-            namespace: default
+          metadata: {name: unifi, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1333,25 +1125,17 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: unifi
-                          port:
-                            name: https-gui
+                      backend: {service: {name: unifi, port: {name: https-gui}}}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10.0.0.42:8443 "
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10.0.0.42:8443 "}
 
       - type: contains
         target: haproxy.cfg
         pattern: "# Backend for: Ingress default/unifi → Service unifi:8443"
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10.0.0.42:80 "
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_1 10.0.0.42:80 "}
 
   test-ingress-named-port-skips-portless-slices:
     description: |
@@ -1363,16 +1147,11 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: mixed-workload
-            namespace: default
+          metadata: {name: mixed-workload, namespace: default}
           spec:
-            selector:
-              app: mixed-workload
+            selector: {app: mixed-workload}
             ports:
-              - name: http
-                port: 4000
-                targetPort: http
+              - {name: http, port: 4000, targetPort: http}
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -1387,9 +1166,7 @@ validationTests:
               conditions: {ready: true}
               targetRef: {kind: Pod, name: application}
           ports:
-            - name: http
-              port: 4000
-              protocol: TCP
+            - {name: http, port: 4000, protocol: TCP}
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
           metadata:
@@ -1415,15 +1192,11 @@ validationTests:
               conditions: {ready: true}
               targetRef: {kind: Pod, name: metrics-sidecar}
           ports:
-            - name: metrics
-              port: 9090
-              protocol: TCP
+            - {name: metrics, port: 9090, protocol: TCP}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: mixed-workload
-            namespace: default
+          metadata: {name: mixed-workload, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1432,22 +1205,14 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: mixed-workload
-                          port:
-                            name: http
+                      backend: {service: {name: mixed-workload, port: {name: http}}}
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_1 10\\.0\\.0\\.10:4000 .*# Pod: application"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "10\\.0\\.0\\.20"
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "10\\.0\\.0\\.30"
+      - {type: not_contains, target: haproxy.cfg, pattern: "10\\.0\\.0\\.20"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "10\\.0\\.0\\.30"}
 
   test-ingress-named-port-typo-fails:
     description: Ingress referencing a non-existent port name must fail rendering loudly with a clear message
@@ -1455,14 +1220,10 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: unifi
-            namespace: default
+          metadata: {name: unifi, namespace: default}
           spec:
             ports:
-              - name: https-gui
-                port: 8443
-                targetPort: https-gui
+              - {name: https-gui, port: 8443, targetPort: https-gui}
       endpoints:
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
@@ -1475,15 +1236,11 @@ validationTests:
           endpoints:
             - addresses: ["10.0.0.42"]
           ports:
-            - name: https-gui
-              port: 8443
-              protocol: TCP
+            - {name: https-gui, port: 8443, protocol: TCP}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: unifi
-            namespace: default
+          metadata: {name: unifi, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1492,18 +1249,12 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: unifi
-                          port:
-                            name: nonexistent-port-name
+                      backend: {service: {name: unifi, port: {name: nonexistent-port-name}}}
     assertions:
       - type: contains
         target: rendering_error
         pattern: "ResolveServicePort: Service default/unifi has no port named 'nonexistent-port-name'"
-      - type: contains
-        target: rendering_error
-        pattern: "https-gui\\(8443\\)"
+      - {type: contains, target: rendering_error, pattern: "https-gui\\(8443\\)"}
 
   test-ingress-named-port-service-not-yet-created:
     description: |
@@ -1526,10 +1277,7 @@ validationTests:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: wildcard-host
-            namespace: default
-            uid: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+          metadata: {name: wildcard-host, namespace: default, uid: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1538,29 +1286,19 @@ validationTests:
                   paths:
                     - path: /echo
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: foo-bar-com
-                          port:
-                            name: http
+                      backend: {service: {name: foo-bar-com, port: {name: http}}}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend default_wildcard-host_svc_foo-bar-com_http"
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_wildcard-host_svc_foo-bar-com_http"}
 
       - type: contains
         target: map:path-prefix.map
         pattern: "bar.example.com/echo/ BACKEND:default_wildcard-host_svc_foo-bar-com_http"
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 192\\.0\\.2\\.1:1 .*disabled"
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 192\\.0\\.2\\.1:1 .*disabled"}
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "server SRV_[0-9]+ \\S+:0"
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_[0-9]+ \\S+:0"}
 
       - type: match_count
         target: "k8s:ingress-degraded-backend-events"
@@ -1570,26 +1308,18 @@ validationTests:
       - type: contains
         target: "k8s:ingress-degraded-backend-events"
         pattern: 'lastTimestamp: .?2[0-9]{3}-[0-9]{2}-[0-9]{2}T'
-      - type: contains
-        target: "k8s:ingress-degraded-backend-events"
-        pattern: "reason: BackendUnresolved"
-      - type: contains
-        target: "k8s:ingress-degraded-backend-events"
-        pattern: "type: Warning"
+      - {type: contains, target: "k8s:ingress-degraded-backend-events", pattern: "reason: BackendUnresolved"}
+      - {type: contains, target: "k8s:ingress-degraded-backend-events", pattern: "type: Warning"}
       - type: contains
         target: "k8s:ingress-degraded-backend-events"
         pattern: "name: wildcard-host\\.backend-unresolved"
       # kubectl describe matches events by the involvedObject.uid field selector.
-      - type: contains
-        target: "k8s:ingress-degraded-backend-events"
-        pattern: "kind: Ingress"
+      - {type: contains, target: "k8s:ingress-degraded-backend-events", pattern: "kind: Ingress"}
       - type: contains
         target: "k8s:ingress-degraded-backend-events"
         pattern: "uid: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
       # Token-only pattern: independent of the YAML marshaller's scalar quoting.
-      - type: contains
-        target: "k8s:ingress-degraded-backend-events"
-        pattern: "default/foo-bar-com"
+      - {type: contains, target: "k8s:ingress-degraded-backend-events", pattern: "default/foo-bar-com"}
 
   test-ingress-named-port-service-missing-slice-resolution:
     description: |
@@ -1617,9 +1347,7 @@ validationTests:
               conditions: {ready: true, serving: true, terminating: false}
               targetRef: {kind: Pod, name: fast-pod}
           ports:
-            - name: http
-              port: 8080
-              protocol: TCP
+            - {name: http, port: 8080, protocol: TCP}
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
           metadata:
@@ -1633,15 +1361,11 @@ validationTests:
               conditions: {ready: true, serving: true, terminating: false}
               targetRef: {kind: Pod, name: slow-pod}
           ports:
-            - name: metrics
-              port: 9090
-              protocol: TCP
+            - {name: metrics, port: 9090, protocol: TCP}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: race
-            namespace: default
+          metadata: {name: race, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1650,39 +1374,21 @@ validationTests:
                   paths:
                     - path: /fast
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: svc-fast
-                          port:
-                            name: http
+                      backend: {service: {name: svc-fast, port: {name: http}}}
                     - path: /slow
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: svc-slow
-                          port:
-                            name: http
+                      backend: {service: {name: svc-slow, port: {name: http}}}
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.0\\.9:8080 .*enabled"
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10\\.0\\.0\\.9:8080 .*enabled"}
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "10\\.0\\.0\\.10"
+      - {type: not_contains, target: haproxy.cfg, pattern: "10\\.0\\.0\\.10"}
 
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "server SRV_[0-9]+ \\S+:0"
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_[0-9]+ \\S+:0"}
 
-      - type: contains
-        target: "k8s:ingress-degraded-backend-events"
-        pattern: "default/svc-slow"
-      - type: not_contains
-        target: "k8s:ingress-degraded-backend-events"
-        pattern: "default/svc-fast"
+      - {type: contains, target: "k8s:ingress-degraded-backend-events", pattern: "default/svc-slow"}
+      - {type: not_contains, target: "k8s:ingress-degraded-backend-events", pattern: "default/svc-fast"}
 
   test-ingress-degraded-backend-event-multiple:
     description: |
@@ -1694,9 +1400,7 @@ validationTests:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: first-broken
-            namespace: default
+          metadata: {name: first-broken, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1705,16 +1409,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: first-ghost
-                          port:
-                            name: http
+                      backend: {service: {name: first-ghost, port: {name: http}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: second-broken
-            namespace: default
+          metadata: {name: second-broken, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1723,11 +1421,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: second-ghost
-                          port:
-                            name: http
+                      backend: {service: {name: second-ghost, port: {name: http}}}
     assertions:
       - type: haproxy_valid
       - type: match_count
@@ -1738,12 +1432,8 @@ validationTests:
         target: "k8s:ingress-degraded-backend-events"
         pattern: "(?m)^---$"
         expected: "1"
-      - type: contains
-        target: "k8s:ingress-degraded-backend-events"
-        pattern: "default/first-ghost"
-      - type: contains
-        target: "k8s:ingress-degraded-backend-events"
-        pattern: "default/second-ghost"
+      - {type: contains, target: "k8s:ingress-degraded-backend-events", pattern: "default/first-ghost"}
+      - {type: contains, target: "k8s:ingress-degraded-backend-events", pattern: "default/second-ghost"}
 
   test-ingress-degraded-backend-event-negatives:
     description: |
@@ -1756,20 +1446,12 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: healthy-svc
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 8080
-                targetPort: 8080
+          metadata: {name: healthy-svc, namespace: default}
+          spec: *specHttp8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: by-name-resolved
-            namespace: default
+          metadata: {name: by-name-resolved, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1778,16 +1460,10 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: healthy-svc
-                          port:
-                            name: http
+                      backend: {service: {name: healthy-svc, port: {name: http}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: by-number-absent
-            namespace: default
+          metadata: {name: by-number-absent, namespace: default}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1796,22 +1472,14 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: ghost-svc
-                          port:
-                            number: 8080
+                      backend: {service: {name: ghost-svc, port: {number: 8080}}}
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_by-name-resolved_svc_healthy-svc_http"
-      - type: not_contains
-        target: "k8s:ingress-degraded-backend-events"
-        pattern: "kind: Event"
-      - type: not_contains
-        target: "k8s:ingress-degraded-backend-events"
-        pattern: "BackendUnresolved"
+      - {type: not_contains, target: "k8s:ingress-degraded-backend-events", pattern: "kind: Event"}
+      - {type: not_contains, target: "k8s:ingress-degraded-backend-events", pattern: "BackendUnresolved"}
 
   test-ingress-default-backend-rules-less:
     description: "Ingress with only spec.defaultBackend (no rules) emits a \"/\" catch-all entry in path-prefix.map pointing at the default backend pool, and the backend pool itself gets generated. Routes any request that didn't match a more-specific rule to that backend."
@@ -1819,39 +1487,22 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: fallback-svc
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 8080
-                targetPort: 8080
+          metadata: {name: fallback-svc, namespace: default}
+          spec: *specHttp8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: only-default
-            namespace: default
+          metadata: {name: only-default, namespace: default}
           spec:
             ingressClassName: haproxy
-            defaultBackend:
-              service:
-                name: fallback-svc
-                port:
-                  number: 8080
+            defaultBackend: {service: {name: fallback-svc, port: {number: 8080}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend default_only-default_svc_fallback-svc_http"
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_only-default_svc_fallback-svc_http"}
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^/ BACKEND:default_only-default_svc_fallback-svc_http$"
-      - type: match_count
-        target: map:path-prefix.map
-        pattern: "(?m)^/ BACKEND:"
-        expected: "1"
+      - {type: match_count, target: map:path-prefix.map, pattern: "(?m)^/ BACKEND:", expected: "1"}
 
   test-ingress-default-backend-with-rules-per-host:
     description: "Ingress with both spec.rules (host: example.com) and spec.defaultBackend emits a per-host catch-all \"example.com/\" entry in path-prefix.map alongside the rule's entries. K8s spec: requests matching the Ingress's host but no rule path go to defaultBackend; requests to OTHER hosts must NOT be caught."
@@ -1859,56 +1510,32 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: rule-svc
-            namespace: default
+          metadata: {name: rule-svc, namespace: default}
           spec:
             ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+              - {name: http, port: 80, targetPort: 8080}
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: fallback-svc
-            namespace: default
-          spec:
-            ports:
-              - name: http
-                port: 8080
-                targetPort: 8080
+          metadata: {name: fallback-svc, namespace: default}
+          spec: *specHttp8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: with-default
-            namespace: default
+          metadata: {name: with-default, namespace: default}
           spec:
             ingressClassName: haproxy
-            defaultBackend:
-              service:
-                name: fallback-svc
-                port:
-                  number: 8080
+            defaultBackend: {service: {name: fallback-svc, port: {number: 8080}}}
             rules:
               - host: example.com
                 http:
                   paths:
                     - path: /api
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: rule-svc
-                          port:
-                            number: 80
+                      backend: {service: {name: rule-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend default_with-default_svc_rule-svc_http"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend default_with-default_svc_fallback-svc_http"
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_with-default_svc_rule-svc_http"}
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_with-default_svc_fallback-svc_http"}
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^example\\.com/api/ BACKEND:default_with-default_svc_rule-svc_http$"
@@ -1925,31 +1552,20 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: svc-old
-            namespace: zeta
+          metadata: {name: svc-old, namespace: zeta}
           spec:
             ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+              - {name: http, port: 80, targetPort: 8080}
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: svc-new
-            namespace: alpha
+          metadata: {name: svc-new, namespace: alpha}
           spec:
             ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+              - {name: http, port: 80, targetPort: 8080}
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: route-old
-            namespace: zeta
-            creationTimestamp: "2020-01-01T00:00:00Z"
+          metadata: {name: route-old, namespace: zeta, creationTimestamp: "2020-01-01T00:00:00Z"}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1958,17 +1574,10 @@ validationTests:
                   paths:
                     - path: /checkout
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: svc-old
-                          port:
-                            number: 80
+                      backend: {service: {name: svc-old, port: {number: 80}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: route-new
-            namespace: alpha
-            creationTimestamp: "2026-01-01T00:00:00Z"
+          metadata: {name: route-new, namespace: alpha, creationTimestamp: "2026-01-01T00:00:00Z"}
           spec:
             ingressClassName: haproxy
             rules:
@@ -1977,11 +1586,7 @@ validationTests:
                   paths:
                     - path: /checkout
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: svc-new
-                          port:
-                            number: 80
+                      backend: {service: {name: svc-new, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -2004,33 +1609,11 @@ validationTests:
   test-ingress-same-host-different-paths-coexist:
     description: "Two Ingresses on the same host but DIFFERENT paths are NOT a conflict — both routes render. Guards features-090-ingress-path-conflict against false positives."
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: svc-a
-            namespace: team-a
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: svc-b
-            namespace: team-b
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+      services: *servicesServiceSvcA
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: route-a
-            namespace: team-a
+          metadata: {name: route-a, namespace: team-a}
           spec:
             ingressClassName: haproxy
             rules:
@@ -2039,16 +1622,10 @@ validationTests:
                   paths:
                     - path: /cart
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: svc-a
-                          port:
-                            number: 80
+                      backend: *backendSvcA
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: route-b
-            namespace: team-b
+          metadata: {name: route-b, namespace: team-b}
           spec:
             ingressClassName: haproxy
             rules:
@@ -2057,11 +1634,7 @@ validationTests:
                   paths:
                     - path: /account
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: svc-b
-                          port:
-                            number: 80
+                      backend: *backendSvcB
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -2074,34 +1647,11 @@ validationTests:
   test-ingress-implementation-specific-shares-slot-oldest-wins:
     description: "pathType Prefix and ImplementationSpecific render into the same path maps (they share a routing slot), so two Ingresses claiming the same host+path with those two path types collide. The owner computation collapses ImplementationSpecific to Prefix, so oldest-wins resolves the collision to a single map entry — the older Prefix Ingress here. If the two path types were treated as distinct slots, both would emit into path-prefix.map, producing a duplicate key."
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: svc-a
-            namespace: team-a
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: svc-b
-            namespace: team-b
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+      services: *servicesServiceSvcA
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: route-a
-            namespace: team-a
-            creationTimestamp: "2020-01-01T00:00:00Z"
+          metadata: {name: route-a, namespace: team-a, creationTimestamp: "2020-01-01T00:00:00Z"}
           spec:
             ingressClassName: haproxy
             rules:
@@ -2110,17 +1660,10 @@ validationTests:
                   paths:
                     - path: /checkout
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: svc-a
-                          port:
-                            number: 80
+                      backend: *backendSvcA
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: route-b
-            namespace: team-b
-            creationTimestamp: "2026-01-01T00:00:00Z"
+          metadata: {name: route-b, namespace: team-b, creationTimestamp: "2026-01-01T00:00:00Z"}
           spec:
             ingressClassName: haproxy
             rules:
@@ -2129,11 +1672,7 @@ validationTests:
                   paths:
                     - path: /checkout
                       pathType: ImplementationSpecific
-                      backend:
-                        service:
-                          name: svc-b
-                          port:
-                            number: 80
+                      backend: *backendSvcB
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -2148,34 +1687,11 @@ validationTests:
   test-ingress-prefix-trailing-slash-oldest-wins:
     description: "Prefix paths '/checkout' and '/checkout/' render into the same map keys (the emit stage strips the trailing slash for the Prefix slot), so they collide. The owner key applies the same trailing-slash normalization, so oldest-wins resolves them to a single map entry instead of emitting a duplicate key. The older Ingress ('/checkout') wins; the newer ('/checkout/') is dropped."
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: svc-a
-            namespace: team-a
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: svc-b
-            namespace: team-b
-          spec:
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8080
+      services: *servicesServiceSvcA
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: route-a
-            namespace: team-a
-            creationTimestamp: "2020-01-01T00:00:00Z"
+          metadata: {name: route-a, namespace: team-a, creationTimestamp: "2020-01-01T00:00:00Z"}
           spec:
             ingressClassName: haproxy
             rules:
@@ -2184,17 +1700,10 @@ validationTests:
                   paths:
                     - path: /checkout
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: svc-a
-                          port:
-                            number: 80
+                      backend: *backendSvcA
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: route-b
-            namespace: team-b
-            creationTimestamp: "2026-01-01T00:00:00Z"
+          metadata: {name: route-b, namespace: team-b, creationTimestamp: "2026-01-01T00:00:00Z"}
           spec:
             ingressClassName: haproxy
             rules:
@@ -2203,11 +1712,7 @@ validationTests:
                   paths:
                     - path: /checkout/
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: svc-b
-                          port:
-                            number: 80
+                      backend: *backendSvcB
     assertions:
       - type: haproxy_valid
       - type: match_count
@@ -2230,73 +1735,39 @@ validationTests:
       services:
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: old-svc
-            namespace: ns-old
-          spec:
-            ports:
-              - name: http
-                port: 8080
-                targetPort: 8080
+          metadata: {name: old-svc, namespace: ns-old}
+          spec: *specHttp8080
         - apiVersion: v1
           kind: Service
-          metadata:
-            name: new-svc
-            namespace: ns-new
-          spec:
-            ports:
-              - name: http
-                port: 8080
-                targetPort: 8080
+          metadata: {name: new-svc, namespace: ns-new}
+          spec: *specHttp8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: older
-            namespace: ns-old
-            creationTimestamp: "2024-01-01T00:00:00Z"
+          metadata: {name: older, namespace: ns-old, creationTimestamp: "2024-01-01T00:00:00Z"}
           spec:
             ingressClassName: haproxy
-            defaultBackend:
-              service:
-                name: old-svc
-                port:
-                  number: 8080
+            defaultBackend: {service: {name: old-svc, port: {number: 8080}}}
             rules:
               - host: example.com
                 http:
                   paths:
                     - path: /old
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: old-svc
-                          port:
-                            number: 8080
+                      backend: {service: {name: old-svc, port: {number: 8080}}}
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata:
-            name: newer
-            namespace: ns-new
-            creationTimestamp: "2024-06-01T00:00:00Z"
+          metadata: {name: newer, namespace: ns-new, creationTimestamp: "2024-06-01T00:00:00Z"}
           spec:
             ingressClassName: haproxy
-            defaultBackend:
-              service:
-                name: new-svc
-                port:
-                  number: 8080
+            defaultBackend: {service: {name: new-svc, port: {number: 8080}}}
             rules:
               - host: example.com
                 http:
                   paths:
                     - path: /new
                       pathType: Prefix
-                      backend:
-                        service:
-                          name: new-svc
-                          port:
-                            number: 8080
+                      backend: {service: {name: new-svc, port: {number: 8080}}}
     assertions:
       - type: haproxy_valid
       - type: contains

@@ -13,7 +13,6 @@ func TestIsAnySectionString(t *testing.T) {
 	assert.True(t, IsAnySectionString("frontend"))
 	assert.True(t, IsAnySectionString("global"))
 
-	// Unknown section is not
 	assert.False(t, IsAnySectionString("unknown-section"))
 }
 

@@ -576,7 +576,6 @@ func TestApplyVariant_ChecksumSkip(t *testing.T) {
 		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
 	})
 
-	// First apply — should apply
 	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
 	event1 := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, 1, event1.AppliedCount)
@@ -606,7 +605,6 @@ func TestApplyVariant_DifferentPayloadNotSkipped(t *testing.T) {
 		"rendered": {"conditions": []any{map[string]any{"type": "Ready", "status": "False"}}},
 	})
 
-	// First apply
 	comp.applyVariant(context.Background(), patches1, events.StatusPatchPhaseRendered)
 	event1 := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, 1, event1.AppliedCount)

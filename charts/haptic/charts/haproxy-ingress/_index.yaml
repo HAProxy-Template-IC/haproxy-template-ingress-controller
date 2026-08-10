@@ -76,8 +76,7 @@
 #   - limit-rps, limit-rpm, limit-whitelist
 
 # Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
-_helm_load:
-  enable: '{{ .Values.controller.templateLibraries.haproxyIngress.enabled }}'
+_helm_load: {enable: '{{ .Values.controller.templateLibraries.haproxyIngress.enabled }}'}
 
 watchedResources:
   secrets:
