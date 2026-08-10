@@ -29,8 +29,7 @@ func TestScriggoSortBy_EmptySlice(t *testing.T) {
 	items := []any{}
 	criteria := []string{"$.name"}
 
-	result, err := scriggoSortBy(items, criteria)
-	require.NoError(t, err)
+	result := sortByItems(items, criteria, false)
 	assert.Empty(t, result)
 }
 
@@ -40,8 +39,7 @@ func TestScriggoSortBy_EmptyCriteria(t *testing.T) {
 		map[string]any{"name": "a"},
 	}
 
-	result, err := scriggoSortBy(items, []string{})
-	require.NoError(t, err)
+	result := sortByItems(items, []string{}, false)
 	assert.Len(t, result, 2)
 	// Should return original order when no criteria
 	assert.Equal(t, "b", result[0].(map[string]any)["name"])
@@ -56,8 +54,7 @@ func TestScriggoSortBy_SingleCriteria(t *testing.T) {
 	}
 	criteria := []string{"$.name"}
 
-	result, err := scriggoSortBy(items, criteria)
-	require.NoError(t, err)
+	result := sortByItems(items, criteria, false)
 	require.Len(t, result, 3)
 
 	assert.Equal(t, "alice", result[0].(map[string]any)["name"])
@@ -73,8 +70,7 @@ func TestScriggoSortBy_Descending(t *testing.T) {
 	}
 	criteria := []string{"$.priority:desc"}
 
-	result, err := scriggoSortBy(items, criteria)
-	require.NoError(t, err)
+	result := sortByItems(items, criteria, false)
 	require.Len(t, result, 3)
 
 	assert.Equal(t, 3, result[0].(map[string]any)["priority"])
@@ -90,8 +86,7 @@ func TestScriggoSortBy_MultipleCriteria(t *testing.T) {
 	}
 	criteria := []string{"$.type", "$.priority"}
 
-	result, err := scriggoSortBy(items, criteria)
-	require.NoError(t, err)
+	result := sortByItems(items, criteria, false)
 	require.Len(t, result, 3)
 
 	// First sort by type (a, a, b), then by priority within same type
@@ -110,8 +105,7 @@ func TestScriggoSortBy_ExistsModifier(t *testing.T) {
 	}
 	criteria := []string{"$.method:exists:desc"}
 
-	result, err := scriggoSortBy(items, criteria)
-	require.NoError(t, err)
+	result := sortByItems(items, criteria, false)
 	require.Len(t, result, 3)
 
 	// Items with method field should come first (exists:desc)
@@ -126,8 +120,7 @@ func TestScriggoSortBy_LengthModifier(t *testing.T) {
 	}
 	criteria := []string{"$.items | length:desc"}
 
-	result, err := scriggoSortBy(items, criteria)
-	require.NoError(t, err)
+	result := sortByItems(items, criteria, false)
 	require.Len(t, result, 3)
 
 	// Sort by items length descending
@@ -147,8 +140,7 @@ func TestScriggoSortBy_DoesNotModifyOriginal(t *testing.T) {
 	// Keep original order reference
 	originalFirst := items[0].(map[string]any)["name"]
 
-	result, err := scriggoSortBy(items, criteria)
-	require.NoError(t, err)
+	result := sortByItems(items, criteria, false)
 
 	// Original slice should not be modified
 	assert.Equal(t, originalFirst, items[0].(map[string]any)["name"])

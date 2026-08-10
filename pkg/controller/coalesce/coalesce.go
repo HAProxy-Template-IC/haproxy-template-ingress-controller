@@ -76,23 +76,6 @@ func DrainLatest[T busevents.Event](
 	})
 }
 
-// DrainLatestByType is the runtime-typed sibling of DrainLatest. Instead of a
-// compile-time type parameter it matches events whose EventType() equals
-// eventType. Components that select on a dynamic event-type string (e.g.
-// component.Base's coalescing loop, which reads the type from a
-// CoalescingHandler) use this; consumers with a static type use the generic
-// DrainLatest.
-func DrainLatestByType(
-	eventChan <-chan busevents.Event,
-	eventType string,
-	handleOther func(busevents.Event),
-	flush func(latest busevents.Event, supersededCount int),
-) {
-	drainLatest(eventChan, handleOther, func(event busevents.Event) bool {
-		return event.EventType() == eventType
-	}, flush)
-}
-
 // drainLatest is the shared coalescing drain loop behind DrainLatest and
 // DrainLatestByType. It non-blockingly pulls events off eventChan; an event
 // joins the current run when match(event) is true AND it is a coalescible

@@ -189,39 +189,6 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 	}, nil
 }
 
-// RenderFixtures renders the full artifact set (haproxy.cfg, maps, general
-// files, SSL certificates, k8sResources) against stores built from the
-// supplied fixtures, merged with the config's validationTests._global
-// fixtures exactly like a validation test run. This is the real render
-// pipeline behind the migration report's per-resource hard-failure probe:
-// a template fail() or any other render error surfaces as the
-// returned error, unchanged from what admission or reconciliation would
-// hit.
-//
-// The render uses the runner's shared engine and validation paths (callers
-// invoke this sequentially; use separate runners for parallel renders).
-func (r *Runner) RenderFixtures(fixtures map[string][]any) (RenderOutput, error) {
-	httpFixtures := []config.HTTPResourceFixture(nil)
-	var globalExtraContext map[string]any
-	if globalTest, hasGlobal := r.config.ValidationTests["_global"]; hasGlobal {
-		fixtures = MergeFixtures(globalTest.Fixtures, fixtures)
-		httpFixtures = globalTest.HTTPFixtures
-		// Same isolated baseline as a validation-test render (see runSingleTest):
-		// the migration probe renders against synthetic _global values, not the
-		// operator's real default-cert names.
-		globalExtraContext = globalTest.ExtraContext
-	}
-
-	fixtureStores, err := r.CreateStoresFromFixtures(fixtures)
-	if err != nil {
-		return RenderOutput{}, fmt.Errorf("creating fixture stores: %w", err)
-	}
-
-	httpStore := NewFixtureHTTPStoreWrapper(CreateHTTPStoreFromFixtures(httpFixtures, r.logger), r.logger)
-
-	return r.renderWithStores(r.engineTemplate, fixtureStores, r.validationPaths, httpStore, nil, nil, globalExtraContext)
-}
-
 // mergeTestExtraContext folds a per-test extraContext map into the rendering
 // context built from the global config. Nested maps merge recursively with
 // per-test leaves winning — the same mergeOverwrite semantics the chart uses

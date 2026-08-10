@@ -39,14 +39,12 @@ func TestSortByItems_DebugLogging(t *testing.T) {
 
 	// Debug disabled → no comparison logging.
 	buf.Reset()
-	_, err := sortByItems(items, criteria, false)
-	require.NoError(t, err)
+	sortByItems(items, criteria, false)
 	require.NotContains(t, buf.String(), "SORT comparison")
 
 	// Debug enabled → each comparison logged with the documented fields.
 	buf.Reset()
-	_, err = sortByItems(items, criteria, true)
-	require.NoError(t, err)
+	sortByItems(items, criteria, true)
 	out := buf.String()
 	require.Contains(t, out, "SORT comparison")
 	require.Contains(t, out, "criterion=")

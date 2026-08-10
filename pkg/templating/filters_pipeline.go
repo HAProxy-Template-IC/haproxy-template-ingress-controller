@@ -294,10 +294,7 @@ func sortByCriteria(rv reflect.Value, criteria []string, debug bool) (any, error
 	for i := range rv.Len() {
 		items[i] = rv.Index(i).Interface()
 	}
-	sorted, err := sortByItems(items, criteria, debug)
-	if err != nil {
-		return nil, err
-	}
+	sorted := sortByItems(items, criteria, debug)
 	out := reflect.MakeSlice(rv.Type(), 0, len(sorted))
 	for _, item := range sorted {
 		out = reflect.Append(out, reflect.ValueOf(item))

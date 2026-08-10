@@ -51,21 +51,6 @@ const (
 	StatusUnknown   Status = "unknown"
 )
 
-// Exit codes of the migrate-check CLI.
-const (
-	// ExitClean means every checked annotation is fully supported and
-	// every Ingress rendered.
-	ExitClean = 0
-	// ExitDifferences means at least one annotation behaves differently,
-	// is dropped, or is unknown to the coverage data.
-	ExitDifferences = 1
-	// ExitBlockers means at least one annotation is marked as failing or
-	// at least one Ingress failed to render. Operational errors of the
-	// CLI itself also use this code: a check that could not complete
-	// must not read as "safe to migrate".
-	ExitBlockers = 2
-)
-
 // Ingress is one audited Ingress resource, reduced to the fields the
 // classification needs.
 type Ingress struct {
@@ -158,20 +143,6 @@ type Report struct {
 	// colliding hosts or paths, cross-resource map-key collisions) — which
 	// isolated renders cannot see. A non-empty value is a blocker.
 	AggregateRenderError string `json:"aggregateRenderError,omitempty"`
-}
-
-// ExitCode derives the CLI exit code from the report:
-// ExitBlockers when any render failed or any annotation is marked fails,
-// ExitDifferences when any annotation is different, dropped, or unknown,
-// ExitClean otherwise.
-func (r *Report) ExitCode() int {
-	if r.RenderFailures > 0 || r.Counts[StatusFails] > 0 || r.AggregateRenderError != "" {
-		return ExitBlockers
-	}
-	if r.Counts[StatusDifferent]+r.Counts[StatusDropped]+r.Counts[StatusUnknown] > 0 {
-		return ExitDifferences
-	}
-	return ExitClean
 }
 
 // Classify groups the audited Ingresses by source controller (via each
