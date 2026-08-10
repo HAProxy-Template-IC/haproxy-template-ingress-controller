@@ -31,6 +31,45 @@ func TestValidateStructure_NilConfig(t *testing.T) {
 	assert.Contains(t, err.Error(), "config is nil")
 }
 
+func TestValidateStructure_RejectsInvalidValidatorGlobs(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*ValidatorConfig)
+		want      string
+	}{
+		{
+			name: "files",
+			configure: func(validator *ValidatorConfig) {
+				validator.Files = []string{"general/[broken"}
+			},
+			want: "validators: spoa-hub.files: invalid glob",
+		},
+		{
+			name: "data files",
+			configure: func(validator *ValidatorConfig) {
+				validator.DataFiles = []string{"general/[broken"}
+			},
+			want: "validators: spoa-hub.data_files: invalid glob",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			validator := ValidatorConfig{
+				Name:       "spoa-hub",
+				SocketPath: "/var/run/haptic-validators/spoa-hub.sock",
+				Files:      []string{"general/*.toml"},
+			}
+			tt.configure(&validator)
+			cfg.Validators = []ValidatorConfig{validator}
+
+			err := ValidateStructure(cfg)
+			assert.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
 func TestValidatePodSelector_EmptyMatchLabels(t *testing.T) {
 	cfg := validConfig()
 	cfg.PodSelector.MatchLabels = map[string]string{}

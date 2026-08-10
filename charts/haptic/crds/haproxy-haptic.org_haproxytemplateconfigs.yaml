@@ -1040,17 +1040,17 @@ spec:
               validators:
                 description: |-
                   Validators declares pluggable validator sidecars consulted by the
-                  admission webhook before admitting changes that affect plugin
-                  configuration. See `docs/site/docs/operations/pluggable-validators.md`
+                  controller before publishing rendered configuration. See
+                  `docs/site/docs/operations/pluggable-validators.md`
                   for setup; the wire protocol is at
                   `docs/development/validator-protocol.md`.
 
                   An empty list (the default) disables pluggable validation — the
-                  webhook keeps performing template + HAProxy syntax dry-run only.
+                  controller keeps performing its built-in validation only.
                 items:
                   description: |-
                     ValidatorConfig declares one pluggable validator sidecar that the
-                    controller will consult during admission webhook processing.
+                    controller consults before rendered configuration is published.
 
                     The wire protocol between the controller and a validator sidecar is
                     documented in `docs/development/validator-protocol.md` and is owned
@@ -1104,11 +1104,8 @@ spec:
                           - `**` is NOT supported; use multiple entries to cover
                             directory hierarchies.
 
-                        At least one glob MUST be specified. Each glob MUST be an
-                        absolute path (start with `/`) so it matches the rendered file
-                        paths that the controller produces (e.g. `/etc/haproxy/maps/host.map`,
-                        `/etc/haproxy-spoa-hub/config.toml`). Operators get the matching
-                        behaviour they expect from a path-style glob.
+                        At least one glob MUST be specified. Paths use the same relative or
+                        absolute form emitted by the corresponding file template.
                       items:
                         type: string
                       minItems: 1

@@ -284,7 +284,7 @@ func TestServer_HandleValidation_InvalidBody(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
-func TestServer_HandleValidation_NoValidatorAllowsByDefault(t *testing.T) {
+func TestServer_HandleValidation_NoValidatorDenies(t *testing.T) {
 	server := newTestServer(t, &ServerConfig{})
 
 	// Create a valid AdmissionReview request for a type with no validator
@@ -299,7 +299,9 @@ func TestServer_HandleValidation_NoValidatorAllowsByDefault(t *testing.T) {
 	err := json.NewDecoder(resp.Body).Decode(&responseReview)
 	require.NoError(t, err)
 
-	assert.True(t, responseReview.Response.Allowed)
+	assert.False(t, responseReview.Response.Allowed)
+	assert.Equal(t, int32(http.StatusServiceUnavailable), responseReview.Response.Result.Code)
+	assert.Contains(t, responseReview.Response.Result.Message, "no validator registered")
 }
 
 func TestServer_HandleValidation_ValidatorAllows(t *testing.T) {
@@ -794,11 +796,8 @@ func TestServer_ConcurrentValidation(t *testing.T) {
 	mu.Unlock()
 }
 
-// TestServer_HandleValidation_UnregisteredGVKIsReported pins that admitting an
-// object no validator backs is never silent. The API server only routes what
-// its rules select, so a request arriving with no validator means the rules and
-// the registrations have diverged and the gate is open for that kind — which
-// must be reportable, not indistinguishable from a clean pass.
+// TestServer_HandleValidation_UnregisteredGVKIsReported verifies that a routed
+// object without a validator is denied and reported.
 func TestServer_HandleValidation_UnregisteredGVKIsReported(t *testing.T) {
 	certPEM, keyPEM, err := generateTestCertificates()
 	require.NoError(t, err)
@@ -837,14 +836,14 @@ func TestServer_HandleValidation_UnregisteredGVKIsReported(t *testing.T) {
 	var responseReview admissionv1.AdmissionReview
 	require.NoError(t, json.NewDecoder(w.Result().Body).Decode(&responseReview))
 
-	assert.True(t, responseReview.Response.Allowed,
-		"nothing registered can judge it, so it is still admitted")
+	assert.False(t, responseReview.Response.Allowed)
+	assert.Equal(t, int32(http.StatusServiceUnavailable), responseReview.Response.Result.Code)
 	assert.Equal(t, []string{"v1.ConfigMap"}, reported,
-		"the unchecked admission must be reported with the GVK that had no validator")
+		"the denied admission must be reported with the GVK that had no validator")
 }
 
 // TestServer_HandleValidation_RegisteredGVKNotReported is the negative control:
-// a kind that IS validated must never be reported as an unchecked admission.
+// a kind that IS validated must never be reported as unregistered.
 func TestServer_HandleValidation_RegisteredGVKNotReported(t *testing.T) {
 	certPEM, keyPEM, err := generateTestCertificates()
 	require.NoError(t, err)
@@ -880,7 +879,7 @@ func TestServer_HandleValidation_RegisteredGVKNotReported(t *testing.T) {
 
 	server.handleValidation(w, req)
 
-	assert.Empty(t, reported, "a validated kind is not an unchecked admission")
+	assert.Empty(t, reported, "a validated kind is not unregistered")
 }
 
 // TestServer_SetValidators_ReplacesTable pins the property RegisterValidator
@@ -919,7 +918,7 @@ func TestServer_SetValidators_ReplacesTable(t *testing.T) {
 	assert.Equal(t, []string{"first"}, called,
 		"the dropped kind's old closure must not be called after the swap")
 	assert.Equal(t, []string{"v1.ConfigMap"}, unregistered,
-		"the dropped kind is now an unchecked admission and must be reported")
+		"the dropped kind is denied and reported")
 }
 
 // TestServer_SetValidators_CopiesInput pins that the server does not alias the

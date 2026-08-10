@@ -34,16 +34,7 @@ import (
 // cleanup callback on the iteration setup so the manager's
 // connection pools are drained on teardown (every iteration
 // restart, every config change, every shutdown).
-//
-// Returns nil and logs the underlying error when the slice contains
-// duplicate names, empty paths, or malformed globs — all CRD-schema
-// violations the apiserver should have rejected before this code
-// path runs, so the failure is treated as a degraded state rather
-// than a fatal one. The /healthz check downstream sees a nil
-// manager and skips the "pluggable-validators" entry, surfacing the
-// misconfiguration through the absence of the expected entry plus
-// the controller log.
-func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *coreconfig.Config, logger *slog.Logger) *pluggablevalidator.Manager {
+func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *coreconfig.Config, logger *slog.Logger) (*pluggablevalidator.Manager, error) {
 	configs := make([]pluggablevalidator.ManagerConfig, 0, len(cfg.Validators))
 	for _, v := range cfg.Validators {
 		mc := pluggablevalidator.ManagerConfig{
@@ -65,9 +56,7 @@ func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *corec
 	mgr, err := pluggablevalidator.NewManager(logger, configs,
 		pluggablevalidator.WithStagedRoot(filepath.Dir(cfg.Dataplane.MapsDir)))
 	if err != nil {
-		logger.Error("Pluggable-validator manager construction failed; feature disabled for this iteration",
-			slog.Any("error", err))
-		return nil
+		return nil, err
 	}
 	if mgr.Configured() {
 		logger.Info("Pluggable validators registered",
@@ -79,7 +68,7 @@ func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *corec
 		logger.Debug("Closing pluggable-validator connection pools")
 		mgr.Close()
 	})
-	return mgr
+	return mgr, nil
 }
 
 // waitAndLoadInitialConfig polls until the HAProxyTemplateConfig exists (the
@@ -240,10 +229,16 @@ func runIteration(
 		return err
 	}
 
+	// 5.5. Construct the validator used by every render pipeline.
+	pluggableMgr, err := buildAndRegisterPluggableValidatorManager(setup, cfg, logger)
+	if err != nil {
+		return fmt.Errorf("creating pluggable validators: %w", err)
+	}
+
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
 	logger.Info("Stage 5: Creating reconciliation components")
-	wiring, err := setupReconciliation(setup, cfg, crd, bundle.Sources, creds, k8sClient, resourceWatcher, currentConfigStore, currentAuxFiles, storeProvider, logger)
+	wiring, err := setupReconciliation(setup, cfg, crd, bundle.Sources, creds, k8sClient, resourceWatcher, currentConfigStore, currentAuxFiles, storeProvider, pluggableMgr, logger)
 	if err != nil {
 		return err
 	}
@@ -251,23 +246,12 @@ func runIteration(
 	// 6.1. EventBuffer was already created early (step 0.25) for /debug/events handler
 	// It subscribes in constructor before EventBus.Start() for proper subscription ordering
 
-	// 6.2. Construct the pluggable-validator Manager from spec.validators.
-	// Pure synchronous service (no event subs, no goroutines) so order
-	// relative to EventBus.Start() doesn't matter. The Manager's
-	// Healthy() output is plumbed into /healthz below; admission-time
-	// dispatch happens via the DryRunValidator wired up next. The helper
-	// registers Close() on the iteration cleanup hook so connection
-	// pools drain on teardown.
-	pluggableMgr := buildAndRegisterPluggableValidatorManager(setup, cfg, logger)
-
 	// 6.3. Create DryRunValidator for webhook validation.
 	// The validator is a synchronous library (ValidateDirect); the proposal
 	// validator it wires up subscribes to ProposalValidationRequestedEvent in
-	// its constructor, so this must run before EventBus.Start(). The
-	// pluggable-validator Manager is injected here so admission-time
-	// validation can dispatch the rendered file set to validator sidecars
-	// (e.g. SPOA hub --validate-socket) after the standard pipeline
-	// passes. A nil Manager is the no-validators-configured case.
+	// its constructor, so this must run before EventBus.Start(). The same output
+	// validator used by reconciliation is injected into the
+	// admission pipeline so every path applies one validation contract.
 	// The webhook server runs whenever the chart mounted a TLS cert directory
 	// (the maybeSetupWebhook caller gates on `webhookCertDir != ""`).
 	// The DryRunValidator is nil when no watched-resource rules exist.
@@ -295,21 +279,15 @@ func runIteration(
 	setupInfrastructureServers(setup.IterCtx, setup, state, infra, stateCache, eventBuffer, pluggableMgr, logger)
 
 	// 10. Enable reinitialization signaling now that startup is complete
-	// This allows future ConfigValidatedEvents to trigger controller reinitialization.
-	// During startup, multiple events occur (watcher sync, status updates) that should
-	// NOT trigger reinitialization - those were skipped while this was disabled.
-	setup.ConfigChangeHandler.EnableReinitialization()
-
+	// This replays any config or credential update newer than the fetched startup
+	// versions, then allows future updates to trigger reinitialization.
 	// 11. Flip the "initialized" health bit. /healthz returns 503 until
 	// this fires and 200 (assuming other components healthy) after.
 	// This is the canonical "controller is ready to accept work"
 	// signal — see configState.SetInitialized's docstring and the
 	// "initialized" entry in the full health checker installed by
 	// setupInfrastructureServers.
-	state.SetInitialized()
-	infra.NoteInitialized()
-
-	logger.Info("Controller iteration initialized successfully - entering event loop")
+	markIterationInitialized(setup, state, infra, logger)
 
 	// 10. Wait for config change signal or context cancellation
 	select {
@@ -323,6 +301,13 @@ func runIteration(
 		handleConfigurationChange(leaderState, setup, logger)
 		return nil
 	}
+}
+
+func markIterationInitialized(setup *componentSetup, state *configState, infra *persistentInfra, logger *slog.Logger) {
+	setup.ConfigChangeHandler.EnableReinitialization()
+	state.SetInitialized()
+	infra.NoteInitialized()
+	logger.Info("Controller iteration initialized successfully - entering event loop")
 }
 
 // handleIterationCancellation handles cleanup when the controller iteration is cancelled.

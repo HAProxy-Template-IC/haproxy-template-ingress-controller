@@ -190,7 +190,7 @@ Three phases run in-process, eliminating the need for a separate validation side
 
 Results are cached by an SHA-256 over (config + auxiliary files) per instance — repeat validations during drift-prevention cycles short-circuit before touching disk. Because Phase 2 runs the real `haproxy` binary against a mirror of the production file layout, a passing check means a live HAProxy instance would accept the config.
 
-Two service instances are wired (`buildValidationPipelines` in `pkg/controller/reconciliation.go`): the **strict** one (all three phases) serves the watched-resource admission webhook, HTTP-store promotion, *and* the Coordinator's first render of each iteration — an iteration restarts on every config change, so a config or template change is always checked semantically. Every render after that falls through to the **fast** instance (`SkipSemanticValidation: true`), which runs only Phases 1 and 1.5: its inputs already passed the strict check, and the Dataplane API runs its own `haproxy -c` server-side before accepting a push.
+One validation pipeline is wired in `pkg/controller/reconciliation.go` and shared by leader reconciliation, watched-resource admission, and HTTP-store promotion. Every changed render runs all three phases, then every configured rendered-output validator, before any success event can publish or deploy it. Identical output returns from the pipeline's content-checksum caches. [ADR-0020](../adr/0020-authoritative-render-validation-pipeline.md) records why validation is attached to output rather than assumed from the trigger that produced it.
 
 ## Operating assumptions and constraints
 

@@ -102,6 +102,7 @@ func createReconciliationComponents(
 	currentConfigStore *currentconfigstore.Store,
 	currentAuxFiles func() map[string]string,
 	storeProvider stores.StoreProvider,
+	outputValidator pipeline.RenderedOutputValidator,
 	logger *slog.Logger,
 ) (*reconciliationWiring, error) {
 	// Create Reconciler. It fires immediately on every resource/HTTP event;
@@ -161,42 +162,20 @@ func createReconciliationComponents(
 		TypedResourceTypes:      wiring.TypedResourceTypes,
 	})
 
-	// Two ValidationService instances, two pipelines. The split lets the
-	// leader-side reconcile skip `haproxy -c` on every render while keeping
-	// strict validation on the admission paths.
-	//
-	// Strict (SkipSemanticValidation=false) — runs full `haproxy -c`:
-	//   - Watched-resource admission webhook (Ingress, HTTPRoute, …) via the
-	//     ProposalValidator + DryRunValidator.
-	//   - HAProxyTemplateConfig admission webhook (closes the CRD-side
-	//     validation gap so the leader can safely skip `haproxy -c`).
-	//   - HTTP-store content promotion.
-	//
-	// Fast (SkipSemanticValidation=true) — skips `haproxy -c`:
-	//   - Leader-side reconciliation Coordinator. Every input has already
-	//     passed strict validation (admission webhook or HTTP-store), and
-	//     the dataplane API server-side runs its own `haproxy -c` before
-	//     accepting a `/raw` push. Skipping shaves ~94 ms per render off
-	//     the rolling-restart reaction path.
-	strictPipeline, fastPipeline := buildValidationPipelines(cfg, localVersion, renderService, logger)
+	validationPipeline := buildValidationPipeline(cfg, localVersion, renderService, outputValidator, logger)
 
-	// Coordinator: leader-side render + validate + deploy. Fast pipeline for
-	// steady state; the strict one serves the iteration's first render — the
-	// one a config change produced — restoring the semantic check that config
-	// admission carried before ADR-0016 removed it.
+	// Coordinator: leader-side render + validate + deploy.
 	coordinatorComponent := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
-		EventBus:       setup.Bus,
-		Pipeline:       fastPipeline,
-		StrictPipeline: strictPipeline,
-		StoreProvider:  storeProvider,
-		Logger:         logger,
+		EventBus:      setup.Bus,
+		Pipeline:      validationPipeline,
+		StoreProvider: storeProvider,
+		Logger:        logger,
 	})
 
 	// ProposalValidator: admission webhook + HTTP-store content promotion.
-	// Uses strict pipeline so invalid input never reaches the leader.
 	proposalValidatorComponent := proposalvalidator.New(&proposalvalidator.ComponentConfig{
 		EventBus:          setup.Bus,
-		Pipeline:          strictPipeline,
+		Pipeline:          validationPipeline,
 		BaseStoreProvider: storeProvider,
 		Logger:            logger,
 	})
@@ -318,29 +297,20 @@ func registerLifecycleComponents(reg *lifecycle.Registry, allReplica, leaderOnly
 	}
 }
 
-// buildValidationPipelines builds two render+validate pipelines sharing the
-// renderer but differing on `haproxy -c`:
-//
-//   - strict: full validation. Used by the admission webhook (watched-resource
-//   - HAProxyTemplateConfig validators) and HTTP-store content promotion —
-//     the only places operator-supplied / third-party input enters the system.
-//   - fast: skips `haproxy -c` (~94 ms saved per reconcile). Used by the
-//     leader-side reconcile loop. Every input has already passed strict
-//     validation upstream, and the dataplane API runs its own `haproxy -c`
-//     server-side before accepting a `/raw` push — defense in depth.
-//
-// Both keep SkipDNSValidation=true: hostname-DNS lookup is independently
+// buildValidationPipeline creates the shared full-validation pipeline used by
+// reconciliation, admission, and HTTP content promotion. DNS lookup remains
 // flaky and recovers at runtime (HAProxy starts the server DOWN and brings
 // it up when the next health check resolves).
-func buildValidationPipelines(
+func buildValidationPipeline(
 	cfg *coreconfig.Config,
 	localVersion *dataplane.Version,
 	renderService *renderer.RenderService,
+	outputValidator pipeline.RenderedOutputValidator,
 	logger *slog.Logger,
-) (strict, fast *pipeline.Pipeline) {
+) *pipeline.Pipeline {
 	dirConfig := extractValidationDirConfig(&cfg.Dataplane)
-	strictValidation := validation.NewValidationService(&validation.ValidationServiceConfig{
-		Logger:            logger.With("validation", "strict"),
+	validationService := validation.NewValidationService(&validation.ValidationServiceConfig{
+		Logger:            logger.With("validation", "full"),
 		Version:           localVersion,
 		SkipDNSValidation: true,
 		BaseDir:           dirConfig.BaseDir,
@@ -348,27 +318,12 @@ func buildValidationPipelines(
 		SSLCertsDir:       dirConfig.SSLCertsDir,
 		GeneralDir:        dirConfig.GeneralDir,
 	})
-	fastValidation := validation.NewValidationService(&validation.ValidationServiceConfig{
-		Logger:                 logger.With("validation", "fast"),
-		Version:                localVersion,
-		SkipDNSValidation:      true,
-		SkipSemanticValidation: true,
-		BaseDir:                dirConfig.BaseDir,
-		MapsDir:                dirConfig.MapsDir,
-		SSLCertsDir:            dirConfig.SSLCertsDir,
-		GeneralDir:             dirConfig.GeneralDir,
+	return pipeline.New(&pipeline.PipelineConfig{
+		Renderer:        renderService,
+		Validator:       validationService,
+		OutputValidator: outputValidator,
+		Logger:          logger,
 	})
-	strict = pipeline.New(&pipeline.PipelineConfig{
-		Renderer:  renderService,
-		Validator: strictValidation,
-		Logger:    logger,
-	})
-	fast = pipeline.New(&pipeline.PipelineConfig{
-		Renderer:  renderService,
-		Validator: fastValidation,
-		Logger:    logger,
-	})
-	return strict, fast
 }
 
 // newResourceApplier builds the all-replica/leader-only ResourceApplier

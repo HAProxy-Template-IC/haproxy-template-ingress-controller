@@ -466,7 +466,7 @@ See [Validation Tests](./validation-tests.md) for the full test-framework refere
 
 ### `validators`
 
-Pluggable validator sidecars consulted by the admission webhook (optional).
+Pluggable validator sidecars consulted before rendered output is published or deployed (optional).
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -477,7 +477,7 @@ Pluggable validator sidecars consulted by the admission webhook (optional).
 | `timeoutMs` | integer | No | `5000` (range 1–60000) |
 | `maxConnections` | integer | No | `4` (range 1–32) |
 
-Globs follow Go's `path/filepath.Match` rules and must be absolute: `*` and `?` don't cross `/`, and `**` isn't supported — use one entry per directory level.
+Globs follow Go's `path/filepath.Match` rules and must use the same relative or absolute form as the rendered path: `*` and `?` don't cross `/`, and `**` isn't supported. Malformed patterns fail configuration validation.
 
 `dataFiles` covers files the validator needs in order to check something else but must not check on its own. Every match is attached to every request to that validator, marked as data. A validator sidecar runs in the controller pod and can't read the HAProxy pod's filesystem, so a config that `Include`s a ruleset by path is only checkable if the ruleset's content travels with the request. A file matching both `files` and `dataFiles` is treated as data.
 

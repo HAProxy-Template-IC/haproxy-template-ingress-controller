@@ -33,7 +33,7 @@ for cfg := range configChangeCh {
 }
 ```
 
-The handler also exposes `SetInitialConfigVersion` and `EnableReinitialization` to suppress the bootstrap `ConfigValidatedEvent` that the CRD watcher emits at startup; without those calls every cold start would reinit itself.
+The handler records the config and credential versions fetched at startup. Exact watcher echoes of those versions are ignored; newer changes observed before startup completes are queued latest-wins and replayed by `EnableReinitialization`, so startup neither loops on its own snapshot nor loses concurrent updates.
 
 ## Events
 

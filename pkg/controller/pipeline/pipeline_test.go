@@ -16,6 +16,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 
@@ -33,6 +34,17 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
+
+type recordingOutputValidator struct {
+	warnings []string
+	err      error
+	calls    int
+}
+
+func (v *recordingOutputValidator) ValidateRenderedOutput(_ context.Context, _ *PipelineResult) ([]string, error) {
+	v.calls++
+	return v.warnings, v.err
+}
 
 // mockStoreProvider implements stores.StoreProvider for testing.
 type mockStoreProvider struct {
@@ -215,4 +227,49 @@ backend http_back
 	assert.False(t, valResult.Valid)
 	assert.NotNil(t, valResult.Error)
 	assert.Equal(t, "semantic", valResult.Phase)
+}
+
+func TestPipeline_ExecuteWithResult_RunsOutputValidator(t *testing.T) {
+	pipeline := createTestPipeline(t, testutil.MinimalHAProxyConfig)
+	outputValidator := &recordingOutputValidator{warnings: []string{"deprecated directive"}}
+	pipeline.outputValidator = outputValidator
+
+	result, valResult, err := pipeline.ExecuteWithResult(
+		context.Background(),
+		&mockStoreProvider{storeMap: map[string]stores.Store{}},
+		rendercontext.RenderModeReconcile,
+	)
+
+	require.NoError(t, err)
+	require.True(t, valResult.Valid)
+	assert.Equal(t, 1, outputValidator.calls)
+	assert.Equal(t, []string{"deprecated directive"}, valResult.Warnings)
+	assert.Equal(t, valResult.Warnings, result.ValidationWarnings)
+}
+
+func TestPipeline_ExecuteWithResult_OutputValidatorFailure(t *testing.T) {
+	pipeline := createTestPipeline(t, testutil.MinimalHAProxyConfig)
+	outputValidator := &recordingOutputValidator{err: errors.New("payload rejected")}
+	pipeline.outputValidator = outputValidator
+
+	result, valResult, err := pipeline.ExecuteWithResult(
+		context.Background(),
+		&mockStoreProvider{storeMap: map[string]stores.Store{}},
+		rendercontext.RenderModeReconcile,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, valResult.Valid)
+	assert.Equal(t, "external", valResult.Phase)
+	assert.ErrorContains(t, valResult.Error, "payload rejected")
+
+	result, err = pipeline.Execute(
+		context.Background(),
+		&mockStoreProvider{storeMap: map[string]stores.Store{}},
+		rendercontext.RenderModeReconcile,
+	)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.ErrorContains(t, err, "external")
 }

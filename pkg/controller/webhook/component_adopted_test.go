@@ -97,6 +97,44 @@ func TestAdoptedServer_SurvivesIterationTeardown(t *testing.T) {
 	require.NotContains(t, msg, "iteration-A")
 }
 
+func TestAdoptedServer_RejectsPartialReplacement(t *testing.T) {
+	certPEM, keyPEM, pool := generateLoopbackCert(t)
+	procCtx, procCancel := context.WithCancel(context.Background())
+	defer procCancel()
+
+	server := startServerOnFreePort(t, procCtx, certPEM, keyPEM)
+	post := admissionPoster(t, server.Addr(), pool)
+
+	iterA, cancelA := context.WithCancel(procCtx)
+	componentA := newAdoptingComponent(t, server, "iteration-A")
+	go func() { _ = componentA.Start(iterA) }()
+	<-componentA.Listening()
+
+	componentB := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&Config{
+			Server: server,
+			Rules: []WebhookRule{
+				{APIGroup: "networking.k8s.io", APIVersion: "v1", Resource: "ingresses"},
+				{APIGroup: "example.com", APIVersion: "v1", Resource: "missing"},
+			},
+			DryRunValidator: staticDenyValidator{reason: "denied by iteration-B"},
+		},
+		ingressRESTMapper(),
+		nil,
+	)
+
+	err := componentB.Start(procCtx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "example.com/v1/missing")
+
+	allowed, message := post()
+	require.False(t, allowed)
+	require.Contains(t, message, "iteration-A")
+	require.NotContains(t, message, "iteration-B")
+	cancelA()
+}
+
 // startServerOnFreePort binds the server to a free loopback port.
 //
 // ServerConfig.Port 0 means "unset" and defaults to 9443, so an ephemeral port

@@ -28,12 +28,14 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -69,6 +71,39 @@ func createTestPipeline(t *testing.T, template string) *pipeline.Pipeline {
 		SkipDNSValidation: true,
 	})
 
+	return pipeline.New(&pipeline.PipelineConfig{
+		Renderer:  renderSvc,
+		Validator: validationSvc,
+		Logger:    slog.Default(),
+	})
+}
+
+func createStoreTestPipeline(t *testing.T, template string) *pipeline.Pipeline {
+	t.Helper()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: template},
+		WatchedResources: map[string]config.WatchedResource{
+			"ingresses": {APIVersion: "networking.k8s.io/v1", Resources: "ingresses"},
+		},
+	}
+	declarations := typebootstrap.BuildEngineDeclarations(&typebootstrap.Result{}, "ingresses")
+	engine, err := templating.New(map[string]string{"haproxy.cfg": template}, &templating.Options{
+		EntryPoints:  []string{"haproxy.cfg"},
+		Declarations: declarations,
+	})
+	require.NoError(t, err)
+
+	renderSvc := renderer.NewRenderService(&renderer.RenderServiceConfig{
+		Engine:       engine,
+		Config:       cfg,
+		Logger:       slog.Default(),
+		Capabilities: defaultCapabilities(),
+	})
+	validationSvc := validation.NewValidationService(&validation.ValidationServiceConfig{
+		Logger:            slog.Default(),
+		SkipDNSValidation: true,
+	})
 	return pipeline.New(&pipeline.PipelineConfig{
 		Renderer:  renderSvc,
 		Validator: validationSvc,
@@ -162,23 +197,7 @@ defaults
 	assert.Nil(t, pipelineResult, "failed validation must not leak a partial pipeline result")
 }
 
-// TestComponent_ValidateSync_BaselineAlsoFails_Admits pins the load-bearing
-// behavior added to bound the webhook's coupling to global state: when the
-// rendered config fails validation BUT the baseline (live stores without the
-// proposed overlay) ALSO fails for the same reason, the new resource isn't
-// the cause of the failure. The webhook must admit it; otherwise a single
-// pre-existing broken resource (e.g. an Ingress whose referenced Secret was
-// deleted) blocks admission of every unrelated resource until an operator
-// intervenes — a real production reliability issue.
-func TestComponent_ValidateSync_BaselineAlsoFails_Admits(t *testing.T) {
-	// Template renders an invalid HAProxy directive verbatim, so semantic
-	// validation (haproxy -c) rejects the config regardless of which stores
-	// or overlays are applied. Both proposed and baseline runs hit the same
-	// failure → the new resource isn't the cause → admit.
-	//
-	// The rejection is simulated via the fake executor (unit tests never
-	// shell out); it applies to every check, which is exactly the
-	// "baseline fails too" condition this test needs.
+func TestComponent_ValidateSync_UnchangedInvalidContent_Admits(t *testing.T) {
 	t.Cleanup(dataplanetest.InstallFakeHAProxy(
 		dataplanetest.WithRejectAll("parsing [haproxy.cfg:3] : unknown keyword 'nosuch_directive_haproxy_will_reject'")))
 	template := `global
@@ -188,7 +207,7 @@ func TestComponent_ValidateSync_BaselineAlsoFails_Admits(t *testing.T) {
 
 	bus := busevents.NewEventBus(100)
 	pipelineInstance := createTestPipeline(t, template)
-	baseStore := stores.NewRealStoreProvider(map[string]stores.Store{})
+	baseStore := stores.NewRealStoreProvider(map[string]stores.Store{"ingresses": &storetest.MockStore{}})
 
 	component := New(&ComponentConfig{
 		EventBus:          bus,
@@ -197,25 +216,69 @@ func TestComponent_ValidateSync_BaselineAlsoFails_Admits(t *testing.T) {
 		Logger:            slog.Default(),
 	})
 
-	// Empty overlays — baseline and proposed render to the same config; the
-	// admission-relevant property is "broken state, no fix from this MR".
-	pipelineResult, result := component.ValidateSync(context.Background(), map[string]*stores.StoreOverlay{})
+	overlays := map[string]*stores.StoreOverlay{
+		"ingresses": stores.NewStoreOverlayForCreate(unstructuredObj("default", "unrelated")),
+	}
+	pipelineResult, result := component.ValidateSync(context.Background(), overlays)
 
 	require.NotNil(t, result)
-	assert.True(t, result.Valid,
-		"baseline-also-fails MUST admit — denying would gate every unrelated "+
-			"resource on an operator fixing the pre-existing broken state, "+
-			"which is the production bug this baseline check exists to fix")
-	assert.Empty(t, result.Phase,
-		"on admit, no phase should be reported — the result represents an "+
-			"intentional bypass of the failure, not the failure itself")
-	assert.Nil(t, result.Error,
-		"on admit, no error should be reported — the proposed-render failure "+
-			"is logged at warn but not surfaced to the caller as a denial reason")
-	assert.Nil(t, pipelineResult,
-		"baseline-via-admit path must NOT return a pipeline result — baseline "+
-			"rendered against the live store, not the proposed overlay, so its "+
-			"files would mislead downstream consumers expecting proposed state")
+	assert.True(t, result.Valid)
+	assert.Empty(t, result.Phase)
+	assert.Nil(t, result.Error)
+	require.NotNil(t, pipelineResult)
+	assert.NotEmpty(t, pipelineResult.ContentChecksum)
+}
+
+func TestComponent_ValidateSync_AdmissionSubjectOnlyDifference_Admits(t *testing.T) {
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithRejectAll("invalid configuration")))
+	template := `global
+    daemon
+# subject: {{ admissionSubject | dig("name") | fallback("") }}
+`
+
+	component := New(&ComponentConfig{
+		Pipeline:          createTestPipeline(t, template),
+		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{"ingresses": &storetest.MockStore{}}),
+		Logger:            slog.Default(),
+		SyncOnly:          true,
+	})
+	overlays := map[string]*stores.StoreOverlay{
+		"ingresses": stores.NewStoreOverlayForCreate(unstructuredObj("default", "new-failure")),
+	}
+
+	pipelineResult, result := component.ValidateSync(context.Background(), overlays)
+
+	require.NotNil(t, result)
+	assert.True(t, result.Valid)
+	assert.Empty(t, result.Phase)
+	assert.NoError(t, result.Error)
+	require.NotNil(t, pipelineResult)
+}
+
+func TestComponent_ValidateSync_ChangedInvalidContent_Denies(t *testing.T) {
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithRejectAll("invalid configuration")))
+	template := `global
+    daemon
+# ingress-count: {{ len(resources.ingresses.List()) }}
+`
+
+	component := New(&ComponentConfig{
+		Pipeline:          createStoreTestPipeline(t, template),
+		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{"ingresses": &storetest.MockStore{}}),
+		Logger:            slog.Default(),
+		SyncOnly:          true,
+	})
+	overlays := map[string]*stores.StoreOverlay{
+		"ingresses": stores.NewStoreOverlayForCreate(unstructuredObj("default", "new-failure")),
+	}
+
+	pipelineResult, result := component.ValidateSync(context.Background(), overlays)
+
+	require.NotNil(t, result)
+	assert.False(t, result.Valid)
+	assert.Equal(t, "semantic", result.Phase)
+	assert.Error(t, result.Error)
+	assert.Nil(t, pipelineResult)
 }
 
 func TestValidationResult_ErrorMessage(t *testing.T) {
@@ -256,23 +319,8 @@ func TestValidationResult_ErrorMessage(t *testing.T) {
 	}
 }
 
-// TestComponent_Start_AsyncPath_DeniesOnFailure pins that the async event
-// path keeps strict deny-on-failure semantics, which is intentionally
-// different from ValidateSync's baseline-check policy. The async path is
-// driven by HTTPStore's pending-content promotion flow:
-// HTTPStore.handleProposalValidationCompleted branches on event.Valid —
-// Valid=true → promote pending HTTP content, Valid=false → reject it.
-// Admitting on baseline-also-fails (the policy ValidateSync uses for
-// admission) would PROMOTE BAD content into the live config, compounding
-// the broken state rather than recovering from it. The two callers ask
-// different questions ("can this admission go through?" vs. "is this new
-// content OK to promote?") and need different answers.
-//
-// Surfaced as a regression on MR !875's CI when the async path
-// temporarily inherited the admission policy: TestIngressAuthHeaders*
-// failed because SPOA-related HTTP content was promoted despite the
-// rendered config being broken, so the runtime SPOA filter chain was
-// missing and auth headers never reached the backend.
+// HTTP proposals always deny invalid candidate content instead of comparing
+// it with the live Kubernetes-only baseline.
 func TestComponent_Start_AsyncPath_DeniesOnFailure(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	failingEngine, err := templating.New(map[string]string{"haproxy.cfg": `{{ fail("pretend HTTP content is bad") }}`}, nil)

@@ -107,17 +107,12 @@ func (c *Component) validateWithOverlay(
     overlay := c.createOverlay(namespace, name, object, operation, requestID)
     overlays := map[string]*stores.StoreOverlay{resourceType: overlay}
 
-    pipelineResult, result := c.proposalValidator.ValidateSync(ctx, overlays)
+    _, result := c.proposalValidator.ValidateSync(ctx, overlays)
     if !result.Valid {
-        return false, c.simplifyError(result.Phase, result.Error), nil
+        return false, c.simplifyError(result.Phase, result.Error), result.Warnings
     }
-    // After the standard pipeline succeeds, dispatch the rendered files
-    // to any configured pluggable validators. Their errors deny admission;
-    // their warnings flow back to AdmissionResponse.Warnings via the
-    // returned `warnings` slice. PipelineResult is nil on the
-    // baseline-also-fails admit path, in which case dispatch is skipped.
 
-    return true, "", nil
+    return true, "", result.Warnings
 }
 ```
 
@@ -175,7 +170,7 @@ Webhook Admission Request
     ├─ Valid → Continue
     └─ Invalid → SimplifyValidationError → Deny
     ↓
-6. Dispatch rendered files to pluggable validators (if configured)
+6. Validate rendered files with pluggable validators (if configured in the pipeline)
     ├─ All valid → Allow (warnings → AdmissionResponse.Warnings)
     └─ Any errors → Deny (errors → reason, warnings → still propagated)
     ↓
@@ -190,7 +185,7 @@ The component uses error simplification at component boundaries:
 
 `ValidateSync` returns a `*validation.ValidationResult` with `Valid` (bool),
 `Error` (the underlying error), and `Phase` (one of `"render"`, `"syntax"`,
-`"schema"`, `"semantic"`). There are no sentinel errors to compare against —
+`"schema"`, `"semantic"`, `"external"`). There are no sentinel errors to compare against —
 phase routing happens by string in `simplifyError`:
 
 ```go
@@ -223,15 +218,14 @@ The DryRunValidator delegates the render+validate work to a `*proposalvalidator.
 
 ```go
 type Component struct {
-    proposalValidator  *proposalvalidator.Component   // Performs render + 3-phase validation
-    pluggableValidator *pluggablevalidator.Manager    // Optional: external validator sidecar dispatch
-    restMapper         meta.RESTMapper                // GVK -> watched-resource plural (RULE #1)
-    logger             *slog.Logger
+    proposalValidator *proposalvalidator.Component // Performs the full pipeline
+    restMapper        meta.RESTMapper              // GVK -> watched-resource plural (RULE #1)
+    logger            *slog.Logger
 }
 
 func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string) {
     // Build the overlay store, delegate render+validate to proposalValidator.ValidateSync,
-    // dispatch the rendered files to any pluggable validators, return a flat allow/deny + reason.
+    // return a flat allow/deny + reason and warnings.
     // No event hop — the webhook holds the request open and gets the answer synchronously.
 }
 ```

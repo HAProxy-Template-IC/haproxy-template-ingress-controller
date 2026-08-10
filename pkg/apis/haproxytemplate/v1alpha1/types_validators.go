@@ -15,7 +15,7 @@
 package v1alpha1
 
 // ValidatorConfig declares one pluggable validator sidecar that the
-// controller will consult during admission webhook processing.
+// controller consults before rendered configuration is published.
 //
 // The wire protocol between the controller and a validator sidecar is
 // documented in `docs/development/validator-protocol.md` and is owned
@@ -71,11 +71,8 @@ type ValidatorConfig struct {
 	//   - `**` is NOT supported; use multiple entries to cover
 	//     directory hierarchies.
 	//
-	// At least one glob MUST be specified. Each glob MUST be an
-	// absolute path (start with `/`) so it matches the rendered file
-	// paths that the controller produces (e.g. `/etc/haproxy/maps/host.map`,
-	// `/etc/haproxy-spoa-hub/config.toml`). Operators get the matching
-	// behaviour they expect from a path-style glob.
+	// At least one glob MUST be specified. Paths use the same relative or
+	// absolute form emitted by the corresponding file template.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
 	// +listType=set
