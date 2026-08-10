@@ -141,8 +141,10 @@ const scaleMetricsFile = "scale-metrics.json"
 //	    marker present in the deployed HAProxyCfg content on every HAProxy
 //	    pod — one batch condition, not per-Ingress polling); spot-check real
 //	    routing on a sample via NodePort (Ingress) and ForwardGateway.
-//	(b) measure: seed→converged wall time; single-change convergence latency
-//	    at full scale (create 1 Ingress, time create→deployed-marker and
+//	(b) measure: seed→converged wall time; then wait for the rendered config
+//	    to go still, so latency is sampled from idle rather than from the
+//	    tail of the seed storm; single-change convergence latency at full
+//	    scale (create 1 Ingress, time create→deployed-marker and
 //	    create→routed, x5, median/p95 — THE key number); rendered config
 //	    line count, HAProxyCfg spec size, compression state; controller
 //	    container memory (kubelet stats summary via the apiserver node
@@ -366,6 +368,49 @@ func TestScale(t *testing.T) {
 					t.Fatalf("spot-check Gateway %s: expected echo-server JSON, got %d bytes", gw, len(resp.Body))
 				}
 			}
+			return ctx
+		}).
+		Assess("controller quiesces after the seed storm", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			// The last marker landing does not mean the controller is idle:
+			// Gateway status write-back is itself a watched input, so seeding
+			// keeps triggering renders after convergence. A latency sample
+			// taken here measures the tail of that storm, not a single change
+			// — which is what the p95 budget is about. Gate on the rendered
+			// config going still, so every sample starts from idle.
+			const stableFor = 5 * time.Second
+			cfgName := HAProxyConfigName + "-haproxycfg"
+			var (
+				lastRV      string
+				stableSince time.Time
+			)
+			quiesceStart := time.Now()
+			quiesceWait := testutil.WaitConfig{
+				InitialInterval: 500 * time.Millisecond,
+				MaxInterval:     time.Second,
+				Timeout:         2 * time.Minute,
+				Multiplier:      1.0,
+			}
+			if err := testutil.WaitForConditionWithDescription(ctx, quiesceWait,
+				fmt.Sprintf("HAProxyCfg resourceVersion stable for %s", stableFor),
+				func(ctx context.Context) (bool, error) {
+					obj, err := hc.HaproxyTemplateICV1alpha1().HAProxyCfgs(ControllerNamespace).
+						Get(ctx, cfgName, metav1.GetOptions{})
+					if err != nil {
+						return false, err
+					}
+					now := time.Now()
+					if obj.ResourceVersion != lastRV {
+						lastRV = obj.ResourceVersion
+						stableSince = now
+						return false, fmt.Errorf("still re-rendering (resourceVersion %s)", obj.ResourceVersion)
+					}
+					return now.Sub(stableSince) >= stableFor, nil
+				}); err != nil {
+				t.Fatalf("controller never went quiescent after seeding: %v", err)
+			}
+			quiesceDuration := time.Since(quiesceStart)
+			sink.set("post_seed_quiesce_seconds", round2(quiesceDuration.Seconds()))
+			t.Logf("post-seed quiescence reached in %s", quiesceDuration.Round(time.Millisecond))
 			return ctx
 		}).
 		Assess("single-change convergence latency at full scale", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
