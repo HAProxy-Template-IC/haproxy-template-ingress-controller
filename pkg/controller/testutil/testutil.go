@@ -264,3 +264,23 @@ frontend test_frontend
 backend test_backend
     server test_server 127.0.0.1:8081
 `
+
+// MinimalHAProxyConfig is the smallest config that passes `haproxy -c`: one
+// frontend, one backend, one server. Render/validate tests that only need
+// *some* valid config use this so a change to what "valid" means is one edit.
+const MinimalHAProxyConfig = `global
+    daemon
+
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 50s
+    timeout server 50s
+
+frontend http_front
+    bind *:8080
+    default_backend http_back
+
+backend http_back
+    server srv1 127.0.0.1:80
+`

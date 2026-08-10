@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"testing"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -113,22 +115,7 @@ func TestPipelineNew_NilLoggerFallsBackToDefault(t *testing.T) {
 // for the same input — this catches a future bug where a maintainer
 // optimizes one path but not the other.
 func TestPipeline_ContentChecksumInvariantAcrossMethods(t *testing.T) {
-	template := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
+	template := testutil.MinimalHAProxyConfig
 
 	pipeline := makePipeline(t, template)
 
@@ -177,22 +164,7 @@ func TestPipeline_ContentChecksumIsDeterministicAcrossInvocations(t *testing.T) 
 	// Template needs at least one listener so HAProxy semantic
 	// validation passes ("no listener" is treated as an error by the
 	// haproxy -c binary).
-	template := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
+	template := testutil.MinimalHAProxyConfig
 	pipeline := makePipeline(t, template)
 	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
 	ctx := context.Background()

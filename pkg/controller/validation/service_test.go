@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -61,22 +63,7 @@ func TestValidationService_Validate_ValidConfig(t *testing.T) {
 	})
 
 	// Minimal valid HAProxy configuration
-	config := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
+	config := testutil.MinimalHAProxyConfig
 
 	result := validate(svc, context.Background(), config, nil)
 
@@ -243,22 +230,7 @@ func TestValidationService_Validate_TempDirCleanup(t *testing.T) {
 		SkipDNSValidation: true,
 	})
 
-	config := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
+	config := testutil.MinimalHAProxyConfig
 
 	// Run validation multiple times to ensure temp dirs are cleaned up
 	for i := range 3 {
@@ -277,22 +249,7 @@ func TestValidationService_Validate_Concurrent(t *testing.T) {
 		SkipDNSValidation: true,
 	})
 
-	config := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
+	config := testutil.MinimalHAProxyConfig
 
 	// Run concurrent validations to verify thread safety
 	const concurrency = 5
@@ -314,22 +271,7 @@ backend http_back
 }
 
 // validConfig is a minimal valid HAProxy configuration used by cache tests.
-const validConfig = `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
+const validConfig = testutil.MinimalHAProxyConfig
 
 func TestValidationService_CacheHit(t *testing.T) {
 	svc := NewValidationService(&ValidationServiceConfig{
