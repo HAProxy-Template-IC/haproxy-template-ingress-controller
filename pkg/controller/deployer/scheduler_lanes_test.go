@@ -55,6 +55,42 @@ backend api2
   server SRV_1 10.9.9.9:8080 enabled
 `
 
+// laneTwoServers carries two servers so a diff can mix a runtime-eligible field
+// change on one with a reload-only change on the other.
+const laneTwoServers = `global
+
+defaults
+  mode http
+  timeout connect 5s
+  timeout client 30s
+  timeout server 30s
+
+backend api
+  default-server check
+  server SRV_1 %s enabled
+  server SRV_2 10.0.1.1:8080 enabled%s
+`
+
+// A reload-only server change riding along with a runtime-eligible one must
+// classify the whole diff as structural. DiffSummary.StructuralOperations()
+// subtracts EVERY modified server, so it reported 0 here and the deployer took
+// the runtime-raw lane: the full render was written to disk with skip_reload,
+// only the eligible field reached the live worker, and the render was recorded
+// as activated — leaving disk and memory permanently divergent.
+func TestSchedulerLanes_MixedServerFields_ClassifyStructural(t *testing.T) {
+	baseline := parseLaneConfig(t, fmt.Sprintf(laneTwoServers, "10.0.0.1:8080", ""))
+	// SRV_1's address is runtime-eligible; SRV_2 gaining `ssl verify none` is not.
+	mixed := parseLaneConfig(t, fmt.Sprintf(laneTwoServers, "10.0.0.2:8080", " ssl verify none"))
+
+	upd, err := dataplane.ComputeRuntimeServerUpdates(baseline, mixed)
+	require.NoError(t, err)
+
+	require.Positive(t, upd.ServerOpCount(), "SRV_1's address change is runtime-eligible")
+	require.Positive(t, upd.StructuralOpCount(), "SRV_2's ssl change needs a reload")
+	require.False(t, upd.IsRuntimeEligible(),
+		"a diff carrying any reload-only change must not take the runtime-raw lane")
+}
+
 // parseLaneConfig parses a config string into a *parser.StructuredConfig.
 func parseLaneConfig(t *testing.T, raw string) *parser.StructuredConfig {
 	t.Helper()

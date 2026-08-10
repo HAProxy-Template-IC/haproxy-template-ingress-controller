@@ -157,3 +157,58 @@ func TestHTTPStore_NewWithNilLoggerUsesDefault(t *testing.T) {
 			"every fetch via the .With('component', 'httpstore') chain")
 	assert.Equal(t, "ok", content)
 }
+
+// Reached through the store's own client, so a regression that unwires the
+// policy in New() fails here too — not just one that changes the policy body.
+func TestHTTPStore_CheckRedirectPolicy(t *testing.T) {
+	policy := New(nil, 0).httpClient.CheckRedirect
+	require.NotNil(t, policy, "New() must install a redirect policy")
+
+	req := func(url string) *http.Request {
+		r, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
+		require.NoError(t, err)
+		return r
+	}
+	from := func(url string) []*http.Request { return []*http.Request{req(url)} }
+
+	t.Run("refuses https to http downgrade", func(t *testing.T) {
+		err := policy(req("http://evil.example/x"), from("https://origin.example/x"))
+		require.Error(t, err, "a plaintext hop can rewrite content that becomes HAProxy config and WAF rules")
+	})
+
+	t.Run("allows https to https", func(t *testing.T) {
+		require.NoError(t, policy(req("https://cdn.example/x"), from("https://origin.example/x")))
+	})
+
+	t.Run("allows an http origin to stay http", func(t *testing.T) {
+		require.NoError(t, policy(req("http://cdn.example/x"), from("http://origin.example/x")))
+	})
+
+	t.Run("drops credentials when the host changes", func(t *testing.T) {
+		r := req("https://other.example/x")
+		r.Header.Set("Authorization", "Bearer token")
+		r.Header.Set("X-API-Key", "api-key")
+		r.Header.Set("User-Agent", "haptic")
+
+		require.NoError(t, policy(r, from("https://origin.example/x")))
+		assert.Empty(t, r.Header.Get("Authorization"))
+		assert.Empty(t, r.Header.Get("X-API-Key"), "net/http strips only Authorization, so AuthTypeHeader keys need this")
+		assert.Equal(t, "haptic", r.Header.Get("User-Agent"))
+	})
+
+	t.Run("keeps credentials on the same host", func(t *testing.T) {
+		r := req("https://origin.example/moved")
+		r.Header.Set("X-API-Key", "api-key")
+
+		require.NoError(t, policy(r, from("https://origin.example/x")))
+		assert.Equal(t, "api-key", r.Header.Get("X-API-Key"))
+	})
+
+	t.Run("breaks chains longer than ten hops", func(t *testing.T) {
+		via := make([]*http.Request, 10)
+		for i := range via {
+			via[i] = req("https://origin.example/x")
+		}
+		require.Error(t, policy(req("https://origin.example/x"), via))
+	})
+}

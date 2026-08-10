@@ -67,19 +67,47 @@ func New(logger *slog.Logger, maxAge time.Duration) *HTTPStore {
 	return &HTTPStore{
 		cache: make(map[string]*CacheEntry),
 		httpClient: &http.Client{
-			Timeout: DefaultTimeout,
-			// Don't follow redirects automatically - we want to handle them
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 10 {
-					return errors.New("too many redirects")
-				}
-				return nil
-			},
+			Timeout:       DefaultTimeout,
+			CheckRedirect: checkRedirect,
 		},
 		logger:               logger.With("component", "httpstore"),
 		maxAge:               maxAge,
 		validationStuckAfter: DefaultValidationStuckAfter,
 	}
+}
+
+// redirectSafeHeaders survive a cross-host redirect. Everything else is dropped:
+// net/http only strips Authorization when the host changes, which leaves
+// AuthTypeHeader's API keys (and any header a future caller adds) in place.
+var redirectSafeHeaders = map[string]bool{
+	"User-Agent":        true,
+	"Referer":           true,
+	"If-None-Match":     true,
+	"If-Modified-Since": true,
+	"Accept-Encoding":   true,
+}
+
+// checkRedirect follows redirects but refuses to downgrade an https fetch to
+// plaintext, and drops credentials when the host changes. Fetched bodies become
+// HAProxy config and WAF rules, so a plaintext hop is a config-injection path.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("too many redirects")
+	}
+	// via[0] is the URL the operator configured: an http:// source was never
+	// confidential, so only an https:// origin gets downgrade protection.
+	if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing redirect from https to %s (%s): plaintext hop can rewrite the fetched content",
+			req.URL.Scheme, req.URL.Redacted())
+	}
+	if req.URL.Host != via[0].URL.Host {
+		for name := range req.Header {
+			if !redirectSafeHeaders[name] {
+				req.Header.Del(name)
+			}
+		}
+	}
+	return nil
 }
 
 // Fetch retrieves content from a URL, using cache if available.

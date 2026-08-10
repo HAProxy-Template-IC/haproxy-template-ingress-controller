@@ -85,17 +85,17 @@ rules:
   - apiGroups: ["haproxy-haptic.org"]
     resources: ["haproxycfgs/status", "haproxygeneralfiles/status", "haproxycrtlistfiles/status", "haproxymapfiles/status"]
     verbs: ["update", "patch"]
-  {{- if .Values.controller.templateLibraries.ingress.enabled }}
-  # Warning Events on Ingresses whose by-name backend Service is absent
-  # (the ingress library's `ingress-degraded-backend-events` k8sResources
-  # emission, issue #66). Each Event lands in the owning Ingress's own
-  # namespace, so the grant is cluster-scoped. SSA needs patch (with
-  # create for the first apply); delete covers orphan pruning once the
-  # Service appears.
+  # Warning Events emitted by templates via recordEvent — the ingress library's
+  # degraded-backend events (issue #66), governance rule violations, WAF policy
+  # warnings, and the vendor annotation libraries' rejections. Each Event lands
+  # in the owning resource's own namespace, so the grant is cluster-scoped. SSA
+  # needs patch (with create for the first apply); delete covers orphan pruning.
+  #
+  # Not gated on any library: recordEvent is a generic engine function and
+  # governance / hapticAnnotations enable independently of ingress.
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "update", "patch", "delete"]
-  {{- end }}
   {{- if .Values.controller.templateLibraries.gateway.enabled }}
   # Cluster-wide Service write verbs for Gateway-API templates that emit
   # owned Services in namespaces other than the controller's. The chart's

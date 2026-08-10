@@ -1,0 +1,31 @@
+suite: controller ClusterRole — the events grant must not follow one library
+# recordEvent is a generic engine function, not an ingress feature. governance and
+# hapticAnnotations default to enabled and call it without ingress; the vendor
+# annotation libraries call it too. Gating the events rule on
+# templateLibraries.ingress.enabled therefore removed the grant while ~12 recordEvent
+# call sites stayed in the rendered config, and every Warning Event they emit 403s —
+# destroying the only operator-visible signal for a warned or skipped resource.
+templates:
+  - clusterrole.yaml
+tests:
+  - it: should grant events even when the ingress library is disabled
+    template: clusterrole.yaml
+    set:
+      controller.templateLibraries.ingress.enabled: false
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["events"]
+            verbs: ["create", "update", "patch", "delete"]
+
+  - it: should grant events on chart defaults
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["events"]
+            verbs: ["create", "update", "patch", "delete"]

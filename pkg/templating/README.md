@@ -166,6 +166,26 @@ The engine depends on a forked Scriggo (`gitlab.com/haproxy-haptic/scriggo`) con
 
 Nothing in here expects vanilla Scriggo; don't swap the dep for upstream without running the template benchmarks.
 
+## Sandbox Posture
+
+Templates come from `HAProxyTemplateConfig` / `HAProxyTemplateLibrary` objects and execute in-process on the controller's goroutines — including on the admission path, before an operator has necessarily reviewed them. What that execution can and cannot reach:
+
+| Capability | Contained | How |
+|---|---|---|
+| Go package imports | Yes | `BuildOptions.Packages` is never set, so `{% import "os" %}` fails to compile |
+| Native function surface | Yes | Only the `native.Declarations` map built in `filters_scriggo.go` is nameable — crypto, encoding, html, math, regexp, sort, strconv, time, strings. No `os`, `net`, `exec`, `reflect`, `unsafe` |
+| Filesystem | Yes | The compile FS serves an in-memory template map only |
+| `{% go f() %}` statement | Yes | `AllowGoStmt: false`. Parallel rendering uses `{{ go Macro(...) }}`, a different node (`OpGoRender`), which stays available |
+| Panics | Yes | Recovered into `*RenderError`. Exception: `native.Env.Fatal` is deliberately unrecoverable — `regex_search` relies on it to reject an uncompilable operator-supplied pattern |
+| Unbounded loop | Yes, if the caller passes a cancellable context | The VM re-checks cancellation between instructions, so it stops a running template rather than abandoning its result |
+| Archive expansion | Yes | `untar_gz` caps entries, per-entry bytes, and total bytes |
+| Network egress | **No** | `http.Fetch(url)` performs an outbound request from inside template execution |
+| Allocation | **No** | No memory or instruction budget; `seq(n)` allocates `n` ints with no ceiling |
+
+The two uncontained rows are the real residual risk: a template can fetch an arbitrary URL, and one that allocates without bound is limited only by the render timeout and the container memory limit. Both matter most on the admission path, where the render is on the apiserver's request path.
+
+**Upstream tracking.** Renovate follows the fork's own branch; nothing watches upstream Scriggo, and `govulncheck` keys on module path, so an advisory against `github.com/open2b/scriggo` would not match this dependency. Taking an upstream security fix is a manual rebase today.
+
 ## Testing
 
 ```bash

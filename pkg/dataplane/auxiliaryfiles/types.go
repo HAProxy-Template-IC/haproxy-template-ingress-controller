@@ -24,7 +24,9 @@ type GeneralFile struct {
 
 	// Content is the file contents as a string. This maps to the 'file' field in
 	// multipart form uploads to the Dataplane API.
-	Content string
+	// json:"-" on every aux Content keeps key material out of /debug/vars; the
+	// tls-ticket-keys STEK file is a general file, so this is not SSL-only.
+	Content string `json:"-"`
 
 	// IsCaFile marks this general file as an SSL CA / trust bundle referenced by
 	// the config as `ca-file <path>` (frontend client-cert verify or backend mTLS
@@ -68,7 +70,7 @@ type SSLCertificate struct {
 	Path string
 
 	// Content is the PEM-encoded certificate and key data.
-	Content string
+	Content string `json:"-"`
 }
 
 // GetIdentifier implements the FileItem interface.
@@ -89,7 +91,7 @@ type MapFile struct {
 	Path string
 
 	// Content is the map file contents (one key-value pair per line).
-	Content string
+	Content string `json:"-"`
 }
 
 // GetIdentifier implements the FileItem interface.
@@ -112,7 +114,7 @@ type CRTListFile struct {
 	// Content is the crt-list file contents (one certificate entry per line).
 	// Format: <cert-path> [ssl-options] [sni-filter]
 	// Example: "/etc/haproxy/ssl/cert.pem [ocsp-update on] example.com"
-	Content string
+	Content string `json:"-"`
 }
 
 // GetIdentifier implements the FileItem interface.
@@ -152,7 +154,7 @@ type SSLCaFile struct {
 
 	// Content is the PEM-encoded CA certificate data.
 	// Can contain multiple CA certificates concatenated together.
-	Content string
+	Content string `json:"-"`
 }
 
 // GetIdentifier implements the FileItem interface.

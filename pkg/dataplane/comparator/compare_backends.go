@@ -150,11 +150,14 @@ func (c *Comparator) compareModifiedBackendsWithIndexes(desiredBackends, current
 		serverTemplateOps := c.compareServerTemplatesWithIndex(name, current.ServerTemplateIndex[name], desired.ServerTemplateIndex[name])
 		appendOperationsIfNotEmpty(&operations, serverTemplateOps, &backendModified)
 
-		// Compare backend attributes (excluding servers, ACLs, and rules which we already compared)
-		if diffFields := backendBaseDiffFields(currentBackend, desiredBackend); len(diffFields) > 0 {
+		// Compare backend attributes (excluding servers, ACLs, and rules which we already compared).
+		// Gate on equality, not on the named-field list: BackendBase.Diff cannot name a field
+		// that lives on Backend rather than BackendBase (http_error_rule_list,
+		// filter_sequence_list), so a change to one produced an empty list and was dropped.
+		if !backendsEqualWithoutNestedCollections(currentBackend, desiredBackend) {
 			operations = append(operations, sections.BackendOps.Update(desiredBackend))
 			backendModified = true
-			summary.BackendDiffFields[name] = diffFields
+			summary.BackendDiffFields[name] = backendBaseDiffFields(currentBackend, desiredBackend)
 		}
 
 		if backendModified {
@@ -223,9 +226,22 @@ func clearNestedCollections(b *models.Backend) {
 	b.ServerTemplates = nil
 }
 
+// backendsEqualWithoutNestedCollections reports whether two backends are equal
+// across every attribute the comparator does not diff separately. This is the
+// authority for "does this backend need an update"; backendBaseDiffFields only
+// names the subset of differing fields that BackendBase.Diff can see.
+func backendsEqualWithoutNestedCollections(b1, b2 *models.Backend) bool {
+	b1Copy := *b1
+	b2Copy := *b2
+	clearNestedCollections(&b1Copy)
+	clearNestedCollections(&b2Copy)
+	return b1Copy.Equal(b2Copy) && reflect.DeepEqual(b1.DefaultServer, b2.DefaultServer)
+}
+
 // backendBaseDiffFields returns the list of BackendBase field names that differ
 // between two backends (excluding nested collections which are compared separately).
-// Returns nil if the backends are equal.
+// Returns nil if the backends are equal. Diagnostics only — see
+// backendsEqualWithoutNestedCollections for the update gate.
 func backendBaseDiffFields(b1, b2 *models.Backend) []string {
 	b1Copy := *b1
 	b2Copy := *b2
