@@ -83,7 +83,7 @@ The controller SHALL expose a counter `haptic_haproxy_pods_rejected_total`, labe
 
 ### Requirement: Runtime Fast-Path Metrics
 
-The controller SHALL record every runtime-eligible fast-path apply attempt from RuntimeFastPathResultEvent across four counters: `haptic_runtime_fast_path_fires_total` (every attempt, one per pod per reconcile), `haptic_runtime_fast_path_applies_total` (attempts that applied at least one runtime-eligible server update), `haptic_runtime_fast_path_server_updates_total` (total server updates applied via the fast path), and `haptic_runtime_fast_path_failures_total` (attempts that errored — best-effort, since the scheduled deploy remains the correctness floor). A failed attempt SHALL increment only the fires and failures counters; a successful attempt with zero updates SHALL increment only fires.
+The controller SHALL record every runtime-eligible fast-path apply attempt across four counters: `haptic_runtime_fast_path_fires_total` (every attempt, one per pod per reconcile), `haptic_runtime_fast_path_applies_total` (attempts that applied at least one runtime-eligible server update), `haptic_runtime_fast_path_server_updates_total` (total server updates applied via the fast path), and `haptic_runtime_fast_path_failures_total` (attempts that errored — best-effort, since the scheduled deploy remains the correctness floor). A failed attempt SHALL increment only the fires and failures counters; a successful attempt with zero updates SHALL increment only fires.
 
 #### Scenario: Successful apply recorded
 

@@ -28,7 +28,6 @@ One file per category. The full list as of writing, with representative types:
 | `proposal.go` | Admission-time proposal validation | `ProposalValidationRequestedEvent`, `ProposalValidationCompletedEvent` |
 | `http.go` | HTTP resource fetcher | `HTTPResourceUpdatedEvent` |
 | `status.go` | Status-patch application | `StatusUpdateCompletedEvent`, `StatusUpdateFailedEvent` |
-| `runtime_fast_path.go` | Runtime fast-path result | `RuntimeFastPathResultEvent` |
 
 `types.go` plus the event-category files enumerate every constant — if the list above looks incomplete, check `grep -E "^type [A-Z].*Event " pkg/controller/events/*.go` rather than trusting this README.
 
@@ -98,7 +97,7 @@ Each responder subscribes normally, matches on request ID, and `bus.Publish`es a
 2. Define the struct in the appropriate category file (or create a new file if there's no natural home).
 3. Implement `EventType() string` with a **pointer** receiver.
 4. Add a `NewFooEvent(...)` constructor that `copy()`s every incoming slice and map field.
-5. Update `pkg/controller/commentator` with a matching log case — every event type should be logged somewhere so the ring buffer shows meaningful history.
+5. Decide `pkg/controller/commentator`'s treatment: Give the commentator an insight case OR a level arm, unless the publisher already logs the payload — the fallback then records only that the event happened.
 6. If this event should drive a Prometheus metric, wire a case into `pkg/controller/metrics.Component.HandleEvent` and update `pkg/controller/metrics/README.md`.
 
 ## See Also

@@ -459,7 +459,7 @@ func TestRuntimeBypass_StructuralPreInterval_NoDeployedConfigPublish(t *testing.
 // TestRuntimeBypass_PartialSuppressesDeployPublishes verifies the in-flight partial
 // apply (partial=true) of a laneRuntimeRaw render — applied while a SEPARATE
 // structural deploy is mid-reload, which still owns completion + CR/status — keeps
-// only the RuntimeFastPathResultEvent metric and suppresses BOTH deploy-owning
+// only the fast-path metric and suppresses BOTH deploy-owning
 // publishes (ConfigAppliedToPodEvent, DeployedConfigPublishRequest). The dep is
 // laneRuntimeRaw with a resolved HAProxyCfg identity — exactly the shape that WOULD
 // publish on a non-partial apply — proving it is the `partial` flag, not the lane
@@ -468,8 +468,9 @@ func TestRuntimeBypass_PartialSuppressesDeployPublishes(t *testing.T) {
 	bus := testutil.NewTestBus()
 	appliedCh := bus.SubscribeTypes("test-partial-applied", 50, events.EventTypeConfigAppliedToPod)
 	publishCh := bus.SubscribeTypes("test-partial-publish", 50, events.EventTypeDeployedConfigPublishRequest)
-	metricCh := bus.SubscribeTypes("test-partial-metric", 50, events.EventTypeRuntimeFastPathResult)
 	bus.Start()
+
+	var fastPathFires int
 
 	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
 		return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
@@ -477,6 +478,7 @@ func TestRuntimeBypass_PartialSuppressesDeployPublishes(t *testing.T) {
 		}}, nil
 	})
 	b.eventBus = bus
+	b.recordFastPath = func(int, bool) { fastPathFires++ }
 
 	dep := &scheduledDeployment{
 		config:                 "deployed-config-body",
@@ -488,14 +490,9 @@ func TestRuntimeBypass_PartialSuppressesDeployPublishes(t *testing.T) {
 	}
 	b.applyRuntimeRaw(context.Background(), dep, bypassPush{body: dep.config, partial: true})
 
-	// The metric event still fires (fire-vs-apply accounting stays correct).
-	select {
-	case ev := <-metricCh:
-		_, ok := ev.(*events.RuntimeFastPathResultEvent)
-		require.True(t, ok, "expected *RuntimeFastPathResultEvent, got %T", ev)
-	case <-time.After(2 * time.Second):
-		t.Fatal("partial apply must still emit RuntimeFastPathResultEvent")
-	}
+	// The metric still fires (fire-vs-apply accounting stays correct).
+	require.Equal(t, 1, fastPathFires,
+		"a partial apply must still be counted as a fast-path fire")
 
 	// Neither deploy-owning publish fires — the in-flight structural deploy owns them.
 	select {

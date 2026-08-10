@@ -19,10 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -34,7 +36,10 @@ func createTestDeployer(eventBus *busevents.EventBus) *Component {
 	// Zero timeouts are intentional: every per-sync knob falls back to
 	// dataplane.DefaultSyncOptions() in deployToSingleEndpoint (timeouts applied
 	// only via the > 0 guards). This is the contract the deployer gives test code.
-	return New(eventBus, logger, 0, 0)
+	//
+	// A real Metrics on a private registry, so tests can assert the divergence
+	// counters the deployer now records directly instead of publishing.
+	return New(eventBus, logger, 0, 0, metrics.NewMetrics(prometheus.NewRegistry()))
 }
 
 func TestHandleDeploymentScheduled(t *testing.T) {

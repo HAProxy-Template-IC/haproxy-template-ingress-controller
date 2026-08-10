@@ -29,6 +29,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
@@ -74,6 +75,12 @@ type Component struct {
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
 
+	// metrics records the two runtime-divergence counters directly rather than
+	// over the bus: each had exactly one subscriber, and that subscriber only
+	// incremented a counter (ADR-0001 — no event hop without a second
+	// participant). Nil in tests.
+	metrics *metrics.Metrics
+
 	// versionCache caches the last-synced config version per endpoint URL.
 	// Allows skipping expensive GetRawConfiguration() + parse on subsequent syncs
 	// when the pod's config version hasn't changed.
@@ -98,13 +105,16 @@ type Component struct {
 //
 // Returns:
 //   - A new Component instance ready to be started
-func New(eventBus *busevents.EventBus, logger *slog.Logger, reloadVerificationTimeout, syncTimeout time.Duration) *Component {
+//
+// domainMetrics may be nil in tests; the divergence counters are then not recorded.
+func New(eventBus *busevents.EventBus, logger *slog.Logger, reloadVerificationTimeout, syncTimeout time.Duration, domainMetrics *metrics.Metrics) *Component {
 	c := &Component{
 		ReadySignal:               component.NewReadySignal(),
 		reloadVerificationTimeout: reloadVerificationTimeout,
 		syncTimeout:               syncTimeout,
 		versionCache:              newConfigVersionCache(),
 		healthTracker:             lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
+		metrics:                   domainMetrics,
 	}
 	// Subscription happens here, at construction (component.Base), before
 	// EventBus.Start(). The Deployer remains a leader-only component: its

@@ -128,7 +128,8 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true,
+			seedRenderIdentity(scheduler))
 
 		scheduler.handleValidationCompleted(ctx, event)
 
@@ -146,7 +147,8 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true,
+			seedRenderIdentity(scheduler))
 
 		// Should not panic when no config available
 		scheduler.handleValidationCompleted(ctx, event)
@@ -163,7 +165,8 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true,
+			seedRenderIdentity(scheduler))
 
 		scheduler.handleValidationCompleted(ctx, event)
 
@@ -465,11 +468,15 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 	})
 
 	t.Run("routes ValidationCompletedEvent", func(t *testing.T) {
-		scheduler.mu.Lock()
-		scheduler.lastRenderedConfig = "global\n"
-		scheduler.mu.Unlock()
+		// Route a real render first and propagate its correlation onto the
+		// verdict: the scheduler only promotes a cache the verdict describes.
+		rendered := events.NewTemplateRenderedEvent(
+			"global\n", &dataplane.AuxiliaryFiles{}, nil, nil, 0, 50, "", "", true,
+		)
+		scheduler.handleEvent(ctx, rendered)
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true,
+			events.PropagateCorrelation(rendered))
 
 		scheduler.handleEvent(ctx, event)
 

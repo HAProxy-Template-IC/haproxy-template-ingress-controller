@@ -343,11 +343,11 @@ func TestScheduler_ApplyRuntimeSubset_InFlightPatchesDispatchedNotActivated(t *t
 
 	var mu sync.Mutex
 	proofs := []string{}
-	s.SetActivationRecorder(func(_, proof string) {
+	s.runtimeBypass.recordActivation = func(_, proof string) {
 		mu.Lock()
 		defer mu.Unlock()
 		proofs = append(proofs, proof)
-	})
+	}
 
 	// The fleet is running the plain base; the in-flight structural deploy has
 	// dispatched (and written) base+api2.
@@ -401,11 +401,11 @@ func TestScheduler_ApplyRuntimeSubset_NoDeployInFlightPatchesActivated(t *testin
 
 	var mu sync.Mutex
 	proofs := []string{}
-	s.SetActivationRecorder(func(_, proof string) {
+	s.runtimeBypass.recordActivation = func(_, proof string) {
 		mu.Lock()
 		defer mu.Unlock()
 		proofs = append(proofs, proof)
-	})
+	}
 
 	baselineRaw := fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
 	baseline := parseLaneConfig(t, baselineRaw)

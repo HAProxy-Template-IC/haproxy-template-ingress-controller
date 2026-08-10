@@ -108,7 +108,8 @@ func TestDeployFailureRetry_ReschedulesAfterFullFailure(t *testing.T) {
 	startLoopForTest(t, s, ctx)
 
 	// One ValidationCompleted → exactly one DeploymentScheduledEvent.
-	s.handleValidationCompleted(ctx, events.NewValidationCompletedEvent(nil, 5, "config_change", nil, true))
+	s.handleValidationCompleted(ctx, events.NewValidationCompletedEvent(nil, 5, "config_change", nil, true,
+		seedRenderIdentity(s)))
 	sd1 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	require.Equal(t, "config_validation", sd1.Reason)
 	require.Equal(t, checksum, sd1.ContentChecksum)

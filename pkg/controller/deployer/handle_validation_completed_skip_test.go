@@ -76,6 +76,7 @@ func TestHandleValidationCompleted_SkipsWhenConfigAndPodSetUnchanged(t *testing.
 	// Use a non-drift trigger reason so the bypass doesn't fire.
 	event := events.NewValidationCompletedEvent(
 		[]string{}, 100, "config_change", nil, true,
+		seedRenderIdentity(scheduler),
 	)
 
 	scheduler.handleValidationCompleted(ctx, event)
@@ -121,6 +122,7 @@ func TestHandleValidationCompleted_PublishesDeploymentSkippedOnCacheHit(t *testi
 
 	event := events.NewValidationCompletedEvent(
 		[]string{}, 100, "config_change", nil, true,
+		seedRenderIdentity(scheduler),
 	)
 
 	scheduler.handleValidationCompleted(ctx, event)
@@ -170,6 +172,7 @@ func TestHandleValidationCompleted_DriftPreventionBypassesSkip(t *testing.T) {
 		[]string{}, 100,
 		events.TriggerReasonDriftPrevention,
 		nil, false, // drift events are non-coalescible
+		seedRenderIdentity(scheduler),
 	)
 
 	scheduler.handleValidationCompleted(ctx, event)
@@ -252,6 +255,7 @@ func TestHandleValidationCompleted_DeploymentScheduledCarriesStatusPatches(t *te
 
 	event := events.NewValidationCompletedEvent(
 		[]string{}, 100, "config_change", nil, true,
+		seedRenderIdentity(scheduler),
 	)
 	scheduler.handleValidationCompleted(ctx, event)
 

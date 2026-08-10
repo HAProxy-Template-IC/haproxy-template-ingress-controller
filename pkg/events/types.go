@@ -22,6 +22,12 @@ const (
 	// during startup if many events are published before subscribers are ready.
 	// Events exceeding this limit are dropped with a warning.
 	MaxPreStartBufferSize = 1000
+
+	// PreStartBufferSubscriber is the DropInfo.SubscriberName reported when the
+	// pre-start buffer is full. No subscriber is involved — the event is lost
+	// before fan-out — but it is accounted as a critical drop so it reaches the
+	// same counter and operator alert as every other lost event.
+	PreStartBufferSubscriber = "pre-start-buffer"
 )
 
 // DropInfo contains information about a dropped event for debugging.

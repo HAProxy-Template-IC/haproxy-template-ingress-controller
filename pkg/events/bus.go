@@ -61,6 +61,7 @@ type EventBus struct {
 	started        bool
 	startMu        sync.Mutex
 	preStartBuffer []Event
+	bufferCapacity int
 
 	// Event drop monitoring - separate counters for different subscriber types
 	droppedEventsCritical      uint64       // atomic: drops from critical subscribers (triggers WARN)
@@ -79,27 +80,85 @@ type EventBus struct {
 func NewEventBus(capacity int) *EventBus {
 	return &EventBus{
 		preStartBuffer: make([]Event, 0, capacity),
+		bufferCapacity: capacity,
 	}
 }
 
-// recordDrop records a dropped event and optionally calls the onDrop callback.
-// This consolidates drop handling logic into a single place (DRY principle).
+// reportDrops accounts critical drops and hands each to the drop callback.
 //
-// For lossy subscribers, drops are counted in droppedEventsObservability and
-// no callback is triggered (these drops are expected and acceptable).
-//
-// For critical subscribers, drops are counted in droppedEventsCritical and
-// the onDrop callback is triggered (these drops indicate a problem).
-func (b *EventBus) recordDrop(info DropInfo, lossy bool) {
-	if lossy {
-		atomic.AddUint64(&b.droppedEventsObservability, 1)
-		// No callback for lossy subscribers - drops are expected
-	} else {
+// Callers must hold no bus lock. The callback is arbitrary caller-supplied code:
+// invoking it under b.mu would let a callback that subscribes deadlock, and
+// invoking it under startMu (the replay path) would deadlock a callback that
+// publishes. Drops from lossy subscribers never reach here — they are counted
+// at the drop site in fanOut and deliberately never reported.
+func (b *EventBus) reportDrops(drops []DropInfo) {
+	if len(drops) == 0 {
+		return
+	}
+
+	b.mu.RLock()
+	cb := b.onDrop
+	b.mu.RUnlock()
+
+	for _, info := range drops {
 		atomic.AddUint64(&b.droppedEventsCritical, 1)
-		if b.onDrop != nil {
-			b.onDrop(info)
+		if cb != nil {
+			cb(info)
 		}
 	}
+}
+
+// fanOut delivers event to every subscriber that accepts it, returning how many
+// received it and the critical drops the caller must pass to reportDrops.
+//
+// b.mu is held for the whole walk: the loops index the subscriber slices, and
+// UnsubscribeTyped removes an entry by overwriting it in place. Reporting the
+// drops is left to the caller so the callback runs with no lock held.
+func (b *EventBus) fanOut(event Event) (sent int, criticalDrops []DropInfo) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	eventType := event.EventType()
+
+	for _, sub := range b.subscribers {
+		select {
+		case sub.ch <- event:
+			sent++
+		default:
+			// Channel full, subscriber is lagging - drop event
+			if sub.lossy {
+				atomic.AddUint64(&b.droppedEventsObservability, 1)
+				continue
+			}
+			criticalDrops = append(criticalDrops, DropInfo{
+				EventType:      eventType,
+				SubscriberName: sub.name,
+				BufferSize:     sub.bufferSize,
+			})
+		}
+	}
+
+	// Send to typed subscribers (filtered at bus level)
+	for _, sub := range b.typedSubscribers {
+		if !sub.filterFunc(event) {
+			continue
+		}
+		select {
+		case sub.outputChan <- event:
+			sent++
+		default:
+			// Typed subscriptions are always critical; SubscribeLossy is
+			// universal-only, so there is no lossy branch to take here.
+			criticalDrops = append(criticalDrops, DropInfo{
+				EventType:      eventType,
+				SubscriberName: sub.name,
+				BufferSize:     sub.bufferSize,
+				EventTypes:     sub.eventTypesStr,
+			})
+		}
+	}
+
+	return sent, criticalDrops
 }
 
 // Publish sends an event to all subscribers.
@@ -119,57 +178,29 @@ func (b *EventBus) Publish(event Event) int {
 	b.startMu.Lock()
 	if !b.started {
 		// Buffer event for replay after Start(), with capacity limit
-		if len(b.preStartBuffer) >= MaxPreStartBufferSize {
-			slog.Warn("Pre-start buffer capacity exceeded, dropping event",
-				"capacity", MaxPreStartBufferSize,
-				"event_type", event.EventType())
-		} else {
+		overflowed := len(b.preStartBuffer) >= MaxPreStartBufferSize
+		if !overflowed {
 			b.preStartBuffer = append(b.preStartBuffer, event)
 		}
 		b.startMu.Unlock()
+
+		if overflowed {
+			slog.Warn("Pre-start buffer capacity exceeded, dropping event",
+				"capacity", MaxPreStartBufferSize,
+				"event_type", event.EventType())
+			b.reportDrops([]DropInfo{{
+				EventType:      event.EventType(),
+				SubscriberName: PreStartBufferSubscriber,
+				BufferSize:     MaxPreStartBufferSize,
+			}})
+		}
 		return 0
 	}
 	b.startMu.Unlock()
 
 	// Bus has started - publish to subscribers
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	sent := 0
-	eventType := event.EventType()
-
-	// Send to universal subscribers
-	for _, sub := range b.subscribers {
-		select {
-		case sub.ch <- event:
-			sent++
-		default:
-			// Channel full, subscriber is lagging - drop event
-			b.recordDrop(DropInfo{
-				EventType:      eventType,
-				SubscriberName: sub.name,
-				BufferSize:     sub.bufferSize,
-			}, sub.lossy)
-		}
-	}
-
-	// Send to typed subscribers (filtered at bus level)
-	for _, sub := range b.typedSubscribers {
-		if sub.filterFunc(event) {
-			select {
-			case sub.outputChan <- event:
-				sent++
-			default:
-				// Channel full, subscriber is lagging - drop event
-				b.recordDrop(DropInfo{
-					EventType:      eventType,
-					SubscriberName: sub.name,
-					BufferSize:     sub.bufferSize,
-					EventTypes:     sub.eventTypesStr,
-				}, sub.lossy)
-			}
-		}
-	}
+	sent, drops := b.fanOut(event)
+	b.reportDrops(drops)
 	return sent
 }
 
@@ -201,10 +232,10 @@ func (b *EventBus) Publish(event Event) int {
 //	bus.Start()
 func (b *EventBus) Start() {
 	b.startMu.Lock()
-	defer b.startMu.Unlock()
 
 	// Idempotent - return if already started
 	if b.started {
+		b.startMu.Unlock()
 		return
 	}
 
@@ -212,7 +243,10 @@ func (b *EventBus) Start() {
 	b.started = true
 
 	// Replay buffered events to subscribers
-	b.replayBufferedEvents()
+	drops := b.replayBufferedEvents()
+	b.startMu.Unlock()
+
+	b.reportDrops(drops)
 }
 
 // Pause temporarily suspends event delivery, buffering events for later replay.
@@ -247,67 +281,32 @@ func (b *EventBus) Pause() {
 
 	// Return to buffering mode
 	b.started = false
-	b.preStartBuffer = make([]Event, 0, 100)
+	b.preStartBuffer = make([]Event, 0, b.bufferCapacity)
 
 	slog.Debug("EventBus paused, entering buffering mode")
 }
 
-// replayBufferedEvents sends all buffered events to subscribers.
-// Must be called while holding startMu lock.
-func (b *EventBus) replayBufferedEvents() {
+// replayBufferedEvents sends all buffered events to subscribers and returns the
+// critical drops for the caller to report once startMu is released.
+// Must be called while holding startMu.
+func (b *EventBus) replayBufferedEvents() []DropInfo {
 	if len(b.preStartBuffer) == 0 {
-		return
+		return nil
 	}
 
-	b.mu.RLock()
-	subscribers := b.subscribers
-	typedSubs := b.typedSubscribers
-	b.mu.RUnlock()
-
+	// fanOut takes b.mu per event, exactly as Publish does. Iterating a snapshot
+	// of the subscriber slices instead would race UnsubscribeTyped, which
+	// removes an entry by overwriting it in place.
+	var drops []DropInfo
 	for _, event := range b.preStartBuffer {
-		b.replayEventToSubscribers(event, subscribers, typedSubs)
+		_, eventDrops := b.fanOut(event)
+		drops = append(drops, eventDrops...)
 	}
 
 	// Clear buffer
 	b.preStartBuffer = nil
-}
 
-// replayEventToSubscribers sends a single event to all subscribers.
-func (b *EventBus) replayEventToSubscribers(event Event, subscribers []subscriber, typedSubs []*typedSubscription) {
-	eventType := event.EventType()
-
-	// Send to universal subscribers
-	for _, sub := range subscribers {
-		select {
-		case sub.ch <- event:
-			// Event sent
-		default:
-			// Channel full - drop event (same behavior as normal Publish)
-			b.recordDrop(DropInfo{
-				EventType:      eventType,
-				SubscriberName: sub.name,
-				BufferSize:     sub.bufferSize,
-			}, sub.lossy)
-		}
-	}
-
-	// Send to typed subscribers (filtered at bus level)
-	for _, sub := range typedSubs {
-		if sub.filterFunc(event) {
-			select {
-			case sub.outputChan <- event:
-				// Event sent
-			default:
-				// Channel full - drop event
-				b.recordDrop(DropInfo{
-					EventType:      eventType,
-					SubscriberName: sub.name,
-					BufferSize:     sub.bufferSize,
-					EventTypes:     sub.eventTypesStr,
-				}, sub.lossy)
-			}
-		}
-	}
+	return drops
 }
 
 // Request sends a request event and waits for responses using the scatter-gather pattern.
@@ -342,6 +341,10 @@ func (b *EventBus) Request(ctx context.Context, request Request, opts RequestOpt
 // Lossy drops are expected and silently counted
 // in DroppedEventsObservability().
 //
+// The callback runs on the publishing goroutine with no bus lock held, so it may
+// safely call back into the bus. It runs inline, so a slow callback slows the
+// publisher that hit the drop.
+//
 // This callback pattern keeps the EventBus domain-agnostic while allowing
 // the controller layer to handle drops with appropriate logging and metrics.
 //
@@ -363,7 +366,8 @@ func (b *EventBus) SetDropCallback(cb DropCallback) {
 }
 
 // DroppedEventsCritical returns the number of events dropped from
-// business-critical (non-lossy) subscribers.
+// business-critical (non-lossy) subscribers, plus events discarded because the
+// pre-start buffer was full.
 //
 // Non-zero values indicate a problem that needs attention - critical
 // subscribers are not keeping up with event volume.
@@ -382,7 +386,12 @@ func (b *EventBus) DroppedEventsObservability() uint64 {
 }
 
 // SubscriberCount returns the number of active subscriptions (universal + typed).
-// All subscriptions are created before Start(), so this is safe to call from any goroutine.
+//
+// Leader-only components subscribe and unsubscribe per leadership term and
+// scatter-gather subscribes per request, so the count changes after Start() and
+// this read takes the lock like every other reader of the subscriber slices.
 func (b *EventBus) SubscriberCount() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	return len(b.subscribers) + len(b.typedSubscribers)
 }
