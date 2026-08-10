@@ -118,7 +118,7 @@ type Store interface {
     List() ([]any, error)
     Add(resource any, keys []string) error
     Update(resource any, keys []string) error
-    Delete(keys ...string) error
+    Delete(namespace, name string, keys []string) error
     Clear() error
 }
 

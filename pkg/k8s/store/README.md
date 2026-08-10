@@ -14,7 +14,7 @@ type Store interface {
     List() ([]any, error)                 // everything in the store
     Add(resource any, keys []string) error
     Update(resource any, keys []string) error
-    Delete(keys ...string) error
+    Delete(namespace, name string, keys []string) error
     Clear() error
 }
 ```
@@ -93,7 +93,7 @@ This is enforced by convention, not by type — the `Store` interface returns `a
 
 ## Non-Unique Keys
 
-Indexing by labels (e.g. `metadata.labels.kubernetes\\.io/service-name` for EndpointSlices) is expected to collide — many slices share a service. `Add` appends to the slot instead of overwriting, and `Get` with that key returns every match. Resource-identity equality for `Update` (and `Delete`-by-name) is **namespace + name** only, via `extractNamespaceName` — UID is not consulted, so a deleted-and-recreated resource looks identical to its predecessor (which is correct: the watcher fires `Update`, not `Delete`+`Add`, on a re-create). `Add` itself does not dedupe — duplicates are possible if the watcher's delta logic is wrong. That's by design: cheap append, dedupe lives in `Update`.
+Indexing by labels (e.g. `metadata.labels.kubernetes\\.io/service-name` for EndpointSlices) is expected to collide — many slices share a service. `Add` appends to the slot instead of overwriting, and `Get` with that key returns every match. Resource-identity equality for `Update` and `Delete` is **namespace + name** only, via `extractNamespaceName`. `Delete` therefore removes exactly the named resource and drops the composite key's entry only once its last member goes — deleting one slice never evicts its siblings — UID is not consulted, so a deleted-and-recreated resource looks identical to its predecessor (which is correct: the watcher fires `Update`, not `Delete`+`Add`, on a re-create). `Add` itself does not dedupe — duplicates are possible if the watcher's delta logic is wrong. That's by design: cheap append, dedupe lives in `Update`.
 
 ## Testing
 

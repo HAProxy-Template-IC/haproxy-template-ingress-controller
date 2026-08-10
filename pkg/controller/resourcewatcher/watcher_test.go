@@ -218,7 +218,7 @@ func (m *mockStore) Get(...string) ([]any, error)            { return nil, nil }
 func (m *mockStore) List() ([]any, error)                    { return nil, nil }
 func (m *mockStore) Add(any, []string) error                 { return nil }
 func (m *mockStore) Update(any, []string) error              { return nil }
-func (m *mockStore) Delete(...string) error                  { return nil }
+func (m *mockStore) Delete(string, string, []string) error   { return nil }
 func (m *mockStore) Clear() error                            { return nil }
 func (m *mockStore) GetKeys(any, []string) ([]string, error) { return nil, nil }
 

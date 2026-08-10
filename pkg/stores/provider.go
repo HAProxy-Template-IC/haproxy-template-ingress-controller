@@ -133,8 +133,10 @@ type Store interface {
 	// Update modifies an existing resource in the store.
 	Update(resource any, keys []string) error
 
-	// Delete removes a resource from the store using its index keys.
-	Delete(keys ...string) error
+	// Delete removes the single resource identified by namespace/name from the
+	// bucket addressed by keys. Index keys need not be unique, so identity is
+	// passed separately to avoid evicting siblings sharing the bucket.
+	Delete(namespace, name string, keys []string) error
 
 	// Clear removes all resources from the store.
 	Clear() error
@@ -160,15 +162,17 @@ type TypesStoreAdapter struct {
 		List() ([]any, error)
 		Add(resource any, keys []string) error
 		Update(resource any, keys []string) error
-		Delete(keys ...string) error
+		Delete(namespace, name string, keys []string) error
 		Clear() error
 	}
 }
 
 func (a *TypesStoreAdapter) Get(keys ...string) ([]any, error) { return a.Inner.Get(keys...) }
 func (a *TypesStoreAdapter) List() ([]any, error)              { return a.Inner.List() }
-func (a *TypesStoreAdapter) Delete(keys ...string) error       { return a.Inner.Delete(keys...) }
 func (a *TypesStoreAdapter) Clear() error                      { return a.Inner.Clear() }
+func (a *TypesStoreAdapter) Delete(namespace, name string, keys []string) error {
+	return a.Inner.Delete(namespace, name, keys)
+}
 func (a *TypesStoreAdapter) Add(resource any, keys []string) error {
 	return a.Inner.Add(resource, keys)
 }

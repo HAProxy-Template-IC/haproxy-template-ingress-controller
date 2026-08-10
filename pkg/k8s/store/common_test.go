@@ -7,6 +7,18 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// namedResource builds the minimal shape extractNamespaceName understands.
+// A bare map without a metadata block resolves to ("", "") and so is only
+// deletable by passing empty identity — realistic fixtures avoid that trap.
+func namedResource(namespace, name string) map[string]any {
+	return map[string]any{
+		"metadata": map[string]any{
+			"namespace": namespace,
+			"name":      name,
+		},
+	}
+}
+
 func TestStoreError_Error(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -242,7 +254,7 @@ func runUpdateToNewKeyTest(t *testing.T, store interface {
 //   - nonExistentKeys: keys for a resource that doesn't exist
 func runDeleteNonExistentTest(t *testing.T, store interface {
 	Add(resource any, keys []string) error
-	Delete(keys ...string) error
+	Delete(namespace, name string, keys []string) error
 }, sizeGetter storeWithSize, existingResource any, existingKeys []string, nonExistentKeys []string) {
 	t.Helper()
 
@@ -251,7 +263,7 @@ func runDeleteNonExistentTest(t *testing.T, store interface {
 	}
 
 	// Delete a non-existent resource (should not error)
-	err := store.Delete(nonExistentKeys...)
+	err := store.Delete("default", "does-not-exist", nonExistentKeys)
 	if err != nil {
 		t.Errorf("Delete of non-existent resource should not error: %v", err)
 	}

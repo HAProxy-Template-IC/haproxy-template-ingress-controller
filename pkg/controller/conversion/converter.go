@@ -17,8 +17,11 @@ package conversion
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 
@@ -99,14 +102,22 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		SyncTimeout:               spec.Dataplane.SyncTimeout,
 	}
 
-	// Convert watched resources
+	// Convert watched resources.
+	// Sorted so that with two invalid entries the reported one is stable —
+	// map order would make the error message differ per process.
 	watchedResources := make(map[string]config.WatchedResource)
-	for name := range spec.WatchedResources {
+	for _, name := range slices.Sorted(maps.Keys(spec.WatchedResources)) {
 		crdRes := spec.WatchedResources[name]
-		// Parse label selector string into map
-		// CRD uses string format "key1=value1,key2=value2"
-		// Config uses map[string]string
-		labelSelectorMap := parseLabelSelector(crdRes.LabelSelector)
+		// CRD uses the string form "key1=value1,key2=value2"; config uses a map.
+		// An absent selector stays nil — the watch is unfiltered.
+		var labelSelectorMap map[string]string
+		if raw := strings.TrimSpace(crdRes.LabelSelector); raw != "" {
+			var err error
+			labelSelectorMap, err = parseLabelSelector(raw)
+			if err != nil {
+				return nil, fmt.Errorf("watchedResources[%s].labelSelector: %w", name, err)
+			}
+		}
 
 		watchedResources[name] = config.WatchedResource{
 			APIVersion:              crdRes.APIVersion,
@@ -384,39 +395,34 @@ func convertHTTPFixtures(crdHTTPFixtures []v1alpha1.HTTPResourceFixture) []confi
 	return httpFixtures
 }
 
-// parseLabelSelector parses a label selector string into a map.
+// parseLabelSelector parses a non-empty label selector string into the map
+// form used by config.WatchedResource. Callers treat an empty selector as
+// "unfiltered" and must not call this with one.
 //
-// Kubernetes label selectors in string format use "key1=value1,key2=value2".
-// This function converts that to the map format used by config.WatchedResource.
 // Example: "app=nginx,env=prod" -> map[string]string{"app": "nginx", "env": "prod"}.
-func parseLabelSelector(selector string) map[string]string {
-	if selector == "" {
-		return nil
+//
+// Parsing uses the Kubernetes label-selector grammar, and anything it cannot
+// represent as plain equality pairs is rejected rather than dropped. Silently
+// discarding part of a selector widens the watch to every object of that kind
+// cluster-wide — a memory, API-budget and correctness change that produces no
+// diagnostic at all. Set-based syntax ("in", "notin", "!") parses successfully
+// into MatchExpressions, so checking only for a parse error would keep exactly
+// that failure mode.
+func parseLabelSelector(selector string) (map[string]string, error) {
+	parsed, err := metav1.ParseToLabelSelector(selector)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %q: %w", selector, err)
 	}
 
-	result := make(map[string]string)
-
-	// Split by comma to get individual label assignments
-	for pair := range strings.SplitSeq(selector, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-
-		// Split by equals to get key=value
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-			if key != "" {
-				result[key] = value
-			}
-		}
+	if len(parsed.MatchExpressions) > 0 {
+		return nil, fmt.Errorf(
+			"parsing %q: set-based selectors are not supported, use equality pairs like \"app=nginx,env=prod\"",
+			selector)
 	}
 
-	if len(result) == 0 {
-		return nil
+	if len(parsed.MatchLabels) == 0 {
+		return nil, fmt.Errorf("parsing %q: no label equality pairs found", selector)
 	}
 
-	return result
+	return parsed.MatchLabels, nil
 }

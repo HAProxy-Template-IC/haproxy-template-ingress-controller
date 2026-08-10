@@ -200,12 +200,14 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 	return nil
 }
 
-// Delete removes a resource from the store.
-// NOTE: With non-unique index keys, this method cannot identify which specific resource
-// to delete when multiple resources have the same index keys. It removes ALL resources
-// matching the provided keys. The watcher should call this with the resource's actual
-// namespace+name as the index keys to delete a specific resource.
-func (s *MemoryStore) Delete(keys ...string) error {
+// Delete removes the single resource identified by namespace/name from the
+// bucket addressed by keys, leaving any siblings that share the bucket in
+// place. Deleting a resource that is not present is a no-op.
+//
+// The bucket's map entry is removed once its last resource is deleted —
+// leaving an empty slice behind would leak a map key per churned bucket and
+// still be walked by the prefix scan in Get.
+func (s *MemoryStore) Delete(namespace, name string, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -214,7 +216,30 @@ func (s *MemoryStore) Delete(keys ...string) error {
 	}
 
 	keyStr := makeKeyString(keys)
-	delete(s.data, keyStr)
+	resources, ok := s.data[keyStr]
+	if !ok {
+		return nil
+	}
+
+	// A fresh slice, never an in-place compaction: Get returns the bucket by
+	// reference (see the Immutability Contract on Get), so compacting would
+	// mutate a slice a render may still be holding.
+	remaining := make([]any, 0, len(resources))
+	for _, existing := range resources {
+		existingNs, existingName := extractNamespaceName(existing)
+		if existingNs == namespace && existingName == name {
+			continue
+		}
+		remaining = append(remaining, existing)
+	}
+
+	if len(remaining) == 0 {
+		delete(s.data, keyStr)
+		return nil
+	}
+
+	// Filtering preserves the existing order, so the bucket stays sorted.
+	s.data[keyStr] = remaining
 
 	return nil
 }

@@ -296,7 +296,9 @@ func TestCachedStore_UpdateWithNonUniqueKeys(t *testing.T) {
 	}
 }
 
-// TestCachedStore_DeleteWithNonUniqueKeys verifies Delete removes all matching resources.
+// TestCachedStore_DeleteWithNonUniqueKeys verifies that deleting one resource
+// leaves its siblings under the same index key in place, and evicts only the
+// deleted resource's cache entry.
 func TestCachedStore_DeleteWithNonUniqueKeys(t *testing.T) {
 	scheme := runtime.NewScheme()
 
@@ -321,19 +323,22 @@ func TestCachedStore_DeleteWithNonUniqueKeys(t *testing.T) {
 		t.Errorf("expected size 2 before delete, got %d", store.Size())
 	}
 
-	// Delete all resources with this index key
-	if err := store.Delete("nginx"); err != nil {
+	// Warm the cache for both so eviction is observable.
+	if _, err := store.Get("nginx"); err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+
+	if err := store.Delete("default", "nginx-slice-1", []string{"nginx"}); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	// Verify ALL resources were deleted
-	if store.Size() != 0 {
-		t.Errorf("expected size 0 after delete, got %d", store.Size())
+	if store.Size() != 1 {
+		t.Errorf("expected size 1 after deleting one sibling, got %d", store.Size())
 	}
 
-	// Verify cache was cleared
-	if got := cacheLen(store); got != 0 {
-		t.Errorf("expected cache size 0 after delete, got %d", got)
+	// Only the deleted resource's entry is evicted; the sibling stays warm.
+	if got := cacheLen(store); got != 1 {
+		t.Errorf("expected cache size 1 after delete, got %d", got)
 	}
 
 	results, err := store.Get("nginx")
@@ -341,8 +346,33 @@ func TestCachedStore_DeleteWithNonUniqueKeys(t *testing.T) {
 		t.Fatalf("Get failed: %v", err)
 	}
 
-	if len(results) != 0 {
-		t.Errorf("expected 0 results after delete, got %d", len(results))
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result after delete, got %d", len(results))
+	}
+	if _, name := extractNamespaceName(results[0]); name != "nginx-slice-2" {
+		t.Errorf("expected the surviving resource to be nginx-slice-2, got %q", name)
+	}
+}
+
+// TestCachedStore_DeleteRemovesEmptyBucket verifies the refs entry is dropped
+// once its last resource is deleted.
+func TestCachedStore_DeleteRemovesEmptyBucket(t *testing.T) {
+	scheme := runtime.NewScheme()
+
+	only := createTestResource("default", "only")
+	client := fake.NewSimpleDynamicClient(scheme, only)
+
+	store := newTestCachedStore(t, client, createTestIndexer(), 1, 5*time.Minute)
+
+	if err := store.Add(only, []string{"nginx"}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	if err := store.Delete("default", "only", []string{"nginx"}); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	if len(store.refs) != 0 {
+		t.Errorf("expected the bucket's refs entry to be removed, got %d entries", len(store.refs))
 	}
 }
 
@@ -622,7 +652,7 @@ func TestCachedStore_WrongKeyCount(t *testing.T) {
 	}
 
 	// Test Delete with wrong key count
-	err = store.Delete("only-one-key")
+	err = store.Delete("default", "obj", []string{"only-one-key"})
 	if err == nil {
 		t.Error("expected error for wrong key count in Delete")
 	}

@@ -265,11 +265,15 @@ func TestParseLabelSelector(t *testing.T) {
 		name     string
 		selector string
 		want     map[string]string
+		wantErr  bool
 	}{
 		{
-			name:     "empty string",
+			// An empty selector never reaches here — ConvertSpec treats it as
+			// "unfiltered" and skips the parse. Reaching it means a caller lost
+			// that guard, which must not silently produce an empty selector.
+			name:     "empty string is a caller error",
 			selector: "",
-			want:     nil,
+			wantErr:  true,
 		},
 		{
 			name:     "single label",
@@ -304,21 +308,6 @@ func TestParseLabelSelector(t *testing.T) {
 			},
 		},
 		{
-			name:     "trailing comma",
-			selector: "app=nginx,env=prod,",
-			want: map[string]string{
-				"app": "nginx",
-				"env": "prod",
-			},
-		},
-		{
-			name:     "malformed - no equals",
-			selector: "app,env=prod",
-			want: map[string]string{
-				"env": "prod",
-			},
-		},
-		{
 			name:     "kubernetes style labels",
 			selector: "app.kubernetes.io/name=haproxy,app.kubernetes.io/component=loadbalancer",
 			want: map[string]string{
@@ -326,14 +315,103 @@ func TestParseLabelSelector(t *testing.T) {
 				"app.kubernetes.io/component": "loadbalancer",
 			},
 		},
+		{
+			// Double-equals is valid equality syntax. The old split-on-"="
+			// parser turned this into {"app": "=nginx"}.
+			name:     "double equals",
+			selector: "app==nginx",
+			want: map[string]string{
+				"app": "nginx",
+			},
+		},
+		{
+			name:     "trailing comma",
+			selector: "app=nginx,env=prod,",
+			wantErr:  true,
+		},
+		{
+			// A bare key is an Exists requirement, not an equality pair. The
+			// old parser dropped it and watched with the remainder.
+			name:     "malformed - no equals",
+			selector: "app,env=prod",
+			wantErr:  true,
+		},
+		{
+			// The strongest regression guard: the old parser produced the
+			// key "app!", which then failed conversion at list time and left
+			// the watch unfiltered across the whole cluster.
+			name:     "not-equals is rejected",
+			selector: "app!=nginx",
+			wantErr:  true,
+		},
+		{
+			name:     "set-based in",
+			selector: "tier in (frontend,api)",
+			wantErr:  true,
+		},
+		{
+			name:     "set-based notin",
+			selector: "tier notin (backend)",
+			wantErr:  true,
+		},
+		{
+			name:     "set-based exists negation",
+			selector: "!disabled",
+			wantErr:  true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseLabelSelector(tt.selector)
+			got, err := parseLabelSelector(tt.selector)
+			if tt.wantErr {
+				require.Error(t, err, "selector %q must be rejected, not silently narrowed", tt.selector)
+				assert.Nil(t, got)
+				return
+			}
+			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// An absent selector means "unfiltered" and must convert cleanly to nil.
+func TestConvertSpec_EmptyLabelSelectorStaysNil(t *testing.T) {
+	spec := &v1alpha1.HAProxyTemplateConfigSpec{
+		WatchedResources: map[string]v1alpha1.WatchedResource{
+			"ingresses": {
+				APIVersion: "networking.k8s.io/v1",
+				Resources:  "ingresses",
+				IndexBy:    []string{"metadata.namespace", "metadata.name"},
+			},
+		},
+	}
+
+	cfg, err := ConvertSpec(spec)
+
+	require.NoError(t, err)
+	assert.Nil(t, cfg.WatchedResources["ingresses"].LabelSelector)
+}
+
+// A rejected selector must fail the whole conversion, naming the watched
+// resource so the operator knows which entry to fix.
+func TestConvertSpec_RejectsSetBasedLabelSelector(t *testing.T) {
+	spec := &v1alpha1.HAProxyTemplateConfigSpec{
+		WatchedResources: map[string]v1alpha1.WatchedResource{
+			"ingresses": {
+				APIVersion:    "networking.k8s.io/v1",
+				Resources:     "ingresses",
+				IndexBy:       []string{"metadata.namespace", "metadata.name"},
+				LabelSelector: "tier in (frontend,api)",
+			},
+		},
+	}
+
+	_, err := ConvertSpec(spec)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "watchedResources[ingresses].labelSelector")
+	assert.Contains(t, err.Error(), "tier in (frontend,api)")
 }
 
 func TestParseCRD(t *testing.T) {

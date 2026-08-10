@@ -44,7 +44,9 @@ func (s *mockStore) Update(resource any, keys []string) error {
 	return nil
 }
 
-func (s *mockStore) Delete(keys ...string) error {
+func (s *mockStore) Delete(_, _ string, keys []string) error {
+	// This fake holds one resource per composite key, so the key alone
+	// identifies it; identity is accepted and ignored.
 	delete(s.resources, keyString(keys))
 	return nil
 }

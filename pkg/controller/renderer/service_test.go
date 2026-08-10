@@ -63,7 +63,7 @@ func (m *mockTypedStore) Update(resource any, keys []string) error {
 	return nil
 }
 
-func (m *mockTypedStore) Delete(keys ...string) error {
+func (m *mockTypedStore) Delete(_, _ string, _ []string) error {
 	return nil
 }
 

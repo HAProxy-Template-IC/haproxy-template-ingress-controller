@@ -85,12 +85,50 @@ func newProjectionTransform(roots map[string]bool, idx *indexer.Indexer) cache.T
 			}
 		}
 		husk := &unstructured.Unstructured{Object: projected}
-		if idx != nil {
-			// Best-effort: a filter error just means the husk keeps a field
-			// it could have dropped — never a correctness problem, since the
-			// render reads the full body live regardless.
-			_ = idx.FilterFields(husk)
-		}
+		normalizeInPlace(husk, idx)
 		return husk, nil
+	}
+}
+
+// normalizeInPlace applies the IgnoreFields filter and the float→int
+// conversion to u, in place.
+//
+// Both steps are idempotent — RemoveNestedField on an absent field is a no-op
+// and an int64 falls through the conversion untouched — which client-go
+// requires, because a cached object can be handed back to the transform on a
+// Replace.
+//
+// A filter error is swallowed for the same reason newProjectionTransform
+// swallows it: the pattern is operator-controlled, and returning an error here
+// would propagate into the reflector and abort the list/watch entirely.
+func normalizeInPlace(u *unstructured.Unstructured, idx *indexer.Indexer) {
+	if idx == nil {
+		return
+	}
+	_ = idx.FilterFields(u)
+	indexer.ConvertResource(u)
+}
+
+// newNormalizeTransform returns a client-go TransformFunc for memory-backed
+// watchers: it normalises the object in place and hands back the SAME pointer,
+// dropping nothing beyond the configured IgnoreFields.
+//
+// It deliberately does NOT project. For a memory store the stored body IS what
+// templates read, so stripping it to the index roots would render every field
+// outside metadata as missing — see ADR-0012, which rejects key-projection for
+// MemoryStore kinds as blocker B1.
+//
+// Doing this here rather than in the event handler is what keeps the informer's
+// contract: client-go requires handlers not to modify the objects they receive,
+// and the transform is the sanctioned mutation point — it runs before the
+// object is inserted into the cache and before any listener sees it.
+func newNormalizeTransform(idx *indexer.Indexer) cache.TransformFunc {
+	return func(obj any) (any, error) {
+		u, ok := obj.(*unstructured.Unstructured)
+		if !ok {
+			return obj, nil
+		}
+		normalizeInPlace(u, idx)
+		return u, nil
 	}
 }
