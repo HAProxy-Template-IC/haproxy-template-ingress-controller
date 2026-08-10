@@ -61,25 +61,3 @@ func NewCredentialsUpdatedEvent(credentials any, secretVersion string) *Credenti
 }
 
 func (e *CredentialsUpdatedEvent) EventType() string { return EventTypeCredentialsUpdated }
-
-// CredentialsInvalidEvent is published when credential loading or validation fails.
-//
-// The controller will continue running with the previous valid credentials and wait.
-// for the next Secret update.
-type CredentialsInvalidEvent struct {
-	SecretVersion string
-	Error         string
-
-	timestamped
-}
-
-// NewCredentialsInvalidEvent creates a new CredentialsInvalidEvent.
-func NewCredentialsInvalidEvent(secretVersion, errMsg string) *CredentialsInvalidEvent {
-	return &CredentialsInvalidEvent{
-		SecretVersion: secretVersion,
-		Error:         errMsg,
-		timestamped:   newTimestamped(),
-	}
-}
-
-func (e *CredentialsInvalidEvent) EventType() string { return EventTypeCredentialsInvalid }

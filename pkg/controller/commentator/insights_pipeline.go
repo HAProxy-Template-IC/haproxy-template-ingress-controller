@@ -132,21 +132,12 @@ func (ec *EventCommentator) templateInsight(event busevents.Event, attrs []any) 
 	}
 }
 
-// deploymentInsight handles DeploymentStarted, InstanceDeployed, InstanceDeploymentFailed,
-// and DeploymentCompleted events.
+// deploymentInsight handles DeploymentStarted, InstanceDeploymentFailed, and DeploymentCompleted events.
 func (ec *EventCommentator) deploymentInsight(event busevents.Event, attrs []any) (insight string, args []any) {
 	switch e := event.(type) {
 	case *events.DeploymentStartedEvent:
 		return fmt.Sprintf("Deployment started to %d HAProxy instances", e.EndpointCount),
 			append(attrs, "instance_count", e.EndpointCount)
-
-	case *events.InstanceDeployedEvent:
-		reloadInfo := ""
-		if e.ReloadRequired {
-			reloadInfo = " (reload triggered)"
-		}
-		return fmt.Sprintf("Instance deployed successfully in %dms%s", e.DurationMs, reloadInfo),
-			append(attrs, "duration_ms", e.DurationMs, "reload_required", e.ReloadRequired)
 
 	case *events.InstanceDeploymentFailedEvent:
 		retryableInfo := ""

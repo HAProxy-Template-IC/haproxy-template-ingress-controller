@@ -116,7 +116,7 @@ infrastructure. The bus API surface (typed and lossy subscription variants,
 drop accounting, `Publish` semantics) is documented in
 `pkg/events/README.md`.
 
-Two boundaries of the pattern are recorded as ADRs:
+Three boundaries of the pattern are recorded as ADRs:
 
 - **Rendering and HAProxy validation are synchronous, not event adapters**
   ([ADR-0001](../adr/0001-renderer-is-synchronous-not-event-adapter.md)).
@@ -131,6 +131,11 @@ Two boundaries of the pattern are recorded as ADRs:
   even though it looks like the same single-publisher/single-subscriber
   shape ADR-0001 removed. There the async coupling is load-bearing: it
   decouples the refresh-timer cadence from multi-second validation latency.
+- **Domain events require a concrete payload consumer**
+  ([ADR-0019](../adr/0019-domain-events-require-a-payload-consumer.md)).
+  Generic tracing doesn't keep an event alive. An observability subscriber
+  qualifies only when it emits an operator-visible log, metric, or debug state
+  that the publisher doesn't already emit.
 
 Two invariants keep the pattern safe in practice:
 

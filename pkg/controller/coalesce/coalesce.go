@@ -76,8 +76,8 @@ func DrainLatest[T busevents.Event](
 	})
 }
 
-// drainLatest is the shared coalescing drain loop behind DrainLatest and
-// DrainLatestByType. It non-blockingly pulls events off eventChan; an event
+// drainLatest is the coalescing drain loop behind DrainLatest. It
+// non-blockingly pulls events off eventChan; an event
 // joins the current run when match(event) is true AND it is a coalescible
 // CoalescibleEvent, superseding the run's earlier events. Any other event is a
 // run boundary: the held run is flushed BEFORE the event goes to handleOther,

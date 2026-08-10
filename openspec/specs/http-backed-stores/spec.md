@@ -60,7 +60,7 @@ The HTTPStore adapter SHALL run a refresh timer per registered URL, firing at th
 
 ### Requirement: Promote-or-Reject Validation Flow
 
-When a refresh produces changed content, the adapter SHALL publish a ProposalValidationRequestedEvent carrying an HTTP overlay of the pending state (recording the request ID as the pending validation), plus an HTTPResourceUpdatedEvent for observability. On the ProposalValidationCompletedEvent whose request ID matches the pending one — non-matching IDs SHALL be ignored — the adapter SHALL either promote or reject every URL with pending content: on Valid=true, promote pending to accepted, publish an HTTPResourceAcceptedEvent per URL, and publish a coalescible ReconciliationTriggeredEvent with reason "http_content_validated" so the accepted content reaches HAProxy; on Valid=false, discard pending (accepted preserved) and publish an HTTPResourceRejectedEvent per URL carrying the validation error as the reason. The pending-validation ID SHALL be checked and cleared atomically so a duplicate completion cannot double-process.
+When a refresh produces changed content, the adapter SHALL publish a ProposalValidationRequestedEvent carrying an HTTP overlay of the pending state (recording the request ID as the pending validation), plus an HTTPResourceUpdatedEvent for observability. On the ProposalValidationCompletedEvent whose request ID matches the pending one — non-matching IDs SHALL be ignored — the adapter SHALL either promote or reject every URL with pending content: on Valid=true, promote pending to accepted, publish an HTTPResourceAcceptedEvent per URL, and publish a coalescible ReconciliationTriggeredEvent with reason "http_content_validated" so the accepted content reaches HAProxy; on Valid=false, discard every pending version while preserving accepted versions, log the validation phase and error, and identify each rejected URL with the rejected and retained checksums. The pending-validation ID SHALL be checked and cleared atomically so a duplicate completion cannot double-process.
 
 #### Scenario: Valid content is promoted and reconciled
 
@@ -70,7 +70,7 @@ When a refresh produces changed content, the adapter SHALL publish a ProposalVal
 #### Scenario: Invalid content is rejected without touching accepted
 
 - **WHEN** the matching completion arrives with Valid=false
-- **THEN** each pending URL's content SHALL be discarded, an HTTPResourceRejectedEvent published per URL, and the accepted content SHALL remain in use
+- **THEN** each pending URL's content SHALL be discarded, the accepted content SHALL remain in use, and rejection diagnostics SHALL identify the URL and the rejected and retained checksums
 
 #### Scenario: Foreign validation results ignored
 

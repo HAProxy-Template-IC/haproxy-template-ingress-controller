@@ -9,7 +9,7 @@ Templates can pull external content via `{% var blocklist = http.Fetch("https://
 - A refresh timer per registered URL (driven by `delay` in the `http.Fetch` options).
 - Proposal-validation handling: when a refresh produces new pending content, the component publishes `ProposalValidationRequestedEvent` for the proposal pipeline to validate it; on the matching `ProposalValidationCompletedEvent` it branches on `event.Valid` to promote the pending content to accepted (and trigger a reconciliation) or discard it.
 - Periodic eviction of cache entries that templates haven't touched recently (`evictionMaxAge`, typically `2 × dataplane.driftPreventionInterval`).
-- Publishing `HTTPResourceUpdatedEvent` / `HTTPResourceAcceptedEvent` / `HTTPResourceRejectedEvent` so the commentator, metrics, and other observability consumers can react.
+- Publishing `HTTPResourceUpdatedEvent` / `HTTPResourceAcceptedEvent` for accepted-state observability. Rejections are logged directly with the validation error, URL, and rejected and retained checksums.
 
 The `HTTPStoreWrapper` is the template-side view: it implements the methods Scriggo calls into (`Fetch`, `Status`) and bridges them to the underlying component, including the `HTTPContentOverlay` used by the proposal validator to inject hypothetical content during admission.
 
@@ -34,7 +34,7 @@ The component runs on every replica (not leader-only) so all replicas have warm 
 ## Events
 
 - Subscribes: `ProposalValidationCompletedEvent` (the only subscription — branches on `event.Valid` to either promote or reject pending content; matched by request ID against the most recent `ProposalValidationRequestedEvent` this component published).
-- Publishes: `ProposalValidationRequestedEvent` (asks the proposal pipeline to validate pending content), `HTTPResourceUpdatedEvent` (sibling observability event when a refresh produces new pending content), `HTTPResourceAcceptedEvent` (after validation promotes pending → accepted), `HTTPResourceRejectedEvent` (after validation discards pending), and `ReconciliationTriggeredEvent("http_content_validated")` after a successful promotion so HAProxy picks up the new content.
+- Publishes: `ProposalValidationRequestedEvent` (asks the proposal pipeline to validate pending content), `HTTPResourceUpdatedEvent` (sibling observability event when a refresh produces new pending content), `HTTPResourceAcceptedEvent` (after validation promotes pending → accepted), and `ReconciliationTriggeredEvent("http_content_validated")` after a successful promotion so HAProxy picks up the new content. A rejected proposal is logged and discarded without publishing another event.
 
 ## Production vs Validation Render
 

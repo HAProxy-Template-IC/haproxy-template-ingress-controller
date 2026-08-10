@@ -119,11 +119,9 @@ sequenceDiagram
     par Parallel Deployment
         Deployer->>HAProxy1: dataplane.Sync via Dataplane API
         HAProxy1-->>Deployer: Success
-        Deployer->>EventBus: Publish(InstanceDeployedEvent)
     and
         Deployer->>HAProxy2: dataplane.Sync via Dataplane API
         HAProxy2-->>Deployer: Success
-        Deployer->>EventBus: Publish(InstanceDeployedEvent)
     end
 
     Deployer->>EventBus: Publish(DeploymentCompletedEvent)
@@ -139,7 +137,7 @@ sequenceDiagram
 4. **Pipeline**: runs `RenderService.Render` (template engine + auxiliary files), computes the content checksum once, then runs the fast `ValidationService.Validate` (syntax via client-native parser → OpenAPI schema; the leader pipeline skips the `haproxy -c` phase — the strict service runs it at admission and on HTTP-store promotion).
 5. **Coordinator post-pipeline**: on success, publishes `TemplateRenderedEvent` + `ValidationCompletedEvent` for downstream consumers; on failure, publishes `ReconciliationFailedEvent` carrying a `*PipelineError` (use `errors.AsType[*PipelineError]` to extract the failed phase).
 6. **DeploymentScheduler (leader-only)**: subscribes to `TemplateRenderedEvent`, `ValidationCompletedEvent`, and `HAProxyPodsDiscoveredEvent`; only deploys when all three inputs are present. Enforces `minDeploymentInterval` and "latest wins" coalescing.
-7. **Deployer (leader-only)**: executes parallel `dataplane.Sync` calls to every endpoint, publishes per-endpoint `InstanceDeployedEvent` / `InstanceDeploymentFailedEvent` and aggregate `DeploymentCompletedEvent`.
+7. **Deployer (leader-only)**: executes parallel `dataplane.Sync` calls to every endpoint, logs successful endpoints directly, and publishes per-endpoint `InstanceDeploymentFailedEvent` plus aggregate `DeploymentCompletedEvent`.
 8. **Completion**: Coordinator subscribes to `DeploymentCompletedEvent` and publishes `ReconciliationCompletedEvent` with duration metrics.
 
 There is no event-adapter for rendering or HAProxy-config validation — the synchronous Pipeline owns both. Coordination still happens entirely via EventBus pub/sub *between* components; only the render-validate split inside the Coordinator is a direct function call.

@@ -94,7 +94,7 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 // This method:
 //  1. Publishes DeploymentStartedEvent
 //  2. Deploys to all endpoints in parallel
-//  3. Publishes InstanceDeployedEvent or InstanceDeploymentFailedEvent for each endpoint
+//  3. Logs successful endpoints and publishes InstanceDeploymentFailedEvent for failures
 //  4. Publishes ConfigAppliedToPodEvent for successful deployments
 //  5. Publishes DeploymentCompletedEvent with summary
 func (c *Component) deployToEndpoints(
@@ -351,14 +351,6 @@ func (c *Component) handleEndpointSuccess(
 		"duration_ms", durationMs,
 		"reload_triggered", syncResult.ReloadTriggered,
 		"correlation_id", correlationID)
-
-	// Publish InstanceDeployedEvent with correlation
-	c.EventBus().Publish(events.NewInstanceDeployedEvent(
-		ep,
-		durationMs,
-		syncResult.ReloadTriggered,
-		events.WithCorrelation(correlationID, correlationID),
-	))
 
 	// A runtime map that failed its read-back cost this sync the reload-free
 	// lane. The sync still SUCCEEDED (the reload fallback is convergent), so

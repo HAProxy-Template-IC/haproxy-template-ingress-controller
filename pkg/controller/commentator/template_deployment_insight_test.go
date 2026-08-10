@@ -143,57 +143,6 @@ func TestTemplateInsight_RenderFailedEvent_PassesErrorThrough(t *testing.T) {
 			"strip the carefully-assembled context (line numbers, hints)")
 }
 
-func TestDeploymentInsight_InstanceDeployedEvent_ReloadFragmentConditional(t *testing.T) {
-	tests := []struct {
-		name           string
-		reloadRequired bool
-		wantFragment   string
-		notFragment    string
-	}{
-		{
-			name:           "reload required → '(reload triggered)' fragment appended",
-			reloadRequired: true,
-			wantFragment:   "(reload triggered)",
-			notFragment:    "", // n/a
-		},
-		{
-			name:           "no reload → fragment must be ABSENT (NOT '(reload not triggered)' or empty parens)",
-			reloadRequired: false,
-			wantFragment:   "",
-			notFragment:    "(reload",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ec := emptyECommentator()
-			evt := ctlevents.NewInstanceDeployedEvent(
-				dataplane.Endpoint{URL: "http://1.2.3.4:5555"},
-				75, // 75ms
-				tt.reloadRequired,
-			)
-
-			insight, _ := ec.deploymentInsight(evt, nil)
-
-			assert.Contains(t, insight, "75ms",
-				"deploy duration must always appear")
-
-			if tt.reloadRequired {
-				assert.Contains(t, insight, tt.wantFragment,
-					"reload-required deployments MUST be tagged so operators can "+
-						"distinguish zero-reload runtime updates (the optimization "+
-						"target) from structural changes that needed a reload")
-			} else {
-				assert.NotContains(t, insight, tt.notFragment,
-					"non-reload deployments MUST NOT carry any reload fragment — "+
-						"a regression that emitted '(reload not triggered)' or "+
-						"empty parens would muddy the signal operators rely on for "+
-						"counting reloads via log grep")
-			}
-		})
-	}
-}
-
 func TestDeploymentInsight_InstanceDeploymentFailedEvent_RetryableFragmentConditional(t *testing.T) {
 	// The retryable flag determines on-call response: retryable
 	// failures auto-recover (no immediate action), non-retryable

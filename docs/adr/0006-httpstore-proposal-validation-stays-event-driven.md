@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-`pkg/controller/httpstore.Component` runs a refresh-timer loop: per registered URL, when the refresh interval elapses it fetches the URL, and on a content change publishes `ProposalValidationRequestedEvent`. `pkg/controller/proposalvalidator.Component` consumes that event, runs render-validate against the proposed content via its `HTTPOverlay`, and publishes `ProposalValidationCompletedEvent`. `httpstore` correlates the response by `RequestID` against its `pendingValidationID`, then either promotes the pending content (`HTTPResourceAcceptedEvent`) or discards it (`HTTPResourceRejectedEvent`).
+`pkg/controller/httpstore.Component` runs a refresh-timer loop: per registered URL, when the refresh interval elapses it fetches the URL, and on a content change publishes `ProposalValidationRequestedEvent`. `pkg/controller/proposalvalidator.Component` consumes that event, runs render-validate against the proposed content via its `HTTPOverlay`, and publishes `ProposalValidationCompletedEvent`. `httpstore` correlates the response by `RequestID` against its `pendingValidationID`, then either promotes the pending content and publishes `HTTPResourceAcceptedEvent`, or discards it and logs the rejection directly.
 
 That shape is suspicious on first inspection — one publisher, one subscriber-back, closed loop. ADR-0001 removed an analogous event hop for the renderer. A future architecture review will likely propose collapsing this one too: drop the events, have `httpstore` call `proposalValidator.ValidateSync(ctx, overlays)` directly the way `dryrunvalidator` already does.
 

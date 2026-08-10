@@ -49,7 +49,7 @@ Template calls http.Fetch()
 │   - Publishes ProposalValidationRequestedEvent on refresh    │
 │   - Subscribes to ProposalValidationCompletedEvent           │
 │     (branches on event.Valid → promote or reject)            │
-│   - Publishes HTTPResourceUpdated/Accepted/RejectedEvent     │
+│   - Publishes HTTPResourceUpdated/AcceptedEvent              │
 └─────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -103,8 +103,7 @@ event.Valid?
     │
     └── false → handleValidationFailure(event.Phase, event.Error)
                 For each URL with pending content:
-                  ├── RejectPending() - discard pending
-                  └── Publish HTTPResourceRejectedEvent (reason from event.Error)
+                  └── RejectPending() - discard pending and log diagnostics
 ```
 
 ## Template Usage
@@ -183,7 +182,6 @@ Published events (defined in `pkg/controller/events/`):
 | `ProposalValidationRequestedEvent` | Refresh produced new content; before promoting it | Asks the proposal pipeline to validate the pending HTTP content via `HTTPOverlay`. The component records `event.ID` as `pendingValidationID` so it can correlate the response |
 | `HTTPResourceUpdatedEvent` | Same call as above — sibling event for observability | Lets `commentator` / metrics see that content changed without subscribing to validation events |
 | `HTTPResourceAcceptedEvent` | After a matching `ProposalValidationCompletedEvent` with `Valid == true` | Observability that pending → accepted promotion happened |
-| `HTTPResourceRejectedEvent` | After a matching `ProposalValidationCompletedEvent` with `Valid == false` | Observability that pending was discarded; carries the reason from the validation error |
 | `ReconciliationTriggeredEvent("http_content_validated", true)` | After a successful promotion (in `handleValidationSuccess`) | Coalescible reconciliation request so HAProxy picks up the new content |
 
 Subscribed events:

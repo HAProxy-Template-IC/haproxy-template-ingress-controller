@@ -55,40 +55,6 @@ func NewDeploymentStartedEvent(endpointCount int, opts ...CorrelationOption) *De
 
 func (e *DeploymentStartedEvent) EventType() string { return EventTypeDeploymentStarted }
 
-// InstanceDeployedEvent is published when deployment to a single HAProxy instance succeeds.
-//
-// This event propagates the correlation ID from DeploymentStartedEvent.
-//
-// Observability-only: consumed by the commentator's deploymentInsight for
-// per-instance logging; no business-logic subscriber reacts to it.
-type InstanceDeployedEvent struct {
-	Endpoint       any // The HAProxy endpoint that was deployed to
-	DurationMs     int64
-	ReloadRequired bool // Whether this deployment required a HAProxy reload
-	timestamped
-
-	// Correlation embeds correlation tracking for event tracing.
-	Correlation
-}
-
-// NewInstanceDeployedEvent creates a new InstanceDeployedEvent.
-//
-// Use PropagateCorrelation() to propagate correlation from the triggering event:
-//
-//	event := events.NewInstanceDeployedEvent(endpoint, durationMs, reloadRequired,
-//	    events.PropagateCorrelation(startedEvent))
-func NewInstanceDeployedEvent(endpoint any, durationMs int64, reloadRequired bool, opts ...CorrelationOption) *InstanceDeployedEvent {
-	return &InstanceDeployedEvent{
-		Endpoint:       endpoint,
-		DurationMs:     durationMs,
-		ReloadRequired: reloadRequired,
-		timestamped:    newTimestamped(),
-		Correlation:    newCorrelation(opts...),
-	}
-}
-
-func (e *InstanceDeployedEvent) EventType() string { return EventTypeInstanceDeployed }
-
 // InstanceDeploymentFailedEvent is published when deployment to a single HAProxy instance fails.
 //
 // This event propagates the correlation ID from DeploymentStartedEvent.

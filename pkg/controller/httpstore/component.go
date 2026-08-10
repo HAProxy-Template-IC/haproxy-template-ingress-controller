@@ -57,7 +57,6 @@ const (
 // Event publications:
 //   - ProposalValidationRequestedEvent: When refreshed content differs from accepted
 //   - HTTPResourceAcceptedEvent: When pending content is promoted
-//   - HTTPResourceRejectedEvent: When pending content is rejected
 //   - ReconciliationTriggeredEvent: After successful validation promotion
 type Component struct {
 	eventBus  *busevents.EventBus
@@ -231,25 +230,8 @@ func (c *Component) handleValidationFailure(phase, errMsg string) {
 		"phase", phase,
 		"error", errMsg)
 
-	// Format reason from validation error
-	reason := "validation failed"
-	if errMsg != "" {
-		reason = errMsg
-	}
-
 	for _, url := range pendingURLs {
-		entry := c.store.GetEntry(url)
-		if entry == nil {
-			continue
-		}
-
-		if c.store.RejectPending(url) {
-			c.eventBus.Publish(events.NewHTTPResourceRejectedEvent(
-				url,
-				entry.PendingChecksum,
-				reason,
-			))
-		}
+		c.store.RejectPending(url)
 	}
 }
 

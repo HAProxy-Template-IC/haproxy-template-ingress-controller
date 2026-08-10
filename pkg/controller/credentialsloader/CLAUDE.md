@@ -34,16 +34,15 @@ CredentialsLoaderComponent.ProcessEvent          (this package)
         ├─ extract `data` map (still base64 strings)
         ├─ config.ParseSecretData (base64 → []byte per key)
         ├─ config.LoadCredentials (rejects missing / empty username or password)
-        └─ publish:
-             • CredentialsUpdatedEvent{Credentials, SecretVersion}   on success
-             • CredentialsInvalidEvent{SecretVersion, Error}         on failure
+        ├─ publish CredentialsUpdatedEvent{Credentials, SecretVersion} on success
+        └─ log the Secret version and validation error on failure
 ```
 
 Notes worth knowing before editing:
 
 - The event payload is `*unstructured.Unstructured`; `data` values come back as base64-encoded strings (Kubernetes does **not** auto-decode through unstructured). Decoding is done by `config.ParseSecretData`, not by the loader directly — keep the contract there.
-- `resourceVersion` is read off the unstructured resource by the loader itself; there's no separate version field on the inbound event. Both outbound events carry it as `SecretVersion` so downstream subscribers can correlate against the live `Secret`.
-- A `CredentialsInvalidEvent` does **not** roll back previously-accepted credentials — it just signals failure; the previously-accepted `Credentials` stay in effect until a valid Secret is seen.
+- `resourceVersion` is read off the unstructured resource by the loader itself; there's no separate version field on the inbound event. The success event and failure log both include it so operators can correlate against the live `Secret`.
+- An invalid update does **not** roll back previously accepted credentials. They stay in effect until a valid Secret is seen.
 - `Start(ctx)` is promoted from `component.Base`; this loader does not define its own.
 
 ## Usage
