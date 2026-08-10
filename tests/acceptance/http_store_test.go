@@ -81,18 +81,7 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			return ctx
 		}).
 		Assess("Valid HTTP update is applied", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			require.NoError(t, err)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			// Use shared clientset (rate limiting disabled) to avoid exhaustion
-			clientset := Clientset()
-
-			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Controller pod ready")
+			namespace, client, clientset := readyControllerEnv(ctx, t, cfg)
 
 			// Setup debug client via NodePort
 			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
@@ -244,18 +233,7 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			return ctx
 		}).
 		Assess("Invalid HTTP update is rejected and old content preserved", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			require.NoError(t, err)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			// Use shared clientset (rate limiting disabled) to avoid exhaustion
-			clientset := Clientset()
-
-			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Controller pod ready")
+			namespace, client, clientset := readyControllerEnv(ctx, t, cfg)
 
 			// Setup debug client via NodePort
 			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)

@@ -37,27 +37,31 @@ func createTestResource(namespace, name string) *unstructured.Unstructured {
 	}
 }
 
+// newTestCachedStore builds a CachedStore over client, failing the test if the
+// config is rejected. numKeys and ttl are the only settings the tests vary.
+func newTestCachedStore(t *testing.T, client *fake.FakeDynamicClient, idx *indexer.Indexer,
+	numKeys int, ttl time.Duration) *CachedStore {
+	t.Helper()
+	store, err := NewCachedStore(&CachedStoreConfig{
+		NumKeys:  numKeys,
+		CacheTTL: ttl,
+		Client:   client,
+		GVR:      configMapGVR,
+		Indexer:  idx,
+	})
+	if err != nil {
+		t.Fatalf("NewCachedStore failed: %v", err)
+	}
+	return store
+}
+
 // TestNewCachedStore verifies store creation.
 func TestNewCachedStore(t *testing.T) {
 	scheme := runtime.NewScheme()
 	client := fake.NewSimpleDynamicClient(scheme)
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
-	cfg := &CachedStoreConfig{
-		NumKeys:   2,
-		CacheTTL:  5 * time.Minute,
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
+	store := newTestCachedStore(t, client, testIndexer, 2, 5*time.Minute)
 
 	if store == nil {
 		t.Fatal("NewCachedStore returned nil")
@@ -133,23 +137,9 @@ func TestCachedStore_AddAndGet(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
+	store := newTestCachedStore(t, client, testIndexer, 2, 5*time.Minute)
 
-	cfg := &CachedStoreConfig{
-		NumKeys:   2,
-		CacheTTL:  5 * time.Minute,
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
-
-	err = store.Add(resource, []string{"default", "test-cm"})
+	err := store.Add(resource, []string{"default", "test-cm"})
 	if err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
@@ -189,13 +179,11 @@ func TestCachedStore_NonUniqueKeys(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2])
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
 	cfg := &CachedStoreConfig{
 		NumKeys:   1, // Index by service name only
 		CacheTTL:  5 * time.Minute,
 		Client:    client,
-		GVR:       gvr,
+		GVR:       configMapGVR,
 		Namespace: "",
 		Indexer:   testIndexer,
 	}
@@ -255,21 +243,7 @@ func TestCachedStore_UpdateWithNonUniqueKeys(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, slice1, slice2)
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
-	cfg := &CachedStoreConfig{
-		NumKeys:   1,
-		CacheTTL:  5 * time.Minute,
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
+	store := newTestCachedStore(t, client, testIndexer, 1, 5*time.Minute)
 
 	// Add both resources
 	if err := store.Add(slice1, []string{"nginx"}); err != nil {
@@ -332,21 +306,7 @@ func TestCachedStore_DeleteWithNonUniqueKeys(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, slice1, slice2)
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
-	cfg := &CachedStoreConfig{
-		NumKeys:   1,
-		CacheTTL:  5 * time.Minute,
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
+	store := newTestCachedStore(t, client, testIndexer, 1, 5*time.Minute)
 
 	// Add resources
 	if err := store.Add(slice1, []string{"nginx"}); err != nil {
@@ -400,21 +360,7 @@ func TestCachedStore_List(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2])
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
-	cfg := &CachedStoreConfig{
-		NumKeys:   1,
-		CacheTTL:  5 * time.Minute,
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
+	store := newTestCachedStore(t, client, testIndexer, 1, 5*time.Minute)
 
 	// Add resources with different index keys
 	if err := store.Add(resources[0], []string{"nginx"}); err != nil {
@@ -460,21 +406,7 @@ func TestCachedStore_CacheTTL(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
-	cfg := &CachedStoreConfig{
-		NumKeys:   2,
-		CacheTTL:  100 * time.Millisecond, // Very short TTL for testing
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
+	store := newTestCachedStore(t, client, testIndexer, 2, 100*time.Millisecond) // Very short TTL for testing
 
 	// Add resource (caches it)
 	if err := store.Add(resource, []string{"default", "test-cm"}); err != nil {
@@ -514,21 +446,7 @@ func TestCachedStore_Clear(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1])
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
-	cfg := &CachedStoreConfig{
-		NumKeys:   2,
-		CacheTTL:  5 * time.Minute,
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
+	store := newTestCachedStore(t, client, testIndexer, 2, 5*time.Minute)
 
 	// Add resources
 	for _, res := range resources {
@@ -570,21 +488,7 @@ func TestCachedStore_PartialMatch(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2])
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
-	cfg := &CachedStoreConfig{
-		NumKeys:   2,
-		CacheTTL:  5 * time.Minute,
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
+	store := newTestCachedStore(t, client, testIndexer, 2, 5*time.Minute)
 
 	// Add resources
 	for _, res := range resources {
@@ -620,24 +524,10 @@ func TestCachedStore_TTLReset(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
 	// Short TTL for testing
 	cacheTTL := 200 * time.Millisecond
 
-	cfg := &CachedStoreConfig{
-		NumKeys:   2,
-		CacheTTL:  cacheTTL,
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
+	store := newTestCachedStore(t, client, testIndexer, 2, cacheTTL)
 
 	// Add resource to cache
 	if err := store.Add(resource, []string{"default", "test-cm"}); err != nil {
@@ -717,24 +607,10 @@ func TestCachedStore_WrongKeyCount(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
-	cfg := &CachedStoreConfig{
-		NumKeys:   2,
-		CacheTTL:  5 * time.Minute,
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
+	store := newTestCachedStore(t, client, testIndexer, 2, 5*time.Minute)
 
 	// Test Add with wrong key count
-	err = store.Add(resource, []string{"only-one-key"})
+	err := store.Add(resource, []string{"only-one-key"})
 	if err == nil {
 		t.Error("expected error for wrong key count in Add")
 	}
@@ -775,13 +651,11 @@ func TestCachedStore_UpdateAddsNewResourceToExistingKey(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, slice1, slice2)
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
 	cfg := &CachedStoreConfig{
 		NumKeys:   1, // Index by service name only
 		CacheTTL:  5 * time.Minute,
 		Client:    client,
-		GVR:       gvr,
+		GVR:       configMapGVR,
 		Namespace: "",
 		Indexer:   testIndexer,
 	}
@@ -826,21 +700,7 @@ func TestCachedStore_UpdateToNewKey(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
-	cfg := &CachedStoreConfig{
-		NumKeys:   2,
-		CacheTTL:  5 * time.Minute,
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
+	store := newTestCachedStore(t, client, testIndexer, 2, 5*time.Minute)
 
 	runUpdateToNewKeyTest(t, store, store, resource, []string{"default", "test-cm"})
 }
@@ -853,21 +713,7 @@ func TestCachedStore_DeleteNonExistent(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resource)
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
-	cfg := &CachedStoreConfig{
-		NumKeys:   2,
-		CacheTTL:  5 * time.Minute,
-		Client:    client,
-		GVR:       gvr,
-		Namespace: "",
-		Indexer:   testIndexer,
-	}
-
-	store, err := NewCachedStore(cfg)
-	if err != nil {
-		t.Fatalf("NewCachedStore failed: %v", err)
-	}
+	store := newTestCachedStore(t, client, testIndexer, 2, 5*time.Minute)
 
 	runDeleteNonExistentTest(t, store, store, resource,
 		[]string{"default", "test-cm"},
@@ -892,13 +738,11 @@ func TestCachedStore_CacheMissLogging(t *testing.T) {
 		t.Fatalf("creating indexer: %v", err)
 	}
 
-	gvr := configMapGVR
-
 	cfg := &CachedStoreConfig{
 		NumKeys:   2,
 		CacheTTL:  5 * time.Minute,
 		Client:    client,
-		GVR:       gvr,
+		GVR:       configMapGVR,
 		Namespace: "",
 		Indexer:   idx,
 		// Logger is optional, will use slog.Default()
@@ -949,14 +793,12 @@ func TestCachedStore_LRUEviction(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2], resources[3])
 	testIndexer := createTestIndexer()
 
-	gvr := configMapGVR
-
 	cfg := &CachedStoreConfig{
 		NumKeys:      2,
 		CacheTTL:     5 * time.Minute,
 		MaxCacheSize: 3, // Only 3 entries fit
 		Client:       client,
-		GVR:          gvr,
+		GVR:          configMapGVR,
 		Namespace:    "",
 		Indexer:      testIndexer,
 	}

@@ -18,6 +18,20 @@ import (
 )
 
 // TestNewSingle verifies SingleWatcher creation.
+// testWatcherConfig is the ConfigMap watch these tests share; a nil onChange
+// installs a no-op callback.
+func testWatcherConfig(onChange func(any) error) types.SingleWatcherConfig {
+	if onChange == nil {
+		onChange = func(any) error { return nil }
+	}
+	return types.SingleWatcherConfig{
+		GVR:       configMapGVR,
+		Namespace: "default",
+		Name:      "test-config",
+		OnChange:  onChange,
+	}
+}
+
 func TestNewSingle(t *testing.T) {
 	k8sClient := createFakeClientForSingleWatcher()
 
@@ -122,14 +136,7 @@ func TestNewSingle(t *testing.T) {
 func TestSingleWatcher_WaitForSyncTimeout(t *testing.T) {
 	k8sClient := createFakeClientForSingleWatcher()
 
-	cfg := types.SingleWatcherConfig{
-		GVR:       configMapGVR,
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			return nil
-		},
-	}
+	cfg := testWatcherConfig(nil)
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
@@ -241,15 +248,8 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 
 // TestSingleWatcherConfig_SetDefaults verifies default value application.
 func TestSingleWatcherConfig_SetDefaults(t *testing.T) {
-	cfg := types.SingleWatcherConfig{
-		GVR:       configMapGVR,
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			return nil
-		},
-		// Context is nil
-	}
+	cfg := testWatcherConfig(nil)
+	// Context is nil
 
 	cfg.SetDefaults()
 
@@ -263,15 +263,7 @@ func TestSingleWatcher_NoAddCallbacksDuringSync(t *testing.T) {
 	k8sClient := createFakeClientForConfigMapListing()
 
 	callbackCount := 0
-	cfg := types.SingleWatcherConfig{
-		GVR:       configMapGVR,
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			callbackCount++
-			return nil
-		},
-	}
+	cfg := testWatcherConfig(func(any) error { callbackCount++; return nil })
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
@@ -311,15 +303,7 @@ func TestSingleWatcher_NoUpdateCallbacksDuringSync(t *testing.T) {
 	k8sClient := createFakeClientForConfigMapListing()
 
 	callbackCount := 0
-	cfg := types.SingleWatcherConfig{
-		GVR:       configMapGVR,
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			callbackCount++
-			return nil
-		},
-	}
+	cfg := testWatcherConfig(func(any) error { callbackCount++; return nil })
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
@@ -354,15 +338,7 @@ func TestSingleWatcher_NoDeleteCallbacksDuringSync(t *testing.T) {
 	k8sClient := createFakeClientForConfigMapListing()
 
 	callbackCount := 0
-	cfg := types.SingleWatcherConfig{
-		GVR:       configMapGVR,
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			callbackCount++
-			return nil
-		},
-	}
+	cfg := testWatcherConfig(func(any) error { callbackCount++; return nil })
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
@@ -401,14 +377,7 @@ func TestSingleWatcher_NoDeleteCallbacksDuringSync(t *testing.T) {
 func TestSingleWatcher_StopIdempotency(t *testing.T) {
 	k8sClient := createFakeClientForSingleWatcher()
 
-	cfg := types.SingleWatcherConfig{
-		GVR:       configMapGVR,
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			return nil
-		},
-	}
+	cfg := testWatcherConfig(nil)
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
@@ -495,14 +464,7 @@ func TestSingleWatcher_ConcurrentCallbacks(t *testing.T) {
 func TestSingleWatcher_StartIdempotency(t *testing.T) {
 	k8sClient := createFakeClientForConfigMapListing()
 
-	cfg := types.SingleWatcherConfig{
-		GVR:       configMapGVR,
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			return nil
-		},
-	}
+	cfg := testWatcherConfig(nil)
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
@@ -600,15 +562,7 @@ func TestSingleWatcher_SkipsStatusOnlyUpdates(t *testing.T) {
 	k8sClient := createFakeClientForSingleWatcher()
 
 	callbackCount := 0
-	cfg := types.SingleWatcherConfig{
-		GVR:       configMapGVR,
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			callbackCount++
-			return nil
-		},
-	}
+	cfg := testWatcherConfig(func(any) error { callbackCount++; return nil })
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
@@ -703,15 +657,7 @@ func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
 	k8sClient := createFakeClientForSingleWatcher()
 
 	callbackCount := 0
-	cfg := types.SingleWatcherConfig{
-		GVR:       configMapGVR,
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			callbackCount++
-			return nil
-		},
-	}
+	cfg := testWatcherConfig(func(any) error { callbackCount++; return nil })
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
@@ -898,15 +844,8 @@ func TestSingleWatcher_OnSyncComplete_ReceivesCurrentResource(t *testing.T) {
 func TestSingleWatcher_OnSyncComplete_Optional(t *testing.T) {
 	k8sClient := createFakeClientForConfigMapListing()
 
-	cfg := types.SingleWatcherConfig{
-		GVR:       configMapGVR,
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			return nil
-		},
-		// OnSyncComplete is nil - should be optional
-	}
+	cfg := testWatcherConfig(nil)
+	// OnSyncComplete is nil - should be optional
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {

@@ -42,6 +42,14 @@ func mustMarshalRawExtension(obj map[string]any) runtime.RawExtension {
 	return runtime.RawExtension{Raw: data}
 }
 
+// servicesWatch is the single watched resource these tests declare. It returns a
+// fresh map because the runner takes the spec by pointer.
+func servicesWatch() map[string]v1alpha1.WatchedResource {
+	return map[string]v1alpha1.WatchedResource{
+		"services": {APIVersion: "v1", Resources: "services", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+	}
+}
+
 func TestRunner_RunTests(t *testing.T) {
 	// Setup logger
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -59,16 +67,8 @@ func TestRunner_RunTests(t *testing.T) {
 		{
 			name: "simple rendering test with contains assertion",
 			config: &v1alpha1.HAProxyTemplateConfigSpec{
-				HAProxyConfig: v1alpha1.HAProxyConfig{
-					Template: "global\n  maxconn 1000\n",
-				},
-				WatchedResources: map[string]v1alpha1.WatchedResource{
-					"services": {
-						APIVersion: "v1",
-						Resources:  "services",
-						IndexBy:    []string{"metadata.namespace", "metadata.name"},
-					},
-				},
+				HAProxyConfig:    v1alpha1.HAProxyConfig{Template: "global\n  maxconn 1000\n"},
+				WatchedResources: servicesWatch(),
 				ValidationTests: map[string]v1alpha1.ValidationTest{
 					"basic-rendering": {
 						Description: "Test basic HAProxy rendering",
@@ -95,16 +95,8 @@ func TestRunner_RunTests(t *testing.T) {
 		{
 			name: "test with failing assertion",
 			config: &v1alpha1.HAProxyTemplateConfigSpec{
-				HAProxyConfig: v1alpha1.HAProxyConfig{
-					Template: "global\n  maxconn 1000\n",
-				},
-				WatchedResources: map[string]v1alpha1.WatchedResource{
-					"services": {
-						APIVersion: "v1",
-						Resources:  "services",
-						IndexBy:    []string{"metadata.namespace", "metadata.name"},
-					},
-				},
+				HAProxyConfig:    v1alpha1.HAProxyConfig{Template: "global\n  maxconn 1000\n"},
+				WatchedResources: servicesWatch(),
 				ValidationTests: map[string]v1alpha1.ValidationTest{
 					"failing-test": {
 						Description: "Test with failing assertion",
@@ -131,16 +123,8 @@ func TestRunner_RunTests(t *testing.T) {
 		{
 			name: "multiple tests with mixed results",
 			config: &v1alpha1.HAProxyTemplateConfigSpec{
-				HAProxyConfig: v1alpha1.HAProxyConfig{
-					Template: "global\n  maxconn 1000\n",
-				},
-				WatchedResources: map[string]v1alpha1.WatchedResource{
-					"services": {
-						APIVersion: "v1",
-						Resources:  "services",
-						IndexBy:    []string{"metadata.namespace", "metadata.name"},
-					},
-				},
+				HAProxyConfig:    v1alpha1.HAProxyConfig{Template: "global\n  maxconn 1000\n"},
+				WatchedResources: servicesWatch(),
 				ValidationTests: map[string]v1alpha1.ValidationTest{
 					"passing-test": {
 						Description: "This test should pass",
@@ -179,16 +163,8 @@ func TestRunner_RunTests(t *testing.T) {
 		{
 			name: "filter specific test by name",
 			config: &v1alpha1.HAProxyTemplateConfigSpec{
-				HAProxyConfig: v1alpha1.HAProxyConfig{
-					Template: "global\n  maxconn 1000\n",
-				},
-				WatchedResources: map[string]v1alpha1.WatchedResource{
-					"services": {
-						APIVersion: "v1",
-						Resources:  "services",
-						IndexBy:    []string{"metadata.namespace", "metadata.name"},
-					},
-				},
+				HAProxyConfig:    v1alpha1.HAProxyConfig{Template: "global\n  maxconn 1000\n"},
+				WatchedResources: servicesWatch(),
 				ValidationTests: map[string]v1alpha1.ValidationTest{
 					"test-1": {
 						Description: "First test",
@@ -228,16 +204,8 @@ func TestRunner_RunTests(t *testing.T) {
 		{
 			name: "non-existent test name",
 			config: &v1alpha1.HAProxyTemplateConfigSpec{
-				HAProxyConfig: v1alpha1.HAProxyConfig{
-					Template: "global\n  maxconn 1000\n",
-				},
-				WatchedResources: map[string]v1alpha1.WatchedResource{
-					"services": {
-						APIVersion: "v1",
-						Resources:  "services",
-						IndexBy:    []string{"metadata.namespace", "metadata.name"},
-					},
-				},
+				HAProxyConfig:    v1alpha1.HAProxyConfig{Template: "global\n  maxconn 1000\n"},
+				WatchedResources: servicesWatch(),
 				ValidationTests: map[string]v1alpha1.ValidationTest{
 					"test-1": {
 						Fixtures: map[string][]runtime.RawExtension{
@@ -259,16 +227,8 @@ func TestRunner_RunTests(t *testing.T) {
 		{
 			name: "_global fixtures entry is excluded from execution",
 			config: &v1alpha1.HAProxyTemplateConfigSpec{
-				HAProxyConfig: v1alpha1.HAProxyConfig{
-					Template: "global\n  maxconn 1000\n",
-				},
-				WatchedResources: map[string]v1alpha1.WatchedResource{
-					"services": {
-						APIVersion: "v1",
-						Resources:  "services",
-						IndexBy:    []string{"metadata.namespace", "metadata.name"},
-					},
-				},
+				HAProxyConfig:    v1alpha1.HAProxyConfig{Template: "global\n  maxconn 1000\n"},
+				WatchedResources: servicesWatch(),
 				ValidationTests: map[string]v1alpha1.ValidationTest{
 					"_global": {
 						Description: "shared fixtures only; must never run as a standalone test",
@@ -437,13 +397,7 @@ backend {{ svcMeta["namespace"] }}-{{ svcMeta["name"] }}
 {% end %}
 `,
 		},
-		WatchedResources: map[string]v1alpha1.WatchedResource{
-			"services": {
-				APIVersion: "v1",
-				Resources:  "services",
-				IndexBy:    []string{"metadata.namespace", "metadata.name"},
-			},
-		},
+		WatchedResources: servicesWatch(),
 		ValidationTests: map[string]v1alpha1.ValidationTest{
 			"with-service-fixture": {
 				Description: "Test with service fixture",
@@ -533,13 +487,7 @@ func TestRunner_RenderError(t *testing.T) {
 			// Use fail() to cause rendering error
 			Template: `{{ fail("intentional error") }}`,
 		},
-		WatchedResources: map[string]v1alpha1.WatchedResource{
-			"services": {
-				APIVersion: "v1",
-				Resources:  "services",
-				IndexBy:    []string{"metadata.namespace", "metadata.name"},
-			},
-		},
+		WatchedResources: servicesWatch(),
 		ValidationTests: map[string]v1alpha1.ValidationTest{
 			"rendering-error-test": {
 				Description: "Test with rendering error",
@@ -676,13 +624,7 @@ func TestRunner_RunTests_WithHTTPFixtures(t *testing.T) {
 {%- end %}`,
 			},
 		},
-		WatchedResources: map[string]v1alpha1.WatchedResource{
-			"services": {
-				APIVersion: "v1",
-				Resources:  "services",
-				IndexBy:    []string{"metadata.namespace", "metadata.name"},
-			},
-		},
+		WatchedResources: servicesWatch(),
 		ValidationTests: map[string]v1alpha1.ValidationTest{
 			"http-fixture-test": {
 				Description: "Test with HTTP fixture",
@@ -776,13 +718,7 @@ global
   maxconn 1000
 `,
 		},
-		WatchedResources: map[string]v1alpha1.WatchedResource{
-			"services": {
-				APIVersion: "v1",
-				Resources:  "services",
-				IndexBy:    []string{"metadata.namespace", "metadata.name"},
-			},
-		},
+		WatchedResources: servicesWatch(),
 		ValidationTests: map[string]v1alpha1.ValidationTest{
 			"missing-http-fixture": {
 				Description: "Test with missing HTTP fixture",
@@ -864,13 +800,7 @@ func TestRunner_RunTests_WithCurrentConfig(t *testing.T) {
 {%- end %}
 `,
 		},
-		WatchedResources: map[string]v1alpha1.WatchedResource{
-			"services": {
-				APIVersion: "v1",
-				Resources:  "services",
-				IndexBy:    []string{"metadata.namespace", "metadata.name"},
-			},
-		},
+		WatchedResources: servicesWatch(),
 		ValidationTests: map[string]v1alpha1.ValidationTest{
 			"test-currentconfig": {
 				Description: "Test that currentConfig is available in templates",
@@ -971,13 +901,7 @@ func TestRunner_RunTests_WithoutCurrentConfig(t *testing.T) {
 {%- end %}
 `,
 		},
-		WatchedResources: map[string]v1alpha1.WatchedResource{
-			"services": {
-				APIVersion: "v1",
-				Resources:  "services",
-				IndexBy:    []string{"metadata.namespace", "metadata.name"},
-			},
-		},
+		WatchedResources: servicesWatch(),
 		ValidationTests: map[string]v1alpha1.ValidationTest{
 			"test-no-currentconfig": {
 				Description: "Test that template handles empty currentConfig (first deployment)",

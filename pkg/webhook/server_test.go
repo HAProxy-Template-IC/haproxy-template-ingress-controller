@@ -89,6 +89,27 @@ func newTestServer(t *testing.T, cfg *ServerConfig) *Server {
 	return server
 }
 
+// configMapAdmissionRequest posts a Create AdmissionReview for a v1.ConfigMap
+// at /validate — the shape most handler tests exercise.
+func configMapAdmissionRequest(t *testing.T) (*httptest.ResponseRecorder, *http.Request) {
+	t.Helper()
+	reviewBytes, err := json.Marshal(&admissionv1.AdmissionReview{
+		TypeMeta: metav1.TypeMeta{APIVersion: "admission.k8s.io/v1", Kind: "AdmissionReview"},
+		Request: &admissionv1.AdmissionRequest{
+			UID:       "test-uid",
+			Kind:      metav1.GroupVersionKind{Version: "v1", Kind: "ConfigMap"},
+			Operation: admissionv1.Create,
+			Object: runtime.RawExtension{
+				Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test","namespace":"default"}}`),
+			},
+		},
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/validate", bytes.NewReader(reviewBytes))
+	req.Header.Set("Content-Type", "application/json")
+	return httptest.NewRecorder(), req
+}
+
 func TestNewServer_Defaults(t *testing.T) {
 	server := newTestServer(t, &ServerConfig{})
 
@@ -267,31 +288,7 @@ func TestServer_HandleValidation_NoValidatorAllowsByDefault(t *testing.T) {
 	server := newTestServer(t, &ServerConfig{})
 
 	// Create a valid AdmissionReview request for a type with no validator
-	review := &admissionv1.AdmissionReview{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "admission.k8s.io/v1",
-			Kind:       "AdmissionReview",
-		},
-		Request: &admissionv1.AdmissionRequest{
-			UID: "test-uid",
-			Kind: metav1.GroupVersionKind{
-				Group:   "",
-				Version: "v1",
-				Kind:    "ConfigMap",
-			},
-			Operation: admissionv1.Create,
-			Object: runtime.RawExtension{
-				Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test","namespace":"default"}}`),
-			},
-		},
-	}
-
-	reviewBytes, err := json.Marshal(review)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/validate", bytes.NewReader(reviewBytes))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	w, req := configMapAdmissionRequest(t)
 
 	server.handleValidation(w, req)
 
@@ -299,7 +296,7 @@ func TestServer_HandleValidation_NoValidatorAllowsByDefault(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var responseReview admissionv1.AdmissionReview
-	err = json.NewDecoder(resp.Body).Decode(&responseReview)
+	err := json.NewDecoder(resp.Body).Decode(&responseReview)
 	require.NoError(t, err)
 
 	assert.True(t, responseReview.Response.Allowed)
@@ -317,31 +314,7 @@ func TestServer_HandleValidation_ValidatorAllows(t *testing.T) {
 	})
 
 	// Create a valid AdmissionReview request
-	review := &admissionv1.AdmissionReview{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "admission.k8s.io/v1",
-			Kind:       "AdmissionReview",
-		},
-		Request: &admissionv1.AdmissionRequest{
-			UID: "test-uid",
-			Kind: metav1.GroupVersionKind{
-				Group:   "",
-				Version: "v1",
-				Kind:    "ConfigMap",
-			},
-			Operation: admissionv1.Create,
-			Object: runtime.RawExtension{
-				Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test","namespace":"default"}}`),
-			},
-		},
-	}
-
-	reviewBytes, err := json.Marshal(review)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/validate", bytes.NewReader(reviewBytes))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	w, req := configMapAdmissionRequest(t)
 
 	server.handleValidation(w, req)
 
@@ -349,7 +322,7 @@ func TestServer_HandleValidation_ValidatorAllows(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var responseReview admissionv1.AdmissionReview
-	err = json.NewDecoder(resp.Body).Decode(&responseReview)
+	err := json.NewDecoder(resp.Body).Decode(&responseReview)
 	require.NoError(t, err)
 
 	assert.True(t, responseReview.Response.Allowed)
@@ -365,31 +338,7 @@ func TestServer_HandleValidation_ValidatorDenies(t *testing.T) {
 	})
 
 	// Create a valid AdmissionReview request
-	review := &admissionv1.AdmissionReview{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "admission.k8s.io/v1",
-			Kind:       "AdmissionReview",
-		},
-		Request: &admissionv1.AdmissionRequest{
-			UID: "test-uid",
-			Kind: metav1.GroupVersionKind{
-				Group:   "",
-				Version: "v1",
-				Kind:    "ConfigMap",
-			},
-			Operation: admissionv1.Create,
-			Object: runtime.RawExtension{
-				Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test","namespace":"default"}}`),
-			},
-		},
-	}
-
-	reviewBytes, err := json.Marshal(review)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/validate", bytes.NewReader(reviewBytes))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	w, req := configMapAdmissionRequest(t)
 
 	server.handleValidation(w, req)
 
@@ -397,7 +346,7 @@ func TestServer_HandleValidation_ValidatorDenies(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var responseReview admissionv1.AdmissionReview
-	err = json.NewDecoder(resp.Body).Decode(&responseReview)
+	err := json.NewDecoder(resp.Body).Decode(&responseReview)
 	require.NoError(t, err)
 
 	assert.False(t, responseReview.Response.Allowed)
@@ -414,31 +363,7 @@ func TestServer_HandleValidation_ValidatorError(t *testing.T) {
 	})
 
 	// Create a valid AdmissionReview request
-	review := &admissionv1.AdmissionReview{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "admission.k8s.io/v1",
-			Kind:       "AdmissionReview",
-		},
-		Request: &admissionv1.AdmissionRequest{
-			UID: "test-uid",
-			Kind: metav1.GroupVersionKind{
-				Group:   "",
-				Version: "v1",
-				Kind:    "ConfigMap",
-			},
-			Operation: admissionv1.Create,
-			Object: runtime.RawExtension{
-				Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test","namespace":"default"}}`),
-			},
-		},
-	}
-
-	reviewBytes, err := json.Marshal(review)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/validate", bytes.NewReader(reviewBytes))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	w, req := configMapAdmissionRequest(t)
 
 	server.handleValidation(w, req)
 
@@ -446,7 +371,7 @@ func TestServer_HandleValidation_ValidatorError(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var responseReview admissionv1.AdmissionReview
-	err = json.NewDecoder(resp.Body).Decode(&responseReview)
+	err := json.NewDecoder(resp.Body).Decode(&responseReview)
 	require.NoError(t, err)
 
 	assert.False(t, responseReview.Response.Allowed)

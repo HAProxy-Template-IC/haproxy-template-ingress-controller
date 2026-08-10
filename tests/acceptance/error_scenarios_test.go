@@ -127,34 +127,9 @@ backend test-backend
 // 5. Verify controller doesn't crash and continues watching
 func buildInvalidHAProxyConfigFeature() types.Feature {
 	return features.New("Error Scenarios - Invalid HAProxy Config").
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace := envconf.RandomName("test-invalid-cfg", 32)
-			ctx = StoreNamespaceInContext(ctx, namespace)
-			t.Logf("Test namespace: %s", namespace)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			opts := DefaultControllerEnvironmentOptions()
-			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
-				t.Fatal("Failed to create controller environment:", err)
-			}
-
-			return ctx
-		}).
+		Setup(setupControllerEnv("test-invalid-cfg")).
 		Assess("Invalid config is rejected and old config preserved", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			require.NoError(t, err)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			// Use shared clientset (rate limiting disabled) to avoid exhaustion
-			clientset := Clientset()
-
-			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Controller pod ready")
+			namespace, client, clientset := readyControllerEnv(ctx, t, cfg)
 
 			// Get controller pod for debug client
 			pod, err := GetControllerPod(ctx, client, namespace)
@@ -287,23 +262,9 @@ func TestInvalidHAProxyConfig(t *testing.T) {
 // 6. Verify controller picks it up and proceeds
 func buildCredentialsMissingFeature() types.Feature {
 	return features.New("Error Scenarios - Credentials Missing").
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace := envconf.RandomName("test-creds-miss", 32)
-			ctx = StoreNamespaceInContext(ctx, namespace)
-			t.Logf("Test namespace: %s", namespace)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			// Deploy controller WITHOUT creating credentials secret first
-			opts := DefaultControllerEnvironmentOptions()
-			opts.SkipCredentialsSecret = true
-			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
-				t.Fatal("Failed to create controller environment:", err)
-			}
-
-			return ctx
-		}).
+		Setup(setupControllerEnv("test-creds-miss", func(o *ControllerEnvironmentOptions) {
+			o.SkipCredentialsSecret = true
+		})).
 		Assess("Controller waits for credentials and recovers when created", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace, err := GetNamespaceFromContext(ctx)
 			require.NoError(t, err)
@@ -422,34 +383,9 @@ func TestCredentialsMissing(t *testing.T) {
 // 6. Verify subsequent config changes work normally
 func buildControllerCrashRecoveryFeature() types.Feature {
 	return features.New("Error Scenarios - Controller Crash Recovery").
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace := envconf.RandomName("test-crash-rec", 32)
-			ctx = StoreNamespaceInContext(ctx, namespace)
-			t.Logf("Test namespace: %s", namespace)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			opts := DefaultControllerEnvironmentOptions()
-			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
-				t.Fatal("Failed to create controller environment:", err)
-			}
-
-			return ctx
-		}).
+		Setup(setupControllerEnv("test-crash-rec")).
 		Assess("Controller recovers after crash", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			require.NoError(t, err)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			// Use shared clientset (rate limiting disabled) to avoid exhaustion
-			clientset := Clientset()
-
-			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Controller pod ready")
+			namespace, client, clientset := readyControllerEnv(ctx, t, cfg)
 
 			// Setup metrics access for waiting on reconciliation completion
 			metricsClient, err := SetupMetricsAccess(ctx, client, clientset, namespace, 30*time.Second)
@@ -536,34 +472,9 @@ func TestControllerCrashRecovery(t *testing.T) {
 // 4. Verify no transaction conflicts from rapid changes
 func buildRapidConfigUpdatesFeature() types.Feature {
 	return features.New("Error Scenarios - Rapid Config Updates").
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace := envconf.RandomName("test-rapid-cfg", 32)
-			ctx = StoreNamespaceInContext(ctx, namespace)
-			t.Logf("Test namespace: %s", namespace)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			opts := DefaultControllerEnvironmentOptions()
-			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
-				t.Fatal("Failed to create controller environment:", err)
-			}
-
-			return ctx
-		}).
+		Setup(setupControllerEnv("test-rapid-cfg")).
 		Assess("Rapid updates are debounced", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			require.NoError(t, err)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			// Use shared clientset (rate limiting disabled) to avoid exhaustion
-			clientset := Clientset()
-
-			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Controller pod ready")
+			namespace, client, clientset := readyControllerEnv(ctx, t, cfg)
 
 			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			require.NoError(t, err)
@@ -663,34 +574,9 @@ func TestRapidConfigUpdates(t *testing.T) {
 // 4. Verify next controller instance starts cleanly
 func buildGracefulShutdownFeature() types.Feature {
 	return features.New("Error Scenarios - Graceful Shutdown").
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace := envconf.RandomName("test-shutdown", 32)
-			ctx = StoreNamespaceInContext(ctx, namespace)
-			t.Logf("Test namespace: %s", namespace)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			opts := DefaultControllerEnvironmentOptions()
-			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
-				t.Fatal("Failed to create controller environment:", err)
-			}
-
-			return ctx
-		}).
+		Setup(setupControllerEnv("test-shutdown")).
 		Assess("Controller shuts down gracefully", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			require.NoError(t, err)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			// Use shared clientset (rate limiting disabled) to avoid exhaustion
-			clientset := Clientset()
-
-			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Controller pod ready")
+			namespace, client, clientset := readyControllerEnv(ctx, t, cfg)
 
 			pod, err := GetControllerPod(ctx, client, namespace)
 			require.NoError(t, err)
@@ -774,34 +660,9 @@ func TestGracefulShutdown(t *testing.T) {
 // The controller will log errors about no HAProxy endpoints - we verify it doesn't crash.
 func buildDataplaneUnreachableFeature() types.Feature {
 	return features.New("Error Scenarios - Dataplane Unreachable").
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace := envconf.RandomName("test-dp-unreach", 32)
-			ctx = StoreNamespaceInContext(ctx, namespace)
-			t.Logf("Test namespace: %s", namespace)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			opts := DefaultControllerEnvironmentOptions()
-			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
-				t.Fatal("Failed to create controller environment:", err)
-			}
-
-			return ctx
-		}).
+		Setup(setupControllerEnv("test-dp-unreach")).
 		Assess("Controller handles no HAProxy endpoints gracefully", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			require.NoError(t, err)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			// Use shared clientset (rate limiting disabled) to avoid exhaustion
-			clientset := Clientset()
-
-			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Controller pod ready")
+			namespace, client, clientset := readyControllerEnv(ctx, t, cfg)
 
 			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			require.NoError(t, err)
@@ -1056,21 +917,7 @@ func TestLeadershipDuringReconciliation(t *testing.T) {
 // 5. Verify new Pod reconnects and processes update
 func buildWatchReconnectionFeature() types.Feature {
 	return features.New("Error Scenarios - Watch Reconnection").
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace := envconf.RandomName("test-watch-rec", 32)
-			ctx = StoreNamespaceInContext(ctx, namespace)
-			t.Logf("Test namespace: %s", namespace)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			opts := DefaultControllerEnvironmentOptions()
-			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
-				t.Fatal("Failed to create controller environment:", err)
-			}
-
-			return ctx
-		}).
+		Setup(setupControllerEnv("test-watch-rec")).
 		Assess("Controller reconnects and processes updates after restart", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace, err := GetNamespaceFromContext(ctx)
 			require.NoError(t, err)
@@ -1174,34 +1021,9 @@ func TestWatchReconnection(t *testing.T) {
 // 4. Verify controller state remains consistent
 func buildTransactionConflictFeature() types.Feature {
 	return features.New("Error Scenarios - Transaction Conflict Handling").
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace := envconf.RandomName("test-tx-conf", 32)
-			ctx = StoreNamespaceInContext(ctx, namespace)
-			t.Logf("Test namespace: %s", namespace)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			opts := DefaultControllerEnvironmentOptions()
-			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
-				t.Fatal("Failed to create controller environment:", err)
-			}
-
-			return ctx
-		}).
+		Setup(setupControllerEnv("test-tx-conf")).
 		Assess("Controller handles concurrent updates gracefully", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			require.NoError(t, err)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			// Use shared clientset (rate limiting disabled) to avoid exhaustion
-			clientset := Clientset()
-
-			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Controller pod ready")
+			namespace, client, clientset := readyControllerEnv(ctx, t, cfg)
 
 			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			require.NoError(t, err)
@@ -1313,34 +1135,9 @@ func TestTransactionConflict(t *testing.T) {
 // 3. Controller remains operational for future deployments
 func buildPartialDeploymentFailureFeature() types.Feature {
 	return features.New("Error Scenarios - Partial Deployment Failure").
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace := envconf.RandomName("test-part-fail", 32)
-			ctx = StoreNamespaceInContext(ctx, namespace)
-			t.Logf("Test namespace: %s", namespace)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			opts := DefaultControllerEnvironmentOptions()
-			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
-				t.Fatal("Failed to create controller environment:", err)
-			}
-
-			return ctx
-		}).
+		Setup(setupControllerEnv("test-part-fail")).
 		Assess("Controller handles zero endpoints and remains operational", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			require.NoError(t, err)
-
-			client, err := cfg.NewClient()
-			require.NoError(t, err)
-
-			// Use shared clientset (rate limiting disabled) to avoid exhaustion
-			clientset := Clientset()
-
-			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Controller pod ready")
+			namespace, client, clientset := readyControllerEnv(ctx, t, cfg)
 
 			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			require.NoError(t, err)
