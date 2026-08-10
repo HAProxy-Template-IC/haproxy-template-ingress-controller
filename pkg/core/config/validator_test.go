@@ -6,33 +6,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestValidateStructure_Success(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{"app": "haproxy"},
-		},
-		Controller: ControllerConfig{},
-		Logging: LoggingConfig{
-			Level: "INFO",
-		},
-		Dataplane: DataplaneConfig{
-			Port:              5555,
-			MapsDir:           "/etc/haproxy/maps",
-			SSLCertsDir:       "/etc/haproxy/certs",
-			GeneralStorageDir: "/etc/haproxy/general",
-			ConfigFile:        "/etc/haproxy/haproxy.cfg",
-		},
-		WatchedResources: map[string]WatchedResource{
-			"ingresses": {
-				APIVersion: "networking.k8s.io/v1",
-				Resources:  "ingresses",
-				IndexBy:    []string{"metadata.namespace"},
-			},
-		},
-		HAProxyConfig: HAProxyConfig{
-			Template: "global",
-		},
+// validConfig returns a Config that passes ValidateStructure; each test mutates
+// only the field it is about.
+func validConfig() *Config {
+	return &Config{
+		PodSelector:      PodSelector{MatchLabels: map[string]string{"app": "haproxy"}},
+		Logging:          LoggingConfig{Level: "INFO"},
+		Dataplane:        DataplaneConfig{Port: 5555, MapsDir: "/etc/haproxy/maps", SSLCertsDir: "/etc/haproxy/certs", GeneralStorageDir: "/etc/haproxy/general", ConfigFile: "/etc/haproxy/haproxy.cfg"},
+		WatchedResources: map[string]WatchedResource{"ingresses": {APIVersion: "networking.k8s.io/v1", Resources: "ingresses", IndexBy: []string{"metadata.namespace"}}},
+		HAProxyConfig:    HAProxyConfig{Template: "global"},
 	}
+}
+
+func TestValidateStructure_Success(t *testing.T) {
+	cfg := validConfig()
 
 	err := ValidateStructure(cfg)
 	assert.NoError(t, err)
@@ -45,11 +32,8 @@ func TestValidateStructure_NilConfig(t *testing.T) {
 }
 
 func TestValidatePodSelector_EmptyMatchLabels(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{},
-		},
-	}
+	cfg := validConfig()
+	cfg.PodSelector.MatchLabels = map[string]string{}
 
 	err := ValidateStructure(cfg)
 	assert.Error(t, err)
@@ -57,11 +41,8 @@ func TestValidatePodSelector_EmptyMatchLabels(t *testing.T) {
 }
 
 func TestValidatePodSelector_EmptyLabelKey(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{"": "value"},
-		},
-	}
+	cfg := validConfig()
+	cfg.PodSelector.MatchLabels = map[string]string{"": "value"}
 
 	err := ValidateStructure(cfg)
 	assert.Error(t, err)
@@ -69,11 +50,8 @@ func TestValidatePodSelector_EmptyLabelKey(t *testing.T) {
 }
 
 func TestValidatePodSelector_EmptyLabelValue(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{"app": ""},
-		},
-	}
+	cfg := validConfig()
+	cfg.PodSelector.MatchLabels = map[string]string{"app": ""}
 
 	err := ValidateStructure(cfg)
 	assert.Error(t, err)
@@ -92,25 +70,8 @@ func TestValidateLoggingConfig_InvalidLevel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				PodSelector: PodSelector{
-					MatchLabels: map[string]string{"app": "haproxy"},
-				},
-				Controller: ControllerConfig{},
-				Logging: LoggingConfig{
-					Level: tt.level,
-				},
-				WatchedResources: map[string]WatchedResource{
-					"ingresses": {
-						APIVersion: "networking.k8s.io/v1",
-						Resources:  "ingresses",
-						IndexBy:    []string{"metadata.namespace"},
-					},
-				},
-				HAProxyConfig: HAProxyConfig{
-					Template: "global",
-				},
-			}
+			cfg := validConfig()
+			cfg.Logging.Level = tt.level
 
 			err := ValidateStructure(cfg)
 			assert.Error(t, err)
@@ -124,32 +85,8 @@ func TestValidateLoggingConfig_ValidLevels(t *testing.T) {
 
 	for _, level := range validLevels {
 		t.Run("level_"+level, func(t *testing.T) {
-			cfg := &Config{
-				PodSelector: PodSelector{
-					MatchLabels: map[string]string{"app": "haproxy"},
-				},
-				Controller: ControllerConfig{},
-				Logging: LoggingConfig{
-					Level: level,
-				},
-				Dataplane: DataplaneConfig{
-					Port:              5555,
-					MapsDir:           "/etc/haproxy/maps",
-					SSLCertsDir:       "/etc/haproxy/certs",
-					GeneralStorageDir: "/etc/haproxy/general",
-					ConfigFile:        "/etc/haproxy/haproxy.cfg",
-				},
-				WatchedResources: map[string]WatchedResource{
-					"ingresses": {
-						APIVersion: "networking.k8s.io/v1",
-						Resources:  "ingresses",
-						IndexBy:    []string{"metadata.namespace"},
-					},
-				},
-				HAProxyConfig: HAProxyConfig{
-					Template: "global",
-				},
-			}
+			cfg := validConfig()
+			cfg.Logging.Level = level
 
 			err := ValidateStructure(cfg)
 			assert.NoError(t, err)
@@ -158,23 +95,8 @@ func TestValidateLoggingConfig_ValidLevels(t *testing.T) {
 }
 
 func TestValidateWatchedResources_Empty(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{"app": "haproxy"},
-		},
-		Controller: ControllerConfig{},
-		Dataplane: DataplaneConfig{
-			Port:              5555,
-			MapsDir:           "/etc/haproxy/maps",
-			SSLCertsDir:       "/etc/haproxy/certs",
-			GeneralStorageDir: "/etc/haproxy/general",
-			ConfigFile:        "/etc/haproxy/haproxy.cfg",
-		},
-		WatchedResources: map[string]WatchedResource{},
-		HAProxyConfig: HAProxyConfig{
-			Template: "global",
-		},
-	}
+	cfg := validConfig()
+	cfg.WatchedResources = map[string]WatchedResource{}
 
 	err := ValidateStructure(cfg)
 	assert.Error(t, err)
@@ -182,29 +104,8 @@ func TestValidateWatchedResources_Empty(t *testing.T) {
 }
 
 func TestValidateWatchedResource_MissingAPIVersion(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{"app": "haproxy"},
-		},
-		Controller: ControllerConfig{},
-		Dataplane: DataplaneConfig{
-			Port:              5555,
-			MapsDir:           "/etc/haproxy/maps",
-			SSLCertsDir:       "/etc/haproxy/certs",
-			GeneralStorageDir: "/etc/haproxy/general",
-			ConfigFile:        "/etc/haproxy/haproxy.cfg",
-		},
-		WatchedResources: map[string]WatchedResource{
-			"ingresses": {
-				APIVersion: "",
-				Resources:  "ingresses",
-				IndexBy:    []string{"metadata.namespace"},
-			},
-		},
-		HAProxyConfig: HAProxyConfig{
-			Template: "global",
-		},
-	}
+	cfg := validConfig()
+	cfg.WatchedResources["ingresses"] = WatchedResource{Resources: "ingresses", IndexBy: []string{"metadata.namespace"}}
 
 	err := ValidateStructure(cfg)
 	assert.Error(t, err)
@@ -212,29 +113,8 @@ func TestValidateWatchedResource_MissingAPIVersion(t *testing.T) {
 }
 
 func TestValidateWatchedResource_MissingKind(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{"app": "haproxy"},
-		},
-		Controller: ControllerConfig{},
-		Dataplane: DataplaneConfig{
-			Port:              5555,
-			MapsDir:           "/etc/haproxy/maps",
-			SSLCertsDir:       "/etc/haproxy/certs",
-			GeneralStorageDir: "/etc/haproxy/general",
-			ConfigFile:        "/etc/haproxy/haproxy.cfg",
-		},
-		WatchedResources: map[string]WatchedResource{
-			"ingresses": {
-				APIVersion: "networking.k8s.io/v1",
-				Resources:  "",
-				IndexBy:    []string{"metadata.namespace"},
-			},
-		},
-		HAProxyConfig: HAProxyConfig{
-			Template: "global",
-		},
-	}
+	cfg := validConfig()
+	cfg.WatchedResources["ingresses"] = WatchedResource{APIVersion: "networking.k8s.io/v1", Resources: "", IndexBy: []string{"metadata.namespace"}}
 
 	err := ValidateStructure(cfg)
 	assert.Error(t, err)
@@ -242,29 +122,8 @@ func TestValidateWatchedResource_MissingKind(t *testing.T) {
 }
 
 func TestValidateWatchedResource_EmptyIndexBy(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{"app": "haproxy"},
-		},
-		Controller: ControllerConfig{},
-		Dataplane: DataplaneConfig{
-			Port:              5555,
-			MapsDir:           "/etc/haproxy/maps",
-			SSLCertsDir:       "/etc/haproxy/certs",
-			GeneralStorageDir: "/etc/haproxy/general",
-			ConfigFile:        "/etc/haproxy/haproxy.cfg",
-		},
-		WatchedResources: map[string]WatchedResource{
-			"ingresses": {
-				APIVersion: "networking.k8s.io/v1",
-				Resources:  "ingresses",
-				IndexBy:    []string{},
-			},
-		},
-		HAProxyConfig: HAProxyConfig{
-			Template: "global",
-		},
-	}
+	cfg := validConfig()
+	cfg.WatchedResources["ingresses"] = WatchedResource{APIVersion: "networking.k8s.io/v1", Resources: "ingresses", IndexBy: []string{}}
 
 	err := ValidateStructure(cfg)
 	assert.Error(t, err)
@@ -272,29 +131,8 @@ func TestValidateWatchedResource_EmptyIndexBy(t *testing.T) {
 }
 
 func TestValidateWatchedResource_EmptyIndexByElement(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{"app": "haproxy"},
-		},
-		Controller: ControllerConfig{},
-		Dataplane: DataplaneConfig{
-			Port:              5555,
-			MapsDir:           "/etc/haproxy/maps",
-			SSLCertsDir:       "/etc/haproxy/certs",
-			GeneralStorageDir: "/etc/haproxy/general",
-			ConfigFile:        "/etc/haproxy/haproxy.cfg",
-		},
-		WatchedResources: map[string]WatchedResource{
-			"ingresses": {
-				APIVersion: "networking.k8s.io/v1",
-				Resources:  "ingresses",
-				IndexBy:    []string{"metadata.namespace", ""},
-			},
-		},
-		HAProxyConfig: HAProxyConfig{
-			Template: "global",
-		},
-	}
+	cfg := validConfig()
+	cfg.WatchedResources["ingresses"] = WatchedResource{APIVersion: "networking.k8s.io/v1", Resources: "ingresses", IndexBy: []string{"metadata.namespace", ""}}
 
 	err := ValidateStructure(cfg)
 	assert.Error(t, err)
@@ -302,29 +140,8 @@ func TestValidateWatchedResource_EmptyIndexByElement(t *testing.T) {
 }
 
 func TestValidateHAProxyConfig_EmptyTemplate(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{"app": "haproxy"},
-		},
-		Controller: ControllerConfig{},
-		Dataplane: DataplaneConfig{
-			Port:              5555,
-			MapsDir:           "/etc/haproxy/maps",
-			SSLCertsDir:       "/etc/haproxy/certs",
-			GeneralStorageDir: "/etc/haproxy/general",
-			ConfigFile:        "/etc/haproxy/haproxy.cfg",
-		},
-		WatchedResources: map[string]WatchedResource{
-			"ingresses": {
-				APIVersion: "networking.k8s.io/v1",
-				Resources:  "ingresses",
-				IndexBy:    []string{"metadata.namespace"},
-			},
-		},
-		HAProxyConfig: HAProxyConfig{
-			Template: "",
-		},
-	}
+	cfg := validConfig()
+	cfg.HAProxyConfig.Template = ""
 
 	err := ValidateStructure(cfg)
 	assert.Error(t, err)
@@ -392,29 +209,8 @@ func TestValidateDataplaneConfig_InvalidPort(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				PodSelector: PodSelector{
-					MatchLabels: map[string]string{"app": "haproxy"},
-				},
-				Controller: ControllerConfig{},
-				Dataplane: DataplaneConfig{
-					Port:              tt.port,
-					MapsDir:           "/etc/haproxy/maps",
-					SSLCertsDir:       "/etc/haproxy/certs",
-					GeneralStorageDir: "/etc/haproxy/general",
-					ConfigFile:        "/etc/haproxy/haproxy.cfg",
-				},
-				WatchedResources: map[string]WatchedResource{
-					"ingresses": {
-						APIVersion: "networking.k8s.io/v1",
-						Resources:  "ingresses",
-						IndexBy:    []string{"metadata.namespace"},
-					},
-				},
-				HAProxyConfig: HAProxyConfig{
-					Template: "global",
-				},
-			}
+			cfg := validConfig()
+			cfg.Dataplane.Port = tt.port
 
 			err := ValidateStructure(cfg)
 			assert.Error(t, err)
@@ -468,29 +264,11 @@ func TestValidateDataplaneConfig_EmptyPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				PodSelector: PodSelector{
-					MatchLabels: map[string]string{"app": "haproxy"},
-				},
-				Controller: ControllerConfig{},
-				Dataplane: DataplaneConfig{
-					Port:              5555,
-					MapsDir:           tt.mapsDir,
-					SSLCertsDir:       tt.sslDir,
-					GeneralStorageDir: tt.genDir,
-					ConfigFile:        tt.cfgFile,
-				},
-				WatchedResources: map[string]WatchedResource{
-					"ingresses": {
-						APIVersion: "networking.k8s.io/v1",
-						Resources:  "ingresses",
-						IndexBy:    []string{"metadata.namespace"},
-					},
-				},
-				HAProxyConfig: HAProxyConfig{
-					Template: "global",
-				},
-			}
+			cfg := validConfig()
+			cfg.Dataplane.MapsDir = tt.mapsDir
+			cfg.Dataplane.SSLCertsDir = tt.sslDir
+			cfg.Dataplane.GeneralStorageDir = tt.genDir
+			cfg.Dataplane.ConfigFile = tt.cfgFile
 
 			err := ValidateStructure(cfg)
 			assert.Error(t, err)

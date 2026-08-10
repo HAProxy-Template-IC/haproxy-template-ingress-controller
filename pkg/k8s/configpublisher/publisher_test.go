@@ -64,25 +64,18 @@ func basePublishRequest() PublishRequest {
 func TestPublishConfig_CreateNew(t *testing.T) {
 	ctx, k8sClient, crdClient, publisher := newTestPublisher(t)
 
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-		AuxiliaryFiles: &AuxiliaryFiles{
-			MapFiles: []auxiliaryfiles.MapFile{
-				{
-					Path:    "/etc/haproxy/maps/host.map",
-					Content: "example.com backend1\n",
-				},
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{
+		MapFiles: []auxiliaryfiles.MapFile{
+			{
+				Path:    "/etc/haproxy/maps/host.map",
+				Content: "example.com backend1\n",
 			},
-			SSLCertificates: []auxiliaryfiles.SSLCertificate{
-				{
-					Path:    "/etc/haproxy/ssl/cert.pem",
-					Content: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n",
-				},
+		},
+		SSLCertificates: []auxiliaryfiles.SSLCertificate{
+			{
+				Path:    "/etc/haproxy/ssl/cert.pem",
+				Content: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n",
 			},
 		},
 	}
@@ -141,14 +134,7 @@ func TestPublishConfig_Update(t *testing.T) {
 	ctx, _, crdClient, publisher := newTestPublisher(t)
 
 	// Create initial runtime config
-	initialReq := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-	}
+	initialReq := basePublishRequest()
 
 	_, err := publisher.PublishConfig(ctx, &initialReq)
 	require.NoError(t, err)
@@ -437,20 +423,13 @@ func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 func TestPublishConfig_GeneralFiles(t *testing.T) {
 	ctx, _, crdClient, publisher := newTestPublisher(t)
 
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-		AuxiliaryFiles: &AuxiliaryFiles{
-			GeneralFiles: []auxiliaryfiles.GeneralFile{
-				{
-					Filename: "503.http",
-					Path:     "/etc/haproxy/general/503.http",
-					Content:  "HTTP/1.0 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nService Unavailable",
-				},
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{
+		GeneralFiles: []auxiliaryfiles.GeneralFile{
+			{
+				Filename: "503.http",
+				Path:     "/etc/haproxy/general/503.http",
+				Content:  "HTTP/1.0 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nService Unavailable",
 			},
 		},
 	}
@@ -477,20 +456,13 @@ func TestPublishConfig_GeneralFiles(t *testing.T) {
 func TestPublishConfig_CRTListFiles(t *testing.T) {
 	ctx, _, crdClient, publisher := newTestPublisher(t)
 
-	req := PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "abc123",
-		AuxiliaryFiles: &AuxiliaryFiles{
-			CRTListFiles: []auxiliaryfiles.CRTListFile{
-				{
-					Path: "/etc/haproxy/ssl/crt-list.txt",
-					Content: `/etc/haproxy/ssl/example.pem [verify none alpn h2,http/1.1] example.com
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{
+		CRTListFiles: []auxiliaryfiles.CRTListFile{
+			{
+				Path: "/etc/haproxy/ssl/crt-list.txt",
+				Content: `/etc/haproxy/ssl/example.pem [verify none alpn h2,http/1.1] example.com
 /etc/haproxy/ssl/wildcard.pem *.example.com`,
-				},
 			},
 		},
 	}

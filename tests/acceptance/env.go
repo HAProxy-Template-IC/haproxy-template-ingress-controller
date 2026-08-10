@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,6 +48,8 @@ import (
 	"sigs.k8s.io/e2e-framework/klient"
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 	"sigs.k8s.io/e2e-framework/pkg/env"
+	"sigs.k8s.io/e2e-framework/pkg/envconf"
+	"sigs.k8s.io/e2e-framework/pkg/types"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
@@ -1410,4 +1413,46 @@ func UpdateBlocklistAndRestart(ctx context.Context, t *testing.T, client klient.
 
 	t.Log("Blocklist content updated and server restarted")
 	return nil
+}
+
+// setupControllerEnv returns a feature Setup step that provisions a controller
+// in a fresh namespace named after prefix. tweak, when given, adjusts the
+// environment options before creation.
+func setupControllerEnv(prefix string, tweak ...func(*ControllerEnvironmentOptions)) types.StepFunc {
+	return func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		namespace := envconf.RandomName(prefix, 32)
+		ctx = StoreNamespaceInContext(ctx, namespace)
+		t.Logf("Test namespace: %s", namespace)
+
+		client, err := cfg.NewClient()
+		require.NoError(t, err)
+
+		opts := DefaultControllerEnvironmentOptions()
+		for _, f := range tweak {
+			f(&opts)
+		}
+		if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
+			t.Fatal("Failed to create controller environment:", err)
+		}
+
+		return ctx
+	}
+}
+
+// readyControllerEnv resolves the test namespace and clients, then blocks until
+// the controller pod is ready. The clientset is the shared one (rate limiting
+// disabled) so parallel assessments don't exhaust the per-client limiter.
+func readyControllerEnv(ctx context.Context, t *testing.T, cfg *envconf.Config) (string, klient.Client, kubernetes.Interface) {
+	t.Helper()
+	namespace, err := GetNamespaceFromContext(ctx)
+	require.NoError(t, err)
+
+	client, err := cfg.NewClient()
+	require.NoError(t, err)
+
+	clientset := Clientset()
+	require.NoError(t, WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout))
+	t.Log("Controller pod ready")
+
+	return namespace, client, clientset
 }
