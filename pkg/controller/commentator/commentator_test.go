@@ -82,11 +82,6 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 
 		// Warn level events
 		{
-			name:  "credentials invalid is warn",
-			event: mockEvent{eventType: events.EventTypeCredentialsInvalid},
-			want:  slog.LevelWarn,
-		},
-		{
 			name:  "lost leadership is warn",
 			event: mockEvent{eventType: events.EventTypeLostLeadership},
 			want:  slog.LevelWarn,
@@ -346,27 +341,6 @@ func TestEventCommentator_GenerateInsight_DeploymentEvents(t *testing.T) {
 		assert.Contains(t, insight, "Deployment started")
 		assert.Contains(t, insight, "3 HAProxy instances")
 		assertContainsAttr(t, attrs, "instance_count", 3)
-	})
-
-	t.Run("InstanceDeployedEvent with reload", func(t *testing.T) {
-		// endpoint, durationMs, reloadRequired
-		event := events.NewInstanceDeployedEvent("pod1", 250, true)
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Instance deployed")
-		assert.Contains(t, insight, "250ms")
-		assert.Contains(t, insight, "reload triggered")
-		assertContainsAttr(t, attrs, "reload_required", true)
-	})
-
-	t.Run("InstanceDeployedEvent without reload", func(t *testing.T) {
-		event := events.NewInstanceDeployedEvent("pod1", 150, false)
-
-		insight, _ := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Instance deployed")
-		assert.NotContains(t, insight, "reload triggered")
 	})
 
 	t.Run("InstanceDeploymentFailedEvent retryable", func(t *testing.T) {
@@ -753,24 +727,6 @@ func TestEventCommentator_GenerateInsight_HAProxyPodEvents(t *testing.T) {
 		assert.Contains(t, insight, "HAProxy pod terminated")
 		assert.Contains(t, insight, "haproxy-system/haproxy-123")
 		assertContainsAttr(t, attrs, "pod_name", "haproxy-123")
-	})
-}
-
-func TestEventCommentator_GenerateInsight_CredentialsEvents(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.Default()
-	ec := NewEventCommentator(bus, logger, 100)
-
-	t.Run("CredentialsInvalidEvent falls through to default", func(t *testing.T) {
-		// CredentialsInvalidEvent is not explicitly handled, falls through to default case
-		event := events.NewCredentialsInvalidEvent("v1.0.0", "missing password field")
-
-		insight, attrs := ec.generateInsight(event)
-
-		// Default case just returns "Event: {event_type}"
-		assert.Contains(t, insight, "Event:")
-		assert.Contains(t, insight, events.EventTypeCredentialsInvalid)
-		assertContainsAttr(t, attrs, "event_type", events.EventTypeCredentialsInvalid)
 	})
 }
 

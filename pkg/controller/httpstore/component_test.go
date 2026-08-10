@@ -188,11 +188,11 @@ func TestComponent_HandleValidationFailed_NoPending(t *testing.T) {
 	// Publish ValidationFailedEvent with no pending content
 	bus.Publish(events.NewValidationFailedEvent([]string{"error"}, 0, ""))
 
-	// Should not publish any HTTPResourceRejectedEvent
+	// A failed validation must not promote content.
 	select {
 	case event := <-eventChan:
-		if _, ok := event.(*events.HTTPResourceRejectedEvent); ok {
-			t.Fatal("unexpected HTTPResourceRejectedEvent when no pending content")
+		if _, ok := event.(*events.HTTPResourceAcceptedEvent); ok {
+			t.Fatal("unexpected HTTPResourceAcceptedEvent when no pending content")
 		}
 	case <-time.After(testutil.NoEventTimeout):
 		// Expected
@@ -215,11 +215,11 @@ func TestComponent_HandleValidationFailed_EmptyErrors(t *testing.T) {
 	// Publish ValidationFailedEvent with empty errors slice
 	bus.Publish(events.NewValidationFailedEvent([]string{}, 0, ""))
 
-	// Should not panic and not publish any events
+	// A failed validation must not promote content.
 	select {
 	case event := <-eventChan:
-		if _, ok := event.(*events.HTTPResourceRejectedEvent); ok {
-			t.Fatal("unexpected HTTPResourceRejectedEvent when no pending content")
+		if _, ok := event.(*events.HTTPResourceAcceptedEvent); ok {
+			t.Fatal("unexpected HTTPResourceAcceptedEvent when no pending content")
 		}
 	case <-time.After(testutil.NoEventTimeout):
 		// Expected
@@ -428,8 +428,8 @@ func TestComponent_HandleValidationFailed_WithErrors(t *testing.T) {
 	// Give time for event processing
 	time.Sleep(testutil.DebounceWait)
 
-	// Verify no HTTPResourceRejectedEvent is published when there's no pending content
-	testutil.AssertNoEvent[*events.HTTPResourceRejectedEvent](t, eventChan, testutil.NoEventTimeout)
+	// Verify failed validation does not promote content when nothing is pending.
+	testutil.AssertNoEvent[*events.HTTPResourceAcceptedEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
 func TestComponent_RegisterURL_WithDelay(t *testing.T) {
@@ -576,7 +576,6 @@ func TestComponent_ValidationCompleted_WithActualPendingContent(t *testing.T) {
 	component := New(bus, logger, 0)
 	store := component.GetStore()
 
-	// Subscribe to events BEFORE starting bus
 	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
@@ -645,8 +644,6 @@ func TestComponent_ValidationFailed_WithActualPendingContent(t *testing.T) {
 	component := New(bus, logger, 0)
 	store := component.GetStore()
 
-	// Subscribe to events BEFORE starting bus
-	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	ctx := t.Context()
@@ -674,32 +671,16 @@ func TestComponent_ValidationFailed_WithActualPendingContent(t *testing.T) {
 	component.pendingValidationID = testRequestID
 	component.mu.Unlock()
 
-	// Publish ProposalValidationFailedEvent with matching request ID
-	bus.Publish(events.NewProposalValidationFailedEvent(testRequestID, "validation", nil, 100))
+	component.handleProposalValidationCompleted(
+		events.NewProposalValidationFailedEvent(testRequestID, "validation", nil, 100),
+	)
 
-	// Wait for HTTPResourceRejectedEvent
-	timeout := time.After(2 * time.Second)
-	for {
-		select {
-		case event := <-eventChan:
-			if rejected, ok := event.(*events.HTTPResourceRejectedEvent); ok {
-				assert.Equal(t, server.URL, rejected.URL)
-				assert.Contains(t, rejected.Reason, "validation failed")
+	pendingURLs := store.GetPendingURLs()
+	assert.Len(t, pendingURLs, 0, "pending should be cleared after rejection")
 
-				// Verify pending was rejected and original content preserved
-				pendingURLs := store.GetPendingURLs()
-				assert.Len(t, pendingURLs, 0, "pending should be cleared after rejection")
-
-				// Original content should still be available
-				content, ok := store.Get(server.URL)
-				assert.True(t, ok)
-				assert.Equal(t, "initial content", content)
-				return
-			}
-		case <-timeout:
-			t.Fatal("timeout waiting for HTTPResourceRejectedEvent")
-		}
-	}
+	content, ok := store.Get(server.URL)
+	assert.True(t, ok)
+	assert.Equal(t, "initial content", content)
 }
 
 // Note: Tests for RegisterURL/refreshURL timer behavior removed due to race conditions

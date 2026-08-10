@@ -294,15 +294,6 @@ func TestCredentialsEvents(t *testing.T) {
 		assert.Equal(t, EventTypeCredentialsUpdated, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})
-
-	t.Run("CredentialsInvalidEvent", func(t *testing.T) {
-		event := NewCredentialsInvalidEvent("v1", "missing field")
-		require.NotNil(t, event)
-		assert.Equal(t, "v1", event.SecretVersion)
-		assert.Equal(t, "missing field", event.Error)
-		assert.Equal(t, EventTypeCredentialsInvalid, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
 }
 
 func TestHTTPEvents(t *testing.T) {
@@ -323,16 +314,6 @@ func TestHTTPEvents(t *testing.T) {
 		assert.Equal(t, "abc123", event.ContentChecksum)
 		assert.Equal(t, 1024, event.ContentSize)
 		assert.Equal(t, EventTypeHTTPResourceAccepted, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("HTTPResourceRejectedEvent", func(t *testing.T) {
-		event := NewHTTPResourceRejectedEvent("https://example.com/resource", "abc123", "invalid config")
-		require.NotNil(t, event)
-		assert.Equal(t, "https://example.com/resource", event.URL)
-		assert.Equal(t, "abc123", event.ContentChecksum)
-		assert.Equal(t, "invalid config", event.Reason)
-		assert.Equal(t, EventTypeHTTPResourceRejected, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})
 }
@@ -468,22 +449,6 @@ func TestDeploymentEvents(t *testing.T) {
 		require.NotNil(t, event)
 		assert.Equal(t, "corr-123", event.CorrelationID())
 		assert.Equal(t, "cause-456", event.CausationID())
-	})
-
-	t.Run("InstanceDeployedEvent", func(t *testing.T) {
-		event := NewInstanceDeployedEvent("endpoint1", 100, true)
-		require.NotNil(t, event)
-		assert.Equal(t, "endpoint1", event.Endpoint)
-		assert.Equal(t, int64(100), event.DurationMs)
-		assert.True(t, event.ReloadRequired)
-		assert.Equal(t, EventTypeInstanceDeployed, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("InstanceDeployedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewInstanceDeployedEvent("ep", 50, false, WithNewCorrelation())
-		require.NotNil(t, event)
-		assert.NotEmpty(t, event.CorrelationID())
 	})
 
 	t.Run("InstanceDeploymentFailedEvent", func(t *testing.T) {
@@ -819,16 +784,13 @@ func TestTimestampNotZero(t *testing.T) {
 		{"ReconciliationFailed", NewReconciliationFailedEvent("error", "phase", nil)},
 		{"SecretResourceChanged", NewSecretResourceChangedEvent(nil)},
 		{"CredentialsUpdated", NewCredentialsUpdatedEvent(nil, "v1")},
-		{"CredentialsInvalid", NewCredentialsInvalidEvent("v1", "error")},
 		{"HTTPResourceUpdated", NewHTTPResourceUpdatedEvent("url", "checksum", 0)},
 		{"HTTPResourceAccepted", NewHTTPResourceAcceptedEvent("url", "checksum", 0)},
-		{"HTTPResourceRejected", NewHTTPResourceRejectedEvent("url", "checksum", "error")},
 		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", true)},
 		{"TemplateRenderFailed", NewTemplateRenderFailedEvent("name", "error", "stack")},
 		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0, "", nil, true)},
 		{"ValidationFailed", NewValidationFailedEvent(nil, 0, "")},
 		{"DeploymentStarted", NewDeploymentStartedEvent(0)},
-		{"InstanceDeployed", NewInstanceDeployedEvent(nil, 0, false)},
 		{"InstanceDeploymentFailed", NewInstanceDeploymentFailedEvent(nil, "error", false)},
 		{"DeploymentCompleted", NewDeploymentCompletedEvent(&DeploymentResult{})},
 		{"DeploymentScheduled", NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "", nil, true)},

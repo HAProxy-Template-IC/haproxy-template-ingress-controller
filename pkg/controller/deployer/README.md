@@ -54,9 +54,8 @@ DeploymentCompletedEvent ────┤       (feedback edge)
                              ▼
                          Component
                              │
-                             ▼
+             ▼
            DeploymentStartedEvent
-           InstanceDeployedEvent         (per endpoint)
            InstanceDeploymentFailedEvent (per endpoint)
            DeploymentCompletedEvent
                              │

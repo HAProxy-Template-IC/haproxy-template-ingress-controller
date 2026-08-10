@@ -24,8 +24,7 @@ func (ec *EventCommentator) determineLogLevel(event busevents.Event) slog.Level 
 		return slog.LevelError
 
 	// Warn level - recoverable states and leadership loss
-	case events.EventTypeCredentialsInvalid,
-		events.EventTypeLostLeadership,
+	case events.EventTypeLostLeadership,
 		events.EventTypeHAProxyPodRejected:
 		return slog.LevelWarn
 

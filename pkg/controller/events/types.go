@@ -98,7 +98,6 @@ const (
 	// Deployment event types.
 	EventTypeDeploymentScheduled      = "deployment.scheduled"
 	EventTypeDeploymentStarted        = "deployment.started"
-	EventTypeInstanceDeployed         = "instance.deployed"
 	EventTypeInstanceDeploymentFailed = "instance.deployment.failed"
 	EventTypeDeploymentCompleted      = "deployment.completed"
 	EventTypeDeploymentSkipped        = "deployment.skipped"
@@ -118,7 +117,6 @@ const (
 	// Credentials event types.
 	EventTypeSecretResourceChanged = "secret.resource.changed"
 	EventTypeCredentialsUpdated    = "credentials.updated"
-	EventTypeCredentialsInvalid    = "credentials.invalid"
 
 	// Leader election event types.
 	EventTypeLeaderElectionStarted = "leader.election.started"
@@ -129,7 +127,6 @@ const (
 	// HTTP resource event types.
 	EventTypeHTTPResourceUpdated  = "http.resource.updated"
 	EventTypeHTTPResourceAccepted = "http.resource.accepted"
-	EventTypeHTTPResourceRejected = "http.resource.rejected"
 
 	// Proposal validation event types.
 	// Used for validating hypothetical configuration changes before committing them.

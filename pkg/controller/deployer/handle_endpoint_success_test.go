@@ -49,7 +49,7 @@ import (
 //     so capturing per-endpoint would be redundant churn under
 //     the breakdownMu lock.
 
-func TestHandleEndpointSuccess_PublishesInstanceDeployedAndAppliedWhenNotNoOp(t *testing.T) {
+func TestHandleEndpointSuccess_PublishesAppliedWhenNotNoOp(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
@@ -75,19 +75,6 @@ func TestHandleEndpointSuccess_PublishesInstanceDeployedAndAppliedWhenNotNoOp(t 
 		ep, syncResult, 250, "checksum-abc", false,
 		"rt-cfg-1", "haptic", "corr-1", state,
 	)
-
-	// InstanceDeployedEvent MUST always fire on success.
-	deployed := testutil.WaitForEvent[*events.InstanceDeployedEvent](
-		t, eventChan, testutil.LongTimeout)
-	require.NotNil(t, deployed,
-		"InstanceDeployedEvent MUST be published — without it, the metrics + "+
-			"commentator + status pipeline never observe the per-pod success")
-	assert.Equal(t, "corr-1", deployed.CorrelationID(),
-		"correlation ID MUST propagate so downstream tracing can link "+
-			"the per-pod result back to the deployment cycle")
-	assert.True(t, deployed.ReloadRequired,
-		"ReloadRequired MUST mirror syncResult.ReloadTriggered so the "+
-			"aggregator's reload-vs-runtime breakdown is accurate")
 
 	// ConfigAppliedToPodEvent fires because !isNoOp (operations > 0).
 	applied := testutil.WaitForEvent[*events.ConfigAppliedToPodEvent](
@@ -140,14 +127,6 @@ func TestHandleEndpointSuccess_PublishesAppliedEventOnNoOpDeployment(t *testing.
 		ep, noOpResult, 50, "checksum-abc", false,
 		"rt-cfg-1", "haptic", "corr-1", state,
 	)
-
-	// InstanceDeployedEvent MUST still fire — observability cares
-	// about every deploy attempt, not just the change-producing ones.
-	require.NotNil(t,
-		testutil.WaitForEvent[*events.InstanceDeployedEvent](
-			t, eventChan, testutil.LongTimeout),
-		"InstanceDeployedEvent MUST fire even for no-op deploys so per-pod "+
-			"latency metrics keep updating")
 
 	// ConfigAppliedToPodEvent MUST fire on a no-op too. status-applier
 	// consumes this to record the deployed checksum on the runtime

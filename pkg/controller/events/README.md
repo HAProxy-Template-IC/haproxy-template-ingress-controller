@@ -21,7 +21,7 @@ One file per category. The full list as of writing, with representative types:
 | `reconciliation.go` | Reconciliation pipeline lifecycle | `ReconciliationTriggeredEvent`, `ReconciliationCompletedEvent`, `ResourcesAppliedEvent` |
 | `template.go` | Rendering | `TemplateRenderedEvent`, `TemplateRenderFailedEvent` |
 | `validation.go` | Syntax/semantic validation | `ValidationCompletedEvent`, `ValidationFailedEvent` |
-| `deployment.go` | HAProxy deployment scheduler + executor | `DeploymentScheduledEvent`, `InstanceDeployedEvent` |
+| `deployment.go` | HAProxy deployment scheduler + executor | `DeploymentScheduledEvent`, `InstanceDeploymentFailedEvent` |
 | `discovery.go` | HAProxy pod discovery | `HAProxyPodsDiscoveredEvent`, `HAProxyPodRejectedEvent` |
 | `leader.go` | Leader election | `BecameLeaderEvent`, `LostLeadershipEvent` |
 | `publishing.go` | Output-CRD publishing (`HAProxyCfg` + `HAProxy{General,Map,CRTList}File`) and per-pod sync outcomes | `ConfigPublishedEvent`, `ConfigAppliedToPodEvent` |

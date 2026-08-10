@@ -65,7 +65,7 @@ Each worker is a single goroutine. The publish worker enforces the leading-edge 
 
 - [`pkg/k8s/configpublisher`](../../k8s/configpublisher/) — the underlying `Publisher` that does the actual CRD writes
 - [`pkg/controller/deployer`](../deployer/) — the parallel path that pushes config to HAProxy pods (this package writes the observability artefacts; the deployer writes the live HAProxy configuration)
-- [`pkg/controller/events`](../events/) — `TemplateRenderedEvent`, `ValidationCompletedEvent`, `InstanceDeployedEvent`, etc.
+- [`pkg/controller/events`](../events/) — `TemplateRenderedEvent`, `ValidationCompletedEvent`, `ConfigAppliedToPodEvent`, etc.
 
 ## License
 

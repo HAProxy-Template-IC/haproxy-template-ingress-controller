@@ -15,6 +15,8 @@
 package credentialsloader
 
 import (
+	"bytes"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -30,6 +32,12 @@ import (
 // createCredentialsSecret creates an unstructured Secret using testutil helper.
 func createCredentialsSecret(version string, data map[string]string) *unstructured.Unstructured {
 	return testutil.CreateTestSecretWithStringData("credentials-secret", "test-namespace", version, data)
+}
+
+func newCapturingCredentialsLoader() (*CredentialsLoaderComponent, *bytes.Buffer) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	return NewCredentialsLoaderComponent(testutil.NewTestBus(), logger), &logs
 }
 
 func TestNewCredentialsLoaderComponent(t *testing.T) {
@@ -99,39 +107,20 @@ func TestCredentialsLoaderComponent_InvalidResourceType(t *testing.T) {
 }
 
 func TestCredentialsLoaderComponent_MissingDataField(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-	component := NewCredentialsLoaderComponent(bus, logger)
-
-	eventChan := bus.Subscribe("test-sub", 50)
-	bus.Start()
-
-	ctx := t.Context()
-
-	go component.Start(ctx)
-	time.Sleep(testutil.StartupDelay)
+	component, logs := newCapturingCredentialsLoader()
 
 	secret := &unstructured.Unstructured{}
 	secret.SetKind("Secret")
 	secret.SetResourceVersion("12345")
 
-	bus.Publish(events.NewSecretResourceChangedEvent(secret))
+	component.ProcessEvent(events.NewSecretResourceChangedEvent(secret))
 
-	invalid := testutil.WaitForEvent[*events.CredentialsInvalidEvent](t, eventChan, testutil.LongTimeout)
-	assert.Equal(t, "12345", invalid.SecretVersion)
-	assert.Contains(t, invalid.Error, "no data field")
+	assert.Contains(t, logs.String(), "Secret has no data field")
+	assert.Contains(t, logs.String(), "version=12345")
 }
 
 func TestCredentialsLoaderComponent_NonStringDataValue(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-	component := NewCredentialsLoaderComponent(bus, logger)
-
-	eventChan := bus.Subscribe("test-sub", 50)
-	bus.Start()
-
-	ctx := t.Context()
-
-	go component.Start(ctx)
-	time.Sleep(testutil.StartupDelay)
+	component, logs := newCapturingCredentialsLoader()
 
 	// Create secret with non-string value by directly setting the object map.
 	// We use float64 here because Go's JSON unmarshaling converts numbers to float64,
@@ -152,11 +141,10 @@ func TestCredentialsLoaderComponent_NonStringDataValue(t *testing.T) {
 		},
 	}
 
-	bus.Publish(events.NewSecretResourceChangedEvent(secret))
+	component.ProcessEvent(events.NewSecretResourceChangedEvent(secret))
 
-	invalid := testutil.WaitForEvent[*events.CredentialsInvalidEvent](t, eventChan, testutil.LongTimeout)
-	assert.Equal(t, "12345", invalid.SecretVersion)
-	assert.Contains(t, invalid.Error, "invalid type")
+	assert.Contains(t, logs.String(), "invalid type")
+	assert.Contains(t, logs.String(), "version=12345")
 }
 
 func TestCredentialsLoaderComponent_MissingRequiredCredentials(t *testing.T) {
@@ -189,23 +177,13 @@ func TestCredentialsLoaderComponent_MissingRequiredCredentials(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			bus, logger := testutil.NewTestBusAndLogger()
-			component := NewCredentialsLoaderComponent(bus, logger)
-
-			eventChan := bus.Subscribe("test-sub", 50)
-			bus.Start()
-
-			ctx := t.Context()
-
-			go component.Start(ctx)
-			time.Sleep(testutil.StartupDelay)
+			component, logs := newCapturingCredentialsLoader()
 
 			secret := createCredentialsSecret("12345", tt.data)
-			bus.Publish(events.NewSecretResourceChangedEvent(secret))
+			component.ProcessEvent(events.NewSecretResourceChangedEvent(secret))
 
-			invalid := testutil.WaitForEvent[*events.CredentialsInvalidEvent](t, eventChan, testutil.LongTimeout)
-			assert.Equal(t, "12345", invalid.SecretVersion)
-			assert.Contains(t, invalid.Error, tt.expectedError)
+			assert.Contains(t, logs.String(), tt.expectedError)
+			assert.Contains(t, logs.String(), "version=12345")
 		})
 	}
 }
