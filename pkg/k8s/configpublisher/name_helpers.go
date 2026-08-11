@@ -30,10 +30,14 @@ import (
 // removePodFromStatus removes a pod from the deployment status list.
 // Returns the updated slice and whether the pod was found and removed.
 func removePodFromStatus(pods []haproxyv1alpha1.PodDeploymentStatus, podName string) ([]haproxyv1alpha1.PodDeploymentStatus, bool) {
+	return removePodAuthorityFromStatus(pods, podName, "")
+}
+
+func removePodAuthorityFromStatus(pods []haproxyv1alpha1.PodDeploymentStatus, podName, podUID string) ([]haproxyv1alpha1.PodDeploymentStatus, bool) {
 	newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(pods))
 	removed := false
 	for i := range pods {
-		if pods[i].PodName == podName {
+		if pods[i].PodName == podName && (podUID == "" || pods[i].PodUID == "" || pods[i].PodUID == podUID) {
 			removed = true
 			continue
 		}
@@ -45,8 +49,10 @@ func removePodFromStatus(pods []haproxyv1alpha1.PodDeploymentStatus, podName str
 // buildPodStatus constructs a PodDeploymentStatus from a DeploymentStatusUpdate.
 func buildPodStatus(update *DeploymentStatusUpdate) haproxyv1alpha1.PodDeploymentStatus {
 	podStatus := haproxyv1alpha1.PodDeploymentStatus{
-		PodName:  update.PodName,
-		Checksum: update.Checksum,
+		PodName:      update.PodName,
+		PodUID:       update.PodUID,
+		PodRuntimeID: update.PodRuntimeID,
+		Checksum:     update.Checksum,
 	}
 
 	// Set error tracking

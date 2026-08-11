@@ -9,164 +9,214 @@
 package discovery
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
-// filterByVersion has FOUR branches; the cache-hit branch is the
-// steady-state hot path (every reconciliation after the first
-// admission lands here for previously-admitted pods) and is the
-// only one testable without a real HAProxy /v3/info endpoint to
-// stub. This file pins three load-bearing contracts on that branch:
-//
-//  1. Already-admitted pod returns the SAME *Endpoint object that
-//     was cached. The cached endpoint carries the detected version
-//     fields (DetectedMajorVersion / DetectedMinorVersion /
-//     DetectedFullVersion) populated at admission time. A regression
-//     that returned a fresh copy from the candidate slice would lose
-//     those fields, defeating capability detection downstream
-//     (deployer reads them to decide which dispatch path to use).
-//
-//  2. Cache hit MUST NOT trigger a remote version check. The
-//     localVersion field is intentionally left nil here — if the
-//     code regressed to skip the cache lookup and fall through to
-//     checkRemoteVersion, the test would crash with a nil-pointer
-//     dereference (loud failure mode) rather than silently making
-//     N HTTP calls per reconciliation, which would flood the
-//     dataplane API under churn.
-//
-//  3. Mixed cached + missing candidates return ONLY the cached ones
-//     (without exploding) and DO NOT mutate the cache by adding
-//     stale entries for the missing ones. The "missing" path falls
-//     into checkRemoteVersion which would fail without a server,
-//     and handleVersionCheckFailure must record the failure in
-//     pendingRetries — but the cached endpoint MUST still be in
-//     the returned admitted slice. The contract: cache hits succeed
-//     independently of remote-check failures for other candidates.
-//
-// Branches NOT covered here (require a remote /v3/info stub):
-//   - New-pod first version check + admission
-//   - New-pod version mismatch (permanent rejection)
-//   - New-pod version check transient failure path
-
-// admittedComponent constructs a Component pre-seeded with
-// admittedPods/pendingRetries maps. localVersion is intentionally
-// nil — cache-hit branch must not consult it.
-func admittedComponent(t *testing.T) *Component {
+func infoServerWithProbeCount(t *testing.T, apiVersion string, probes *atomic.Int32) *httptest.Server {
 	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v3/info":
+			probes.Add(1)
+			_, _ = w.Write([]byte(`{"api":{"version":"` + apiVersion + `"}}`))
+		case "/v3/services/haproxy/runtime/info":
+			_, _ = w.Write([]byte(`{"info":{"version":"3.4.2"}}`))
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestRetryTimerKeepsEarlierArmedDeadline(t *testing.T) {
 	c := newTestComponentWithoutHAProxy(t)
-	c.admittedPods = make(map[string]*dataplane.Endpoint)
-	return c
+	defer c.stopRetryTimer()
+	c.pendingRetries[testEndpointIdentity("haproxy-0")] = &retryState{
+		lastAttempt: time.Now().Add(-initialRetryInterval),
+		retryCount:  1,
+	}
+
+	c.mu.Lock()
+	c.scheduleRetryTimerLocked()
+	c.mu.Unlock()
+	c.retryTimerMu.Lock()
+	firstTimer := c.retryTimer
+	firstDeadline := c.retryTimerAt
+	c.retryTimerMu.Unlock()
+	require.NotNil(t, firstTimer)
+
+	c.mu.Lock()
+	c.scheduleRetryTimerLocked()
+	c.mu.Unlock()
+	c.retryTimerMu.Lock()
+	defer c.retryTimerMu.Unlock()
+	assert.Same(t, firstTimer, c.retryTimer)
+	assert.Equal(t, firstDeadline, c.retryTimerAt)
 }
 
-func TestFilterByVersion_CacheHitReturnsCachedEndpointObject(t *testing.T) {
-	c := admittedComponent(t)
-	cached := &dataplane.Endpoint{
-		URL:                  "http://10.0.0.1:5555",
-		Username:             "admin-cached",
-		Password:             "pass-cached",
-		PodName:              "pod-A",
-		PodNamespace:         "haptic",
-		DetectedMajorVersion: 3,
-		DetectedMinorVersion: 2,
-		DetectedFullVersion:  "v3.2.6 87ad0bcf",
-	}
-	c.admittedPods["pod-A"] = cached
-
-	// Candidate has the same pod name but DIFFERENT credentials and
-	// no version info — exactly the input shape that arrives every
-	// reconciliation after admission (creds come from the latest
-	// secret; version comes from the cache).
+func TestFilterByVersion_CacheHitUsesFreshConnectionAuthority(t *testing.T) {
+	c := newTestComponentWithoutHAProxy(t)
 	candidate := dataplane.Endpoint{
-		URL:          "http://10.0.0.1:5555",
-		PodName:      "pod-A",
+		URL:          "http://10.0.0.1:5555/v3",
+		Username:     "rotated-user",
+		Password:     "rotated-password",
+		PodName:      "haproxy-0",
 		PodNamespace: "haptic",
-		// version fields zero — cache must supply them
+		PodUID:       "uid-1",
+	}
+	c.admissionProofs[endpointIdentityOf(&candidate)] = versionAdmissionProof{
+		dataPlaneAPI: dataplane.Version{Major: 3, Minor: 3, Full: "v3.3.5 8467a253"},
+		haproxy:      dataplane.Version{Major: 3, Minor: 4, Full: "3.4.2"},
 	}
 
-	admitted, _ := c.filterByVersion(
-		t.Context(),
-		[]dataplane.Endpoint{candidate},
-		coreconfig.Credentials{
-			DataplaneUsername: "ignored-on-cache-hit",
-			DataplanePassword: "also-ignored",
-		},
-	)
+	admitted, rejections := c.filterByVersion(t.Context(), []dataplane.Endpoint{candidate})
 
-	require.Len(t, admitted, 1,
-		"the cached pod MUST be returned — a regression that missed the "+
-			"cache and fell through to checkRemoteVersion would crash on "+
-			"the nil localVersion (test designed to catch this loudly)")
-	assert.Same(t, cached, admitted[0],
-		"the returned *Endpoint MUST be the cached pointer — a regression "+
-			"that built a fresh Endpoint from the candidate would drop the "+
-			"DetectedMajorVersion/MinorVersion/FullVersion fields, breaking "+
-			"capability dispatch in the deployer")
+	require.Empty(t, rejections)
+	require.Len(t, admitted, 1)
+	assert.Equal(t, candidate.URL, admitted[0].URL)
+	assert.Equal(t, candidate.Username, admitted[0].Username)
+	assert.Equal(t, candidate.Password, admitted[0].Password)
+	assert.Equal(t, candidate.PodUID, admitted[0].PodUID)
+	assert.Equal(t, 3, admitted[0].DetectedMajorVersion)
+	assert.Equal(t, 3, admitted[0].DetectedMinorVersion)
+	assert.Equal(t, "v3.3.5 8467a253", admitted[0].DetectedFullVersion)
 }
 
-func TestFilterByVersion_CacheHitDoesNotConsultLocalVersion(t *testing.T) {
-	// Defensive: localVersion is nil. If the cache-check is wrongly
-	// gated on a non-nil localVersion (e.g. someone added a guard),
-	// the function would skip cache hits, fall through to
-	// checkRemoteVersion, and either crash or make N HTTP requests
-	// per reconciliation. Either failure mode is bad; the "many
-	// HTTP requests" failure mode would flood the dataplane API
-	// silently under steady-state churn.
-	c := admittedComponent(t)
-	require.Nil(t, c.localVersion,
-		"baseline: localVersion must be nil for this test to be meaningful")
+func TestFilterByVersion_EndpointIdentityControlsVersionProof(t *testing.T) {
+	var firstServerProbes atomic.Int32
+	firstServer := infoServerWithProbeCount(t, "v3.3.5 first", &firstServerProbes)
+	var secondServerProbes atomic.Int32
+	secondServer := infoServerWithProbeCount(t, "v3.3.6 second", &secondServerProbes)
 
-	c.admittedPods["pod-A"] = &dataplane.Endpoint{
-		PodName: "pod-A",
-		URL:     "http://10.0.0.1:5555",
-	}
-	c.admittedPods["pod-B"] = &dataplane.Endpoint{
-		PodName: "pod-B",
-		URL:     "http://10.0.0.2:5555",
+	c := newTestComponentWithoutHAProxy(t)
+	c.localVersion = &dataplane.Version{Major: 3, Minor: 4, Full: "3.4.0"}
+	base := dataplane.Endpoint{
+		URL:          firstServer.URL,
+		Username:     "initial-user",
+		Password:     "initial-password",
+		PodName:      "haproxy-0",
+		PodNamespace: "haptic",
+		PodUID:       "uid-1",
+		PodRuntimeID: "runtime-1",
 	}
 
-	candidates := []dataplane.Endpoint{
-		{PodName: "pod-A", URL: "http://10.0.0.1:5555"},
-		{PodName: "pod-B", URL: "http://10.0.0.2:5555"},
+	admitted, rejections := c.filterByVersion(t.Context(), []dataplane.Endpoint{base})
+	require.Empty(t, rejections)
+	require.Len(t, admitted, 1)
+	assert.Equal(t, int32(1), firstServerProbes.Load())
+	proof := c.admissionProofs[endpointIdentityOf(&base)]
+	assert.Equal(t, "v3.3.5 first", proof.dataPlaneAPI.Full)
+	assert.Equal(t, "3.4.2", proof.haproxy.Full)
+
+	credentialRotation := base
+	credentialRotation.Username = "rotated-user"
+	credentialRotation.Password = "rotated-password"
+	admitted, rejections = c.filterByVersion(t.Context(), []dataplane.Endpoint{credentialRotation})
+	require.Empty(t, rejections)
+	require.Len(t, admitted, 1)
+	assert.Equal(t, int32(1), firstServerProbes.Load(), "credential changes reuse the version proof")
+	assert.Equal(t, "rotated-user", admitted[0].Username)
+	assert.Equal(t, "rotated-password", admitted[0].Password)
+
+	imageChanged := credentialRotation
+	imageChanged.PodRuntimeID = "runtime-2"
+	_, rejections = c.filterByVersion(t.Context(), []dataplane.Endpoint{imageChanged})
+	require.Empty(t, rejections)
+	assert.Equal(t, int32(2), firstServerProbes.Load(), "a new container runtime epoch requires a new probe")
+
+	replacement := imageChanged
+	replacement.PodUID = "uid-2"
+	_, rejections = c.filterByVersion(t.Context(), []dataplane.Endpoint{replacement})
+	require.Empty(t, rejections)
+	assert.Equal(t, int32(3), firstServerProbes.Load(), "a new pod UID requires a new probe")
+
+	moved := replacement
+	moved.URL = secondServer.URL
+	admitted, rejections = c.filterByVersion(t.Context(), []dataplane.Endpoint{moved})
+	require.Empty(t, rejections)
+	require.Len(t, admitted, 1)
+	assert.Equal(t, int32(1), secondServerProbes.Load(), "a new endpoint URL requires a new probe")
+	assert.Equal(t, "v3.3.6 second", admitted[0].DetectedFullVersion)
+}
+
+func TestFilterByVersion_PermanentMismatchIsNotReprobed(t *testing.T) {
+	var probes atomic.Int32
+	server := infoServerWithProbeCount(t, "v4.0.0", &probes)
+	c := newTestComponentWithoutHAProxy(t)
+	c.localVersion = &dataplane.Version{Major: 3, Minor: 4, Full: "3.4.0"}
+	candidate := dataplane.Endpoint{
+		URL:          server.URL,
+		Username:     "admin",
+		Password:     "password",
+		PodName:      "haproxy-0",
+		PodNamespace: "haptic",
+		PodUID:       "uid-1",
+	}
+	identity := endpointIdentityOf(&candidate)
+	c.pendingRetries[identity] = &retryState{
+		lastAttempt: time.Now().Add(-initialRetryInterval),
+		retryCount:  1,
 	}
 
-	// Must complete without panicking on the nil localVersion.
-	admitted, _ := c.filterByVersion(t.Context(), candidates, coreconfig.Credentials{})
-
-	require.Len(t, admitted, 2,
-		"both already-admitted pods MUST come back — the cache lookup is "+
-			"the entire point of the steady-state path")
-
-	// Verify both are the cached pointers (preserves version fields).
-	gotByPod := make(map[string]*dataplane.Endpoint, len(admitted))
-	for _, ep := range admitted {
-		gotByPod[ep.PodName] = ep
+	for range 2 {
+		admitted, rejections := c.filterByVersion(t.Context(), []dataplane.Endpoint{candidate})
+		assert.Empty(t, admitted)
+		require.Len(t, rejections, 1)
+		assert.Equal(t, "version_mismatch_newer", rejections[0].reason)
 	}
-	assert.Same(t, c.admittedPods["pod-A"], gotByPod["pod-A"])
-	assert.Same(t, c.admittedPods["pod-B"], gotByPod["pod-B"])
+
+	assert.Equal(t, int32(1), probes.Load())
+	assert.Empty(t, c.pendingRetries)
+}
+
+func TestFilterByVersion_PendingProbeWaitsForItsBackoff(t *testing.T) {
+	var probes atomic.Int32
+	server := infoServerWithProbeCount(t, "v3.3.5", &probes)
+	c := newTestComponentWithoutHAProxy(t)
+	c.localVersion = &dataplane.Version{Major: 3, Minor: 4, Full: "3.4.0"}
+	candidate := dataplane.Endpoint{
+		URL:          server.URL,
+		Username:     "admin",
+		Password:     "password",
+		PodName:      "haproxy-0",
+		PodNamespace: "haptic",
+		PodUID:       "uid-1",
+	}
+	identity := endpointIdentityOf(&candidate)
+	c.pendingRetries[identity] = &retryState{lastAttempt: time.Now(), retryCount: 1}
+
+	admitted, rejections := c.filterByVersion(t.Context(), []dataplane.Endpoint{candidate})
+	assert.Empty(t, admitted)
+	assert.Empty(t, rejections)
+	assert.Zero(t, probes.Load())
+
+	c.pendingRetries[identity].lastAttempt = time.Now().Add(-initialRetryInterval)
+	admitted, rejections = c.filterByVersion(t.Context(), []dataplane.Endpoint{candidate})
+	require.Len(t, admitted, 1)
+	assert.Empty(t, rejections)
+	assert.Equal(t, int32(1), probes.Load())
+	assert.NotContains(t, c.pendingRetries, identity)
 }
 
 func TestFilterByVersion_EmptyCandidatesReturnsEmptyAdmitted(t *testing.T) {
-	// Boundary: the function must handle an empty candidate slice
-	// (which happens when all HAProxy pods have been removed) without
-	// panicking and without spuriously emitting any admitted entries.
-	// A regression that, say, returned a nil slice instead of an
-	// empty one would still satisfy the test, but a regression that
-	// emitted phantom entries would fail.
-	c := admittedComponent(t)
-	c.admittedPods["stale-pod"] = &dataplane.Endpoint{PodName: "stale-pod"}
+	c := newTestComponentWithoutHAProxy(t)
+	c.admissionProofs[testEndpointIdentity("stale-pod")] = versionAdmissionProof{
+		dataPlaneAPI: dataplane.Version{Major: 3},
+	}
 
-	admitted, _ := c.filterByVersion(t.Context(), nil, coreconfig.Credentials{})
+	admitted, rejections := c.filterByVersion(t.Context(), nil)
 
-	assert.Empty(t, admitted,
-		"empty candidate list MUST produce empty admitted list — "+
-			"the cache must NOT be enumerated to fabricate admitted entries "+
-			"for pods that no longer exist (that would re-admit pods the "+
-			"watcher removed, causing the deployer to push config to "+
-			"vanished endpoints)")
+	assert.Empty(t, admitted)
+	assert.Empty(t, rejections)
 }

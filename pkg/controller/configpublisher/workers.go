@@ -540,6 +540,15 @@ func (c *Component) processAllPendingStatusWork(ctx context.Context) {
 // processStatusWork performs the actual pod status update.
 func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem) {
 	event := work.event
+	c.endpointAuthorityMu.RLock()
+	if c.endpointAuthoritiesSet {
+		current, ok := c.endpointAuthorities[podAuthorityKey{namespace: event.PodNamespace, name: event.PodName}]
+		if !ok || current != (podAuthority{uid: event.PodUID, runtimeID: event.PodRuntimeID}) {
+			c.endpointAuthorityMu.RUnlock()
+			return
+		}
+	}
+	defer c.endpointAuthorityMu.RUnlock()
 
 	c.logger.Debug("Processing status update for pod",
 		"runtime_config_name", event.RuntimeConfigName,
@@ -553,6 +562,8 @@ func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem)
 		RuntimeConfigName:      event.RuntimeConfigName,
 		RuntimeConfigNamespace: event.RuntimeConfigNamespace,
 		PodName:                event.PodName,
+		PodUID:                 event.PodUID,
+		PodRuntimeID:           event.PodRuntimeID,
 		Checksum:               event.Checksum,
 	}
 

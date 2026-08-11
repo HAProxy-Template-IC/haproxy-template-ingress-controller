@@ -100,6 +100,16 @@ type statusWorkItem struct {
 	retries int
 }
 
+type podAuthorityKey struct {
+	namespace string
+	name      string
+}
+
+type podAuthority struct {
+	uid       string
+	runtimeID string
+}
+
 // Component is the event adapter for the config publisher.
 // It wraps the pure Publisher component and coordinates it with the event bus.
 //
@@ -149,6 +159,10 @@ type Component struct {
 	statusWorkPendingMu sync.Mutex
 	statusWorkTrigger   chan struct{} // Signals worker to process pending updates
 	statusRetrySignals  *delayedSignals
+
+	endpointAuthorityMu    sync.RWMutex
+	endpointAuthorities    map[podAuthorityKey]podAuthority
+	endpointAuthoritiesSet bool
 
 	// deployedPending is every deployed render awaiting publication, in arrival
 	// order and deduplicated by content checksum.
@@ -246,6 +260,7 @@ func New(
 		publishSuperseded:    make(chan struct{}),
 		invalidSuperseded:    make(chan struct{}),
 		publicationRetryWait: waitForPublicationRetry,
+		endpointAuthorities:  make(map[podAuthorityKey]podAuthority),
 	}
 
 	for _, opt := range opts {
@@ -280,6 +295,10 @@ func (c *Component) Name() string {
 func (c *Component) Start(ctx context.Context) error {
 	c.preparePublicationTerm()
 	defer c.Rearm()
+	c.endpointAuthorityMu.Lock()
+	c.endpointAuthorities = make(map[podAuthorityKey]podAuthority)
+	c.endpointAuthoritiesSet = false
+	c.endpointAuthorityMu.Unlock()
 
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.

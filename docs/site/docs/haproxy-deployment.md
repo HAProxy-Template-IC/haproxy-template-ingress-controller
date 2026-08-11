@@ -639,6 +639,7 @@ Each discovered pod must:
 2. **Run HAProxy in master-worker mode** with an admin socket the Dataplane API sidecar can connect to
 3. **Run the Dataplane API sidecar** in the same pod, sharing the config volume with HAProxy
 4. **Expose Dataplane API** on `haproxy.ports.dataplane` (default 5555)
+5. **Run the same HAProxy major.minor series as `haproxyVersion`** so the controller validates configuration with the matching binary
 
 <a id="example-haproxy-pod-deployment-byo-haproxy"></a>
 
@@ -665,7 +666,7 @@ spec:
     spec:
       containers:
       - name: haproxy
-        image: haproxytech/haproxy-debian:3.2
+        image: haproxytech/haproxy-debian:3.4
         command: ["/bin/sh", "-c"]
         args:
           - |
@@ -698,7 +699,7 @@ spec:
           periodSeconds: 5
 
       - name: dataplane
-        image: haproxytech/haproxy-debian:3.2
+        image: haproxytech/haproxy-debian:3.4
         command: ["/bin/sh", "-c"]
         args:
           - |

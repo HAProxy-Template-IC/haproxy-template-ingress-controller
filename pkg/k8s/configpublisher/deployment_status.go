@@ -96,8 +96,11 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 	// checksum unchanged; if the pod has no prior success, leave it empty so the
 	// pod correctly reads as never-converged.
 	if update.Error != "" {
-		existing, _ := p.existingPodChecksum(ctx, update.RuntimeConfigNamespace, update.RuntimeConfigName, update.PodName)
-		podStatus.Checksum = existing
+		podStatus.Checksum = ""
+		if existing, ok := p.existingPodStatus(ctx, update.RuntimeConfigNamespace, update.RuntimeConfigName, update.PodName); ok &&
+			existing.PodUID == update.PodUID && existing.PodRuntimeID == update.PodRuntimeID {
+			podStatus.Checksum = existing.Checksum
+		}
 	}
 
 	// SSA-apply this pod's entry to HAProxyCfg.status.deployedToPods.
@@ -129,25 +132,21 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 	// SSA-apply this pod's entry to every auxiliary file's
 	// status.deployedToPods. Same per-pod field manager, same merge
 	// semantics — independent of each other and of the HAProxyCfg apply.
-	p.applyPodStatusToAuxiliaryFiles(ctx, auxFiles, update.PodName)
+	p.applyPodStatusToAuxiliaryFiles(ctx, auxFiles, update.PodName, update.PodUID, update.PodRuntimeID)
 
 	return nil
 }
 
-// existingPodChecksum returns the checksum currently recorded for podName in
-// the HAProxyCfg's status.deployedToPods (lister cache first, API fallback). It
-// is used to preserve the last successfully-deployed checksum when a later
-// deploy to that pod fails (see UpdateDeploymentStatus). Returns ("", false)
-// when the pod has no prior entry (never succeeded) or the config isn't
-// readable yet — both of which correctly leave the pod reading as not-converged.
-func (p *Publisher) existingPodChecksum(ctx context.Context, namespace, name, podName string) (string, bool) {
-	find := func(cfg *haproxyv1alpha1.HAProxyCfg) (string, bool) {
+// existingPodStatus returns the status currently recorded for podName in the
+// HAProxyCfg (lister cache first, API fallback).
+func (p *Publisher) existingPodStatus(ctx context.Context, namespace, name, podName string) (haproxyv1alpha1.PodDeploymentStatus, bool) {
+	find := func(cfg *haproxyv1alpha1.HAProxyCfg) (haproxyv1alpha1.PodDeploymentStatus, bool) {
 		for i := range cfg.Status.DeployedToPods {
 			if cfg.Status.DeployedToPods[i].PodName == podName {
-				return cfg.Status.DeployedToPods[i].Checksum, true
+				return cfg.Status.DeployedToPods[i], true
 			}
 		}
-		return "", false
+		return haproxyv1alpha1.PodDeploymentStatus{}, false
 	}
 	if p.listers != nil && p.listers.HAProxyCfgs != nil {
 		if cfg, err := p.listers.HAProxyCfgs.HAProxyCfgs(namespace).Get(name); err == nil {
@@ -156,7 +155,7 @@ func (p *Publisher) existingPodChecksum(ctx context.Context, namespace, name, po
 	}
 	cfg, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return "", false
+		return haproxyv1alpha1.PodDeploymentStatus{}, false
 	}
 	return find(cfg)
 }
@@ -235,7 +234,7 @@ func (p *Publisher) applyPodStatusToRuntimeConfig(ctx context.Context, update *D
 //
 // Errors are logged but don't fail the whole status update — the next
 // reconcile retries any failures.
-func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, podName string) {
+func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, podName, podUID, podRuntimeID string) {
 	if auxFiles == nil {
 		return
 	}
@@ -246,7 +245,9 @@ func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles
 		if !ok {
 			continue
 		}
-		entry := haproxyv1alpha1.PodDeploymentStatus{PodName: podName, Checksum: checksum}
+		entry := haproxyv1alpha1.PodDeploymentStatus{
+			PodName: podName, PodUID: podUID, PodRuntimeID: podRuntimeID, Checksum: checksum,
+		}
 		p.applyAuxiliaryFilePodStatus("HAProxyMapFile", ref.Namespace, ref.Name, &entry, fieldManager,
 			func(name string, data []byte, opts metav1.PatchOptions) error {
 				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(ref.Namespace).
@@ -259,7 +260,9 @@ func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles
 		if !ok {
 			continue
 		}
-		entry := haproxyv1alpha1.PodDeploymentStatus{PodName: podName, Checksum: checksum}
+		entry := haproxyv1alpha1.PodDeploymentStatus{
+			PodName: podName, PodUID: podUID, PodRuntimeID: podRuntimeID, Checksum: checksum,
+		}
 		p.applyAuxiliaryFilePodStatus("HAProxyGeneralFile", ref.Namespace, ref.Name, &entry, fieldManager,
 			func(name string, data []byte, opts metav1.PatchOptions) error {
 				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(ref.Namespace).
@@ -272,7 +275,9 @@ func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles
 		if !ok {
 			continue
 		}
-		entry := haproxyv1alpha1.PodDeploymentStatus{PodName: podName, Checksum: checksum}
+		entry := haproxyv1alpha1.PodDeploymentStatus{
+			PodName: podName, PodUID: podUID, PodRuntimeID: podRuntimeID, Checksum: checksum,
+		}
 		p.applyAuxiliaryFilePodStatus("HAProxyCRTListFile", ref.Namespace, ref.Name, &entry, fieldManager,
 			func(name string, data []byte, opts metav1.PatchOptions) error {
 				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(ref.Namespace).
@@ -353,6 +358,12 @@ func buildPodStatusSSAPayload(kind, name, namespace string, podStatus *haproxyv1
 	// codepath without referencing the typed scheme.
 	entry := map[string]any{
 		"podName": podStatus.PodName,
+	}
+	if podStatus.PodUID != "" {
+		entry["podUID"] = podStatus.PodUID
+	}
+	if podStatus.PodRuntimeID != "" {
+		entry["podRuntimeID"] = podStatus.PodRuntimeID
 	}
 	if podStatus.Checksum != "" {
 		entry["checksum"] = podStatus.Checksum

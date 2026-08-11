@@ -124,6 +124,14 @@ type PodDeploymentStatus struct {
 	// +kubebuilder:validation:MinLength=1
 	PodName string `json:"podName"`
 
+	// PodUID binds the deployment proof to the Kubernetes pod incarnation.
+	// +optional
+	PodUID string `json:"podUID,omitempty"`
+
+	// PodRuntimeID binds the deployment proof to the pod's container execution epoch.
+	// +optional
+	PodRuntimeID string `json:"podRuntimeID,omitempty"`
+
 	// Checksum of the configuration deployed to this pod.
 	// +optional
 	Checksum string `json:"checksum,omitempty"`

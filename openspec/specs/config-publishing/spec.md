@@ -141,12 +141,22 @@ When a per-pod status update targets an HAProxyCfg that has not been published y
 
 ### Requirement: Pod Lifecycle Reconciliation
 
-On HAProxyPodsDiscoveredEvent the publisher SHALL reconcile the deployedToPods status list against the currently running pods, removing stale entries left by pods that terminated while the controller was down. On HAProxyPodTerminatedEvent it SHALL remove the terminated pod's references. On LostLeadershipEvent it SHALL clear all cached state: the template config, the rendered-config cache, the last-published checksum, and any buffered deploy-driven publish.
+Each deployedToPods entry SHALL carry the pod UID and container execution epoch that own its checksum proof. On HAProxyPodsDiscoveredEvent the publisher SHALL reconcile the deployedToPods status list against the currently authoritative pod identities, removing stale entries left by pods that terminated, restarted, or were replaced while the controller was down. On HAProxyPodTerminatedEvent it SHALL remove only the terminated UID's references, preserving a replacement that already reported status under the same name. A failed deployment SHALL preserve a prior checksum only when that checksum belongs to the same pod UID and container execution epoch; the first failure for a replacement or restart SHALL clear the predecessor's checksum. ConfigAppliedToPodEvent results from a UID or container execution epoch outside the current discovered fleet SHALL be ignored both when queued and immediately before the status write. On LostLeadershipEvent it SHALL clear all cached state: the template config, the rendered-config cache, the last-published checksum, endpoint authorities, and any buffered deploy-driven publish.
 
 #### Scenario: Stale pod entries cleaned on discovery
 
 - **WHEN** pods are discovered and the deployedToPods list contains an entry for a pod that no longer runs
 - **THEN** that entry SHALL be removed
+
+#### Scenario: Same-name replacement cannot inherit convergence
+
+- **WHEN** a pod is replaced under the same namespace and name and its first deployment fails
+- **THEN** deployedToPods SHALL identify the replacement UID with an empty checksum, and a late predecessor event SHALL NOT restore the predecessor's checksum
+
+#### Scenario: In-place image replacement cannot inherit queued status
+
+- **WHEN** a ConfigAppliedToPodEvent from the previous container execution epoch remains queued after the same pod UID is admitted with a new epoch
+- **THEN** the publisher SHALL discard the queued event before writing status
 
 #### Scenario: Lost leadership clears cached state
 

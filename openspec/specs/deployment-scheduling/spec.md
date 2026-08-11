@@ -24,7 +24,7 @@ The DeploymentScheduler SHALL own all deployment rate-limit timing in a single d
 
 ### Requirement: Lane Classification Against the Last-Dispatched Config
 
-Each scheduled render SHALL be classified into one of two apply lanes by diffing its parsed config against the last-DISPATCHED config (the render the most recent dispatch committed to — not the last completed deploy). The runtime-raw lane SHALL be chosen if and only if the baseline is non-nil, the diff computed without error, and the diff contains at least one runtime-eligible server change and zero structural operations. Every other case — nil baseline (cold start or new leader), diff error, or any structural operation — SHALL take the structural lane. The dispatch baseline SHALL advance at dispatch time for both lanes, and the precomputed runtime diff SHALL travel with the pending deployment so dispatch does not recompute it. If the baseline advances while a diff is being computed, the scheduler SHALL recompute against the new baseline before classifying.
+Each scheduled render SHALL be classified into one of two apply lanes by diffing its parsed config against the last-DISPATCHED config (the render the most recent dispatch committed to — not the last completed deploy). The runtime-raw lane SHALL be chosen if and only if the baseline is non-nil, the complete endpoint-authority set matches that baseline's fleet, the diff computed without error, and the diff contains at least one runtime-eligible server change and zero structural operations. Every other case — nil baseline (cold start or new leader), changed endpoint authority, diff error, or any structural operation — SHALL take the structural lane. An endpoint-authority change SHALL retire pending work plus the dispatched and activated baselines before the empty-fleet or scheduling decision, ensuring the next non-empty fleet starts structural. The config and endpoint-authority baselines SHALL advance together at dispatch time for both lanes, and the precomputed runtime diff SHALL travel with the pending deployment so dispatch does not recompute it. If either baseline advances while a diff is being computed, the scheduler SHALL recompute against the new baseline before classifying.
 
 #### Scenario: Pure server-field diff takes the runtime-raw lane
 
@@ -98,7 +98,18 @@ A structural dispatch SHALL assign the DeploymentScheduledEvent a unique deploym
 
 ### Requirement: Skip-Unchanged Gate
 
-Before scheduling a validation-driven deployment, the scheduler SHALL skip it when the render's content checksum equals the last successfully deployed config hash AND the hash of the current endpoint set (sorted endpoint URLs) equals the pod-set hash of the last successful deploy. Drift-prevention deployments SHALL always bypass this gate. A skipped deployment SHALL publish a DeploymentSkippedEvent carrying the render's status patches so downstream consumers can still mark the data plane converged. The last-deployed config hash SHALL be updated only from a DeploymentCompletedEvent whose content checksum is non-empty and whose failure count is zero; failed or partial deploys SHALL leave the cache at the last good hash so the next reconcile retries immediately. The content checksum compared and recorded SHALL be the one captured together with the config at schedule time and threaded through the deployment events — never re-read from mutable state at deploy or completion time.
+Before scheduling a validation-driven deployment, the scheduler SHALL skip it when the render's content checksum equals the last successfully deployed config hash AND the order-independent hash of the current complete endpoint-authority set equals the pod-set hash of the last successful deploy. Drift-prevention deployments SHALL always bypass this gate. A skipped deployment SHALL publish a DeploymentSkippedEvent carrying the render's status patches so downstream consumers can still mark the data plane converged. The last-deployed config and pod-set hashes SHALL be updated only from a DeploymentCompletedEvent whose content checksum and dispatched pod-set hash are non-empty and whose failure count is zero; failed, partial, or unprovable deploys SHALL leave the cache at the last good proof so the next reconcile retries immediately. Both hashes SHALL be captured from the scheduled deployment and threaded through the deployment events — never derived from mutable scheduler state at completion time.
+
+#### Scenario: Same URL with a new pod UID is not unchanged
+
+- **WHEN** the rendered checksum is unchanged but a replacement pod UID reuses the predecessor's URL
+- **THEN** the endpoint-authority hash SHALL differ and the deployment SHALL NOT be skipped
+
+#### Scenario: Replacement arrives during an old deployment
+
+- **WHEN** a replacement pod with the same name and URL but a new UID is discovered while its predecessor's deployment is in flight
+- **THEN** the completion SHALL record only the predecessor endpoint-set hash carried by that deployment
+- **AND** the replacement fleet SHALL remain ineligible for the unchanged skip
 
 #### Scenario: Unchanged config for the same pod set is skipped
 
@@ -140,9 +151,9 @@ On ValidationFailedEvent the scheduler SHALL schedule its cached last-validated 
 
 ### Requirement: Deployer Executor
 
-The Deployer SHALL execute DeploymentScheduledEvent by deploying the event's config and auxiliary files to all endpoints in parallel (one goroutine per endpoint), publishing DeploymentStartedEvent first and one DeploymentCompletedEvent afterwards with the scheduled event's unique deployment ID, aggregated result (total, succeeded, failed, reloads, operations), StatusPatches, and ContentChecksum forwarded unchanged. Each endpoint sync SHALL be bounded by a per-endpoint sync timeout (default 2 minutes) and a reload-verification timeout (default 10 seconds). An atomic in-progress guard SHALL drop duplicate scheduled events while a deployment runs. Pending coalescible DeploymentScheduledEvents SHALL be coalesced latest-wins after each dispatch; DeploymentCompletedEvents SHALL never be coalesced. Each deployment SHALL run under a cancellable context. DeploymentCancelRequestEvent SHALL be consumed by an independent control loop, not the mailbox worker that performs deployment, and SHALL abort only when its deployment ID matches the active scheduled event. Shutdown SHALL also abort the active deployment. A zero-endpoint deployment SHALL publish a DeploymentCompletedEvent with an empty content checksum so the scheduler does not record it as a successful deploy.
+The Deployer SHALL execute DeploymentScheduledEvent by deploying the event's config and auxiliary files to all endpoints in parallel (one goroutine per endpoint), publishing DeploymentStartedEvent first and one DeploymentCompletedEvent afterwards with the scheduled event's unique deployment ID, aggregated result (total, succeeded, failed, reloads, operations), StatusPatches, and ContentChecksum forwarded unchanged. Each endpoint sync SHALL be bounded by a per-endpoint sync timeout (default 2 minutes) and a reload-verification timeout (default 10 seconds). An atomic in-progress guard SHALL drop duplicate scheduled events while a deployment runs. Pending coalescible DeploymentScheduledEvents SHALL be coalesced latest-wins after each dispatch; DeploymentCompletedEvents SHALL never be coalesced. Each deployment SHALL run under a cancellable context. DeploymentCancelRequestEvent SHALL be consumed by an independent control loop, not the mailbox worker that performs deployment, and SHALL abort only its exact deployment ID. A request that arrives before that deployment's handler starts SHALL remain latched without aborting another active deployment. Shutdown SHALL also abort the active deployment. A zero-endpoint deployment SHALL publish a DeploymentCompletedEvent with an empty content checksum so the scheduler does not record it as a successful deploy.
 
-The Deployer SHALL stamp each pod's per-pod status checksum with the deployment's CONTENT checksum (config plus auxiliary files — the same value the config publisher writes as the published spec checksum) and SHALL publish a ConfigAppliedToPodEvent for every endpoint UNCONDITIONALLY on success — including zero-operation no-op syncs — because skipping no-ops breaks the published-spec versus per-pod-status convergence invariant. Endpoint failures SHALL publish an InstanceDeploymentFailedEvent plus a ConfigAppliedToPodEvent carrying the error. After a deployment with at least one success that is not a drift-prevention check, the Deployer SHALL publish a DeployedConfigPublishRequest so the just-deployed bytes become observable as the published spec.
+The Deployer SHALL stamp each pod's per-pod status checksum with the deployment's CONTENT checksum (config plus auxiliary files — the same value the config publisher writes as the published spec checksum) and SHALL publish a ConfigAppliedToPodEvent carrying that pod's UID and container execution epoch for every endpoint UNCONDITIONALLY on success — including zero-operation no-op syncs — because skipping no-ops breaks the published-spec versus per-pod-status convergence invariant. Endpoint failures SHALL publish an InstanceDeploymentFailedEvent plus a ConfigAppliedToPodEvent carrying the error. After a deployment with at least one success that is not a drift-prevention check, the Deployer SHALL publish a DeployedConfigPublishRequest so the just-deployed bytes become observable as the published spec.
 
 #### Scenario: No-op sync still publishes per-pod status
 
@@ -161,7 +172,7 @@ The Deployer SHALL stamp each pod's per-pod status checksum with the deployment'
 
 ### Requirement: Per-Endpoint Version Cache
 
-The Deployer SHALL keep a per-endpoint cache of the last-synced config version, parsed config, and content checksum, letting subsequent syncs skip the full fetch-and-parse when the pod's version is unchanged. The cached parsed config SHALL be the pod's ACTUAL post-sync state when the sync reports one (preferring the orchestrator's post-sync fetch over the caller's desired config), so per-pod divergence stays detectable. The cache entry SHALL be invalidated when a sync fails (pod state uncertain) and the whole cache SHALL be cleared on component start (leadership transitions). Drift-prevention deployments SHALL NOT pass the cached checksum as the last-deployed checksum, forcing full comparison.
+The Deployer SHALL keep a per-endpoint cache of the last-synced config version, parsed config, content checksum, and activation proof, letting subsequent syncs skip the full fetch-and-parse when the pod's version is unchanged. Every entry SHALL be keyed by the complete endpoint authority: URL, credentials, pod namespace, pod name, pod UID, container execution epoch, and detected version. The cached parsed config SHALL be the pod's ACTUAL post-sync state when the sync reports one (preferring the orchestrator's post-sync fetch over the caller's desired config), so per-pod divergence stays detectable. The cache entry SHALL be invalidated when a sync fails or its endpoint authority leaves the discovered fleet, and the whole cache SHALL be cleared on component start (leadership transitions). Drift-prevention deployments SHALL NOT pass the cached checksum as the last-deployed checksum, forcing full comparison.
 
 #### Scenario: Cache stores actual post-sync state
 
@@ -173,11 +184,16 @@ The Deployer SHALL keep a per-endpoint cache of the last-synced config version, 
 - **WHEN** a sync to an endpoint fails
 - **THEN** that endpoint's cache entry SHALL be invalidated so the next sync does a full fetch
 
+#### Scenario: Replacement at the same URL has no inherited proof
+
+- **WHEN** a new pod UID reuses the predecessor's URL
+- **THEN** the replacement SHALL inherit none of the predecessor's parsed config, content checksum, or activation proof
+
 ### Requirement: Runtime-Raw Bypass
 
-The runtime bypass SHALL apply runtime-eligible server changes to every endpoint concurrently via one skip-reload raw push per endpoint carrying the shared precomputed render diff, each bounded by a 5-second per-endpoint timeout. Dataplane clients (and their keep-alive HTTP connections) SHALL be persistent per endpoint URL — opened once, reused across applies, evicted when the endpoint disappears, and all closed on scheduler shutdown or lost leadership. Every per-endpoint failure and panic SHALL be swallowed to a debug log: the bypass is best-effort and the scheduled deploy is the correctness floor. Every apply SHALL be recorded to the runtime fast-path counters via the scheduler's injected recorder.
+The runtime bypass SHALL apply runtime-eligible server changes to every endpoint concurrently via one skip-reload raw push per endpoint carrying the shared precomputed render diff, each bounded by a 5-second per-endpoint timeout. Endpoint-bound Dataplane client state SHALL be reused only while the complete endpoint authority remains unchanged. A discovery event SHALL retire clients for absent or changed authorities before any no-config, empty-fleet, or deployment-lane decision and SHALL cancel an in-flight structural deployment targeting the retired authority. Scheduler shutdown and lost leadership SHALL retire every client. HTTP connections belong to the process-wide transport pool and MAY be reused across logical client replacements because authentication is attached to each request. Every per-endpoint failure and panic SHALL be swallowed to a debug log: the bypass is best-effort and the scheduled deploy is the correctness floor. Every current-authority apply SHALL be recorded to the runtime fast-path counters via the scheduler's injected recorder.
 
-An AUTHORITATIVE apply (the pure runtime-raw lane dispatch, partial=false) IS the complete deploy: on each successful endpoint it SHALL publish a ConfigAppliedToPodEvent stamping the pod at the deployment's content checksum, and — once, when at least one endpoint succeeded — a DeployedConfigPublishRequest so the applied config is observable as the published spec. A PARTIAL apply (fast-track during a wait, partial=true) SHALL suppress both publications.
+An AUTHORITATIVE apply (the pure runtime-raw lane dispatch, partial=false) IS the complete deploy: on each successful endpoint it SHALL publish a ConfigAppliedToPodEvent stamping that pod UID and container execution epoch at the deployment's content checksum, and — once, when at least one endpoint succeeded — a DeployedConfigPublishRequest so the applied config is observable as the published spec. A PARTIAL apply (fast-track during a wait, partial=true) SHALL suppress both publications. After every runtime sync returns, the bypass SHALL re-check the lifecycle epoch and complete endpoint authority before recording activation, metrics, success, or events. A result retired by shutdown, leadership loss, or a newer discovery SHALL change none of them. If a current endpoint's authoritative apply fails or panics, the scheduler SHALL invalidate the shared dispatch baseline and retry the latest render through the structural lane.
 
 #### Scenario: Authoritative runtime-raw apply publishes deploy state
 
@@ -191,8 +207,28 @@ An AUTHORITATIVE apply (the pure runtime-raw lane dispatch, partial=false) IS th
 
 #### Scenario: Stale clients evicted
 
-- **WHEN** an endpoint's pod is deleted and a later apply runs against the new endpoint set
-- **THEN** the deleted endpoint's cached client SHALL be closed and dropped
+- **WHEN** an endpoint disappears or its URL, credentials, pod UID, container execution epoch, or detected version changes
+- **THEN** the superseded cached client's Close method SHALL be called and the entry SHALL be dropped when discovery installs the new fleet, even if that fleet is empty or the next deployment is structural
+
+#### Scenario: Structural deployment authority retires in flight
+
+- **WHEN** discovery changes an endpoint authority targeted by an in-flight structural deployment
+- **THEN** the scheduler SHALL request cancellation of that exact deployment before scheduling work for the replacement fleet, and the request SHALL remain effective if the out-of-band control subscriber receives it before the deployment handler starts.
+
+#### Scenario: Client construction overlaps shutdown
+
+- **WHEN** client construction completes after the runtime bypass closes for shutdown or lost leadership
+- **THEN** the new client SHALL be closed and SHALL NOT enter the cache
+
+#### Scenario: Runtime sync completes after its authority retires
+
+- **WHEN** a runtime sync returns after shutdown, leadership loss, or an endpoint-authority replacement retired its epoch
+- **THEN** its result SHALL NOT record activation, metrics, ConfigAppliedToPodEvent, or DeployedConfigPublishRequest
+
+#### Scenario: Runtime apply is incomplete
+
+- **WHEN** an authoritative runtime apply does not succeed on every current endpoint
+- **THEN** the scheduler SHALL discard the runtime dispatch baseline and queue a structural deployment
 
 ### Requirement: Drift-Prevention Monitor
 

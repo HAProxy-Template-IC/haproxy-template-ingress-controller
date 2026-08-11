@@ -92,6 +92,22 @@ func TestNewClientset_CachedVersionSkipsHTTPCall(t *testing.T) {
 			"flag would manifest as 'feature not supported' errors much later")
 }
 
+func TestNewClientset_CachedVersionPreservesEnterpriseEdition(t *testing.T) {
+	endpoint := &Endpoint{
+		URL:                "http://does-not-need-to-exist",
+		Username:           "admin",
+		Password:           "password",
+		CachedMajorVersion: 3,
+		CachedMinorVersion: 2,
+		CachedFullVersion:  "v3.2.6-ee1",
+	}
+
+	clientset, err := NewClientset(t.Context(), endpoint, nil)
+	require.NoError(t, err)
+	assert.True(t, clientset.IsEnterprise())
+	assert.True(t, clientset.Capabilities().SupportsWAF)
+}
+
 func TestNewClientset_UnsupportedMajorVersionIsRejected(t *testing.T) {
 	tests := []struct {
 		name          string

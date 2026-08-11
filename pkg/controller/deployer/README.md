@@ -73,6 +73,7 @@ Notable details:
 - The `DeploymentCompletedEvent` matching the active deployment ID closes the scheduler's in-progress flag. Every completion resets the drift monitor's idle timer, which is why the event is on the feedback edge in the diagram.
 - `deploymentTimeout` is a safety net, not an operational target — hitting it means a lost completion event or a stuck dataplane call, both of which are bugs to investigate.
 - Cancellation uses a separate control subscription, so it reaches a blocked Dataplane call without waiting behind that call in the deployment mailbox. A timed-out deployment keeps the scheduler slot until its exact deployment ID reports termination; completions for any other attempt cannot change baselines, caches, or release queued work.
+- Runtime clients, parsed-config caches, content checksums, and activation proofs are bound to the endpoint URL, credentials, pod namespace/name/UID, and detected version. Discovery retires stale authority before deciding whether the next deployment is empty, runtime-only, or structural.
 
 ## Leadership Transitions
 

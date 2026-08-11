@@ -84,44 +84,45 @@ type Config struct {
 //	    Password: "password",
 //	})
 func New(ctx context.Context, cfg *Config) (*DataplaneClient, error) {
-	if cfg.BaseURL == "" {
-		return nil, errors.New("baseURL is required")
-	}
-	if cfg.Username == "" {
-		return nil, errors.New("username is required")
-	}
-	if cfg.Password == "" {
-		return nil, errors.New("password is required")
-	}
-
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-
-	// Create endpoint
 	endpoint := Endpoint{
 		URL:      cfg.BaseURL,
 		Username: cfg.Username,
 		Password: cfg.Password,
 		PodName:  cfg.PodName,
 	}
+	return newDataplaneClient(ctx, &endpoint, cfg.Logger)
+}
+
+func newDataplaneClient(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) (*DataplaneClient, error) {
+	resolvedEndpoint := *endpoint
+	if resolvedEndpoint.URL == "" {
+		return nil, errors.New("baseURL is required")
+	}
+	if resolvedEndpoint.Username == "" {
+		return nil, errors.New("username is required")
+	}
+	if resolvedEndpoint.Password == "" {
+		return nil, errors.New("password is required")
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	// Create multi-version clientset with automatic version detection
-	clientset, err := NewClientset(ctx, &endpoint, logger)
+	clientset, err := NewClientset(ctx, &resolvedEndpoint, logger)
 	if err != nil {
 		return nil, fmt.Errorf("creating clientset: %w", err)
 	}
 
 	logger.Debug("Created DataPlane API client",
-		"endpoint", endpoint.URL,
+		"endpoint", resolvedEndpoint.URL,
 		"version", clientset.DetectedVersion(),
 		"capabilities", clientset.Capabilities(),
 	)
 
 	return &DataplaneClient{
 		clientset: clientset,
-		Endpoint:  endpoint,
+		Endpoint:  resolvedEndpoint,
 		logger:    logger,
 	}, nil
 }
@@ -166,11 +167,5 @@ func (c *DataplaneClient) BaseURL() string {
 // NewFromEndpoint creates a new DataplaneClient from an Endpoint.
 // This is a convenience function for creating a client with default options.
 func NewFromEndpoint(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) (*DataplaneClient, error) {
-	return New(ctx, &Config{
-		BaseURL:  endpoint.URL,
-		Username: endpoint.Username,
-		Password: endpoint.Password,
-		PodName:  endpoint.PodName,
-		Logger:   logger,
-	})
+	return newDataplaneClient(ctx, endpoint, logger)
 }

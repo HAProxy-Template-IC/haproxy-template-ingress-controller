@@ -388,6 +388,7 @@ func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 	// Set up state that should be cleared
 	scheduler.schedulerMutex.Lock()
 	scheduler.state.deployInFlight = true
+	scheduler.workRevision = 7
 	scheduler.state.pending = &scheduledDeployment{
 		config: "test",
 		reason: "test",
@@ -403,6 +404,7 @@ func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 
 	assert.False(t, scheduler.state.deployInFlight)
 	assert.Nil(t, scheduler.state.pending)
+	assert.Equal(t, uint64(8), scheduler.workRevision)
 }
 
 // TestDeploymentScheduler_ScheduleOrQueue verifies the latest-wins pending slot.

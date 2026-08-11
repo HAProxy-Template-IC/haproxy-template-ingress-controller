@@ -87,6 +87,83 @@ func TestHandleValidationCompleted_SkipsWhenConfigAndPodSetUnchanged(t *testing.
 		t, eventChan, testutil.NoEventTimeout)
 }
 
+func TestComputePodSetHashIncludesCompleteEndpointAuthority(t *testing.T) {
+	base := dataplane.Endpoint{
+		URL: "http://10.0.0.1:5555", Username: "admin", Password: "secret",
+		PodName: "pod-A", PodNamespace: "haptic", PodUID: "uid-old",
+		DetectedMajorVersion: 3, DetectedMinorVersion: 2, DetectedFullVersion: "3.2.1",
+	}
+	tests := []struct {
+		name   string
+		mutate func(*dataplane.Endpoint)
+	}{
+		{name: "URL", mutate: func(endpoint *dataplane.Endpoint) { endpoint.URL = "http://10.0.0.2:5555" }},
+		{name: "username", mutate: func(endpoint *dataplane.Endpoint) { endpoint.Username = "operator" }},
+		{name: "password", mutate: func(endpoint *dataplane.Endpoint) { endpoint.Password = "rotated" }},
+		{name: "pod name", mutate: func(endpoint *dataplane.Endpoint) { endpoint.PodName = "pod-B" }},
+		{name: "pod namespace", mutate: func(endpoint *dataplane.Endpoint) { endpoint.PodNamespace = "other" }},
+		{name: "pod UID", mutate: func(endpoint *dataplane.Endpoint) { endpoint.PodUID = "uid-new" }},
+		{name: "pod runtime", mutate: func(endpoint *dataplane.Endpoint) { endpoint.PodRuntimeID = "runtime-new" }},
+		{name: "major version", mutate: func(endpoint *dataplane.Endpoint) { endpoint.DetectedMajorVersion = 4 }},
+		{name: "minor version", mutate: func(endpoint *dataplane.Endpoint) { endpoint.DetectedMinorVersion = 3 }},
+		{name: "full version", mutate: func(endpoint *dataplane.Endpoint) { endpoint.DetectedFullVersion = "3.2.1-ee1" }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			changed := base
+			test.mutate(&changed)
+			require.NotEqual(t, computePodSetHash([]dataplane.Endpoint{base}), computePodSetHash([]dataplane.Endpoint{changed}))
+		})
+	}
+}
+
+func TestEndpointAuthorityHashIsKeyed(t *testing.T) {
+	endpoint := dataplane.Endpoint{
+		URL: "http://10.0.0.1:5555", Username: "admin", Password: "secret",
+		PodName: "pod-A", PodNamespace: "haptic", PodUID: "uid-old",
+	}
+	require.NotEqual(t,
+		hashEndpointAuthorityWithKey(&endpoint, []byte("first-key")),
+		hashEndpointAuthorityWithKey(&endpoint, []byte("second-key")),
+	)
+}
+
+func TestHandleValidationCompleted_DoesNotSkipSameURLReplacement(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.Subscribe("replacement", 10)
+	bus.Start()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startLoopForTest(t, scheduler, ctx)
+
+	oldEndpoint := dataplane.Endpoint{
+		URL: "http://10.0.0.1:5555", Username: "admin", Password: "secret",
+		PodName: "pod-A", PodNamespace: "haptic", PodUID: "uid-old",
+		DetectedMajorVersion: 3, DetectedMinorVersion: 2, DetectedFullVersion: "3.2.1",
+	}
+	replacement := oldEndpoint
+	replacement.PodUID = "uid-new"
+	const checksum = "stable-content-checksum"
+	scheduler.mu.Lock()
+	scheduler.lastRenderedConfig = "global\n  daemon\n"
+	scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
+	scheduler.lastContentChecksum = checksum
+	scheduler.currentEndpoints = []dataplane.Endpoint{replacement}
+	scheduler.lastDeployedConfigHash = checksum
+	scheduler.lastDeployedPodSetHash = computePodSetHash([]dataplane.Endpoint{oldEndpoint})
+	scheduler.lastDeployedTime = time.Now()
+	scheduler.mu.Unlock()
+
+	scheduler.handleValidationCompleted(ctx, events.NewValidationCompletedEvent(
+		nil, 100, "config_change", nil, true, seedRenderIdentity(scheduler),
+	))
+
+	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
+	require.Equal(t, "uid-new", scheduled.Endpoints[0].PodUID)
+}
+
 // TestHandleValidationCompleted_PublishesDeploymentSkippedOnCacheHit pins the
 // contract that the skip branch ALSO publishes a DeploymentSkippedEvent so
 // the status-applier can write the "deployed" status variant. Without this,

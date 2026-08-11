@@ -114,7 +114,7 @@ func TestHandleStatusTrigger_InsideRefractoryDefersToTimer(t *testing.T) {
 	sentinel := &statusWorkItem{
 		event: events.NewConfigAppliedToPodEvent(
 			"rt-cfg", "haptic", "haproxy-pod-1", "haptic",
-			"checksum-abc", false, nil,
+			"", "", "checksum-abc", false, nil,
 		),
 	}
 	c.statusWorkPendingMu.Lock()

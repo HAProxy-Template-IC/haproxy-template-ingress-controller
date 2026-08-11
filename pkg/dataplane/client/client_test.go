@@ -148,6 +148,24 @@ func TestNewFromEndpoint(t *testing.T) {
 	assert.False(t, caps.SupportsCrtList) // Only v3.2+
 }
 
+func TestNewFromEndpointPreservesCachedEnterpriseVersion(t *testing.T) {
+	endpoint := Endpoint{
+		URL:                "http://does-not-need-to-exist",
+		Username:           "admin",
+		Password:           "password",
+		PodName:            "haproxy-pod",
+		CachedMajorVersion: 3,
+		CachedMinorVersion: 2,
+		CachedFullVersion:  "v3.2.6-ee1",
+		CachedIsEnterprise: true,
+	}
+
+	c, err := NewFromEndpoint(t.Context(), &endpoint, nil)
+	require.NoError(t, err)
+	assert.Equal(t, endpoint, c.Endpoint)
+	assert.True(t, c.Clientset().IsEnterprise())
+}
+
 func TestDataplaneClient_Clientset(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v3/info" {

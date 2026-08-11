@@ -41,13 +41,11 @@ func installFakeDeployment(c *Component, deploymentID string) (cancelInvoked, do
 }
 
 func TestHandleDeploymentCancelRequest(t *testing.T) {
-	t.Run("no active deployment is a no-op (no panic on nil cancel func)", func(t *testing.T) {
+	t.Run("cancel before start is retained for the exact deployment", func(t *testing.T) {
 		bus := busevents.NewEventBus(10)
 		bus.Start()
 		c := createTestDeployer(bus)
 
-		// No deployment in progress — cancel must NOT panic, must NOT
-		// publish anything, must NOT touch internal state.
 		event := events.NewDeploymentCancelRequestEvent("any-deployment", "scheduler_timeout",
 			events.WithCorrelation("any-correlation", ""))
 
@@ -55,11 +53,10 @@ func TestHandleDeploymentCancelRequest(t *testing.T) {
 			c.handleDeploymentCancelRequest(event)
 		})
 
-		// State must remain pristine after the no-op path.
-		c.cancelMu.Lock()
-		defer c.cancelMu.Unlock()
-		assert.Empty(t, c.activeDeploymentID)
-		assert.Nil(t, c.activeCancelFunc)
+		ctx, cancel := c.beginDeployment(t.Context(), "any-deployment", "any-correlation")
+		defer cancel()
+		assert.ErrorIs(t, ctx.Err(), context.Canceled)
+		assert.Empty(t, c.pendingCancellation)
 	})
 
 	t.Run("matching deployment ID invokes the active cancel func", func(t *testing.T) {
@@ -83,26 +80,27 @@ func TestHandleDeploymentCancelRequest(t *testing.T) {
 		}
 	})
 
-	t.Run("mismatched deployment ID is a no-op (does not abort current deployment)", func(t *testing.T) {
+	t.Run("next deployment cancellation does not abort the current deployment", func(t *testing.T) {
 		bus := busevents.NewEventBus(10)
 		bus.Start()
 		c := createTestDeployer(bus)
 
 		cancelInvoked, _ := installFakeDeployment(c, "current-deployment")
 
-		event := events.NewDeploymentCancelRequestEvent("stale-deployment", "scheduler_timeout",
-			events.WithCorrelation("trace", "stale-deployment"))
+		event := events.NewDeploymentCancelRequestEvent("next-deployment", "endpoint_authority_changed",
+			events.WithCorrelation("trace", "next-deployment"))
 
 		c.handleDeploymentCancelRequest(event)
 
-		// Give any (incorrect) async cancel a chance to fire.
 		select {
 		case <-cancelInvoked:
-			t.Fatal("mismatched deployment ID must NOT invoke activeCancelFunc; " +
-				"otherwise stale scheduler timeouts would abort fresh deployments")
-		case <-time.After(50 * time.Millisecond):
-			// expected: no cancel
+			t.Fatal("a cancel for the next deployment must not abort the current deployment")
+		default:
 		}
+
+		ctx, cancel := c.beginDeployment(t.Context(), "next-deployment", "trace")
+		defer cancel()
+		assert.ErrorIs(t, ctx.Err(), context.Canceled)
 	})
 }
 

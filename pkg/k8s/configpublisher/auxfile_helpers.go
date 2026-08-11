@@ -139,14 +139,15 @@ func mutateAuxFilePodStatus(
 // The second return value indicates whether any pods were removed.
 // If pods were removed, their names are logged via the provided logRemoved callback.
 func filterRunningPods(
-	runningSet map[string]struct{},
+	runningSet map[string]PodIdentity,
 	logRemoved func(removed []string),
 ) func([]haproxyv1alpha1.PodDeploymentStatus) ([]haproxyv1alpha1.PodDeploymentStatus, bool) {
 	return func(pods []haproxyv1alpha1.PodDeploymentStatus) ([]haproxyv1alpha1.PodDeploymentStatus, bool) {
 		newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(pods))
 		var removed []string
 		for i := range pods {
-			if _, exists := runningSet[pods[i].PodName]; exists {
+			identity, exists := runningSet[pods[i].PodName]
+			if exists && podStatusMatchesIdentity(&pods[i], &identity) {
 				newPods = append(newPods, pods[i])
 			} else {
 				removed = append(removed, pods[i].PodName)
@@ -163,9 +164,9 @@ func filterRunningPods(
 }
 
 // removePodMutation returns a mutation function that removes a specific pod by name.
-func removePodMutation(podName string) func([]haproxyv1alpha1.PodDeploymentStatus) ([]haproxyv1alpha1.PodDeploymentStatus, bool) {
+func removePodMutation(podName, podUID string) func([]haproxyv1alpha1.PodDeploymentStatus) ([]haproxyv1alpha1.PodDeploymentStatus, bool) {
 	return func(pods []haproxyv1alpha1.PodDeploymentStatus) ([]haproxyv1alpha1.PodDeploymentStatus, bool) {
-		newPods, removed := removePodFromStatus(pods, podName)
+		newPods, removed := removePodAuthorityFromStatus(pods, podName, podUID)
 		return newPods, removed
 	}
 }

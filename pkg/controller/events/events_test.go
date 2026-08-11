@@ -478,6 +478,8 @@ func TestDeploymentEvents(t *testing.T) {
 			DurationMs:         500,
 			ReloadsTriggered:   3,
 			TotalAPIOperations: 25,
+			ContentChecksum:    "content-hash",
+			PodSetHash:         "pod-set-hash",
 		})
 		require.NotNil(t, event)
 		assert.Equal(t, "deployment-1", event.DeploymentID)
@@ -487,6 +489,8 @@ func TestDeploymentEvents(t *testing.T) {
 		assert.Equal(t, int64(500), event.DurationMs)
 		assert.Equal(t, 3, event.ReloadsTriggered)
 		assert.Equal(t, 25, event.TotalAPIOperations)
+		assert.Equal(t, "content-hash", event.ContentChecksum)
+		assert.Equal(t, "pod-set-hash", event.PodSetHash)
 		assert.Equal(t, EventTypeDeploymentCompleted, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})
@@ -594,10 +598,11 @@ func TestDiscoveryEvents(t *testing.T) {
 	})
 
 	t.Run("HAProxyPodTerminatedEvent", func(t *testing.T) {
-		event := NewHAProxyPodTerminatedEvent("pod-1", "default")
+		event := NewHAProxyPodTerminatedEvent("pod-1", "default", "uid-1")
 		require.NotNil(t, event)
 		assert.Equal(t, "pod-1", event.PodName)
 		assert.Equal(t, "default", event.PodNamespace)
+		assert.Equal(t, "uid-1", event.PodUID)
 		assert.Equal(t, EventTypeHAProxyPodTerminated, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})
@@ -631,6 +636,8 @@ func TestPublishingEvents(t *testing.T) {
 			"default",
 			"pod-1",
 			"haproxy",
+			"uid-1",
+			"runtime-1",
 			"checksum-abc",
 			false,
 			syncMetadata,
@@ -640,6 +647,8 @@ func TestPublishingEvents(t *testing.T) {
 		assert.Equal(t, "default", event.RuntimeConfigNamespace)
 		assert.Equal(t, "pod-1", event.PodName)
 		assert.Equal(t, "haproxy", event.PodNamespace)
+		assert.Equal(t, "uid-1", event.PodUID)
+		assert.Equal(t, "runtime-1", event.PodRuntimeID)
 		assert.Equal(t, "checksum-abc", event.Checksum)
 		assert.False(t, event.IsDriftCheck)
 		assert.NotNil(t, event.SyncMetadata)
@@ -652,7 +661,7 @@ func TestPublishingEvents(t *testing.T) {
 
 	t.Run("ConfigAppliedToPodEvent_DriftCheck", func(t *testing.T) {
 		event := NewConfigAppliedToPodEvent(
-			"my-config", "default", "pod-1", "haproxy", "checksum-abc", true, nil)
+			"my-config", "default", "pod-1", "haproxy", "uid-1", "runtime-1", "checksum-abc", true, nil)
 		require.NotNil(t, event)
 		assert.True(t, event.IsDriftCheck)
 		assert.Nil(t, event.SyncMetadata)
@@ -800,10 +809,10 @@ func TestTimestampNotZero(t *testing.T) {
 		{"DriftPreventionTriggered", NewDriftPreventionTriggeredEvent(0)},
 		// Discovery events
 		{"HAProxyPodsDiscovered", NewHAProxyPodsDiscoveredEvent(nil, 0)},
-		{"HAProxyPodTerminated", NewHAProxyPodTerminatedEvent("name", "ns")},
+		{"HAProxyPodTerminated", NewHAProxyPodTerminatedEvent("name", "ns", "uid")},
 		// Publishing events
 		{"ConfigPublished", NewConfigPublishedEvent("n", "ns", 0, 0)},
-		{"ConfigAppliedToPod", NewConfigAppliedToPodEvent("n", "ns", "pod", "ns", "checksum", false, nil)},
+		{"ConfigAppliedToPod", NewConfigAppliedToPodEvent("n", "ns", "pod", "ns", "uid", "runtime", "checksum", false, nil)},
 		{"StatusUpdateCompleted", NewStatusUpdateCompletedEvent(StatusPatchPhaseDeployed, 3, 1, 50)},
 		{"StatusUpdateFailed", NewStatusUpdateFailedEvent("ns", "name", "networking.k8s.io/v1/ingresses", "error", true)},
 	}

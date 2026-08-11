@@ -532,12 +532,17 @@ THEN DispatchWithCapability SHALL return an error indicating the feature require
 
 ### Requirement: Enterprise Edition Auto-Detection
 
-The orchestrator SHALL automatically select the Enterprise Edition parser when connected to HAProxy Enterprise and the Community Edition parser otherwise. The enterprise detection SHALL be based on the client's IsEnterprise() method.
+The orchestrator SHALL automatically select the Enterprise Edition parser when connected to HAProxy Enterprise and the Community Edition parser otherwise. The enterprise detection SHALL be based on the client's IsEnterprise() method. A client constructed from a cached detected-version string SHALL retain the edition encoded in that string.
 
 #### Scenario: Enterprise parser selected for EE
 
 WHEN the Dataplane API reports an Enterprise edition connection
 THEN the orchestrator SHALL use the Enterprise parser for configuration parsing.
+
+#### Scenario: Cached Enterprise version retains edition
+
+WHEN discovery supplies a cached Dataplane API version containing an Enterprise edition marker
+THEN the client SHALL retain Enterprise capabilities without another version probe.
 
 #### Scenario: Community parser selected for CE
 

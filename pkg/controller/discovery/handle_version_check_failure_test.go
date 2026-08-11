@@ -55,7 +55,9 @@ func newTestComponentWithoutHAProxy(t *testing.T) *Component {
 	t.Helper()
 	bus, logger := testutil.NewTestBusAndLogger()
 	c := &Component{
-		pendingRetries: make(map[string]*retryState),
+		admissionProofs:   make(map[endpointIdentity]versionAdmissionProof),
+		versionRejections: make(map[endpointIdentity]string),
+		pendingRetries:    make(map[endpointIdentity]*retryState),
 	}
 	c.Base = component.New(&component.Config{
 		EventBus:   bus,
@@ -67,13 +69,18 @@ func newTestComponentWithoutHAProxy(t *testing.T) *Component {
 	return c
 }
 
+func testEndpointIdentity(podName string) endpointIdentity {
+	return endpointIdentity{podNamespace: "default", podName: podName, podUID: podName + "-uid", url: "http://127.0.0.1:5555/v3"}
+}
+
 func TestHandleVersionCheckFailure_NewPodAddsEntryWithCountOne(t *testing.T) {
 	c := newTestComponentWithoutHAProxy(t)
 	require.Empty(t, c.pendingRetries,
 		"baseline: pendingRetries must start empty for this test to be meaningful")
 
 	before := time.Now()
-	c.handleVersionCheckFailure("new-pod", errors.New("connect: connection refused"))
+	identity := testEndpointIdentity("new-pod")
+	c.handleVersionCheckFailure(&identity, errors.New("connect: connection refused"))
 	after := time.Now()
 
 	require.Len(t, c.pendingRetries, 1,
@@ -82,8 +89,8 @@ func TestHandleVersionCheckFailure_NewPodAddsEntryWithCountOne(t *testing.T) {
 			"pod from retry tracking, so it never gets retried and never reaches "+
 			"the deployment set")
 
-	retry, ok := c.pendingRetries["new-pod"]
-	require.True(t, ok, "the new entry must be keyed by the pod name")
+	retry, ok := c.pendingRetries[identity]
+	require.True(t, ok, "the new entry must be keyed by the endpoint identity")
 	assert.Equal(t, 1, retry.retryCount,
 		"retryCount must be 1 after the first failure — a regression that "+
 			"started at 0 (forgetting to ++) would skew every backoff calculation")
@@ -103,14 +110,15 @@ func TestHandleVersionCheckFailure_ExistingPodIncrementsCount(t *testing.T) {
 	// failure must increment to 3, NOT reset to 1.
 	c := newTestComponentWithoutHAProxy(t)
 	originalAttempt := time.Now().Add(-10 * time.Minute) // stale
-	c.pendingRetries["existing-pod"] = &retryState{
+	identity := testEndpointIdentity("existing-pod")
+	c.pendingRetries[identity] = &retryState{
 		retryCount:  2,
 		lastAttempt: originalAttempt,
 	}
 
-	c.handleVersionCheckFailure("existing-pod", errors.New("timeout"))
+	c.handleVersionCheckFailure(&identity, errors.New("timeout"))
 
-	retry := c.pendingRetries["existing-pod"]
+	retry := c.pendingRetries[identity]
 	assert.Equal(t, 3, retry.retryCount,
 		"existing-pod retryCount MUST INCREMENT from 2 to 3 — "+
 			"a regression that reset the count would lock the exponential-"+
@@ -127,10 +135,11 @@ func TestHandleVersionCheckFailure_MultipleConsecutiveFailuresStackMonotonically
 	// the same new pod. The retryCount must reach 3, not stay at 1
 	// (the bug shape from the previous test) and not skip values.
 	c := newTestComponentWithoutHAProxy(t)
+	identity := testEndpointIdentity("flaky-pod")
 
 	for i := 1; i <= 3; i++ {
-		c.handleVersionCheckFailure("flaky-pod", errors.New("transient"))
-		retry := c.pendingRetries["flaky-pod"]
+		c.handleVersionCheckFailure(&identity, errors.New("transient"))
+		retry := c.pendingRetries[identity]
 		assert.Equal(t, i, retry.retryCount,
 			"after %d failures, retryCount MUST be %d (monotonic increment) — "+
 				"a regression that double-counted, skipped, or reset would break "+
@@ -138,9 +147,9 @@ func TestHandleVersionCheckFailure_MultipleConsecutiveFailuresStackMonotonically
 			i, i)
 	}
 
-	// Single entry across all three failures (NOT three entries).
+	// A retry sequence for one endpoint identity shares one entry.
 	require.Len(t, c.pendingRetries, 1,
-		"multiple failures for the same pod MUST share one entry — "+
+		"multiple failures for the same endpoint identity MUST share one entry — "+
 			"a regression that created a new entry per failure would leak "+
 			"map memory unboundedly during a flaky-pod outage")
 }
@@ -151,17 +160,19 @@ func TestHandleVersionCheckFailure_DistinctPodsGetSeparateEntries(t *testing.T) 
 	// (e.g. used a constant string) would let one pod's failures
 	// silently increment another pod's backoff.
 	c := newTestComponentWithoutHAProxy(t)
-	c.handleVersionCheckFailure("pod-a", errors.New("err-a"))
-	c.handleVersionCheckFailure("pod-b", errors.New("err-b"))
-	c.handleVersionCheckFailure("pod-a", errors.New("err-a-again"))
+	podA := testEndpointIdentity("pod-a")
+	podB := testEndpointIdentity("pod-b")
+	c.handleVersionCheckFailure(&podA, errors.New("err-a"))
+	c.handleVersionCheckFailure(&podB, errors.New("err-b"))
+	c.handleVersionCheckFailure(&podA, errors.New("err-a-again"))
 
 	require.Len(t, c.pendingRetries, 2,
 		"distinct pods MUST produce distinct entries — pinning this catches "+
 			"a regression that miskeyed the map and silently merged unrelated "+
 			"pods' retry state")
-	assert.Equal(t, 2, c.pendingRetries["pod-a"].retryCount,
+	assert.Equal(t, 2, c.pendingRetries[podA].retryCount,
 		"pod-a saw two failures so its retryCount must be 2")
-	assert.Equal(t, 1, c.pendingRetries["pod-b"].retryCount,
+	assert.Equal(t, 1, c.pendingRetries[podB].retryCount,
 		"pod-b saw one failure so its retryCount must be 1 — independent "+
 			"of pod-a's count")
 }

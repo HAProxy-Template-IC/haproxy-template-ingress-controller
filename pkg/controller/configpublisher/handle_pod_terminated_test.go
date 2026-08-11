@@ -55,7 +55,7 @@ func TestHandlePodTerminated_SkipsWhenNoTemplateConfig(t *testing.T) {
 	require.False(t, c.hasTemplateConfig,
 		"baseline: hasTemplateConfig must start false")
 
-	evt := events.NewHAProxyPodTerminatedEvent("haproxy-pod-1", "haptic")
+	evt := events.NewHAProxyPodTerminatedEvent("haproxy-pod-1", "haptic", "")
 
 	require.NotPanics(t, func() { c.handlePodTerminated(t.Context(), evt) },
 		"handlePodTerminated MUST NOT touch the publisher when no "+
@@ -76,7 +76,7 @@ func TestHandlePodTerminated_SkipsWhenNamespaceIsEmpty(t *testing.T) {
 	}
 	c.hasTemplateConfig = true
 
-	evt := events.NewHAProxyPodTerminatedEvent("haproxy-pod-1", "haptic")
+	evt := events.NewHAProxyPodTerminatedEvent("haproxy-pod-1", "haptic", "")
 
 	require.NotPanics(t, func() { c.handlePodTerminated(t.Context(), evt) },
 		"empty templateConfig.Namespace MUST early-return — the namespace "+

@@ -15,11 +15,16 @@
 package deployer
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -42,6 +47,16 @@ const (
 	// Named with "Scheduler" prefix to avoid conflict with EventBufferSize in this package.
 	SchedulerEventBufferSize = busevents.StandardSubscriberBuffer
 )
+
+var podSetHashKey = newPodSetHashKey()
+
+func newPodSetHashKey() [sha256.Size]byte {
+	var key [sha256.Size]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		panic(fmt.Errorf("creating endpoint-authority hash key: %w", err))
+	}
+	return key
+}
 
 // schedulerState groups the deployment scheduling state into a single struct.
 // All fields are protected by DeploymentScheduler.schedulerMutex.
@@ -194,6 +209,9 @@ type DeploymentScheduler struct {
 	// under schedulerMutex. Protected by schedulerMutex.
 	lastDispatchedParsed *parser.StructuredConfig
 	lastDispatchedConfig string
+	// lastDispatchedPodSetHash binds the diff baseline to the endpoint
+	// authorities it was dispatched against.
+	lastDispatchedPodSetHash string
 
 	// lastActivatedConfig is the raw config last proven to be RUNNING on the
 	// fleet — a structural deploy that completed with zero failures, or a
@@ -212,7 +230,7 @@ type DeploymentScheduler struct {
 
 	// Cache for deployment optimization - skip if config unchanged
 	lastDeployedConfigHash string    // SHA-256 hash of last successfully deployed config
-	lastDeployedPodSetHash string    // Hash of pod endpoints for the last deployment
+	lastDeployedPodSetHash string    // Hash of endpoint authorities for the last deployment
 	lastDeployedTime       time.Time // When the last successful deployment occurred
 
 	// Health check: stall detection for event-driven component
@@ -237,22 +255,50 @@ type DeploymentScheduler struct {
 	loopDone      chan struct{}
 }
 
-// computePodSetHash computes a hash of the current pod endpoints.
-// Used to detect if pod set changed (new/removed HAProxy pods).
+// computePodSetHash computes an order-independent hash of endpoint authorities.
 func computePodSetHash(endpoints []dataplane.Endpoint) string {
-	h := sha256.New()
-
-	// Extract and sort URLs for deterministic hashing
-	urls := make([]string, 0, len(endpoints))
-	for _, ep := range endpoints {
-		urls = append(urls, ep.URL)
+	digests := make([][sha256.Size]byte, 0, len(endpoints))
+	for i := range endpoints {
+		digests = append(digests, hashEndpointAuthority(&endpoints[i]))
 	}
-	slices.Sort(urls)
+	slices.SortFunc(digests, func(left, right [sha256.Size]byte) int {
+		return bytes.Compare(left[:], right[:])
+	})
 
-	for _, url := range urls {
-		h.Write([]byte(url))
+	h := sha256.New()
+	for i := range digests {
+		_, _ = h.Write(digests[i][:])
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func hashEndpointAuthority(endpoint *dataplane.Endpoint) [sha256.Size]byte {
+	return hashEndpointAuthorityWithKey(endpoint, podSetHashKey[:])
+}
+
+func hashEndpointAuthorityWithKey(endpoint *dataplane.Endpoint, key []byte) [sha256.Size]byte {
+	authority := endpointAuthorityOf(endpoint)
+	values := []string{
+		authority.url,
+		authority.username,
+		authority.password,
+		authority.podName,
+		authority.podNamespace,
+		authority.podUID,
+		authority.podRuntimeID,
+		strconv.Itoa(authority.detectedMajorVersion),
+		strconv.Itoa(authority.detectedMinorVersion),
+		authority.detectedFullVersion,
+	}
+	// Keying prevents the logged hash prefix from becoming a password verifier.
+	h := hmac.New(sha256.New, key)
+	var length [8]byte
+	for _, value := range values {
+		binary.BigEndian.PutUint64(length[:], uint64(len(value)))
+		_, _ = h.Write(length[:])
+		_, _ = h.Write([]byte(value))
+	}
+	return [sha256.Size]byte(h.Sum(nil))
 }
 
 // NewDeploymentScheduler creates a new DeploymentScheduler component.
@@ -300,6 +346,7 @@ func (s *DeploymentScheduler) Name() string {
 //   - Error only in exceptional circumstances
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	s.ctx = ctx // Save context for scheduling operations
+	s.runtimeBypass.beginLeadershipTerm()
 	s.schedulerMutex.Lock()
 	s.retryStopped = false
 	s.retryGeneration++

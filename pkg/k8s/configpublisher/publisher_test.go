@@ -804,6 +804,63 @@ func TestUpdateDeploymentStatus_FirstDeployFailureRecordsNoChecksum(t *testing.T
 	assert.Equal(t, "connection refused", runtimeConfig.Status.DeployedToPods[0].LastError)
 }
 
+func TestUpdateDeploymentStatus_ReplacementFailureClearsPredecessorProof(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	req := basePublishRequest()
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName: "test-config-haproxycfg", RuntimeConfigNamespace: "default",
+		PodName: "haproxy-0", PodUID: "uid-old", Checksum: "abc123",
+	})
+	require.NoError(t, err)
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName: "test-config-haproxycfg", RuntimeConfigNamespace: "default",
+		PodName: "haproxy-0", PodUID: "uid-new", Checksum: "abc123", Error: "connection refused",
+	})
+	require.NoError(t, err)
+
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+	status := runtimeConfig.Status.DeployedToPods[0]
+	assert.Equal(t, "uid-new", status.PodUID)
+	assert.Empty(t, status.Checksum)
+	assert.Equal(t, "connection refused", status.LastError)
+}
+
+func TestUpdateDeploymentStatus_RuntimeReplacementFailureClearsPredecessorProof(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	req := basePublishRequest()
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName: "test-config-haproxycfg", RuntimeConfigNamespace: "default",
+		PodName: "haproxy-0", PodUID: "uid-same", PodRuntimeID: "runtime-old", Checksum: "abc123",
+	})
+	require.NoError(t, err)
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName: "test-config-haproxycfg", RuntimeConfigNamespace: "default",
+		PodName: "haproxy-0", PodUID: "uid-same", PodRuntimeID: "runtime-new",
+		Checksum: "abc123", Error: "connection refused",
+	})
+	require.NoError(t, err)
+
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+	status := runtimeConfig.Status.DeployedToPods[0]
+	assert.Equal(t, "uid-same", status.PodUID)
+	assert.Equal(t, "runtime-new", status.PodRuntimeID)
+	assert.Empty(t, status.Checksum)
+	assert.Equal(t, "connection refused", status.LastError)
+}
+
 func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
 	ctx, _, crdClient, publisher := newTestPublisher(t)
 
@@ -1122,7 +1179,7 @@ func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
 	}
 
 	// Reconcile with only haproxy-1 as running (namespace-scoped)
-	runningPods := []string{"haproxy-1"}
+	runningPods := []PodIdentity{{PodName: "haproxy-1"}}
 	err = publisher.ReconcileDeployedToPods(ctx, "default", runningPods)
 	require.NoError(t, err)
 
@@ -1134,6 +1191,36 @@ func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
 	assert.Equal(t, "haproxy-1", runtimeConfig.Status.DeployedToPods[0].PodName)
+}
+
+func TestPodCleanupAndReconcileUsePodUID(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	req := basePublishRequest()
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName: "test-config-haproxycfg", RuntimeConfigNamespace: "default",
+		PodName: "haproxy-0", PodUID: "uid-old", Checksum: "abc123",
+	})
+	require.NoError(t, err)
+	err = publisher.ReconcileDeployedToPods(ctx, "default", []PodIdentity{{PodName: "haproxy-0", PodUID: "uid-new"}})
+	require.NoError(t, err)
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, runtimeConfig.Status.DeployedToPods)
+
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName: "test-config-haproxycfg", RuntimeConfigNamespace: "default",
+		PodName: "haproxy-0", PodUID: "uid-new", Checksum: "abc123",
+	})
+	require.NoError(t, err)
+	err = publisher.CleanupPodReferences(ctx, &PodCleanupRequest{PodName: "haproxy-0", PodUID: "uid-old", Namespace: "default"})
+	require.NoError(t, err)
+	runtimeConfig, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+	assert.Equal(t, "uid-new", runtimeConfig.Status.DeployedToPods[0].PodUID)
 }
 
 func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
@@ -1159,7 +1246,7 @@ func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
 	}
 
 	// Reconcile with no running pods (namespace-scoped)
-	runningPods := []string{}
+	runningPods := []PodIdentity{}
 	err = publisher.ReconcileDeployedToPods(ctx, "default", runningPods)
 	require.NoError(t, err)
 
@@ -1195,7 +1282,7 @@ func TestReconcileDeployedToPods_NoStalePods(t *testing.T) {
 	}
 
 	// Reconcile with all pods running (namespace-scoped)
-	runningPods := []string{"haproxy-0", "haproxy-1"}
+	runningPods := []PodIdentity{{PodName: "haproxy-0"}, {PodName: "haproxy-1"}}
 	err = publisher.ReconcileDeployedToPods(ctx, "default", runningPods)
 	require.NoError(t, err)
 
@@ -1218,7 +1305,7 @@ func TestReconcileDeployedToPods_EmptyStatus(t *testing.T) {
 	require.NoError(t, err)
 
 	// Reconcile with some running pods (namespace-scoped)
-	runningPods := []string{"haproxy-0", "haproxy-1"}
+	runningPods := []PodIdentity{{PodName: "haproxy-0"}, {PodName: "haproxy-1"}}
 	err = publisher.ReconcileDeployedToPods(ctx, "default", runningPods)
 	require.NoError(t, err)
 

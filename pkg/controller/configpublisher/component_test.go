@@ -402,6 +402,8 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 		"default",
 		"haproxy-pod-1",
 		"haproxy-ns",
+		"",
+		"",
 		"checksum123",
 		false, // isDriftCheck
 		nil,   // syncMetadata - not testing metadata in this test
@@ -459,6 +461,8 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 		"default",
 		"haproxy-pod-1",
 		"haproxy-ns",
+		"",
+		"",
 		"checksum123",
 		false, // isDriftCheck
 		nil,   // syncMetadata
@@ -474,7 +478,7 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
 
-	env.bus.Publish(events.NewHAProxyPodTerminatedEvent("haproxy-pod-1", "haproxy-ns"))
+	env.bus.Publish(events.NewHAProxyPodTerminatedEvent("haproxy-pod-1", "haproxy-ns", ""))
 
 	time.Sleep(500 * time.Millisecond)
 
@@ -525,6 +529,8 @@ func TestComponent_MultiplePods(t *testing.T) {
 			"default",
 			fmt.Sprintf("haproxy-pod-%d", i),
 			"haproxy-ns",
+			"",
+			"",
 			"checksum123",
 			false, // isDriftCheck
 			nil,   // syncMetadata
@@ -542,7 +548,7 @@ func TestComponent_MultiplePods(t *testing.T) {
 	assert.Len(t, runtimeConfig.Status.DeployedToPods, 3)
 
 	// Remove one pod
-	env.bus.Publish(events.NewHAProxyPodTerminatedEvent("haproxy-pod-2", "haproxy-ns"))
+	env.bus.Publish(events.NewHAProxyPodTerminatedEvent("haproxy-pod-2", "haproxy-ns", ""))
 
 	time.Sleep(500 * time.Millisecond)
 
@@ -793,6 +799,8 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 		"default",
 		"haproxy-pod-sync",
 		"haproxy-ns",
+		"",
+		"",
 		"checksum-sync",
 		false, // isDriftCheck
 		syncMetadata,
@@ -840,6 +848,8 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 		"default",
 		"haproxy-pod-drift",
 		"haproxy-ns",
+		"",
+		"",
 		"checksum-drift",
 		true, // isDriftCheck
 		&events.SyncMetadata{
@@ -903,6 +913,8 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 		"default",
 		"haproxy-pod-error",
 		"haproxy-ns",
+		"",
+		"",
 		"checksum-error",
 		false,
 		syncMetadata,

@@ -33,44 +33,65 @@ type VersionInfo struct {
 	} `json:"api"`
 }
 
+// HAProxyVersionInfo contains the HAProxy binary version reported by the
+// DataPlane API runtime endpoint.
+type HAProxyVersionInfo struct {
+	Info struct {
+		Version string `json:"version"`
+	} `json:"info"`
+}
+
 // DetectVersion queries the /v3/info endpoint to identify the DataPlane API version
 // advertised by the given endpoint. Callers should inspect the result with
 // ParseVersion and IsEnterpriseVersion before deriving Capabilities.
 func DetectVersion(ctx context.Context, endpoint *Endpoint, _ *slog.Logger) (*VersionInfo, error) {
-	// Construct /v3/info URL (strip any version suffix from base URL)
-	baseURL := strings.TrimSuffix(endpoint.URL, "/")
-	baseURL = strings.TrimSuffix(baseURL, "/v2")
-	baseURL = strings.TrimSuffix(baseURL, "/v3")
-	infoURL := baseURL + "/v3/info"
-
-	req, err := http.NewRequestWithContext(ctx, "GET", infoURL, http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	req.SetBasicAuth(endpoint.Username, endpoint.Password)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching version info: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("version endpoint returned status %d", resp.StatusCode)
-	}
-
 	var versionInfo VersionInfo
-	if err := json.NewDecoder(resp.Body).Decode(&versionInfo); err != nil {
-		return nil, fmt.Errorf("decoding version response: %w", err)
+	if err := fetchVersionInfo(ctx, endpoint, "/v3/info", &versionInfo); err != nil {
+		return nil, err
 	}
-
 	if versionInfo.API.Version == "" {
 		return nil, errors.New("version string is empty in response")
 	}
 
 	return &versionInfo, nil
+}
+
+// DetectHAProxyVersion queries the runtime endpoint for the remote HAProxy
+// binary version.
+func DetectHAProxyVersion(ctx context.Context, endpoint *Endpoint, _ *slog.Logger) (*HAProxyVersionInfo, error) {
+	var versionInfo HAProxyVersionInfo
+	if err := fetchVersionInfo(ctx, endpoint, "/v3/services/haproxy/runtime/info", &versionInfo); err != nil {
+		return nil, err
+	}
+	if versionInfo.Info.Version == "" {
+		return nil, errors.New("HAProxy version string is empty in response")
+	}
+
+	return &versionInfo, nil
+}
+
+func fetchVersionInfo(ctx context.Context, endpoint *Endpoint, path string, result any) error {
+	baseURL := strings.TrimSuffix(endpoint.URL, "/")
+	baseURL = strings.TrimSuffix(baseURL, "/v2")
+	baseURL = strings.TrimSuffix(baseURL, "/v3")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, http.NoBody)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.SetBasicAuth(endpoint.Username, endpoint.Password)
+
+	resp, err := sharedHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetching version info: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("version endpoint returned status %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		return fmt.Errorf("decoding version response: %w", err)
+	}
+	return nil
 }
 
 // Version represents a DataPlane API / HAProxy version (major.minor.patch).
@@ -134,7 +155,15 @@ func ParseVersion(version string) (*Version, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing major version: %w", err)
 	}
-	minor, err := strconv.Atoi(segments[1])
+	minorSegment := segments[1]
+	if base, revision, found := strings.Cut(minorSegment, "r"); found {
+		revision = strings.SplitN(revision, "-", 2)[0]
+		if _, rerr := strconv.Atoi(revision); rerr != nil {
+			return nil, fmt.Errorf("parsing enterprise revision: %w", rerr)
+		}
+		minorSegment = base
+	}
+	minor, err := strconv.Atoi(minorSegment)
 	if err != nil {
 		return nil, fmt.Errorf("parsing minor version: %w", err)
 	}

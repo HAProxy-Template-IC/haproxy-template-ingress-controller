@@ -16,46 +16,37 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
-// infoServer returns an httptest server whose /v3/info reports the given
-// DataPlane API version string (the shape client.DetectVersion parses).
-// httptest binds to loopback, so no Windows Firewall prompt is triggered.
-func infoServer(t *testing.T, apiVersion string) *httptest.Server {
+func infoServer(t *testing.T, apiVersion, haproxyVersion string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v3/info" {
-			http.NotFound(w, r)
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"api":{"version":"` + apiVersion + `"}}`))
+		switch r.URL.Path {
+		case "/v3/info":
+			_, _ = w.Write([]byte(`{"api":{"version":"` + apiVersion + `"}}`))
+		case "/v3/services/haproxy/runtime/info":
+			_, _ = w.Write([]byte(`{"info":{"version":"` + haproxyVersion + `"}}`))
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	t.Cleanup(srv.Close)
 	return srv
 }
 
-// A controller built against HAProxy 3.4 (localVersion 3.4.x) MUST admit a pod
-// whose DataPlane API reports v3.3: the HAProxy 3.4 image ships DataPlane API
-// v3.3, so the binary version (3.4) and the DataPlane API version (3.3) diverge
-// at the minor level. Discovery gates on the MAJOR version only — a strict
-// major.minor match deadlocked a correctly-paired 3.4 fleet (every pod rejected
-// → no endpoints → nothing ever deployed). Regression guard for the
-// binary/DataPlane-API version decoupling.
+// DataPlane API and HAProxy minor versions are independent compatibility axes.
 func TestFilterByVersion_Admits34BinaryAgainst33DataPlaneAPI(t *testing.T) {
 	c := newTestComponentWithoutHAProxy(t)
-	c.admittedPods = make(map[string]*dataplane.Endpoint)
 	c.localVersion = &dataplane.Version{Major: 3, Minor: 4, Full: "3.4.0-64a335366"}
 
-	srv := infoServer(t, "v3.3.5 8467a253")
-	candidate := dataplane.Endpoint{URL: srv.URL, PodName: "haproxy-0", PodNamespace: "haptic"}
+	srv := infoServer(t, "v3.3.5 8467a253", "3.4.2-1a2b3c4d")
+	candidate := dataplane.Endpoint{URL: srv.URL, Username: "admin", Password: "pw", PodName: "haproxy-0", PodNamespace: "haptic"}
 
 	admitted, rejections := c.filterByVersion(
 		t.Context(),
 		[]dataplane.Endpoint{candidate},
-		coreconfig.Credentials{DataplaneUsername: "admin", DataplanePassword: "pw"},
 	)
 
 	require.Empty(t, rejections, "a v3.3 DataPlane API pod must not be rejected by a 3.4 controller")
@@ -65,23 +56,89 @@ func TestFilterByVersion_Admits34BinaryAgainst33DataPlaneAPI(t *testing.T) {
 		"records the detected DataPlane API minor (3), not the controller binary's (4)")
 }
 
-// A genuinely unsupported MAJOR (v2) is still permanently rejected — the gate
-// loosened to major-only, not removed.
 func TestFilterByVersion_RejectsUnsupportedMajor(t *testing.T) {
 	c := newTestComponentWithoutHAProxy(t)
-	c.admittedPods = make(map[string]*dataplane.Endpoint)
 	c.localVersion = &dataplane.Version{Major: 3, Minor: 4, Full: "3.4.0"}
 
-	srv := infoServer(t, "v2.9.0 deadbeef")
-	candidate := dataplane.Endpoint{URL: srv.URL, PodName: "haproxy-legacy", PodNamespace: "haptic"}
+	srv := infoServer(t, "v2.9.0 deadbeef", "")
+	candidate := dataplane.Endpoint{URL: srv.URL, Username: "admin", Password: "pw", PodName: "haproxy-legacy", PodNamespace: "haptic"}
 
 	admitted, rejections := c.filterByVersion(
 		t.Context(),
 		[]dataplane.Endpoint{candidate},
-		coreconfig.Credentials{DataplaneUsername: "admin", DataplanePassword: "pw"},
 	)
 
 	require.Empty(t, admitted, "a v2 DataPlane API pod is unsupported and must be rejected")
 	require.Len(t, rejections, 1)
 	assert.Equal(t, "version_mismatch_older", rejections[0].reason)
+}
+
+func TestFilterByVersion_DataPlaneAPISupportIsIndependentOfLocalHAProxyMajor(t *testing.T) {
+	t.Run("supported API admits matching future HAProxy series", func(t *testing.T) {
+		c := newTestComponentWithoutHAProxy(t)
+		c.localVersion = &dataplane.Version{Major: 4, Minor: 0, Full: "4.0.0"}
+
+		srv := infoServer(t, "v3.3.5", "4.0.1")
+		candidate := dataplane.Endpoint{
+			URL: srv.URL, Username: "admin", Password: "pw",
+			PodName: "haproxy-future", PodNamespace: "haptic", PodUID: "uid-1",
+		}
+
+		admitted, rejections := c.filterByVersion(t.Context(), []dataplane.Endpoint{candidate})
+
+		require.Empty(t, rejections)
+		require.Len(t, admitted, 1)
+		assert.Equal(t, 3, admitted[0].DetectedMajorVersion)
+	})
+
+	t.Run("unsupported API is rejected even when it matches HAProxy major", func(t *testing.T) {
+		c := newTestComponentWithoutHAProxy(t)
+		c.localVersion = &dataplane.Version{Major: 4, Minor: 0, Full: "4.0.0"}
+
+		srv := infoServer(t, "v4.0.1", "")
+		candidate := dataplane.Endpoint{
+			URL: srv.URL, Username: "admin", Password: "pw",
+			PodName: "unsupported-api", PodNamespace: "haptic", PodUID: "uid-1",
+		}
+
+		admitted, rejections := c.filterByVersion(t.Context(), []dataplane.Endpoint{candidate})
+
+		require.Empty(t, admitted)
+		require.Len(t, rejections, 1)
+		assert.Equal(t, "version_mismatch_newer", rejections[0].reason)
+	})
+}
+
+func TestFilterByVersion_RejectsMismatchedHAProxySeries(t *testing.T) {
+	c := newTestComponentWithoutHAProxy(t)
+	c.localVersion = &dataplane.Version{Major: 3, Minor: 4, Full: "3.4.0"}
+
+	srv := infoServer(t, "v3.3.5 8467a253", "3.2.10")
+	candidate := dataplane.Endpoint{
+		URL: srv.URL, Username: "admin", Password: "pw",
+		PodName: "haproxy-legacy", PodNamespace: "haptic", PodUID: "uid-1",
+	}
+
+	admitted, rejections := c.filterByVersion(t.Context(), []dataplane.Endpoint{candidate})
+
+	require.Empty(t, admitted)
+	require.Len(t, rejections, 1)
+	assert.Equal(t, "version_mismatch_older", rejections[0].reason)
+}
+
+func TestFilterByVersion_AdmitsEnterpriseRuntimeRevision(t *testing.T) {
+	c := newTestComponentWithoutHAProxy(t)
+	c.localVersion = &dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"}
+
+	srv := infoServer(t, "v3.2.15-ee1", "3.2r1")
+	candidate := dataplane.Endpoint{
+		URL: srv.URL, Username: "admin", Password: "pw",
+		PodName: "haproxy-enterprise", PodNamespace: "haptic", PodUID: "uid-1",
+	}
+
+	admitted, rejections := c.filterByVersion(t.Context(), []dataplane.Endpoint{candidate})
+
+	require.Empty(t, rejections)
+	require.Len(t, admitted, 1)
+	assert.Equal(t, "v3.2.15-ee1", admitted[0].DetectedFullVersion)
 }

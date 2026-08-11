@@ -262,6 +262,11 @@ spec:
 
                   Pods are automatically added when configuration is applied and removed when
                   the pod terminates.
+
+                  The list is keyed by podName so each pod's status update can land via
+                  Server-Side Apply with its own field manager — concurrent updates from
+                  different pods merge naturally instead of last-write-wins on the
+                  full-object UpdateStatus path that preceded this CRD shape.
                 items:
                   description: PodDeploymentStatus tracks deployment to a specific
                     pod.
@@ -289,10 +294,21 @@ spec:
                       description: PodName is the name of the HAProxy pod.
                       minLength: 1
                       type: string
+                    podRuntimeID:
+                      description: PodRuntimeID binds the deployment proof to the
+                        pod's container execution epoch.
+                      type: string
+                    podUID:
+                      description: PodUID binds the deployment proof to the Kubernetes
+                        pod incarnation.
+                      type: string
                   required:
                   - podName
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - podName
+                x-kubernetes-list-type: map
               observedGeneration:
                 description: |-
                   ObservedGeneration reflects the generation of the spec that was most recently processed.

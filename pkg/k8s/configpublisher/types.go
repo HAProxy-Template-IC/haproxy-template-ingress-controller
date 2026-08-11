@@ -123,6 +123,12 @@ type DeploymentStatusUpdate struct {
 	// PodName is the name of the HAProxy pod that received the configuration.
 	PodName string
 
+	// PodUID identifies the HAProxy pod incarnation that received the configuration.
+	PodUID string
+
+	// PodRuntimeID identifies the container execution epoch that received the configuration.
+	PodRuntimeID string
+
 	// Checksum is the checksum of the configuration deployed to the pod.
 	Checksum string
 
@@ -136,7 +142,20 @@ type PodCleanupRequest struct {
 	// PodName is the name of the terminated pod.
 	PodName string
 
+	// PodUID identifies the terminated pod incarnation.
+	PodUID string
+
 	// Namespace is the namespace where HAProxyCfg resources should be looked up.
 	// This ensures namespace-scoped cleanup operations.
 	Namespace string
+}
+
+// PodIdentity identifies a currently authoritative HAProxy pod incarnation.
+type PodIdentity struct {
+	// PodName is the stable Kubernetes pod name.
+	PodName string
+	// PodUID identifies the current incarnation of PodName.
+	PodUID string
+	// PodRuntimeID identifies the current container execution epoch of PodName.
+	PodRuntimeID string
 }

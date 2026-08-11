@@ -60,6 +60,7 @@ func NewDeployStack(
 	// The bypass writes to the same pods the deployer syncs, so both must share
 	// one view of what each pod is proven to be running.
 	scheduler.runtimeBypass.recordActivation = deployer.RecordActivation
+	scheduler.runtimeBypass.retainAuthorities = deployer.RetainEndpointAuthorities
 	scheduler.runtimeBypass.recordFastPath = domainMetrics.RecordRuntimeFastPath
 
 	return &DeployStack{

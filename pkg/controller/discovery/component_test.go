@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
@@ -680,6 +681,7 @@ func addPodToStoreWithPort(t *testing.T, podStore types.Store, name, namespace, 
 	pod.SetKind("Pod")
 	pod.SetName(name)
 	pod.SetNamespace(namespace)
+	pod.SetUID(k8stypes.UID(name + "-uid"))
 
 	// Set spec.containers with dataplane port
 	containers := []any{
@@ -742,19 +744,23 @@ func TestComponent_CleanupRemovedPods(t *testing.T) {
 	require.NoError(t, err)
 	bus.Start()
 
-	// Pre-populate with admitted pods
+	pod1 := testEndpointIdentity("pod-1")
+	pod2 := testEndpointIdentity("pod-2")
+	pod3 := testEndpointIdentity("pod-3")
+	pod4 := testEndpointIdentity("pod-4")
 	component.mu.Lock()
-	component.admittedPods["pod-1"] = &dataplane.Endpoint{PodName: "pod-1"}
-	component.admittedPods["pod-2"] = &dataplane.Endpoint{PodName: "pod-2"}
-	component.admittedPods["pod-3"] = &dataplane.Endpoint{PodName: "pod-3"}
-	component.pendingRetries["pod-2"] = &retryState{retryCount: 1, lastAttempt: time.Now()}
-	component.pendingRetries["pod-4"] = &retryState{retryCount: 1, lastAttempt: time.Now()}
+	component.admissionProofs[pod1] = versionAdmissionProof{dataPlaneAPI: dataplane.Version{Major: 3}}
+	component.admissionProofs[pod2] = versionAdmissionProof{dataPlaneAPI: dataplane.Version{Major: 3}}
+	component.admissionProofs[pod3] = versionAdmissionProof{dataPlaneAPI: dataplane.Version{Major: 3}}
+	component.versionRejections[pod4] = "version_mismatch_newer"
+	component.pendingRetries[pod2] = &retryState{retryCount: 1, lastAttempt: time.Now()}
+	component.pendingRetries[pod4] = &retryState{retryCount: 1, lastAttempt: time.Now()}
 	component.mu.Unlock()
 
 	// Current candidates only have pod-1 and pod-3
-	currentCandidates := map[string]string{
-		"pod-1": "10.0.0.1",
-		"pod-3": "10.0.0.3",
+	currentCandidates := map[endpointIdentity]struct{}{
+		pod1: {},
+		pod3: {},
 	}
 
 	// Call cleanup
@@ -764,22 +770,42 @@ func TestComponent_CleanupRemovedPods(t *testing.T) {
 	component.mu.Lock()
 	defer component.mu.Unlock()
 
-	// pod-2 should be removed from admittedPods
-	_, exists := component.admittedPods["pod-2"]
-	assert.False(t, exists, "pod-2 should be removed from admittedPods")
+	// pod-2 should be removed from admissionProofs
+	_, exists := component.admissionProofs[pod2]
+	assert.False(t, exists, "pod-2 should be removed from admissionProofs")
 
 	// pod-2 and pod-4 should be removed from pendingRetries
-	_, exists = component.pendingRetries["pod-2"]
+	_, exists = component.pendingRetries[pod2]
 	assert.False(t, exists, "pod-2 should be removed from pendingRetries")
-	_, exists = component.pendingRetries["pod-4"]
+	_, exists = component.pendingRetries[pod4]
 	assert.False(t, exists, "pod-4 should be removed from pendingRetries")
+	_, exists = component.versionRejections[pod4]
+	assert.False(t, exists, "pod-4 should be removed from versionRejections")
 
 	// pod-1 and pod-3 should remain
-	assert.Len(t, component.admittedPods, 2)
-	_, exists = component.admittedPods["pod-1"]
-	assert.True(t, exists, "pod-1 should remain in admittedPods")
-	_, exists = component.admittedPods["pod-3"]
-	assert.True(t, exists, "pod-3 should remain in admittedPods")
+	assert.Len(t, component.admissionProofs, 2)
+	_, exists = component.admissionProofs[pod1]
+	assert.True(t, exists, "pod-1 should remain in admissionProofs")
+	_, exists = component.admissionProofs[pod3]
+	assert.True(t, exists, "pod-3 should remain in admissionProofs")
+}
+
+func TestComponent_CleanupRemovedPods_EvictsReplacedIdentity(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	component, err := New(t.Context(), bus, logger)
+	require.NoError(t, err)
+	oldIdentity := testEndpointIdentity("pod-1")
+	replacement := oldIdentity
+	replacement.podUID = "replacement-uid"
+
+	component.admissionProofs[oldIdentity] = versionAdmissionProof{dataPlaneAPI: dataplane.Version{Major: 3}}
+	component.versionRejections[oldIdentity] = "version_mismatch_older"
+	component.pendingRetries[oldIdentity] = &retryState{retryCount: 1, lastAttempt: time.Now()}
+	component.cleanupRemovedPods(map[endpointIdentity]struct{}{replacement: {}})
+
+	assert.NotContains(t, component.admissionProofs, oldIdentity)
+	assert.NotContains(t, component.versionRejections, oldIdentity)
+	assert.NotContains(t, component.pendingRetries, oldIdentity)
 }
 
 func TestComponent_HandleRetryTimer_NoPendingPods(t *testing.T) {
@@ -802,7 +828,7 @@ func TestComponent_HandleRetryTimer_NoPendingPods(t *testing.T) {
 
 	// Ensure no pending retries
 	component.mu.Lock()
-	component.pendingRetries = make(map[string]*retryState)
+	component.pendingRetries = make(map[endpointIdentity]*retryState)
 	component.mu.Unlock()
 
 	// Call handleRetryTimer - should return early
@@ -833,7 +859,7 @@ func TestComponent_HandleRetryTimer_MissingRequirements(t *testing.T) {
 
 	// Add pending retries but don't set credentials/port
 	component.mu.Lock()
-	component.pendingRetries["pod-1"] = &retryState{retryCount: 1, lastAttempt: time.Now()}
+	component.pendingRetries[testEndpointIdentity("pod-1")] = &retryState{retryCount: 1, lastAttempt: time.Now()}
 	component.hasCredentials = false
 	component.hasDataplanePort = false
 	component.podStore = nil
@@ -855,7 +881,7 @@ func TestComponent_ScheduleRetryTimerLocked_NoPendingRetries(t *testing.T) {
 
 	// Ensure no pending retries
 	component.mu.Lock()
-	component.pendingRetries = make(map[string]*retryState)
+	component.pendingRetries = make(map[endpointIdentity]*retryState)
 
 	// Call scheduleRetryTimerLocked - should return early without scheduling
 	component.scheduleRetryTimerLocked()
@@ -876,7 +902,7 @@ func TestComponent_ScheduleRetryTimerLocked_WithPendingRetries(t *testing.T) {
 
 	// Add pending retries
 	component.mu.Lock()
-	component.pendingRetries["pod-1"] = &retryState{
+	component.pendingRetries[testEndpointIdentity("pod-1")] = &retryState{
 		retryCount:  1,
 		lastAttempt: time.Now(),
 	}

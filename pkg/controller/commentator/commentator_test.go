@@ -730,7 +730,7 @@ func TestEventCommentator_GenerateInsight_HAProxyPodEvents(t *testing.T) {
 	})
 
 	t.Run("HAProxyPodTerminatedEvent", func(t *testing.T) {
-		event := events.NewHAProxyPodTerminatedEvent("haproxy-123", "haproxy-system")
+		event := events.NewHAProxyPodTerminatedEvent("haproxy-123", "haproxy-system", "")
 
 		insight, attrs := ec.generateInsight(event)
 

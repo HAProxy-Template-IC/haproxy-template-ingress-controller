@@ -69,10 +69,10 @@ func (p *Publisher) CleanupPodReferences(ctx context.Context, cleanup *PodCleanu
 // should only manage CRDs in its own namespace.
 //
 // Uses retry-on-conflict to handle concurrent updates.
-func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, namespace string, runningPodNames []string) error {
-	runningSet := make(map[string]struct{}, len(runningPodNames))
-	for _, name := range runningPodNames {
-		runningSet[name] = struct{}{}
+func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, namespace string, runningPods []PodIdentity) error {
+	runningSet := make(map[string]PodIdentity, len(runningPods))
+	for _, pod := range runningPods {
+		runningSet[pod.PodName] = pod
 	}
 
 	// List HAProxyCfgs in the specified namespace only (namespace-scoped).
@@ -116,7 +116,7 @@ func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, namespace strin
 func (p *Publisher) reconcileSingleRuntimeConfigStatus(
 	ctx context.Context,
 	listedCfg *haproxyv1alpha1.HAProxyCfg,
-	runningSet map[string]struct{},
+	runningSet map[string]PodIdentity,
 	auxFilesOut **haproxyv1alpha1.AuxiliaryFileReferences,
 ) error {
 	// Fetch fresh copy of the resource
@@ -161,18 +161,24 @@ func (p *Publisher) reconcileSingleRuntimeConfigStatus(
 // Returns the list of stale pod names and the filtered list of running pods.
 func (p *Publisher) filterStalePods(
 	deployedToPods []haproxyv1alpha1.PodDeploymentStatus,
-	runningSet map[string]struct{},
+	runningSet map[string]PodIdentity,
 ) (stalePods []string, runningPods []haproxyv1alpha1.PodDeploymentStatus) {
 	runningPods = make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(deployedToPods))
 	for i := range deployedToPods {
 		pod := &deployedToPods[i]
-		if _, exists := runningSet[pod.PodName]; !exists {
+		identity, exists := runningSet[pod.PodName]
+		if !exists || !podStatusMatchesIdentity(pod, &identity) {
 			stalePods = append(stalePods, pod.PodName)
 		} else {
 			runningPods = append(runningPods, *pod)
 		}
 	}
 	return stalePods, runningPods
+}
+
+func podStatusMatchesIdentity(status *haproxyv1alpha1.PodDeploymentStatus, identity *PodIdentity) bool {
+	uidMatches := identity.PodUID == "" || status.PodUID == identity.PodUID
+	return uidMatches && status.PodRuntimeID == identity.PodRuntimeID
 }
 
 // cleanupRuntimeConfigPodReference removes pod reference from a single HAProxyCfg.
@@ -193,7 +199,7 @@ func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtim
 			return fmt.Errorf("getting runtime config: %w", err)
 		}
 
-		newDeployedToPods, removed := removePodFromStatus(current.Status.DeployedToPods, cleanup.PodName)
+		newDeployedToPods, removed := removePodAuthorityFromStatus(current.Status.DeployedToPods, cleanup.PodName, cleanup.PodUID)
 		if !removed {
 			return nil // Pod not in this runtime config
 		}
@@ -296,7 +302,7 @@ func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFi
 		for _, ref := range group.refs {
 			err := mutateAuxFilePodStatus(
 				func() (*auxFileHandle, error) { return group.handle(ctx, ref.Namespace, ref.Name) },
-				removePodMutation(cleanup.PodName),
+				removePodMutation(cleanup.PodName, cleanup.PodUID),
 			)
 			if err != nil {
 				p.logger.Warn("Failed to cleanup "+group.label+" pod reference",
@@ -312,7 +318,7 @@ func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFi
 // reconcileAuxiliaryFilePods removes stale pod entries from all auxiliary files.
 // Unlike cleanupAuxiliaryFilePodReferences which handles one pod at a time,
 // this processes all pods in a single pass per file to minimize API calls.
-func (p *Publisher) reconcileAuxiliaryFilePods(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, runningSet map[string]struct{}) {
+func (p *Publisher) reconcileAuxiliaryFilePods(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, runningSet map[string]PodIdentity) {
 	for _, group := range p.auxFileGroupsFor(auxFiles) {
 		for _, ref := range group.refs {
 			err := mutateAuxFilePodStatus(

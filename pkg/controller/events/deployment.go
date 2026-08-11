@@ -139,6 +139,10 @@ type DeploymentCompletedEvent struct {
 	// Empty string for the zero-endpoint code path (nothing was deployed).
 	ContentChecksum string
 
+	// PodSetHash identifies the endpoint authorities THIS deployment targeted.
+	// It is captured from DeploymentScheduledEvent.Endpoints before execution.
+	PodSetHash string
+
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
 }
@@ -176,6 +180,10 @@ type DeploymentResult struct {
 	// See DeploymentCompletedEvent.ContentChecksum for the full rationale.
 	// Empty when no deployment occurred (zero-endpoint path).
 	ContentChecksum string
+
+	// PodSetHash identifies the endpoint authorities THIS deployment targeted.
+	// Empty when no deployment occurred (zero-endpoint path).
+	PodSetHash string
 }
 
 // NewDeploymentCompletedEvent creates a new DeploymentCompletedEvent.
@@ -220,6 +228,7 @@ func NewDeploymentCompletedEvent(result *DeploymentResult, opts ...CorrelationOp
 		BackendDiffFields:  result.BackendDiffFields,
 		StatusPatches:      slices.Clone(result.StatusPatches),
 		ContentChecksum:    result.ContentChecksum,
+		PodSetHash:         result.PodSetHash,
 		timestamped:        newTimestamped(),
 		Correlation:        newCorrelation(opts...),
 	}

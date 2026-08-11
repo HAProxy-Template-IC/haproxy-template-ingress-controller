@@ -57,16 +57,8 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 	}
 	// Note: flag will be cleared by deployToEndpoints after deployment completes
 
-	// Create cancellable context for this deployment
-	deployCtx, cancel := context.WithCancel(ctx)
-
-	// Store cancel function so it can be called on timeout
-	c.cancelMu.Lock()
-	c.activeDeploymentID = deploymentID
-	c.activeCorrelationID = correlationID
-	c.activeCancelFunc = cancel
-	c.deploymentDone = make(chan struct{})
-	c.cancelMu.Unlock()
+	deployCtx, cancel := c.beginDeployment(ctx, deploymentID, correlationID)
+	defer cancel()
 
 	// Ensure we clean up cancel state when deployment completes
 	defer func() {
@@ -147,6 +139,7 @@ func (c *Component) deployToEndpoints(
 	// the two could never match and there was no clean "everyone at current"
 	// signal.
 	checksum := contentChecksum
+	podSetHash := computePodSetHash(endpoints)
 
 	c.Logger().Debug("Starting deployment",
 		"reason", reason,
@@ -209,6 +202,7 @@ func (c *Component) deployToEndpoints(
 			TotalAPIOperations: int(state.totalOperations),
 			StatusPatches:      statusPatches,
 			ContentChecksum:    contentChecksum,
+			PodSetHash:         podSetHash,
 			OperationBreakdown: state.operationBreakdown,
 			BackendDiffFields:  state.backendDiffFields,
 		},
@@ -330,6 +324,8 @@ func (c *Component) handleEndpointFailure(
 			runtimeConfigNamespace,
 			ep.PodName,
 			ep.PodNamespace,
+			ep.PodUID,
+			ep.PodRuntimeID,
 			checksum,
 			isDriftCheck,
 			syncMetadata,
@@ -402,6 +398,8 @@ func (c *Component) handleEndpointSuccess(
 			runtimeConfigNamespace,
 			ep.PodName,
 			ep.PodNamespace,
+			ep.PodUID,
+			ep.PodRuntimeID,
 			checksum,
 			isDriftCheck,
 			syncMetadata,
@@ -466,7 +464,7 @@ func (c *Component) deployToSingleEndpoint(
 	}
 
 	// Populate cached current config from version cache (if available)
-	cachedVersion, cachedConfig, cachedChecksum := c.versionCache.get(endpoint.URL)
+	cachedVersion, cachedConfig, cachedChecksum := c.versionCache.get(endpoint)
 	if cachedConfig != nil {
 		opts.CachedCurrentConfig = cachedConfig
 		opts.CachedConfigVersion = cachedVersion
@@ -484,7 +482,7 @@ func (c *Component) deployToSingleEndpoint(
 	// this is passed on EVERY sync including drift prevention: it does not skip
 	// work, it decides whether an empty diff may be trusted at all, and drift
 	// prevention is exactly when a stale answer is most costly.
-	opts.LastActivatedConfigChecksum = c.versionCache.activated(endpoint.URL)
+	opts.LastActivatedConfigChecksum = c.versionCache.activated(endpoint)
 
 	// Sync configuration
 	result, err := client.Sync(ctx, config, auxFiles, opts)
@@ -494,14 +492,14 @@ func (c *Component) deployToSingleEndpoint(
 		// right call: a push that errored may still have written its body to
 		// disk (a skip_version push does so even when its runtime actions
 		// fail), so nothing about this pod's running state is provable now.
-		c.versionCache.invalidate(endpoint.URL)
+		c.versionCache.invalidate(endpoint)
 		return nil, fmt.Errorf("sync failed: %w", err)
 	}
 
 	// Record what this sync proved, or clear the proof when it proved nothing.
 	// Both directions matter: without the record every sync would force a
 	// reload; without the clear a parked config would keep short-circuiting.
-	c.versionCache.setActivated(endpoint.URL, result.ActivatedConfigChecksum)
+	c.versionCache.setActivated(endpoint, result.ActivatedConfigChecksum)
 
 	// Update version cache with post-sync state (including content checksum).
 	// Prefer result.PostSyncParsedConfig (the pod's ACTUAL post-sync state,
@@ -520,7 +518,7 @@ func (c *Component) deployToSingleEndpoint(
 		cachedParsed = parsedConfig
 	}
 	if result.PostSyncVersion > 0 && cachedParsed != nil {
-		c.versionCache.set(endpoint.URL, result.PostSyncVersion, cachedParsed, contentChecksum)
+		c.versionCache.set(endpoint, result.PostSyncVersion, cachedParsed, contentChecksum)
 	}
 
 	c.Logger().Debug("Sync completed for endpoint",

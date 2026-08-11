@@ -45,20 +45,37 @@ func (c *Component) runCancellationLoop(ctx context.Context, done chan<- struct{
 	}
 }
 
+func (c *Component) beginDeployment(ctx context.Context, deploymentID, correlationID string) (context.Context, context.CancelFunc) {
+	deployCtx, cancel := context.WithCancel(ctx)
+	c.cancelMu.Lock()
+	c.activeDeploymentID = deploymentID
+	c.activeCorrelationID = correlationID
+	c.activeCancelFunc = cancel
+	c.deploymentDone = make(chan struct{})
+	if c.pendingCancellation == deploymentID {
+		cancel()
+	}
+	c.pendingCancellation = ""
+	c.cancelMu.Unlock()
+	return deployCtx, cancel
+}
+
 // handleDeploymentCancelRequest cancels the exact in-progress deployment.
 func (c *Component) handleDeploymentCancelRequest(event *events.DeploymentCancelRequestEvent) {
 	c.cancelMu.Lock()
 	defer c.cancelMu.Unlock()
 
 	if c.activeDeploymentID == "" || c.activeCancelFunc == nil {
-		c.Logger().Debug("Received cancel request but no deployment in progress",
+		c.pendingCancellation = event.DeploymentID
+		c.Logger().Debug("Queued cancel request for a deployment that has not started",
 			"requested_deployment_id", event.DeploymentID,
 			"reason", event.Reason)
 		return
 	}
 
 	if c.activeDeploymentID != event.DeploymentID {
-		c.Logger().Debug("Received cancel request for a different deployment",
+		c.pendingCancellation = event.DeploymentID
+		c.Logger().Debug("Queued cancel request for the next deployment",
 			"requested_deployment_id", event.DeploymentID,
 			"active_deployment_id", c.activeDeploymentID,
 			"reason", event.Reason)

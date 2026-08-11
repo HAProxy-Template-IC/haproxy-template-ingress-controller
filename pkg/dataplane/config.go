@@ -29,7 +29,13 @@ type Endpoint struct {
 	// PodNamespace is the Kubernetes pod namespace (for observability)
 	PodNamespace string
 
-	// Version info (cached after discovery admission, avoids redundant /v3/info calls)
+	// PodUID distinguishes replacements that reuse the same namespace and name.
+	PodUID string
+
+	// PodRuntimeID distinguishes container restarts and image changes within one pod UID.
+	PodRuntimeID string
+
+	// DataPlane API version info cached after discovery admission.
 	// Zero values indicate version not yet detected.
 	DetectedMajorVersion int    // Major version (e.g., 3)
 	DetectedMinorVersion int    // Minor version (e.g., 2)

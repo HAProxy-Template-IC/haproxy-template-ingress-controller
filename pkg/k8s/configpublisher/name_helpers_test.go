@@ -106,13 +106,17 @@ func TestBuildPodStatus(t *testing.T) {
 
 	t.Run("update with error", func(t *testing.T) {
 		update := &DeploymentStatusUpdate{
-			PodName:  "pod-1",
-			Checksum: "sha256:abc",
-			Error:    "connection reset",
+			PodName:      "pod-1",
+			PodUID:       "uid-1",
+			PodRuntimeID: "runtime-1",
+			Checksum:     "sha256:abc",
+			Error:        "connection reset",
 		}
 		result := buildPodStatus(update)
 
 		assert.Equal(t, "pod-1", result.PodName)
+		assert.Equal(t, "uid-1", result.PodUID)
+		assert.Equal(t, "runtime-1", result.PodRuntimeID)
 		assert.Equal(t, "sha256:abc", result.Checksum)
 		assert.Equal(t, "connection reset", result.LastError)
 	})
