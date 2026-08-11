@@ -15,41 +15,66 @@
 package deployer
 
 import (
+	"context"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 )
 
-// handleDeploymentCancelRequest cancels an in-progress deployment if the correlation ID matches.
-func (c *Component) handleDeploymentCancelRequest(event *events.DeploymentCancelRequestEvent) {
-	correlationID := event.CorrelationID()
+func (c *Component) flushPendingCancellationRequests() {
+	for {
+		select {
+		case <-c.cancelEventChan:
+		default:
+			return
+		}
+	}
+}
 
+func (c *Component) runCancellationLoop(ctx context.Context, done chan<- struct{}) {
+	defer close(done)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-c.cancelEventChan:
+			request, ok := event.(*events.DeploymentCancelRequestEvent)
+			if ok {
+				c.handleDeploymentCancelRequest(request)
+			}
+		}
+	}
+}
+
+// handleDeploymentCancelRequest cancels the exact in-progress deployment.
+func (c *Component) handleDeploymentCancelRequest(event *events.DeploymentCancelRequestEvent) {
 	c.cancelMu.Lock()
 	defer c.cancelMu.Unlock()
 
-	// Check if there's an active deployment with matching correlation ID
-	if c.activeCorrelationID == "" || c.activeCancelFunc == nil {
+	if c.activeDeploymentID == "" || c.activeCancelFunc == nil {
 		c.Logger().Debug("Received cancel request but no deployment in progress",
-			"requested_correlation_id", correlationID,
+			"requested_deployment_id", event.DeploymentID,
 			"reason", event.Reason)
 		return
 	}
 
-	if c.activeCorrelationID != correlationID {
-		c.Logger().Debug("Received cancel request but correlation ID does not match",
-			"requested_correlation_id", correlationID,
-			"active_correlation_id", c.activeCorrelationID,
+	if c.activeDeploymentID != event.DeploymentID {
+		c.Logger().Debug("Received cancel request for a different deployment",
+			"requested_deployment_id", event.DeploymentID,
+			"active_deployment_id", c.activeDeploymentID,
 			"reason", event.Reason)
 		return
 	}
 
 	c.Logger().Info("Cancelling in-progress deployment",
-		"correlation_id", correlationID,
+		"deployment_id", event.DeploymentID,
+		"correlation_id", c.activeCorrelationID,
 		"reason", event.Reason)
 
 	// Cancel the deployment context
 	c.activeCancelFunc()
 }
 
-// cancelActiveDeployment cancels any active deployment regardless of correlation ID.
+// cancelActiveDeployment cancels any active deployment regardless of its ID.
 // Used for graceful shutdown.
 func (c *Component) cancelActiveDeployment(reason string) {
 	c.cancelMu.Lock()
@@ -60,15 +85,17 @@ func (c *Component) cancelActiveDeployment(reason string) {
 	}
 
 	c.Logger().Info("Cancelling active deployment",
+		"deployment_id", c.activeDeploymentID,
 		"correlation_id", c.activeCorrelationID,
 		"reason", reason)
 
 	c.activeCancelFunc()
 
 	// Wait for deployment to complete if deploymentDone channel exists
-	if c.deploymentDone != nil {
+	done := c.deploymentDone
+	if done != nil {
 		c.cancelMu.Unlock()
-		<-c.deploymentDone
+		<-done
 		c.cancelMu.Lock()
 	}
 }

@@ -429,50 +429,49 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 	// laneStructural: deployInFlight gates the timeout checker and pairs with
 	// awaitCompletion; lastDeploymentEndTime advances only on this lane's
 	// completion (the interval anchor).
+	scheduledEvent := s.newScheduledEvent(dep)
 	s.schedulerMutex.Lock()
 	if !s.pendingRevisionCurrentLocked(ctx, dep) {
 		s.schedulerMutex.Unlock()
 		return !contextCancelled(ctx)
 	}
 	s.state.deployInFlight = true
+	s.state.deploymentTimedOut = false
 	s.state.deploymentStartTime = time.Now()
+	s.state.activeDeploymentID = scheduledEvent.EventID()
 	s.state.activeCorrelationID = dep.correlationID
 	s.lastDispatchedParsed = dep.parsedConfig
 	s.lastDispatchedConfig = dep.config
 	s.schedulerMutex.Unlock()
 
-	// Drain any stale completion (e.g. a late completion of a previously
-	// timed-out deploy) so awaitCompletion waits for THIS deploy's signal.
-	select {
-	case <-s.completed:
-	default:
-	}
 	if contextCancelled(ctx) {
-		s.clearDispatchedPending(dep)
+		s.clearDispatchedPending(scheduledEvent.EventID())
 		return false
 	}
 
-	// Publish exactly one DeploymentScheduledEvent, then wait for its completion /
-	// timeout (both signal s.completed) / shutdown.
-	s.publishScheduled(dep)
+	// Publish exactly one DeploymentScheduledEvent, then wait for its correlated
+	// completion or shutdown. A timeout cancels the deploy but does not release
+	// this slot until the deployer acknowledges termination.
+	s.publishScheduled(scheduledEvent)
 	return s.awaitCompletion(ctx)
 }
 
-func (s *DeploymentScheduler) clearDispatchedPending(dep *scheduledDeployment) {
+func (s *DeploymentScheduler) clearDispatchedPending(deploymentID string) {
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
-	if s.state.activeCorrelationID != dep.correlationID {
+	if s.state.activeDeploymentID != deploymentID {
 		return
 	}
 	s.state.deployInFlight = false
+	s.state.deploymentTimedOut = false
 	s.state.deploymentStartTime = time.Time{}
+	s.state.activeDeploymentID = ""
 	s.state.activeCorrelationID = ""
 }
 
-// awaitCompletion blocks until the in-flight structural deploy completes or times
-// out (handleDeploymentCompleted and checkDeploymentTimeout both record the end
-// state and signal s.completed), or the context is cancelled. Returns false only
-// on shutdown.
+// awaitCompletion blocks until the exact in-flight structural deploy reports
+// termination or the context is cancelled. A timeout requests cancellation but
+// keeps the slot owned until that acknowledgement arrives.
 //
 // While it waits it stays responsive to newer renders: when a render arrives
 // mid-deploy (pendingSignal), it applies that render's runtime-eligible server
@@ -483,9 +482,8 @@ func (s *DeploymentScheduler) clearDispatchedPending(dep *scheduledDeployment) {
 // completion and dispatches it authoritatively; this only fast-tracks the server
 // addresses onto the workers in the meantime.
 //
-// It deliberately does NOT drain s.completed in the pendingSignal branch: the
-// pre-dispatch drain in dispatchPending is the only one, and a second drain here
-// could swallow THIS deploy's completion signal and hang the loop forever.
+// It deliberately does not read s.completed in the pendingSignal branch; doing
+// so could swallow this deploy's accepted completion and hang the loop.
 func (s *DeploymentScheduler) awaitCompletion(ctx context.Context) bool {
 	for {
 		select {
@@ -562,20 +560,24 @@ func (s *DeploymentScheduler) resolveRuntimeConfigName() (name, namespace string
 	return name, namespace
 }
 
-func (s *DeploymentScheduler) publishScheduled(dep *scheduledDeployment) {
+func (s *DeploymentScheduler) newScheduledEvent(dep *scheduledDeployment) *events.DeploymentScheduledEvent {
 	runtimeConfigName, runtimeConfigNamespace := s.resolveRuntimeConfigName()
-
-	s.logger.Debug("Scheduling deployment",
-		"reason", dep.reason,
-		"endpoint_count", len(dep.endpoints),
-		"config_bytes", len(dep.config),
-		"has_parsed_config", dep.parsedConfig != nil,
-		"correlation_id", dep.correlationID)
-
-	s.eventBus.Publish(events.NewDeploymentScheduledEvent(
+	return events.NewDeploymentScheduledEvent(
 		dep.config, dep.auxFiles, dep.parsedConfig, dep.endpoints, runtimeConfigName, runtimeConfigNamespace, dep.reason, dep.contentChecksum, dep.statusPatches, dep.coalescible,
 		events.WithCorrelation(dep.correlationID, dep.correlationID),
-	))
+	)
+}
+
+func (s *DeploymentScheduler) publishScheduled(event *events.DeploymentScheduledEvent) {
+	s.logger.Debug("Scheduling deployment",
+		"reason", event.Reason,
+		"endpoint_count", len(event.Endpoints),
+		"config_bytes", len(event.Config),
+		"has_parsed_config", event.ParsedConfig != nil,
+		"deployment_id", event.EventID(),
+		"correlation_id", event.CorrelationID())
+
+	s.eventBus.Publish(event)
 }
 
 // invalidateDispatchBaselineLocked drops the lane-classification baseline and
@@ -606,10 +608,9 @@ func (s *DeploymentScheduler) invalidateDispatchBaselineLocked() {
 
 // checkDeploymentTimeout checks if the current deployment has exceeded the timeout.
 //
-// If a deployment is in progress and has exceeded the configured timeout, this method
-// publishes a cancellation event to stop the running deployment, resets the stuck state,
-// and triggers a new reconciliation. This is a safety net for race conditions during
-// leadership transitions where DeploymentCompletedEvent may be lost.
+// If a deployment exceeds the configured timeout, this method keeps publishing
+// cancellation for that attempt and triggers one recovery reconciliation. The
+// slot remains owned until the matching completion acknowledges termination.
 func (s *DeploymentScheduler) checkDeploymentTimeout(_ context.Context) {
 	s.schedulerMutex.Lock()
 	// Only a published-but-unconfirmed deploy can time out. The rate-limit wait
@@ -620,51 +621,50 @@ func (s *DeploymentScheduler) checkDeploymentTimeout(_ context.Context) {
 		return
 	}
 	startTime := s.state.deploymentStartTime
+	activeDeploymentID := s.state.activeDeploymentID
 	activeCorrelationID := s.state.activeCorrelationID
-	s.schedulerMutex.Unlock()
 
 	// Skip if deployment hasn't started yet (startTime is zero)
 	if startTime.IsZero() {
+		s.schedulerMutex.Unlock()
 		return
 	}
 
 	elapsed := time.Since(startTime)
 	if elapsed <= s.deploymentTimeout {
+		s.schedulerMutex.Unlock()
 		return
 	}
+	firstTimeout := !s.state.deploymentTimedOut
+	if firstTimeout {
+		s.state.deploymentTimedOut = true
+		s.invalidateDispatchBaselineLocked()
+	}
+	s.schedulerMutex.Unlock()
 
-	s.logger.Warn("Deployment timeout - cancelling and resetting stuck state",
-		"duration_ms", elapsed.Milliseconds(),
-		"timeout_ms", s.deploymentTimeout.Milliseconds(),
-		"correlation_id", activeCorrelationID)
+	if firstTimeout {
+		s.logger.Warn("Deployment timed out; waiting for termination",
+			"duration_ms", elapsed.Milliseconds(),
+			"timeout_ms", s.deploymentTimeout.Milliseconds(),
+			"deployment_id", activeDeploymentID,
+			"correlation_id", activeCorrelationID)
+	}
 
-	// Publish cancellation event to stop the running deployment
-	// This must be done BEFORE resetting state so the deployer can match the correlation ID
-	if activeCorrelationID != "" {
+	// Re-publish until the exact deployment acknowledges termination. Cancellation
+	// is idempotent and a dropped control event must not release newer work.
+	if activeDeploymentID != "" {
 		s.eventBus.Publish(events.NewDeploymentCancelRequestEvent(
+			activeDeploymentID,
 			"deployment_timeout",
-			events.WithCorrelation(activeCorrelationID, activeCorrelationID),
+			events.WithCorrelation(activeCorrelationID, activeDeploymentID),
 		))
 	}
 
-	// Clear the in-flight deploy and count the timeout as a deploy-end, so the
-	// loop rate-limits the next deploy from here. Keep state.pending — the loop
-	// picks it up on its next cycle once awaitCompletion unblocks. Then signal
-	// completion to release the loop.
-	s.schedulerMutex.Lock()
-	s.state.deployInFlight = false
-	s.state.deploymentStartTime = time.Time{}
-	s.state.activeCorrelationID = ""
-	s.state.lastDeploymentEndTime = time.Now()
-	// A timed-out deploy is not known to have landed on the pods — same
-	// invalidation as a failed deploy (issue #76).
-	s.invalidateDispatchBaselineLocked()
-	s.schedulerMutex.Unlock()
-	s.signalCompleted()
-
 	// Trigger a new reconciliation to recover from the stuck state (e.g. a lost
 	// DeploymentCompletedEvent). Not coalescible — it must be processed.
-	s.eventBus.Publish(events.NewReconciliationTriggeredEvent("deployment_timeout_recovery", false, events.WithNewCorrelation()))
+	if firstTimeout {
+		s.eventBus.Publish(events.NewReconciliationTriggeredEvent("deployment_timeout_recovery", false, events.WithNewCorrelation()))
+	}
 }
 
 // HealthCheck implements the lifecycle.HealthChecker interface.

@@ -50,12 +50,13 @@ const (
 // these fields are the shared state it coordinates with the event handlers.
 // `deployInFlight` replaces the old phase state machine: it is true from the
 // moment the loop publishes a DeploymentScheduledEvent until the matching
-// DeploymentCompletedEvent (or a timeout) clears it. With a single goroutine
-// owning the interval timer, "≤1 deploy per minDeploymentInterval" is a
-// structural property rather than an emergent one — no concurrent rate-limit
-// sleeps can exist, so churn can no longer burst reloads.
+// DeploymentCompletedEvent clears it. A timeout marks that deployment as
+// retiring until the same attempt terminates. The single loop makes the
+// deployment interval authoritative.
 type schedulerState struct {
 	deployInFlight        bool
+	deploymentTimedOut    bool
+	activeDeploymentID    string
 	activeCorrelationID   string
 	deploymentStartTime   time.Time
 	pending               *scheduledDeployment
@@ -228,8 +229,8 @@ type DeploymentScheduler struct {
 	// (started in Start) owns rate-limit timing. Created in Start so each
 	// leadership term gets fresh channels.
 	//   - pendingSignal (cap 1): event handlers wake the loop after setting pending.
-	//   - completed (cap 1): handleDeploymentCompleted / checkDeploymentTimeout
-	//     wake the loop's awaitCompletion.
+	//   - completed (cap 1): an accepted DeploymentCompletedEvent wakes the
+	//     loop's awaitCompletion.
 	//   - loopDone: closed when the loop exits, so Start joins it on shutdown.
 	pendingSignal chan struct{}
 	completed     chan struct{}

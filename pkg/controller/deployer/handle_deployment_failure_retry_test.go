@@ -39,6 +39,14 @@ func fullFailure(checksum string) *events.DeploymentCompletedEvent {
 	})
 }
 
+func activeFullFailure(s *DeploymentScheduler, checksum string) *events.DeploymentCompletedEvent {
+	return completionForActiveDeployment(s, &events.DeploymentResult{
+		Total:           2,
+		Failed:          2,
+		ContentChecksum: checksum,
+	})
+}
+
 // newFailureRetryScheduler builds a running scheduler (deploy loop started) with
 // a DeploymentScheduledEvent subscription and the last-validated cache primed so
 // the fast-retry timer's rescheduleLastValidated has a render + endpoints to
@@ -119,7 +127,7 @@ func TestDeployFailureRetry_ReschedulesAfterFullFailure(t *testing.T) {
 	// nothing else). Pre-fix only the 60s drift backstop re-drives this, so no
 	// second dispatch arrives.
 	start := time.Now()
-	s.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
 		Total: 2, Succeeded: 0, Failed: 2, ContentChecksum: checksum,
 	}))
 
@@ -145,14 +153,14 @@ func TestDeployFailureRetry_StopsAfterMaxRetries(t *testing.T) {
 	// cap. Pace on the observable reschedule event so the test is
 	// scheduling-independent.
 	for i := 1; i <= maxDeployFailureRetries; i++ {
-		s.handleDeploymentCompleted(fullFailure(checksum))
+		s.handleDeploymentCompleted(activeFullFailure(s, checksum))
 		sd := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 		require.Equalf(t, "deploy_failure_retry", sd.Reason, "reschedule %d", i)
 	}
 
 	// The budget for this checksum is now spent: a further identical failure must
 	// NOT reschedule (no hot loop) — the drift backstop takes over.
-	s.handleDeploymentCompleted(fullFailure(checksum))
+	s.handleDeploymentCompleted(activeFullFailure(s, checksum))
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 200*time.Millisecond)
 }
 
@@ -167,15 +175,15 @@ func TestDeployFailureRetry_NewChecksumResetsBudget(t *testing.T) {
 
 	// Exhaust the budget for checksum A.
 	for i := 1; i <= maxDeployFailureRetries; i++ {
-		s.handleDeploymentCompleted(fullFailure(checksumA))
+		s.handleDeploymentCompleted(activeFullFailure(s, checksumA))
 		testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	}
 	// Confirm exhaustion: a further A failure does not reschedule.
-	s.handleDeploymentCompleted(fullFailure(checksumA))
+	s.handleDeploymentCompleted(activeFullFailure(s, checksumA))
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 200*time.Millisecond)
 
 	// A NEW render (different checksum) resets the budget → reschedules resume.
-	s.handleDeploymentCompleted(fullFailure("fresh-render-B"))
+	s.handleDeploymentCompleted(activeFullFailure(s, "fresh-render-B"))
 	sd := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	assert.Equal(t, "deploy_failure_retry", sd.Reason,
 		"a new render's checksum must reset the fast-retry budget and resume rescheduling")
@@ -193,10 +201,10 @@ func TestDeployFailureRetry_SuccessCancelsPendingRetry(t *testing.T) {
 	defer cancel()
 
 	// A failing completion arms the retry timer (backoff == interval == 100ms).
-	s.handleDeploymentCompleted(fullFailure(checksum))
+	s.handleDeploymentCompleted(activeFullFailure(s, checksum))
 
 	// Before it fires, a fully-successful completion must cancel it.
-	s.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
 		Total: 2, Succeeded: 2, Failed: 0, ContentChecksum: checksum,
 	}))
 
@@ -216,7 +224,7 @@ func TestDeployFailureRetry_PartialFailureAlsoReschedules(t *testing.T) {
 	s, scheduledCh, cancel := newFailureRetryScheduler(t, interval, checksum)
 	defer cancel()
 
-	s.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
 		Total: 2, Succeeded: 1, Failed: 1, ContentChecksum: checksum,
 	}))
 

@@ -470,6 +470,7 @@ func TestDeploymentEvents(t *testing.T) {
 
 	t.Run("DeploymentCompletedEvent", func(t *testing.T) {
 		event := NewDeploymentCompletedEvent(&DeploymentResult{
+			DeploymentID:       "deployment-1",
 			Total:              10,
 			Succeeded:          8,
 			Failed:             2,
@@ -478,6 +479,7 @@ func TestDeploymentEvents(t *testing.T) {
 			TotalAPIOperations: 25,
 		})
 		require.NotNil(t, event)
+		assert.Equal(t, "deployment-1", event.DeploymentID)
 		assert.Equal(t, 10, event.Total)
 		assert.Equal(t, 8, event.Succeeded)
 		assert.Equal(t, 2, event.Failed)

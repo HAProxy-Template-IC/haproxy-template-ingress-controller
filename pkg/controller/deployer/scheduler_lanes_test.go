@@ -271,7 +271,7 @@ func TestSchedulerLanes_Case2_RuntimeSubsetAppliesDuringInFlightStructural(t *te
 	// Complete the in-flight structural deploy. awaitCompletion returns, the loop
 	// grabs the still-pending runtime-raw render and dispatches it authoritatively
 	// (a second, full applyRuntimeRaw).
-	s.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
 		Total: 1, Succeeded: 1, DurationMs: 10,
 	}))
 
@@ -379,7 +379,7 @@ func TestSchedulerLanes_Case5_StructuralEnqueuedLatestWins(t *testing.T) {
 
 	// Complete the in-flight deploy; the loop's awaitCompletion unblocks and it
 	// grabs the enqueued structural-3 as the next deploy (interval=0, so no wait).
-	s.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
 		Total: 1, Succeeded: 1, DurationMs: 10,
 	}))
 	sd2 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.VeryLongTimeout)
@@ -607,7 +607,7 @@ func TestSchedulerLanes_Case9_CompletionAndPendingRace(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		<-startGate
-		s.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+		s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
 			Total: 1, Succeeded: 1, DurationMs: 10,
 		}))
 	}()

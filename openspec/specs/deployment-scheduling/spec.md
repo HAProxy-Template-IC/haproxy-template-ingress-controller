@@ -43,7 +43,7 @@ Each scheduled render SHALL be classified into one of two apply lanes by diffing
 
 ### Requirement: Minimum Deployment Interval Throttle
 
-Structural deploys SHALL be rate-limited by a minimum deployment interval measured from the END of the previous structural deploy (its completion or its timeout). The controller default SHALL be 2 seconds; the bundled Helm chart configures 5 seconds via its values. A structural pending whose remaining interval is positive SHALL sleep out exactly the remaining time; the timer SHALL NOT be reset when newer renders arrive mid-sleep, so the structural reload fires at the original deadline and reloads cannot burst under churn. Runtime-raw dispatches SHALL ignore the interval entirely and SHALL NOT advance the interval anchor (they reload nothing).
+Structural deploys SHALL be rate-limited by a minimum deployment interval measured from the END of the previous structural deploy. A timed-out deploy ends only when its executor acknowledges termination. The controller default SHALL be 2 seconds; the bundled Helm chart configures 5 seconds via its values. A structural pending whose remaining interval is positive SHALL sleep out exactly the remaining time; the timer SHALL NOT be reset when newer renders arrive mid-sleep, so the structural reload fires at the original deadline and reloads cannot burst under churn. Runtime-raw dispatches SHALL ignore the interval entirely and SHALL NOT advance the interval anchor (they reload nothing).
 
 #### Scenario: Structural deploy waits out the remaining interval
 
@@ -78,17 +78,23 @@ While the deploy loop is gated — sleeping out the deployment interval before a
 
 ### Requirement: Structural Dispatch, Completion Await, and Timeout Recovery
 
-A structural dispatch SHALL mark the deploy in flight, advance the dispatch baseline, publish exactly one DeploymentScheduledEvent, and block until the matching DeploymentCompletedEvent, a deployment timeout, or shutdown. The deployment timeout SHALL default to 30 seconds. On timeout the scheduler SHALL publish a DeploymentCancelRequestEvent carrying the active correlation ID (so the Deployer cancels the running deployment), clear the in-flight state, count the timeout as a deploy end for interval accounting, and publish a non-coalescible recovery ReconciliationTriggeredEvent. Any pending deployment SHALL be kept across a timeout and picked up on the loop's next cycle.
+A structural dispatch SHALL assign the DeploymentScheduledEvent a unique deployment ID, mark that exact attempt in flight, advance the dispatch baseline, publish the event once, and block until its matching DeploymentCompletedEvent or shutdown. The deployment timeout SHALL default to 30 seconds. On timeout the scheduler SHALL mark the attempt as retiring, invalidate its dispatch baseline, publish DeploymentCancelRequestEvent through the Deployer's independent control subscription, and publish one non-coalescible recovery ReconciliationTriggeredEvent. It SHALL keep publishing idempotent cancellation requests and retain the in-flight slot and any pending deployment until a completion carrying the same deployment ID acknowledges termination. A completion with an empty or different deployment ID SHALL NOT mutate scheduler state, deployment caches, retry state, baselines, or the completion signal.
 
 #### Scenario: Timeout cancels and recovers
 
 - **WHEN** an in-flight structural deploy exceeds the 30 s deployment timeout
-- **THEN** the scheduler SHALL publish a cancel request with the deploy's correlation ID, record the timeout as the deployment end time, and trigger a non-coalescible recovery reconciliation
+- **THEN** the scheduler SHALL publish a cancel request with the unique deployment ID and trigger one non-coalescible recovery reconciliation
+- **AND** queued work SHALL remain blocked until that deployment ID reports termination
 
 #### Scenario: Completion releases the loop
 
 - **WHEN** the DeploymentCompletedEvent for the in-flight deploy arrives
 - **THEN** the scheduler SHALL clear the in-flight state, record the deployment end time, and let the loop dispatch any pending deployment on its next cycle
+
+#### Scenario: Stale completion cannot release newer work
+
+- **WHEN** deployment B is active and a completion for deployment A arrives, even if both share a trace correlation ID
+- **THEN** every field owned by deployment B SHALL remain unchanged and the deploy loop SHALL remain blocked on B
 
 ### Requirement: Skip-Unchanged Gate
 
@@ -134,7 +140,7 @@ On ValidationFailedEvent the scheduler SHALL schedule its cached last-validated 
 
 ### Requirement: Deployer Executor
 
-The Deployer SHALL be a stateless executor of DeploymentScheduledEvent: it deploys the event's config and auxiliary files to all endpoints in parallel (one goroutine per endpoint), publishing DeploymentStartedEvent first and one DeploymentCompletedEvent afterwards with the aggregated result (total, succeeded, failed, reloads, operations) and the event's own StatusPatches and ContentChecksum forwarded unchanged. Each endpoint sync SHALL be bounded by a per-endpoint sync timeout (default 2 minutes) and a reload-verification timeout (default 10 seconds). An atomic in-progress guard SHALL drop duplicate scheduled events while a deployment runs. Pending coalescible DeploymentScheduledEvents SHALL be coalesced latest-wins after each dispatch; DeploymentCompletedEvents SHALL never be coalesced. Each deployment SHALL run under a cancellable context so a DeploymentCancelRequestEvent matching the active correlation ID (or shutdown) aborts it. A zero-endpoint deployment SHALL publish a DeploymentCompletedEvent with an empty content checksum so the scheduler does not record it as a successful deploy.
+The Deployer SHALL execute DeploymentScheduledEvent by deploying the event's config and auxiliary files to all endpoints in parallel (one goroutine per endpoint), publishing DeploymentStartedEvent first and one DeploymentCompletedEvent afterwards with the scheduled event's unique deployment ID, aggregated result (total, succeeded, failed, reloads, operations), StatusPatches, and ContentChecksum forwarded unchanged. Each endpoint sync SHALL be bounded by a per-endpoint sync timeout (default 2 minutes) and a reload-verification timeout (default 10 seconds). An atomic in-progress guard SHALL drop duplicate scheduled events while a deployment runs. Pending coalescible DeploymentScheduledEvents SHALL be coalesced latest-wins after each dispatch; DeploymentCompletedEvents SHALL never be coalesced. Each deployment SHALL run under a cancellable context. DeploymentCancelRequestEvent SHALL be consumed by an independent control loop, not the mailbox worker that performs deployment, and SHALL abort only when its deployment ID matches the active scheduled event. Shutdown SHALL also abort the active deployment. A zero-endpoint deployment SHALL publish a DeploymentCompletedEvent with an empty content checksum so the scheduler does not record it as a successful deploy.
 
 The Deployer SHALL stamp each pod's per-pod status checksum with the deployment's CONTENT checksum (config plus auxiliary files — the same value the config publisher writes as the published spec checksum) and SHALL publish a ConfigAppliedToPodEvent for every endpoint UNCONDITIONALLY on success — including zero-operation no-op syncs — because skipping no-ops breaks the published-spec versus per-pod-status convergence invariant. Endpoint failures SHALL publish an InstanceDeploymentFailedEvent plus a ConfigAppliedToPodEvent carrying the error. After a deployment with at least one success that is not a drift-prevention check, the Deployer SHALL publish a DeployedConfigPublishRequest so the just-deployed bytes become observable as the published spec.
 

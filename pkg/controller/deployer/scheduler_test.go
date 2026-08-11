@@ -44,6 +44,21 @@ func initLoopChannels(s *DeploymentScheduler) {
 	s.loopDone = make(chan struct{})
 }
 
+func completionForActiveDeployment(s *DeploymentScheduler, result *events.DeploymentResult) *events.DeploymentCompletedEvent {
+	s.schedulerMutex.Lock()
+	if !s.state.deployInFlight {
+		s.state.deployInFlight = true
+	}
+	if s.state.activeDeploymentID == "" {
+		s.state.activeDeploymentID = "test-deployment"
+	}
+	deploymentID := s.state.activeDeploymentID
+	s.schedulerMutex.Unlock()
+	completed := *result
+	completed.DeploymentID = deploymentID
+	return events.NewDeploymentCompletedEvent(&completed)
+}
+
 // startLoopForTest wires the deploy-loop channels and starts runDeployLoop in a
 // goroutine bound to ctx (mirroring what Start() does). The caller owns ctx and
 // must cancel it (via defer cancel()) so the loop exits and doesn't leak. The
@@ -331,7 +346,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	scheduler.state.deployInFlight = true
 	scheduler.schedulerMutex.Unlock()
 
-	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	event := completionForActiveDeployment(scheduler, &events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,
 		DurationMs: 100,
@@ -535,7 +550,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		scheduler.state.deployInFlight = true
 		scheduler.schedulerMutex.Unlock()
 
-		event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+		event := completionForActiveDeployment(scheduler, &events.DeploymentResult{
 			Total:      1,
 			Succeeded:  1,
 			DurationMs: 50,
@@ -683,7 +698,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 	// the pending deployment and emits its scheduled event. Order of these two
 	// signals is irrelevant — scheduleOrQueue's signalLoop guarantees the loop
 	// re-checks pending regardless of when completion lands.
-	scheduler.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler, &events.DeploymentResult{
 		Total:      1,
 		Succeeded:  1,
 		DurationMs: 100,
@@ -837,17 +852,19 @@ func TestDeploymentScheduler_DeployInFlightState(t *testing.T) {
 		assert.False(t, scheduler.state.deployInFlight)
 		scheduler.schedulerMutex.Unlock()
 
-		// In flight with an expired timeout - SHOULD fire and clear deployInFlight.
+		// In flight with an expired timeout stays owned until termination is acknowledged.
 		scheduler.schedulerMutex.Lock()
 		scheduler.state.deployInFlight = true
 		scheduler.state.deploymentStartTime = time.Now().Add(-10 * time.Second)
+		scheduler.state.activeDeploymentID = "test-deployment"
 		scheduler.state.activeCorrelationID = "test-correlation"
 		scheduler.schedulerMutex.Unlock()
 
 		scheduler.checkDeploymentTimeout(ctx)
 
 		scheduler.schedulerMutex.Lock()
-		assert.False(t, scheduler.state.deployInFlight)
+		assert.True(t, scheduler.state.deployInFlight)
+		assert.True(t, scheduler.state.deploymentTimedOut)
 		scheduler.schedulerMutex.Unlock()
 	})
 }
@@ -927,7 +944,7 @@ func TestScheduler_NoBurstUnderConcurrentReconciles(t *testing.T) {
 	scheduler.schedulerMutex.Unlock()
 	assert.True(t, inFlight, "after emitting the coalesced deploy the loop must be in-flight")
 
-	scheduler.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler, &events.DeploymentResult{
 		Total:      1,
 		Succeeded:  1,
 		DurationMs: 10,

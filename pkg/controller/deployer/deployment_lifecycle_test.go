@@ -20,35 +20,13 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// handleDeploymentCancelRequest is the safety latch the DeploymentScheduler
-// uses to abort an in-flight deployment by correlation ID. Two contracts
-// must hold:
-//
-//  1. The cancel only fires when the request's correlation ID matches the
-//     deployment in progress. A mismatched cancel must be a NO-OP, otherwise
-//     a stale timeout request from a previous reconciliation would silently
-//     abort the new deployment that just started.
-//  2. When no deployment is in progress (the all-replica state), the cancel
-//     is also a no-op. Otherwise a stray cancel during pod startup would
-//     panic on a nil cancel func.
-//
-// cancelActiveDeployment is the unconditional shutdown path used during
-// graceful shutdown. It must:
-//
-//   - No-op when there's nothing active (cancel func is nil).
-//   - Call the active cancel func when set.
-//   - Wait for the deploymentDone signal if present (so leases / locks are
-//     released before the controller exits).
-
-// installFakeDeployment plants synthetic in-flight state on the Component so
-// the cancel paths have something to act on. Returns the channel callers can
-// inspect to verify whether the cancel func was invoked.
-func installFakeDeployment(c *Component, correlationID string) (cancelInvoked, done chan struct{}) {
+func installFakeDeployment(c *Component, deploymentID string) (cancelInvoked, done chan struct{}) {
 	cancelInvoked = make(chan struct{}, 1)
 	done = make(chan struct{})
 
 	c.cancelMu.Lock()
-	c.activeCorrelationID = correlationID
+	c.activeDeploymentID = deploymentID
+	c.activeCorrelationID = "trace-" + deploymentID
 	c.activeCancelFunc = func() {
 		// Non-blocking send so multiple cancel calls don't deadlock.
 		select {
@@ -70,7 +48,7 @@ func TestHandleDeploymentCancelRequest(t *testing.T) {
 
 		// No deployment in progress — cancel must NOT panic, must NOT
 		// publish anything, must NOT touch internal state.
-		event := events.NewDeploymentCancelRequestEvent("scheduler_timeout",
+		event := events.NewDeploymentCancelRequestEvent("any-deployment", "scheduler_timeout",
 			events.WithCorrelation("any-correlation", ""))
 
 		require.NotPanics(t, func() {
@@ -80,11 +58,11 @@ func TestHandleDeploymentCancelRequest(t *testing.T) {
 		// State must remain pristine after the no-op path.
 		c.cancelMu.Lock()
 		defer c.cancelMu.Unlock()
-		assert.Empty(t, c.activeCorrelationID)
+		assert.Empty(t, c.activeDeploymentID)
 		assert.Nil(t, c.activeCancelFunc)
 	})
 
-	t.Run("matching correlation ID invokes the active cancel func", func(t *testing.T) {
+	t.Run("matching deployment ID invokes the active cancel func", func(t *testing.T) {
 		bus := busevents.NewEventBus(10)
 		bus.Start()
 		c := createTestDeployer(bus)
@@ -92,10 +70,8 @@ func TestHandleDeploymentCancelRequest(t *testing.T) {
 		const cid = "deployment-A"
 		cancelInvoked, _ := installFakeDeployment(c, cid)
 
-		// Build the request as the scheduler would: WithCorrelation
-		// stores the correlation ID for the deployment we want killed.
-		event := events.NewDeploymentCancelRequestEvent("scheduler_timeout",
-			events.WithCorrelation(cid, ""))
+		event := events.NewDeploymentCancelRequestEvent(cid, "scheduler_timeout",
+			events.WithCorrelation("trace", cid))
 
 		c.handleDeploymentCancelRequest(event)
 
@@ -107,27 +83,22 @@ func TestHandleDeploymentCancelRequest(t *testing.T) {
 		}
 	})
 
-	t.Run("mismatched correlation ID is a no-op (does not abort current deployment)", func(t *testing.T) {
-		// This is the most important branch: a stale cancel from a
-		// previous reconciliation must NOT abort the deployment that
-		// just started under a fresh correlation ID. Otherwise a
-		// timer overshoot would silently kill healthy reconciliations.
+	t.Run("mismatched deployment ID is a no-op (does not abort current deployment)", func(t *testing.T) {
 		bus := busevents.NewEventBus(10)
 		bus.Start()
 		c := createTestDeployer(bus)
 
 		cancelInvoked, _ := installFakeDeployment(c, "current-deployment")
 
-		// Request targets a different (stale) correlation ID.
-		event := events.NewDeploymentCancelRequestEvent("scheduler_timeout",
-			events.WithCorrelation("stale-deployment", ""))
+		event := events.NewDeploymentCancelRequestEvent("stale-deployment", "scheduler_timeout",
+			events.WithCorrelation("trace", "stale-deployment"))
 
 		c.handleDeploymentCancelRequest(event)
 
 		// Give any (incorrect) async cancel a chance to fire.
 		select {
 		case <-cancelInvoked:
-			t.Fatal("mismatched correlation ID must NOT invoke activeCancelFunc; " +
+			t.Fatal("mismatched deployment ID must NOT invoke activeCancelFunc; " +
 				"otherwise stale scheduler timeouts would abort fresh deployments")
 		case <-time.After(50 * time.Millisecond):
 			// expected: no cancel
@@ -205,6 +176,7 @@ func TestCancelActiveDeployment(t *testing.T) {
 
 		cancelInvoked := make(chan struct{}, 1)
 		c.cancelMu.Lock()
+		c.activeDeploymentID = "x"
 		c.activeCorrelationID = "x"
 		c.activeCancelFunc = func() { cancelInvoked <- struct{}{} }
 		c.deploymentDone = nil // explicitly nil

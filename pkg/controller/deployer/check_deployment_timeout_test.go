@@ -39,20 +39,14 @@ import (
 //     in-progress deployment on the first check.
 //
 //  3. expired → publishes DeploymentCancelRequestEvent with the
-//     active correlation ID propagated. The deployer matches on
-//     correlation ID to stop the right deployment; a regression
-//     that dropped the correlation propagation would either silently
-//     fail to cancel or cancel an unrelated deployment.
+//     unique active deployment ID.
 //
 //  4. expired → publishes ReconciliationTriggeredEvent with
 //     reason="deployment_timeout_recovery" so the system recovers.
 //     Without this, the system would be stuck idle until the next
 //     external trigger.
 //
-//  5. expired with empty activeCorrelationID → MUST NOT publish
-//     a cancel event (event would have empty correlation ID, which
-//     the deployer can't match). A regression that always published
-//     would corrupt deployer state.
+//  5. expired with an empty deployment ID → MUST NOT publish a cancel.
 
 func TestCheckDeploymentTimeout_NoFireWhenStartTimeIsZero(t *testing.T) {
 	// Defensive contract: deployInFlight=true but startTime is the
@@ -68,6 +62,7 @@ func TestCheckDeploymentTimeout_NoFireWhenStartTimeIsZero(t *testing.T) {
 	scheduler.schedulerMutex.Lock()
 	scheduler.state.deployInFlight = true
 	scheduler.state.deploymentStartTime = time.Time{} // ← zero, the guard
+	scheduler.state.activeDeploymentID = "deployment-A"
 	scheduler.state.activeCorrelationID = "should-not-be-touched"
 	scheduler.schedulerMutex.Unlock()
 
@@ -95,6 +90,7 @@ func TestCheckDeploymentTimeout_NoFireWhenElapsedWithinTimeout(t *testing.T) {
 	scheduler.schedulerMutex.Lock()
 	scheduler.state.deployInFlight = true
 	scheduler.state.deploymentStartTime = time.Now() // just started
+	scheduler.state.activeDeploymentID = "deployment-A"
 	scheduler.state.activeCorrelationID = "in-progress"
 	scheduler.schedulerMutex.Unlock()
 
@@ -109,11 +105,7 @@ func TestCheckDeploymentTimeout_NoFireWhenElapsedWithinTimeout(t *testing.T) {
 	assert.Equal(t, "in-progress", scheduler.state.activeCorrelationID)
 }
 
-func TestCheckDeploymentTimeout_PublishesCancelEventWithActiveCorrelationID(t *testing.T) {
-	// Pin the observable side effect: when timeout fires with a
-	// non-empty correlation ID, a DeploymentCancelRequestEvent MUST be
-	// published with the SAME correlation ID. The deployer matches on
-	// correlation ID to stop the right in-flight deployment.
+func TestCheckDeploymentTimeout_PublishesCancelEventWithActiveDeploymentID(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("cancel-event-watcher", 50)
 	bus.Start()
@@ -122,9 +114,11 @@ func TestCheckDeploymentTimeout_PublishesCancelEventWithActiveCorrelationID(t *t
 	initLoopChannels(scheduler)
 
 	const activeCorrID = "in-flight-deployment-corr-1"
+	const activeDeploymentID = "deployment-A"
 	scheduler.schedulerMutex.Lock()
 	scheduler.state.deployInFlight = true
 	scheduler.state.deploymentStartTime = time.Now().Add(-10 * time.Second) // long expired
+	scheduler.state.activeDeploymentID = activeDeploymentID
 	scheduler.state.activeCorrelationID = activeCorrID
 	scheduler.schedulerMutex.Unlock()
 
@@ -137,10 +131,9 @@ func TestCheckDeploymentTimeout_PublishesCancelEventWithActiveCorrelationID(t *t
 		"the cancel reason MUST be 'deployment_timeout' so commentator/"+
 			"metrics can attribute the recovery to the timeout safety net")
 	assert.Equal(t, activeCorrID, cancel.CorrelationID(),
-		"DeploymentCancelRequestEvent MUST carry the ACTIVE correlation ID — "+
-			"the deployer matches on correlation to stop the right in-flight "+
-			"deployment; a regression that dropped this would either silently "+
-			"fail to cancel or cancel an unrelated deployment")
+		"the cancel request must stay in the deployment's trace")
+	assert.Equal(t, activeDeploymentID, cancel.DeploymentID,
+		"the deployer matches the unique attempt ID, not a reusable trace correlation")
 
 	// And the recovery-trigger ReconciliationTriggeredEvent.
 	trigger := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](
@@ -155,28 +148,22 @@ func TestCheckDeploymentTimeout_PublishesCancelEventWithActiveCorrelationID(t *t
 			"defeat the recovery (the trigger could be merged into an "+
 			"already-pending deployment that's also stuck)")
 
-	// State should be reset (no longer in flight).
+	// The slot remains owned until the deployer acknowledges termination.
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
-	assert.False(t, scheduler.state.deployInFlight,
-		"after timeout recovery, deployInFlight MUST be cleared")
-	assert.True(t, scheduler.state.deploymentStartTime.IsZero(),
-		"deploymentStartTime MUST be reset so the next deployment "+
-			"starts fresh")
-	assert.Empty(t, scheduler.state.activeCorrelationID,
-		"activeCorrelationID MUST be cleared so a future stale completion "+
-			"event from the cancelled deployment doesn't get matched")
-	assert.False(t, scheduler.state.lastDeploymentEndTime.IsZero(),
-		"the timeout counts as a deploy-end so the loop rate-limits the next deploy from here")
+	assert.True(t, scheduler.state.deployInFlight)
+	assert.True(t, scheduler.state.deploymentTimedOut)
+	assert.Equal(t, activeDeploymentID, scheduler.state.activeDeploymentID)
+	assert.Equal(t, activeCorrID, scheduler.state.activeCorrelationID)
+	assert.True(t, scheduler.state.lastDeploymentEndTime.IsZero())
+	select {
+	case <-scheduler.completed:
+		t.Fatal("timeout released the deploy slot before termination acknowledgement")
+	default:
+	}
 }
 
-func TestCheckDeploymentTimeout_DoesNotPublishCancelWithEmptyCorrelationID(t *testing.T) {
-	// Edge case: timeout fires but activeCorrelationID is empty (e.g.
-	// the deployment scheduler was forced in-flight without populating
-	// the correlation ID — defensive). The cancel event MUST NOT be
-	// published in this case because it would carry an empty correlation
-	// ID, which the deployer can't match against any active deployment,
-	// leading to corrupted deployer state.
+func TestCheckDeploymentTimeout_DoesNotPublishCancelWithEmptyDeploymentID(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("cancel-empty-corr-watcher", 50)
 	bus.Start()
@@ -187,7 +174,8 @@ func TestCheckDeploymentTimeout_DoesNotPublishCancelWithEmptyCorrelationID(t *te
 	scheduler.schedulerMutex.Lock()
 	scheduler.state.deployInFlight = true
 	scheduler.state.deploymentStartTime = time.Now().Add(-10 * time.Second)
-	scheduler.state.activeCorrelationID = "" // ← empty, the guard
+	scheduler.state.activeDeploymentID = ""
+	scheduler.state.activeCorrelationID = "trace"
 	scheduler.schedulerMutex.Unlock()
 
 	scheduler.checkDeploymentTimeout(context.Background())
@@ -206,10 +194,7 @@ loop:
 		select {
 		case ev := <-eventChan:
 			if _, ok := ev.(*events.DeploymentCancelRequestEvent); ok {
-				t.Fatalf("DeploymentCancelRequestEvent published with empty " +
-					"correlation ID — the empty-corr guard must suppress it; " +
-					"a regression that always published would corrupt deployer " +
-					"state via an unmatchable cancel")
+				t.Fatal("DeploymentCancelRequestEvent published with an empty deployment ID")
 			}
 			if _, ok := ev.(*events.ReconciliationTriggeredEvent); ok {
 				sawTrigger = true
@@ -222,6 +207,5 @@ loop:
 		}
 	}
 	require.True(t, sawTrigger,
-		"recovery trigger MUST still be published even when correlation ID "+
-			"is empty — the system needs to recover regardless")
+		"recovery must still be triggered when the deployment ID is missing")
 }
