@@ -398,11 +398,11 @@ func TestStore_SkipsDecompressionWhenSpecChecksumMatches(t *testing.T) {
 	config1 := store.Get()
 	require.NotNil(t, config1, "config should be set after first update")
 
-	// Verify stored hash is the spec.checksum
+	// Verify the spec.checksum was remembered for the decompression fast path
 	store.mu.RLock()
-	storedHash := store.contentHash
+	storedChecksum := store.lastChecksum
 	store.mu.RUnlock()
-	assert.Equal(t, checksum, storedHash, "stored hash should be spec.checksum")
+	assert.Equal(t, checksum, storedChecksum, "spec.checksum should be remembered")
 
 	// Second update: same checksum, different generation (simulates CRD update with same content)
 	resource2 := newHAProxyCfgResourceWithChecksum(validHAProxyConfig, checksum, 2)
@@ -464,4 +464,54 @@ func TestStore_ClearResetsHash(t *testing.T) {
 	hashAfter := store.contentHash
 	store.mu.RUnlock()
 	assert.Empty(t, hashAfter, "hash should be cleared after Update(nil)")
+}
+
+// An auxiliary-file change bumps spec.checksum while the config text stays
+// byte-identical, because ComputeContentChecksum covers both. Endpoint churn
+// rewrites map files constantly, so keying the parse decision on spec.checksum
+// re-parsed an unchanged config on every churn event — tens of MB of retained
+// heap per parse at a few hundred routes, on the path that OOMKilled the
+// controller at its 512Mi default.
+func TestStore_SkipsParseWhenOnlyAuxFilesChanged(t *testing.T) {
+	logger := newTestLogger()
+	store, err := New(logger)
+	require.NoError(t, err)
+
+	store.Update(newHAProxyCfgResourceWithChecksum(validHAProxyConfig, "checksum-with-aux-v1", 1))
+	first := store.Get()
+	require.NotNil(t, first, "config should be set after first update")
+
+	// Same config text, different checksum: only an auxiliary file changed.
+	store.Update(newHAProxyCfgResourceWithChecksum(validHAProxyConfig, "checksum-with-aux-v2", 2))
+	second := store.Get()
+	require.NotNil(t, second)
+
+	assert.Same(t, first, second,
+		"identical config text must not be re-parsed just because an aux file changed")
+
+	store.mu.RLock()
+	gen, checksum := store.lastGeneration, store.lastChecksum
+	store.mu.RUnlock()
+	assert.Equal(t, int64(2), gen, "generation must advance even when the parse is skipped")
+	assert.Equal(t, "checksum-with-aux-v2", checksum,
+		"the new checksum must be remembered, or the fast path misses on every later repeat")
+}
+
+// The guard must not go too far the other way: a real config change still parses.
+func TestStore_ReparsesWhenConfigTextChanges(t *testing.T) {
+	logger := newTestLogger()
+	store, err := New(logger)
+	require.NoError(t, err)
+
+	store.Update(newHAProxyCfgResourceWithChecksum(validHAProxyConfig, "sum-1", 1))
+	first := store.Get()
+	require.NotNil(t, first)
+
+	changed := validHAProxyConfig + "\nbackend added_backend\n    mode http\n"
+	store.Update(newHAProxyCfgResourceWithChecksum(changed, "sum-2", 2))
+	second := store.Get()
+	require.NotNil(t, second)
+
+	assert.NotSame(t, first, second, "a changed config must be re-parsed")
+	assert.Greater(t, len(second.Backends), len(first.Backends), "the new backend must be visible")
 }
