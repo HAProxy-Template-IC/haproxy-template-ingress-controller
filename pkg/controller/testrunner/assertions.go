@@ -16,6 +16,7 @@ package testrunner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -43,6 +44,7 @@ type RenderDependencies struct {
 // assertDeterministic validates that rendering the template twice produces identical output.
 // This catches non-deterministic template behavior (e.g., map iteration order).
 func (r *Runner) assertDeterministic(
+	ctx context.Context,
 	assertion *config.ValidationAssertion,
 	firstConfig string,
 	firstAuxFiles *dataplane.AuxiliaryFiles,
@@ -74,6 +76,7 @@ func (r *Runner) assertDeterministic(
 	// a render fed its own output does not churn, because churn is a
 	// spurious sync and reload.
 	second, err := r.renderWithStores(
+		ctx,
 		deps.Engine,
 		deps.Stores,
 		deps.ValidationPaths,
@@ -83,6 +86,10 @@ func (r *Runner) assertDeterministic(
 		deps.ExtraContext,
 	)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+			result.incomplete = true
+			return result
+		}
 		result.Passed = false
 		result.Error = fmt.Sprintf("second render failed: %v", dataplane.SimplifyRenderingError(err))
 		return result
@@ -257,22 +264,34 @@ func (r *Runner) executeAssertions(
 	templateContext map[string]any,
 	validationPaths *dataplane.ValidationPaths,
 	renderDeps *RenderDependencies,
-) {
+) bool {
 	for i := range test.Assertions {
+		if ctx.Err() != nil {
+			return true
+		}
 		assertionResult := r.runAssertion(ctx, &test.Assertions[i], haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, templateContext, result.RenderError, validationPaths, renderDeps)
-		result.Assertions = append(result.Assertions, assertionResult)
-
-		if !assertionResult.Passed {
-			result.Passed = false
+		if appendAssertionResult(ctx, result, &assertionResult) {
+			return true
 		}
 	}
 
-	if determinism := r.checkDeterminism(test, haproxyConfig, auxiliaryFiles, result, renderDeps); determinism != nil {
-		result.Assertions = append(result.Assertions, *determinism)
-		if !determinism.Passed {
-			result.Passed = false
+	if determinism := r.checkDeterminism(ctx, test, haproxyConfig, auxiliaryFiles, result, renderDeps); determinism != nil {
+		if appendAssertionResult(ctx, result, determinism) {
+			return true
 		}
 	}
+	return false
+}
+
+func appendAssertionResult(ctx context.Context, result *TestResult, assertion *AssertionResult) bool {
+	if assertion.incomplete {
+		return true
+	}
+	result.Assertions = append(result.Assertions, *assertion)
+	if !assertion.Passed {
+		result.Passed = false
+	}
+	return ctx.Err() != nil
 }
 
 // checkDeterminism renders every test a second time and compares, so a
@@ -288,6 +307,7 @@ func (r *Runner) executeAssertions(
 // Returns nil when there is nothing to compare (a render-error test, or a
 // test that already declares the assertion and has just run it).
 func (r *Runner) checkDeterminism(
+	ctx context.Context,
 	test *config.ValidationTest,
 	haproxyConfig string,
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
@@ -305,7 +325,7 @@ func (r *Runner) checkDeterminism(
 	if haproxyConfig == "" && auxiliaryFiles == nil {
 		return nil
 	}
-	check := r.assertDeterministic(&config.ValidationAssertion{Type: "deterministic"}, haproxyConfig, auxiliaryFiles, renderDeps)
+	check := r.assertDeterministic(ctx, &config.ValidationAssertion{Type: "deterministic"}, haproxyConfig, auxiliaryFiles, renderDeps)
 	return &check
 }
 
@@ -367,7 +387,7 @@ func (r *Runner) runAssertion(
 			result.Passed = false
 			result.Error = "deterministic assertion requires render dependencies (internal error)"
 		} else {
-			result = r.assertDeterministic(assertion, haproxyConfig, auxiliaryFiles, renderDeps)
+			result = r.assertDeterministic(ctx, assertion, haproxyConfig, auxiliaryFiles, renderDeps)
 		}
 
 	default:

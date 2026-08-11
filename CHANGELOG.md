@@ -57,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Rendered-resource apply and orphan-prune failures no longer publish successful infrastructure status. An incomplete desired set also no longer drives pruning, so a transient API or discovery failure cannot delete a resource that is still rendered.
+- Validation-suite deadlines now cancel the active main, auxiliary-file, Kubernetes-resource, and determinism renders instead of taking effect only between tests.
 - Admission no longer accepts changed invalid output merely because the live baseline is also invalid. The recovery exception now requires both renders to complete and produce identical content checksums.
 - Webhook validator registration is atomic and fails controller initialization when any configured kind can't be mapped or the dry-run validator is absent. A request routed to an unregistered kind is denied with HTTP 503 instead of admitted.
 - Pluggable-validator errors now block every render path before publication or deployment, including deletes, HTTP refreshes, startup, and ordinary reconciliation. Malformed file globs reject the merged config, and manager construction failures abort the controller iteration instead of silently disabling the feature.
