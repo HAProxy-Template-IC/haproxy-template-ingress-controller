@@ -8,7 +8,8 @@ package store
 import (
 	"errors"
 	"fmt"
-	"strings"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 )
 
 var errResourceNameRequired = errors.New("resource name is required")
@@ -20,13 +21,8 @@ type resourceIdentity struct {
 	name      string
 }
 
-// makeKeyString creates a composite key from multiple key parts.
-//
-// Example:
-//
-//	makeKeyString("default", "my-ingress") -> "default/my-ingress"
-func makeKeyString(keys []string) string {
-	return strings.Join(keys, "/")
+func resourceCacheKey(namespace, name string) string {
+	return indexer.EncodeKey([]string{namespace, name})
 }
 
 // StoreError represents a generic store operation error.
@@ -37,11 +33,10 @@ type StoreError struct {
 }
 
 func (e *StoreError) Error() string {
-	keyStr := strings.Join(e.Keys, "/")
-	if keyStr == "" {
+	if len(e.Keys) == 0 {
 		return fmt.Sprintf("store error during %s: %v", e.Operation, e.Cause)
 	}
-	return fmt.Sprintf("store error during %s for key '%s': %v", e.Operation, keyStr, e.Cause)
+	return fmt.Sprintf("store error during %s for keys %q: %v", e.Operation, e.Keys, e.Cause)
 }
 
 func (e *StoreError) Unwrap() error {

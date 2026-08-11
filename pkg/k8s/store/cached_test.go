@@ -509,7 +509,7 @@ func TestCachedStore_CacheTTL(t *testing.T) {
 	// The entry is still present in the LRU but its TTL has elapsed: the
 	// read path (fetchResourceByRef) treats a past expiresAt as a miss.
 	store.mu.RLock()
-	entry, ok := store.cache.Peek("default/test-cm")
+	entry, ok := store.cache.Peek(resourceCacheKey("default", "test-cm"))
 	store.mu.RUnlock()
 	if !ok {
 		t.Fatal("expected entry to still be present in the LRU before a read")
@@ -621,7 +621,7 @@ func TestCachedStore_TTLReset(t *testing.T) {
 
 	// Record initial expiration time
 	store.mu.RLock()
-	entry, _ := store.cache.Peek("default/test-cm")
+	entry, _ := store.cache.Peek(resourceCacheKey("default", "test-cm"))
 	initialExpiry := entry.expiresAt
 	store.mu.RUnlock()
 
@@ -640,7 +640,7 @@ func TestCachedStore_TTLReset(t *testing.T) {
 
 	// Check that expiration time was extended
 	store.mu.RLock()
-	entry, _ = store.cache.Peek("default/test-cm")
+	entry, _ = store.cache.Peek(resourceCacheKey("default", "test-cm"))
 	newExpiry := entry.expiresAt
 	store.mu.RUnlock()
 
@@ -661,7 +661,7 @@ func TestCachedStore_TTLReset(t *testing.T) {
 
 	// Entry should still be in cache (not expired yet)
 	store.mu.RLock()
-	_, ok := store.cache.Peek("default/test-cm")
+	_, ok := store.cache.Peek(resourceCacheKey("default", "test-cm"))
 	store.mu.RUnlock()
 
 	if !ok {
@@ -674,7 +674,7 @@ func TestCachedStore_TTLReset(t *testing.T) {
 	// The entry is now past its (reset) TTL: the read path treats a past
 	// expiresAt as a miss and re-fetches.
 	store.mu.RLock()
-	entry, ok = store.cache.Peek("default/test-cm")
+	entry, ok = store.cache.Peek(resourceCacheKey("default", "test-cm"))
 	store.mu.RUnlock()
 	if !ok {
 		t.Fatal("expected entry to still be present in the LRU before a read")

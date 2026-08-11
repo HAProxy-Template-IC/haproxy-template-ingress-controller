@@ -131,7 +131,7 @@ current, so an in-flight read can't restore a body invalidated by `Update` or
   the warm subset for on-demand (documented); under invalidate-on-write those
   are full bodies (live-GET-cached) or absent — no husks.
 
-**Honest scope of the win.** The win is eliminating the informer's full-body
+**Scope of the win.** The win is eliminating the informer's full-body
 retention for on-demand kinds — real and exactly goal (1) for the "many large
 Secrets" use case, but it does **not** reduce per-event network/decode/convert
 cost (the transform runs *after* decode). Projection is a steady-state-heap
@@ -184,10 +184,10 @@ The scrutiny established this is **achievable without a new store type but
 materially heavier and lower-value than the sketch**, and recommends not
 shipping it first. Recorded requirements so it isn't re-discovered:
 
-**Where it must live.** Not in `CachedStore.Get` — warm reads served from the
-LazySnapshot `ListCached()` prime bypass `Get` entirely
-(`store_wrapper.go:183-196`), so keys read *every* render would silently age out
-and get wrongly suppressed (the decisive flaw). The accessed-set must live
+**Where it must live.** Not in `CachedStore.Get` — `List()` and partial lookups
+can consume the LazySnapshot `ListCached()` prime without an exact `Get`, so
+keys read *every* render would silently age out and get wrongly suppressed (the
+decisive flaw). The accessed-set must live
 **controller-side**, recorded by `StoreWrapper` on **all** read paths (snapshot
 hit, lazy `Store.Get` including misses, and the prime fold), and consulted by the
 watcher via a new generic `WatcherConfig.ShouldReconcile(...)` hook **per-event,

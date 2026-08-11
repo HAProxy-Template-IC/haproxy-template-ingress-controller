@@ -214,7 +214,7 @@ func TestCachedStore_GetRefreshesTTLOnHit(t *testing.T) {
 	// regression that didn't refresh expiresAt during Get would have left
 	// it in the past and forced an API re-fetch.
 	store.mu.RLock()
-	entry, ok := store.cache.Peek("default/hot-secret")
+	entry, ok := store.cache.Peek(resourceCacheKey("default", "hot-secret"))
 	store.mu.RUnlock()
 	require.True(t, ok, "the hot entry must still be present in the cache")
 	assert.True(t, time.Now().Before(entry.expiresAt),

@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -48,11 +49,12 @@ func (s *cachedTestStore) Get(keys ...string) ([]any, error) {
 	if s.byKey == nil {
 		return nil, nil
 	}
-	composite := keys[0]
-	for _, k := range keys[1:] {
-		composite += "/" + k
-	}
+	composite := indexer.EncodeKey(keys)
 	return s.byKey[composite], nil
+}
+
+func cachedTestKey(keys ...string) string {
+	return indexer.EncodeKey(keys)
 }
 
 func (s *cachedTestStore) List() ([]any, error) {
@@ -108,17 +110,17 @@ func secret(name string) map[string]any {
 
 // TestStoreWrapper_LazyMode_PrimedFromCachedList is the load-bearing
 // invariant for the `store: on-demand` use case: the wrapper must
-// NEVER call Store.List() during normal operation. Constructing the
-// wrapper + reading a key that's already in cache must come at zero
-// full-list cost.
+// never call Store.List() during normal operation. An exact lookup
+// still calls Store.Get once because one warm entry doesn't prove a
+// non-unique index bucket is complete.
 func TestStoreWrapper_LazyMode_PrimedFromCachedList(t *testing.T) {
 	primedSecret := secret("warm")
 	store := &cachedTestStore{
 		cached: []any{primedSecret},
 		byKey: map[string][]any{
-			"default/warm":  {primedSecret},
-			"default/cold":  {secret("cold")},
-			"default/never": {secret("never-touched")},
+			cachedTestKey("default", "warm"):  {primedSecret},
+			cachedTestKey("default", "cold"):  {secret("cold")},
+			cachedTestKey("default", "never"): {secret("never-touched")},
 		},
 	}
 
@@ -130,15 +132,40 @@ func TestStoreWrapper_LazyMode_PrimedFromCachedList(t *testing.T) {
 		LazySnapshot: true,
 	}
 
-	// Reading the warm key never falls through to Store.Get — the
-	// snapshot prime already populated it.
+	// Store.Get verifies the complete bucket. A real CachedStore serves
+	// this unique warm resource from its LRU without an API call.
 	got := w.GetSingle("default", "warm")
 	require.NotNil(t, got)
 	assert.Equal(t, primedSecret, got)
 
 	assert.Equal(t, int32(1), store.listCachedCalls.Load(), "primed snapshot once")
 	assert.Equal(t, int32(0), store.listCalls.Load(), "lazy mode must never call Store.List()")
-	assert.Equal(t, int32(0), store.getCalls.Load(), "warm-cached read served from snapshot index, not Store.Get")
+	assert.Equal(t, int32(1), store.getCalls.Load(), "first exact lookup verifies the complete bucket")
+}
+
+func TestStoreWrapper_LazyMode_WarmNonUniqueBucketIsCompleted(t *testing.T) {
+	warm := snapshotIndexedResource("warm", "shared", "group")
+	cold := snapshotIndexedResource("cold", "shared", "group")
+	store := &cachedTestStore{
+		cached: []any{warm},
+		byKey: map[string][]any{
+			cachedTestKey("shared", "group"): {warm, cold},
+		},
+	}
+
+	w := &StoreWrapper{
+		Store:        store,
+		ResourceType: "custom-resources",
+		Logger:       testutil.NewTestLogger(),
+		IndexBy:      []string{"spec.first", "spec.second"},
+		LazySnapshot: true,
+	}
+
+	assertWrapperResourceNames(t, w.Fetch("shared", "group"), "warm", "cold")
+	assert.Equal(t, int32(1), store.getCalls.Load())
+	assertWrapperResourceNames(t, w.Fetch("shared", "group"), "warm", "cold")
+	assert.Equal(t, int32(1), store.getCalls.Load())
+	assertWrapperResourceNames(t, w.List(), "warm", "cold")
 }
 
 // TestStoreWrapper_LazyMode_FetchOnMissAndGrow verifies the
@@ -152,8 +179,8 @@ func TestStoreWrapper_LazyMode_FetchOnMissAndGrow(t *testing.T) {
 	store := &cachedTestStore{
 		cached: []any{primedSecret},
 		byKey: map[string][]any{
-			"default/warm": {primedSecret},
-			"default/cold": {coldSecret},
+			cachedTestKey("default", "warm"): {primedSecret},
+			cachedTestKey("default", "cold"): {coldSecret},
 		},
 	}
 
@@ -204,7 +231,7 @@ func TestStoreWrapper_LazyMode_AbsentKeyDoesNotPoisonSnapshot(t *testing.T) {
 	store := &cachedTestStore{
 		cached: []any{primedSecret},
 		byKey: map[string][]any{
-			"default/warm": {primedSecret},
+			cachedTestKey("default", "warm"): {primedSecret},
 		},
 	}
 
@@ -277,7 +304,7 @@ func TestStoreWrapper_EagerMode_StillCallsStoreList(t *testing.T) {
 	store := &cachedTestStore{
 		cached: []any{primed}, // ignored in eager mode
 		byKey: map[string][]any{
-			"default/warm": {primed},
+			cachedTestKey("default", "warm"): {primed},
 		},
 	}
 

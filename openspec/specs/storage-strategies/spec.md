@@ -135,17 +135,32 @@ THEN a warning SHALL be logged indicating that individual API lookups may be exp
 
 ### Requirement: Composite Key Matching
 
-Stores SHALL construct composite keys by joining index key values with "/" as separator. Exact-match lookups SHALL use the full composite key. Partial-match lookups SHALL match all entries whose composite key starts with the provided prefix followed by "/".
+Stores SHALL encode ordered index components with an unambiguous length-prefixed representation. Exact-match lookups SHALL use all configured components. Partial-match lookups SHALL compare complete leading components rather than raw string prefixes. MemoryStore, CachedStore, and StoreWrapper's per-render snapshot index SHALL use the same encoding and prefix comparison. CachedStore SHALL use that encoding for its separate `(namespace, name)` cache identity too. A lazy StoreWrapper SHALL query the underlying store on the first exact lookup of each key, because warm cache entries alone do not prove that a non-unique bucket is complete.
 
-#### Scenario: Two-key composite key formed correctly
+#### Scenario: Separator characters do not collide
 
-WHEN keys `["default", "my-ingress"]` are used
-THEN the composite key SHALL be `"default/my-ingress"`.
+WHEN resources are indexed by `["a/b", "c"]` and `["a", "b/c"]`
+THEN exact lookups SHALL address different buckets and `Get("a")` SHALL return only the second resource.
 
-#### Scenario: Prefix match returns all resources in namespace
+#### Scenario: Empty and Unicode components preserve boundaries
+
+WHEN index components are empty strings or contain Unicode text
+THEN exact and partial lookups SHALL compare them as complete ordered components without collision.
+
+#### Scenario: Prefix match returns all resources with matching leading components
 
 WHEN Get is called with keys `["default"]` on a store with numKeys=2
-THEN all resources whose composite key starts with `"default/"` SHALL be returned.
+THEN all resources whose first index component equals `"default"` SHALL be returned.
+
+#### Scenario: Warm on-demand entry does not hide a non-unique sibling
+
+WHEN a lazy StoreWrapper is primed with one warm resource from a composite key shared by another cold resource
+THEN the first exact Fetch SHALL query the underlying store, return both resources, and reuse that complete bucket for later lookups in the render.
+
+#### Scenario: Template lookup key counts fail closed
+
+WHEN Fetch or GetSingle receives no keys or more keys than the configured index
+THEN the wrapper SHALL return no resources and record a resource-input error that rejects the render.
 
 ### Requirement: Resource Immutability Contract
 

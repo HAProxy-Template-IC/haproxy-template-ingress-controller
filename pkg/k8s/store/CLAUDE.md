@@ -66,8 +66,12 @@ Both stores use composite keys for indexing:
 ```go
 // Example with index_by: ["metadata.namespace", "metadata.name"]
 keys := []string{"default", "my-ingress"}
-compositeKey := "default/my-ingress"
+compositeKey := indexer.EncodeKey(keys)
 ```
+
+`EncodeKey` length-prefixes every component. Never join components with a
+delimiter: index values may contain that delimiter. Encode the lookup prefix
+once, then use `indexer.HasEncodedKeyPrefix` for every bucket comparison.
 
 **Why composite keys:**
 
@@ -140,7 +144,7 @@ type CachedStore struct {
     mu             sync.RWMutex
     refs           map[string][]resourceRef
     locations      map[resourceIdentity]string
-    cache          *lru.Cache[string, *cacheEntry]
+    cache          *lru.Cache[string, *cacheEntry] // Encoded namespace and name
     refGenerations map[string]uint64
     nextGeneration uint64
     numKeys        int
@@ -169,8 +173,8 @@ type CachedStore struct {
 
 **Cache key vs Index key:**
 
-- **Index key** (composite): Used for matching (e.g., "default/common-label")
-- **Cache key** (namespace/name): Used for caching fetched resources (e.g., "default/my-secret")
+- **Index key** (composite): Encoded ordered `indexBy` values used for matching
+- **Cache key** (identity): Encoded `(namespace, name)` used for fetched resources
 
 This separation allows:
 
@@ -235,7 +239,7 @@ func (s *MemoryStore) Add(resource any, keys []string) error {
         return err  // *StoreError{Operation, Keys, Cause}
     }
 
-    keyStr := makeKeyString(keys)
+    keyStr := indexer.EncodeKey(keys)
     if identity, ok := identifyResource(resource); ok {
         s.removeIdentityLocked(identity)
         s.locations[identity] = keyStr
@@ -253,7 +257,7 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
         return err
     }
 
-    keyStr := makeKeyString(keys)
+    keyStr := indexer.EncodeKey(keys)
     if identity, ok := identifyResource(resource); ok {
         s.removeIdentityLocked(identity)
         s.locations[identity] = keyStr

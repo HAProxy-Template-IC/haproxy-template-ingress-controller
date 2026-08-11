@@ -32,7 +32,7 @@ func TestStoreError_Error(t *testing.T) {
 				Keys:      []string{"default", "my-resource"},
 				Cause:     errors.New("invalid key count"),
 			},
-			contains: []string{"add", "default/my-resource", "invalid key count"},
+			contains: []string{"add", `["default" "my-resource"]`, "invalid key count"},
 		},
 		{
 			name: "without keys",
@@ -51,6 +51,15 @@ func TestStoreError_Error(t *testing.T) {
 				Cause:     errors.New("no keys provided"),
 			},
 			contains: []string{"delete", "no keys provided"},
+		},
+		{
+			name: "with empty component",
+			err: &StoreError{
+				Operation: "get",
+				Keys:      []string{""},
+				Cause:     errors.New("missing resource"),
+			},
+			contains: []string{"get", `[""]`, "missing resource"},
 		},
 	}
 
@@ -83,44 +92,6 @@ func TestStoreError_Unwrap(t *testing.T) {
 	// Test errors.Is with wrapped error
 	if !errors.Is(storeErr, baseErr) {
 		t.Error("errors.Is should match the wrapped error")
-	}
-}
-
-func TestMakeKeyString(t *testing.T) {
-	tests := []struct {
-		name     string
-		keys     []string
-		expected string
-	}{
-		{
-			name:     "two keys",
-			keys:     []string{"default", "my-resource"},
-			expected: "default/my-resource",
-		},
-		{
-			name:     "single key",
-			keys:     []string{"default"},
-			expected: "default",
-		},
-		{
-			name:     "empty keys",
-			keys:     []string{},
-			expected: "",
-		},
-		{
-			name:     "three keys",
-			keys:     []string{"ns", "name", "label"},
-			expected: "ns/name/label",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := makeKeyString(tt.keys)
-			if result != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, result)
-			}
-		})
 	}
 }
 
