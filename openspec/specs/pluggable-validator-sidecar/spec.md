@@ -211,6 +211,33 @@ THEN total wall-clock latency SHALL be ~200 ms + dispatch overhead, NOT 3 × 200
 WHEN ValidateAll completes with multiple diagnostics from concurrent dispatch
 THEN the returned outcome's `Warnings` and `Errors` slices SHALL be sorted by `(path, line, column, message)` so output is stable across runs.
 
+### Requirement: Interrupted Dispatch Fails Closed
+
+`ValidateAll` SHALL treat context cancellation before or during dispatch as an
+incomplete validation, preserve the cancellation cause, and return aggregate
+result `error`. Completed `valid` responses SHALL NOT turn a partial fan-out
+into a valid verdict. Cancellation SHALL interrupt active socket reads and
+writes without waiting for the validator's configured request timeout, and the
+interrupted connection SHALL NOT return to the pool.
+
+#### Scenario: Context canceled before dispatch
+
+GIVEN a configured validator whose glob matches a rendered file
+WHEN `ValidateAll` receives an already-canceled context
+THEN it SHALL dispatch no request and SHALL return result `error` wrapping the context cause.
+
+#### Scenario: Context canceled during a valid response
+
+GIVEN a validator request is in flight
+WHEN the context is canceled before that validator returns `valid`
+THEN `ValidateAll` SHALL return result `error` wrapping the context cause.
+
+#### Scenario: Cancellation interrupts socket I/O
+
+GIVEN a validator accepted a request but has not returned a response
+WHEN the validation context is canceled
+THEN the client SHALL stop waiting immediately and SHALL discard that connection.
+
 ### Requirement: Manager Health Check
 
 The Manager SHALL expose `Healthy() (ok bool, failures []string)` summarising the writability of every configured validator socket. Each socket SHALL be checked by `os.Stat` (path exists), mode-test (`mode & os.ModeSocket != 0`), and a non-blocking unix dial. Each check SHALL complete in under 1 ms in the happy path. Failed checks SHALL appear in `failures` as `"<validator-name>: <reason>"`. The `ok` boolean SHALL be `false` if any failure is recorded.

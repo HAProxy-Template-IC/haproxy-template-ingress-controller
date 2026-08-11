@@ -17,6 +17,7 @@ package proposalvalidator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -212,13 +213,15 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 	defer cancel()
 	_, validationResult, err := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission, admissionSubjectOpts(req.Overlays)...)
 	if err != nil {
-		c.logger.Warn("Proposal validation failed: render error",
+		phase := pipelineFailurePhase(err)
+		c.logger.Warn("Proposal validation failed: pipeline error",
 			"request_id", req.ID,
+			"phase", phase,
 			"error", err,
 		)
 		c.EventBus().Publish(events.NewProposalValidationFailedEvent(
 			req.ID,
-			"render",
+			phase,
 			err,
 			time.Since(startTime).Milliseconds(),
 		))
@@ -363,29 +366,80 @@ type validationOutcome struct {
 // HAProxy content is byte-equivalent to the already-invalid live state.
 func (c *Component) runWithBaselineCheck(ctx context.Context, overlayProvider *stores.OverlayStoreProvider, proposedOpts ...rendercontext.Option) validationOutcome {
 	pipelineResult, proposedResult, proposedErr := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission, proposedOpts...)
-	if proposedErr == nil && proposedResult != nil && proposedResult.Valid {
+	if authorityErr := validationAuthorityFailure(ctx, proposedErr, proposedResult); authorityErr != nil {
+		return validationOutcome{Phase: pipelineFailurePhase(authorityErr), Error: authorityErr}
+	}
+	if proposedErr != nil {
+		return validationOutcome{Phase: pipelineFailurePhase(proposedErr), Error: proposedErr}
+	}
+	if proposedResult == nil {
+		return validationOutcome{Phase: "validation", Error: fmt.Errorf("proposal validation returned no result")}
+	}
+	if proposedResult.Valid {
 		return validationOutcome{Admit: true, PipelineResult: pipelineResult, Warnings: proposedResult.Warnings}
 	}
 
 	baselinePipelineResult, baselineResult, baselineErr := c.runBaselineCheck(ctx, proposedOpts...)
-	if proposedErr == nil && proposedResult != nil && !proposedResult.Valid &&
-		baselineErr == nil && baselineResult != nil && !baselineResult.Valid &&
+	if authorityErr := validationAuthorityFailure(ctx, baselineErr, baselineResult); authorityErr != nil {
+		return validationOutcome{Phase: pipelineFailurePhase(authorityErr), Error: authorityErr}
+	}
+	if baselineErr == nil && baselineResult != nil && !baselineResult.Valid &&
 		pipelineResult != nil && baselinePipelineResult != nil &&
 		pipelineResult.ContentChecksum == baselinePipelineResult.ContentChecksum {
 		c.logger.Warn("Admitting resource because it does not change the already-invalid rendered configuration",
 			"validation_phase", proposedResult.Phase,
 			"validation_error", proposedResult.Error,
 			"content_checksum", pipelineResult.ContentChecksum)
+		// Authority may expire concurrently after the first check; recheck at admission.
+		if authorityErr := validationAuthorityFailure(ctx, baselineErr, baselineResult); authorityErr != nil {
+			return validationOutcome{Phase: pipelineFailurePhase(authorityErr), Error: authorityErr}
+		}
 		return validationOutcome{Admit: true, PipelineResult: pipelineResult, Warnings: proposedResult.Warnings}
 	}
 
-	if proposedErr != nil {
-		return validationOutcome{Phase: "render", Error: proposedErr}
-	}
-	if proposedResult == nil {
-		return validationOutcome{Phase: "validation", Error: fmt.Errorf("proposal validation returned no result")}
-	}
 	return validationOutcome{Phase: proposedResult.Phase, Error: proposedResult.Error, Warnings: proposedResult.Warnings}
+}
+
+func validationAuthorityFailure(ctx context.Context, runErr error, runResult *validation.ValidationResult) error {
+	cause := context.Cause(ctx)
+	if cause == nil {
+		return nil
+	}
+	if runErr != nil && errors.Is(runErr, cause) {
+		return runErr
+	}
+
+	phase := pipeline.PhaseValidation
+	validationPhase := ""
+	if pipelineErr, ok := errors.AsType[*pipeline.PipelineError](runErr); ok {
+		phase = pipelineErr.Phase
+		validationPhase = pipelineErr.ValidationPhase
+	} else if runResult != nil {
+		validationPhase = runResult.Phase
+	}
+	authorityErr := fmt.Errorf("proposal validation did not finish: %w; retry the request", cause)
+	if runErr != nil {
+		authorityErr = errors.Join(runErr, authorityErr)
+	}
+	return &pipeline.PipelineError{
+		Phase:           phase,
+		ValidationPhase: validationPhase,
+		Cause:           authorityErr,
+	}
+}
+
+func pipelineFailurePhase(err error) string {
+	pipelineErr, ok := errors.AsType[*pipeline.PipelineError](err)
+	if !ok {
+		return string(pipeline.PhaseRender)
+	}
+	if pipelineErr.Phase == pipeline.PhaseValidation && pipelineErr.ValidationPhase != "" {
+		return pipelineErr.ValidationPhase
+	}
+	if pipelineErr.Phase == "" {
+		return string(pipeline.PhaseRender)
+	}
+	return string(pipelineErr.Phase)
 }
 
 // runBaselineCheck runs the render-validate pipeline against the live stores

@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -88,6 +89,10 @@ func NewTemplatePostProcessor(source string, globals native.Declarations) (*Temp
 // The input (previously rendered template output) is passed as the `input` variable.
 // The template's output becomes the new rendered content.
 func (p *TemplatePostProcessor) Process(input string) (string, error) {
+	return p.processContext(context.Background(), "__postprocessor__", input)
+}
+
+func (p *TemplatePostProcessor) processContext(ctx context.Context, templateName, input string) (string, error) {
 	vars := map[string]any{
 		"input": input,
 	}
@@ -95,8 +100,8 @@ func (p *TemplatePostProcessor) Process(input string) (string, error) {
 	var output strings.Builder
 	output.Grow(len(input)) // Pre-allocate to avoid reallocations
 
-	err := p.compiled.Run(&output, vars, nil)
-	if err != nil {
+	runOpts := &scriggo.RunOptions{Context: ctx}
+	if err := runScriggoTemplate(ctx, templateName, p.compiled, &output, vars, runOpts); err != nil {
 		return "", fmt.Errorf("template post-processor execution failed: %w", err)
 	}
 

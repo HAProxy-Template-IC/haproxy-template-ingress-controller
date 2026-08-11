@@ -129,6 +129,9 @@ func (c *Client) Validate(ctx context.Context, req *Request) (*Response, error) 
 	if req == nil {
 		return nil, errors.New("validator client: nil request")
 	}
+	if cause := context.Cause(ctx); cause != nil {
+		return canceledResponse(c.Name, cause), nil
+	}
 
 	deadline := time.Now().Add(c.Timeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
@@ -157,6 +160,10 @@ func (c *Client) Validate(ctx context.Context, req *Request) (*Response, error) 
 // signal that earns a single fresh-dial retry. Connect/set-deadline failures
 // never retry.
 func (c *Client) attempt(callCtx context.Context, req *Request, deadline time.Time, n int) (result *Response, retry bool) {
+	if cause := context.Cause(callCtx); cause != nil {
+		return canceledResponse(c.Name, cause), false
+	}
+
 	var (
 		conn  net.Conn
 		fresh bool
@@ -172,6 +179,10 @@ func (c *Client) attempt(callCtx context.Context, req *Request, deadline time.Ti
 			"validator %q: connect %s%s: %v", c.Name, c.SocketPath, retrySuffix(n), err,
 		)), false
 	}
+	if cause := context.Cause(callCtx); cause != nil {
+		c.discard(conn)
+		return canceledResponse(c.Name, cause), false
+	}
 
 	if err := conn.SetDeadline(deadline); err != nil {
 		c.discard(conn)
@@ -179,13 +190,23 @@ func (c *Client) attempt(callCtx context.Context, req *Request, deadline time.Ti
 			"validator %q: set deadline%s: %v", c.Name, retrySuffix(n), err,
 		)), false
 	}
+	stopCancellation := armConnectionCancellation(callCtx, conn)
+	if cause := context.Cause(callCtx); cause != nil {
+		stopCancellation()
+		c.discard(conn)
+		return canceledResponse(c.Name, cause), false
+	}
 
 	// A reused connection (first attempt, not freshly dialed) may have been
 	// idle-closed; its encode/decode failure earns one retry.
 	canRetry := n == 0 && !fresh
 
 	if _, err := EncodeRequest(conn, req); err != nil {
+		stopCancellation()
 		c.discard(conn)
+		if cause := context.Cause(callCtx); cause != nil {
+			return canceledResponse(c.Name, cause), false
+		}
 		return ProtocolError(fmt.Sprintf(
 			"validator %q: encode request%s: %v", c.Name, retrySuffix(n), err,
 		)), canRetry
@@ -193,14 +214,47 @@ func (c *Client) attempt(callCtx context.Context, req *Request, deadline time.Ti
 
 	resp, err := DecodeResponse(conn)
 	if err != nil {
+		stopCancellation()
 		c.discard(conn)
+		if cause := context.Cause(callCtx); cause != nil {
+			return canceledResponse(c.Name, cause), false
+		}
 		return ProtocolError(fmt.Sprintf(
 			"validator %q: decode response%s: %v", c.Name, retrySuffix(n), err,
 		)), canRetry
 	}
 
+	stopCancellation()
+	if cause := context.Cause(callCtx); cause != nil {
+		c.discard(conn)
+		return canceledResponse(c.Name, cause), false
+	}
 	c.release(conn)
 	return resp, false
+}
+
+func armConnectionCancellation(ctx context.Context, conn net.Conn) func() {
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.SetDeadline(time.Now())
+		close(done)
+	})
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if !stop() {
+				<-done
+			}
+		})
+	}
+}
+
+func canceledResponse(validatorName string, cause error) *Response {
+	return ProtocolError(fmt.Sprintf(
+		"validator %q: validation did not finish: %v; retry the request",
+		validatorName,
+		cause,
+	))
 }
 
 // retrySuffix returns " (retry)" for retry attempts (attempt > 0) and the
@@ -236,6 +290,9 @@ func (c *Client) acquire(ctx context.Context) (net.Conn, bool, error) {
 		if c.closed {
 			return nil, false, errClientClosed
 		}
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, false, fmt.Errorf("acquire: %w", cause)
+		}
 		// Reuse any free, non-stale connection first.
 		if pc := c.popIdleLocked(); pc != nil {
 			c.inFlight++
@@ -247,26 +304,51 @@ func (c *Client) acquire(ctx context.Context) (net.Conn, bool, error) {
 			c.mu.Unlock()
 			conn, dialErr := c.dial(ctx)
 			c.mu.Lock()
-			if dialErr != nil {
-				c.inFlight--
-				c.cond.Signal()
-				return nil, false, dialErr
-			}
-			if c.closed {
-				c.inFlight--
-				c.cond.Broadcast()
-				_ = conn.Close()
-				return nil, false, errClientClosed
-			}
-			return conn, true, nil
-		}
-		// At cap. Bail if the context is already cancelled.
-		if err := ctx.Err(); err != nil {
-			return nil, false, fmt.Errorf("acquire: %w", err)
+			conn, err := c.finishDialLocked(ctx, conn, dialErr, "acquire")
+			return conn, true, err
 		}
 		// Wait for release/discard or cancellation broadcast.
 		c.cond.Wait()
 	}
+}
+
+func (c *Client) finishDialLocked(
+	ctx context.Context,
+	conn net.Conn,
+	dialErr error,
+	operation string,
+) (net.Conn, error) {
+	if dialErr != nil {
+		c.inFlight--
+		c.cond.Signal()
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if err := clientContextError(ctx, operation); err != nil {
+			return nil, err
+		}
+		return nil, dialErr
+	}
+	if err := clientContextError(ctx, operation); err != nil {
+		c.inFlight--
+		c.cond.Broadcast()
+		_ = conn.Close()
+		return nil, err
+	}
+	if c.closed {
+		c.inFlight--
+		c.cond.Broadcast()
+		_ = conn.Close()
+		return nil, errClientClosed
+	}
+	return conn, nil
+}
+
+func clientContextError(ctx context.Context, operation string) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return fmt.Errorf("%s: %w", operation, cause)
+	}
+	return nil
 }
 
 // popIdleLocked removes and returns the most recently parked
@@ -331,33 +413,24 @@ func (c *Client) dialFresh(ctx context.Context) (net.Conn, bool, error) {
 			c.mu.Unlock()
 			return nil, false, errClientClosed
 		}
-		if err := ctx.Err(); err != nil {
+		if cause := context.Cause(ctx); cause != nil {
 			c.mu.Unlock()
-			return nil, false, fmt.Errorf("dialFresh: %w", err)
+			return nil, false, fmt.Errorf("dialFresh: %w", cause)
 		}
 		c.cond.Wait()
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		c.mu.Unlock()
+		return nil, false, fmt.Errorf("dialFresh: %w", cause)
 	}
 	c.inFlight++
 	c.mu.Unlock()
 
 	conn, err := c.dial(ctx)
-	if err != nil {
-		c.mu.Lock()
-		c.inFlight--
-		c.cond.Signal()
-		c.mu.Unlock()
-		return nil, false, err
-	}
 	c.mu.Lock()
-	if c.closed {
-		c.inFlight--
-		c.cond.Broadcast()
-		c.mu.Unlock()
-		_ = conn.Close()
-		return nil, false, errClientClosed
-	}
+	conn, err = c.finishDialLocked(ctx, conn, err, "dialFresh")
 	c.mu.Unlock()
-	return conn, true, nil
+	return conn, true, err
 }
 
 // release returns a healthy connection to the pool. The connection

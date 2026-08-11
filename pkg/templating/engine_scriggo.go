@@ -16,6 +16,7 @@ package templating
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -222,11 +223,8 @@ func (e *ScriggoEngine) RenderWithSourceMap(ctx context.Context, templateName st
 
 	runOpts := &scriggo.RunOptions{Context: ctx, CollectSourceMap: true}
 	var output strings.Builder
-	if err := template.Run(&output, templateContext, runOpts); err != nil {
-		if ctx.Err() != nil {
-			return "", nil, &RenderTimeoutError{TemplateName: templateName, Cause: ctx.Err()}
-		}
-		return "", nil, NewRenderError(templateName, err)
+	if err := runScriggoTemplate(ctx, templateName, template, &output, templateContext, runOpts); err != nil {
+		return "", nil, err
 	}
 	return output.String(), runOpts.SourceSpans, nil
 }
@@ -278,12 +276,8 @@ func (e *ScriggoEngine) Render(ctx context.Context, templateName string, templat
 
 	// Execute template
 	var output strings.Builder
-	err := template.Run(&output, templateContext, runOpts)
-	if err != nil {
-		if ctx.Err() != nil {
-			return "", &RenderTimeoutError{TemplateName: templateName, Cause: ctx.Err()}
-		}
-		return "", NewRenderError(templateName, err)
+	if err := runScriggoTemplate(ctx, templateName, template, &output, templateContext, runOpts); err != nil {
+		return "", err
 	}
 
 	result := output.String()
@@ -293,7 +287,7 @@ func (e *ScriggoEngine) Render(ctx context.Context, templateName string, templat
 		result += "\n"
 	}
 
-	result, err = e.applyPostProcessors(templateName, result)
+	result, err := e.applyPostProcessors(ctx, templateName, result)
 	if err != nil {
 		return "", err
 	}
@@ -311,6 +305,61 @@ func (e *ScriggoEngine) Render(ctx context.Context, templateName string, templat
 	}
 
 	return result, nil
+}
+
+func runScriggoTemplate(
+	ctx context.Context,
+	templateName string,
+	template *scriggo.Template,
+	output *strings.Builder,
+	templateContext map[string]any,
+	runOpts *scriggo.RunOptions,
+) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if cause := context.Cause(ctx); cause != nil && isScriggoCancellationPanic(recovered, ctx.Err(), cause) {
+				err = &RenderTimeoutError{TemplateName: templateName, Cause: cause}
+				return
+			}
+			panic(recovered)
+		}
+	}()
+
+	err = template.Run(output, templateContext, runOpts)
+	if cause := context.Cause(ctx); cause != nil {
+		return &RenderTimeoutError{TemplateName: templateName, Cause: cause}
+	}
+	if err != nil {
+		return NewRenderError(templateName, err)
+	}
+	return nil
+}
+
+func isScriggoCancellationPanic(recovered any, contextErr, cause error) bool {
+	if panicErr, ok := recovered.(error); ok {
+		for _, cancellation := range []error{contextErr, cause} {
+			if cancellation != nil && errors.Is(panicErr, cancellation) {
+				return true
+			}
+		}
+		return false
+	}
+
+	message, ok := recovered.(string)
+	if !ok {
+		return false
+	}
+
+	for _, cancellation := range []error{contextErr, cause} {
+		if cancellation == nil {
+			continue
+		}
+		fatalMessage := "fatal error: " + cancellation.Error()
+		if message == fatalMessage || strings.HasPrefix(message, fatalMessage+"\n") {
+			return true
+		}
+	}
+	return false
 }
 
 // RenderWithProfiling renders a template and returns profiling statistics.
@@ -353,19 +402,35 @@ func (e *ScriggoEngine) templateNotFoundError(templateName string) error {
 }
 
 // applyPostProcessors applies the post-processor chain to the output.
-func (e *ScriggoEngine) applyPostProcessors(templateName, output string) (string, error) {
+func (e *ScriggoEngine) applyPostProcessors(ctx context.Context, templateName, output string) (string, error) {
 	processors, exists := e.postProcessors[templateName]
 	if !exists || len(processors) == 0 {
+		if cause := context.Cause(ctx); cause != nil {
+			return "", &RenderTimeoutError{TemplateName: templateName, Cause: cause}
+		}
 		return output, nil
 	}
 
 	result := output
 	for _, processor := range processors {
+		if cause := context.Cause(ctx); cause != nil {
+			return "", &RenderTimeoutError{TemplateName: templateName, Cause: cause}
+		}
 		var err error
-		result, err = processor.Process(result)
+		if contextProcessor, ok := processor.(contextPostProcessor); ok {
+			result, err = contextProcessor.processContext(ctx, templateName, result)
+		} else {
+			result, err = processor.Process(result)
+		}
 		if err != nil {
+			if cause := context.Cause(ctx); cause != nil {
+				return "", &RenderTimeoutError{TemplateName: templateName, Cause: cause}
+			}
 			return "", NewRenderError(templateName, err)
 		}
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return "", &RenderTimeoutError{TemplateName: templateName, Cause: cause}
 	}
 	return result, nil
 }

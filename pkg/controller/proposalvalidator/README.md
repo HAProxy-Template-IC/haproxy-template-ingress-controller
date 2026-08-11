@@ -52,7 +52,7 @@ go async.Start(ctx)
 type ValidationResult struct {
     Valid        bool
     Error        error
-    Phase        string                   // "setup" / "render" / "syntax" / "schema" / "semantic" — empty when Valid; "setup" is emitted by this component when the overlay set itself is invalid (before the pipeline runs)
+    Phase        string                   // failing pipeline subphase; empty when valid
     DurationMs   int64
     ParsedConfig *parser.StructuredConfig // pre-parsed; downstream sync can skip the parse
 }
@@ -60,11 +60,14 @@ type ValidationResult struct {
 
 The async path publishes `ProposalValidationCompletedEvent` (or its failure variant) keyed by the request ID so multiple in-flight proposals don't get correlated incorrectly.
 
+Cancellation denies the proposal and retains the most specific pipeline phase.
+It cannot use the unchanged-invalid recovery exception.
+
 ## How It Works
 
 1. The caller hands over `overlays map[string]*stores.StoreOverlay` (one per resource type they want to perturb), and optionally an HTTP overlay for pending HTTP content.
 2. The component wraps `BaseStoreProvider` in an `OverlayStoreProvider` so the pipeline sees the merged view: live store + overlay on top.
-3. `Pipeline.Execute(ctx, mergedProvider)` runs the full render + three-phase validation against that view.
+3. `Pipeline.ExecuteWithResult(ctx, mergedProvider)` runs the full render + validation pipeline against that view.
 4. Failures come back as `*PipelineError` (with `Phase` + `Cause`); the simplification helpers in `pkg/dataplane` (`SimplifyRenderingError` / `SimplifyValidationError`) turn the underlying library error into something a webhook user can act on.
 
 Because the merged view exists only for the duration of the call, a successful proposal validation never mutates live store state.

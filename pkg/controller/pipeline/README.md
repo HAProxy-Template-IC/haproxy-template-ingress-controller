@@ -59,6 +59,10 @@ re-running render or validate:
 4. **Validate rendered output** — after the built-in phases pass, calls the optional validator with the complete rendered file set. Errors use validation phase `external`; warnings remain on the result.
 5. **Wrap errors** — failures come back as `*PipelineError` with `Phase` (`render` / `validation`) and, for validation, `ValidationPhase` (`syntax` / `schema` / `semantic` / `external`). Use `errors.As` to pull the phase out instead of string-matching the message.
 
+The pipeline checks `context.Cause` before and after every phase and immediately
+before returning success. Cancellation returns a phase-tagged `*PipelineError`
+that wraps the cancellation cause; a partial validation result is never valid.
+
 ## Pre-Parsed Config Optimisation
 
 `PipelineResult.ParsedConfig` carries the `*parser.StructuredConfig` produced during syntax validation. Downstream sync operations (`pkg/dataplane.Client.Sync`) accept it as input to skip a redundant parse. When the validation cache hits, this field is nil — the cached entry doesn't carry the parsed structure.
