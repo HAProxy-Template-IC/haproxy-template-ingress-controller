@@ -41,6 +41,16 @@ type recordingOutputValidator struct {
 	calls    int
 }
 
+type cancelingOutputValidator struct {
+	cancel context.CancelCauseFunc
+	cause  error
+}
+
+func (v *cancelingOutputValidator) ValidateRenderedOutput(_ context.Context, _ *PipelineResult) ([]string, error) {
+	v.cancel(v.cause)
+	return nil, nil
+}
+
 func (v *recordingOutputValidator) ValidateRenderedOutput(_ context.Context, _ *PipelineResult) ([]string, error) {
 	v.calls++
 	return v.warnings, v.err
@@ -272,4 +282,47 @@ func TestPipeline_ExecuteWithResult_OutputValidatorFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.ErrorContains(t, err, "external")
+}
+
+func TestPipeline_Execute_OutputValidatorCannotSucceedAfterCancellation(t *testing.T) {
+	pipeline := createTestPipeline(t, testutil.MinimalHAProxyConfig)
+	authorityErr := errors.New("validation authority expired")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	pipeline.outputValidator = &cancelingOutputValidator{cancel: cancel, cause: authorityErr}
+
+	result, err := pipeline.Execute(
+		ctx,
+		&mockStoreProvider{storeMap: map[string]stores.Store{}},
+		rendercontext.RenderModeReconcile,
+	)
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, authorityErr)
+	pipelineErr, ok := errors.AsType[*PipelineError](err)
+	require.True(t, ok)
+	assert.Equal(t, PhaseValidation, pipelineErr.Phase)
+	assert.Equal(t, "external", pipelineErr.ValidationPhase)
+}
+
+func TestPipeline_ExecuteWithResult_CancellationIsNotAValidationVerdict(t *testing.T) {
+	pipeline := createTestPipeline(t, testutil.MinimalHAProxyConfig)
+	authorityErr := errors.New("admission authority expired")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	pipeline.outputValidator = &cancelingOutputValidator{cancel: cancel, cause: authorityErr}
+
+	result, validationResult, err := pipeline.ExecuteWithResult(
+		ctx,
+		&mockStoreProvider{storeMap: map[string]stores.Store{}},
+		rendercontext.RenderModeAdmission,
+	)
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Nil(t, validationResult)
+	assert.ErrorIs(t, err, authorityErr)
+	pipelineErr, ok := errors.AsType[*PipelineError](err)
+	require.True(t, ok)
+	assert.Equal(t, PhaseValidation, pipelineErr.Phase)
+	assert.Equal(t, "external", pipelineErr.ValidationPhase)
 }

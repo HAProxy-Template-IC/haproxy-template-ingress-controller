@@ -17,6 +17,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -202,6 +203,9 @@ func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider, m
 	if err != nil {
 		return nil, err
 	}
+	if err := pipelineCancellationError(ctx, PhaseValidation, validationResult.Phase, validationResult.Error); err != nil {
+		return nil, err
+	}
 	if !validationResult.Valid {
 		return nil, &PipelineError{
 			Phase:           PhaseValidation,
@@ -224,11 +228,19 @@ func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider, m
 //   - provider: StoreProvider for accessing resource stores
 //
 // Returns:
-//   - PipelineResult with config and timing (nil if render failed)
-//   - ValidationResult with validation details (nil if render failed)
-//   - Error if rendering fails (validation failures return non-nil ValidationResult)
+//   - PipelineResult with config and timing (nil if render or authority failed)
+//   - ValidationResult with validation details (nil if render or authority failed)
+//   - Error if rendering fails or context authority expires; ordinary validation
+//     failures return a non-nil ValidationResult
 func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*PipelineResult, *validation.ValidationResult, error) {
-	return p.execute(ctx, provider, mode, extraOpts...)
+	result, validationResult, err := p.execute(ctx, provider, mode, extraOpts...)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := pipelineCancellationError(ctx, PhaseValidation, validationResult.Phase, validationResult.Error); err != nil {
+		return nil, nil, err
+	}
+	return result, validationResult, nil
 }
 
 // execute is the shared render-validate body behind Execute and
@@ -239,9 +251,15 @@ func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreP
 // with a PipelineError and nil results.
 func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*PipelineResult, *validation.ValidationResult, error) {
 	startTime := time.Now()
+	if err := pipelineCancellationError(ctx, PhaseRender, "", nil); err != nil {
+		return nil, nil, err
+	}
 
 	// Phase 1: Render configuration
 	renderResult, err := p.renderer.Render(ctx, provider, mode, extraOpts...)
+	if contextErr := pipelineCancellationError(ctx, PhaseRender, "", err); contextErr != nil {
+		return nil, nil, contextErr
+	}
 	if err != nil {
 		return nil, nil, &PipelineError{
 			Phase: PhaseRender,
@@ -254,6 +272,9 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 
 	// Phase 2: Validate configuration (pass pre-computed checksum to avoid rehashing)
 	validationResult := p.validator.ValidateWithChecksum(ctx, renderResult.HAProxyConfig, renderResult.AuxiliaryFiles, contentChecksum)
+	if err := pipelineCancellationError(ctx, PhaseValidation, validationResult.Phase, validationResult.Error); err != nil {
+		return nil, nil, err
+	}
 
 	result := &PipelineResult{
 		HAProxyConfig:      renderResult.HAProxyConfig,
@@ -271,6 +292,9 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 	}
 
 	if validationResult.Valid && p.outputValidator != nil {
+		if err := pipelineCancellationError(ctx, PhaseValidation, "external", nil); err != nil {
+			return nil, nil, err
+		}
 		validationStart := time.Now()
 		warnings, outputErr := p.outputValidator.ValidateRenderedOutput(ctx, result)
 		result.ValidationWarnings = warnings
@@ -287,7 +311,34 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 		}
 		validationResult = &combined
 		result.ValidationPhase = validationResult.Phase
+		if err := pipelineCancellationError(ctx, PhaseValidation, "external", outputErr); err != nil {
+			return nil, nil, err
+		}
 	}
 
+	if err := pipelineCancellationError(ctx, PhaseValidation, result.ValidationPhase, validationResult.Error); err != nil {
+		return nil, nil, err
+	}
 	return result, validationResult, nil
+}
+
+func pipelineCancellationError(
+	ctx context.Context,
+	phase PipelinePhase,
+	validationPhase string,
+	phaseErr error,
+) *PipelineError {
+	cause := context.Cause(ctx)
+	if cause == nil {
+		return nil
+	}
+	cancellationErr := fmt.Errorf("pipeline operation canceled: %w", cause)
+	if phaseErr != nil && !errors.Is(phaseErr, cause) {
+		cancellationErr = errors.Join(phaseErr, cancellationErr)
+	}
+	return &PipelineError{
+		Phase:           phase,
+		ValidationPhase: validationPhase,
+		Cause:           cancellationErr,
+	}
 }

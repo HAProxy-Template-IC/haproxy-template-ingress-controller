@@ -48,8 +48,10 @@ type FixtureServer struct {
 	mu               sync.Mutex
 	cannedResponse   []byte // length-prefixed JSON to write back, set via SetResponse
 	responseDelay    time.Duration
+	responseGate     <-chan struct{}
 	closeWithoutResp bool
 	requests         [][]byte // bodies (without length prefix) of requests received
+	requestReceived  chan struct{}
 
 	wg     sync.WaitGroup
 	stopCh chan struct{}
@@ -78,9 +80,10 @@ func NewFixtureServer(t *testing.T) *FixtureServer {
 	}
 
 	srv := &FixtureServer{
-		SocketPath: socketPath,
-		listener:   listener,
-		stopCh:     make(chan struct{}),
+		SocketPath:      socketPath,
+		listener:        listener,
+		stopCh:          make(chan struct{}),
+		requestReceived: make(chan struct{}, 1),
 	}
 	srv.wg.Add(1)
 	go srv.serve()
@@ -130,6 +133,18 @@ func (s *FixtureServer) SetResponseDelay(d time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.responseDelay = d
+}
+
+// SetResponseGate blocks responses until gate is closed.
+func (s *FixtureServer) SetResponseGate(gate <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.responseGate = gate
+}
+
+// RequestReceived reports when the server has read a complete request.
+func (s *FixtureServer) RequestReceived() <-chan struct{} {
+	return s.requestReceived
 }
 
 // Requests returns a copy of the bodies received so far, in the order the
@@ -198,9 +213,22 @@ func (s *FixtureServer) handle(conn net.Conn) {
 	s.mu.Lock()
 	s.requests = append(s.requests, body)
 	delay := s.responseDelay
+	gate := s.responseGate
 	resp := s.cannedResponse
 	closeWithoutResp := s.closeWithoutResp
 	s.mu.Unlock()
+
+	select {
+	case s.requestReceived <- struct{}{}:
+	default:
+	}
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-s.stopCh:
+			return
+		}
+	}
 
 	if delay > 0 {
 		select {

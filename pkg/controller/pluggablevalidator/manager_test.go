@@ -17,6 +17,7 @@ package pluggablevalidator_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,6 +37,22 @@ func tomlFile() pv.File {
 
 func tomlGlob() []string {
 	return []string{"/etc/haproxy-spoa-hub/*.toml"}
+}
+
+type cancelOnErrCheckContext struct {
+	context.Context
+	cancel   context.CancelCauseFunc
+	cause    error
+	lookups  int
+	cancelAt int
+}
+
+func (c *cancelOnErrCheckContext) Err() error {
+	c.lookups++
+	if c.lookups == c.cancelAt {
+		c.cancel(c.cause)
+	}
+	return c.Context.Err()
 }
 
 func TestManager_NewManager_RejectsDuplicateNames(t *testing.T) {
@@ -93,6 +110,105 @@ func TestManager_NoValidators(t *testing.T) {
 	}
 	if out.Result() != pv.ResultValid {
 		t.Fatalf("no-validator outcome must be Valid, got %q", out.Result())
+	}
+}
+
+func TestManager_ValidateAll_PreCanceledContextFailsClosed(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	if err := srv.SetResponse(&pv.Response{ProtocolVersion: pv.ProtocolVersion, Result: pv.ResultValid}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+	mgr, err := pv.NewManager(nil, []pv.ManagerConfig{
+		{Name: "coraza", SocketPath: srv.SocketPath, Files: tomlGlob(), Timeout: time.Second},
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	authorityErr := errors.New("validator authority expired")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(authorityErr)
+	out := mgr.ValidateAll(ctx, []pv.File{tomlFile()})
+
+	if out.Result() != pv.ResultError {
+		t.Fatalf("result=%q want %q", out.Result(), pv.ResultError)
+	}
+	if !errors.Is(out.Err, authorityErr) {
+		t.Fatalf("error=%v does not preserve cancellation cause %v", out.Err, authorityErr)
+	}
+	if got := len(srv.Requests()); got != 0 {
+		t.Fatalf("pre-canceled validation dispatched %d requests, want 0", got)
+	}
+}
+
+func TestManager_ValidateAll_CancellationDuringNoMatchRoutingFailsClosed(t *testing.T) {
+	mgr, err := pv.NewManager(nil, []pv.ManagerConfig{
+		{Name: "coraza", SocketPath: "/unused", Files: tomlGlob(), Timeout: time.Second},
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	authorityErr := errors.New("validator authority expired")
+	baseCtx, cancel := context.WithCancelCause(context.Background())
+	ctx := &cancelOnErrCheckContext{
+		Context:  baseCtx,
+		cancel:   cancel,
+		cause:    authorityErr,
+		cancelAt: 2,
+	}
+	out := mgr.ValidateAll(ctx, []pv.File{{
+		Path:    "/etc/haproxy/haproxy.cfg",
+		Content: "global\n    daemon\n",
+	}})
+
+	if out.Result() != pv.ResultError {
+		t.Fatalf("result=%q want %q", out.Result(), pv.ResultError)
+	}
+	if !errors.Is(out.Err, authorityErr) {
+		t.Fatalf("error=%v does not preserve cancellation cause %v", out.Err, authorityErr)
+	}
+}
+
+func TestManager_ValidateAll_CanceledDispatchFailsClosed(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	if err := srv.SetResponse(&pv.Response{ProtocolVersion: pv.ProtocolVersion, Result: pv.ResultValid}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+	responseGate := make(chan struct{})
+	srv.SetResponseGate(responseGate)
+	mgr, err := pv.NewManager(nil, []pv.ManagerConfig{
+		{Name: "coraza", SocketPath: srv.SocketPath, Files: tomlGlob(), Timeout: time.Second},
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	authorityErr := errors.New("validator authority expired")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	result := make(chan *pv.ValidationOutcome, 1)
+	go func() {
+		result <- mgr.ValidateAll(ctx, []pv.File{tomlFile()})
+	}()
+
+	select {
+	case <-srv.RequestReceived():
+	case <-time.After(time.Second):
+		t.Fatal("validator did not receive the dispatched request")
+	}
+	cancel(authorityErr)
+	close(responseGate)
+
+	select {
+	case out := <-result:
+		if out.Result() != pv.ResultError {
+			t.Fatalf("result=%q want %q", out.Result(), pv.ResultError)
+		}
+		if !errors.Is(out.Err, authorityErr) {
+			t.Fatalf("error=%v does not preserve cancellation cause %v", out.Err, authorityErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled validation did not return")
 	}
 }
 

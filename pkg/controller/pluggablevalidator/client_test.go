@@ -184,6 +184,41 @@ func TestClient_Validate_ContextDeadlineEnforced(t *testing.T) {
 	}
 }
 
+func TestClient_Validate_CancellationInterruptsResponseRead(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	if err := srv.SetResponse(&pv.Response{ProtocolVersion: pv.ProtocolVersion, Result: pv.ResultValid}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+	responseGate := make(chan struct{})
+	srv.SetResponseGate(responseGate)
+	client := pv.NewClient("slow", srv.SocketPath, 5*time.Second, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan *pv.Response, 1)
+	go func() {
+		resp, _ := client.Validate(ctx, newRequest())
+		result <- resp
+	}()
+
+	select {
+	case <-srv.RequestReceived():
+	case <-time.After(time.Second):
+		t.Fatal("validator did not receive the request")
+	}
+	cancel()
+
+	select {
+	case resp := <-result:
+		if resp.Result != pv.ResultError {
+			t.Fatalf("result=%q want %q", resp.Result, pv.ResultError)
+		}
+		if len(resp.Errors) != 1 || !strings.Contains(resp.Errors[0].Message, context.Canceled.Error()) {
+			t.Fatalf("errors=%v, want cancellation diagnostic", resp.Errors)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("socket read did not stop after context cancellation")
+	}
+}
+
 func TestClient_Validate_MalformedResponse(t *testing.T) {
 	srv := testutil.NewFixtureServer(t)
 	// Length prefix but a body that isn't valid JSON.

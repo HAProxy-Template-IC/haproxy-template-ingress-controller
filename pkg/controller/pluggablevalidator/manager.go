@@ -182,20 +182,20 @@ func (m *Manager) Names() []string {
 }
 
 // ValidationOutcome bundles the warnings + errors collected across
-// all (file, validator) round-trips for one ValidateAll call. The
-// caller maps these to the shared pipeline result. A non-nil
-// ValidationOutcome with zero entries in
-// both lists is the equivalent of `result: "valid"`.
+// all (file, validator) round-trips for one ValidateAll call. Err is
+// set when the complete dispatch could not finish, so an interrupted
+// validation can never be mistaken for a valid verdict.
 type ValidationOutcome struct {
 	Warnings []Diagnostic
 	Errors   []Diagnostic
+	Err      error
 }
 
 // Result computes the aggregate result string from the populated
 // lists. Mirrors the wire-protocol's per-response `result` field
 // computation but at the cross-validator aggregate level.
 func (o *ValidationOutcome) Result() Result {
-	if len(o.Errors) > 0 {
+	if o.Err != nil || len(o.Errors) > 0 {
 		return ResultError
 	}
 	if len(o.Warnings) > 0 {
@@ -213,6 +213,19 @@ type dispatchTask struct {
 	// dataFiles ride along with every request to this validator so the
 	// config file can be checked against what it references.
 	dataFiles []File
+}
+
+type dispatchResults struct {
+	mu       sync.Mutex
+	warnings []Diagnostic
+	errors   []Diagnostic
+}
+
+func (r *dispatchResults) append(resp *Response) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.warnings = append(r.warnings, resp.Warnings...)
+	r.errors = append(r.errors, resp.Errors...)
 }
 
 // ValidateAll fans the rendered files out to every configured
@@ -235,25 +248,56 @@ type dispatchTask struct {
 // fail-closed behaviour: yes).
 func (m *Manager) ValidateAll(ctx context.Context, files []File) *ValidationOutcome {
 	out := &ValidationOutcome{}
+	if err := externalValidationContextError(ctx); err != nil {
+		out.Err = err
+		return out
+	}
 	if !m.Configured() || len(files) == 0 {
 		return out
 	}
 
-	// Build the dispatch list. Each (validator, matched-file) pair
-	// is one task. Order doesn't matter for correctness; we sort
-	// the diagnostics at the end.
+	tasks, err := m.buildDispatchTasks(ctx, files)
+	if err != nil {
+		out.Err = err
+		return out
+	}
+	if err := externalValidationContextError(ctx); err != nil {
+		out.Err = err
+		return out
+	}
+	if len(tasks) == 0 {
+		return out
+	}
+	return m.dispatchTasks(ctx, tasks)
+}
+
+func (m *Manager) buildDispatchTasks(ctx context.Context, files []File) ([]dispatchTask, error) {
 	var tasks []dispatchTask
 	for _, vcfg := range m.configs {
+		if err := externalValidationContextError(ctx); err != nil {
+			return nil, err
+		}
 		client := m.clients[vcfg.Name]
-		data := matchFiles(files, vcfg.DataFiles)
+		data, err := matchFiles(ctx, files, vcfg.DataFiles)
+		if err != nil {
+			return nil, err
+		}
 		for i := range data {
 			data[i].Kind = FileKindData
 		}
-		for _, f := range matchFiles(files, vcfg.Files) {
+		matchedFiles, err := matchFiles(ctx, files, vcfg.Files)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range matchedFiles {
 			// Data wins over config for a file matching both globs: it is
 			// the reference target, and validating it standalone would
 			// report on the wrong thing.
-			if matchesAny(f.Path, vcfg.DataFiles) {
+			matches, err := matchesAny(ctx, f.Path, vcfg.DataFiles)
+			if err != nil {
+				return nil, err
+			}
+			if matches {
 				continue
 			}
 			tasks = append(tasks, dispatchTask{
@@ -264,69 +308,85 @@ func (m *Manager) ValidateAll(ctx context.Context, files []File) *ValidationOutc
 			})
 		}
 	}
-	if len(tasks) == 0 {
-		return out
-	}
+	return tasks, nil
+}
 
-	// Cap concurrency to avoid spawning hundreds of goroutines on
-	// pathological renders. Per-validator connection pools further
-	// throttle the effective concurrency against any single
-	// validator.
+func (m *Manager) dispatchTasks(ctx context.Context, tasks []dispatchTask) *ValidationOutcome {
 	concurrency := DefaultMaxParallelDispatch
 	if concurrency > len(tasks) {
 		concurrency = len(tasks)
 	}
 	sem := make(chan struct{}, concurrency)
+	results := &dispatchResults{}
+	var wg sync.WaitGroup
+	dispatchErr := m.startDispatchTasks(ctx, tasks, sem, &wg, results)
+	wg.Wait()
 
-	var (
-		mu       sync.Mutex
-		warnings []Diagnostic
-		errs     []Diagnostic
-		wg       sync.WaitGroup
-	)
+	out := &ValidationOutcome{Err: dispatchErr}
+	if err := externalValidationContextError(ctx); err != nil {
+		out.Err = err
+	}
+
+	sortDiagnostics(results.warnings)
+	sortDiagnostics(results.errors)
+	out.Warnings = results.warnings
+	out.Errors = results.errors
+	return out
+}
+
+func (m *Manager) startDispatchTasks(
+	ctx context.Context,
+	tasks []dispatchTask,
+	sem chan struct{},
+	wg *sync.WaitGroup,
+	results *dispatchResults,
+) error {
 	for _, task := range tasks {
-		// Honor context cancellation while waiting for a slot —
-		// otherwise a cancelled call still iterates through every
-		// pending (validator, file) pair before returning, each
-		// failing fast on the cancelled context. For pathological
-		// renders with hundreds of pairs that's avoidable latency.
-		select {
-		case sem <- struct{}{}:
-		case <-ctx.Done():
-			// Stop dispatching. Already-spawned goroutines run to
-			// completion (they observe ctx.Done() inside
-			// client.Validate and bail with a synthetic error).
-			goto wait
+		if err := externalValidationContextError(ctx); err != nil {
+			return err
+		}
+		if err := acquireDispatchSlot(ctx, sem); err != nil {
+			return err
+		}
+		if err := externalValidationContextError(ctx); err != nil {
+			<-sem
+			return err
 		}
 		wg.Add(1)
 		go func(task dispatchTask) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			resp := m.validateOne(ctx, task.client, task.validatorName, task.file, task.dataFiles)
-			mu.Lock()
-			warnings = append(warnings, resp.Warnings...)
-			errs = append(errs, resp.Errors...)
-			mu.Unlock()
+			results.append(m.validateOne(ctx, task.client, task.validatorName, task.file, task.dataFiles))
 		}(task)
 	}
-wait:
-	wg.Wait()
+	return nil
+}
 
-	sortDiagnostics(warnings)
-	sortDiagnostics(errs)
-	out.Warnings = warnings
-	out.Errors = errs
-	return out
+func acquireDispatchSlot(ctx context.Context, sem chan<- struct{}) error {
+	select {
+	case sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return externalValidationContextError(ctx)
+	}
 }
 
 // ValidateRenderedOutput implements pipeline.RenderedOutputValidator.
 func (m *Manager) ValidateRenderedOutput(ctx context.Context, result *pipeline.PipelineResult) ([]string, error) {
 	outcome := m.ValidateAll(ctx, buildFiles(result))
 	warnings := formatDiagnostics(outcome.Warnings)
-	if len(outcome.Errors) == 0 {
-		return warnings, nil
+	var diagnosticErr error
+	if len(outcome.Errors) > 0 {
+		diagnosticErr = errors.New(formatErrorReason(outcome.Errors))
 	}
-	return warnings, errors.New(formatErrorReason(outcome.Errors))
+	return warnings, errors.Join(diagnosticErr, outcome.Err)
+}
+
+func externalValidationContextError(ctx context.Context) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return fmt.Errorf("external validation did not finish: %w; retry the request", cause)
+	}
+	return nil
 }
 
 func buildFiles(result *pipeline.PipelineResult) []File {
@@ -456,25 +516,28 @@ func (m *Manager) validateOne(
 
 // matchesAny reports whether path matches any of the globs. A malformed glob
 // cannot reach here — the Manager rejects those at construction.
-func matchesAny(path string, globs []string) bool {
+func matchesAny(ctx context.Context, path string, globs []string) (bool, error) {
+	if err := externalValidationContextError(ctx); err != nil {
+		return false, err
+	}
 	for _, g := range globs {
 		if ok, err := filepath.Match(g, path); err == nil && ok {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, externalValidationContextError(ctx)
 }
 
-// matchFiles returns the subset of `files` whose path matches any
-// of `globs` (Go filepath.Match semantics). Order is preserved so
-// downstream output is stable across calls. A file matching
-// multiple globs is included once (first match wins).
-func matchFiles(files []File, globs []string) []File {
+// matchFiles returns the matching files or the context cancellation error.
+func matchFiles(ctx context.Context, files []File, globs []string) ([]File, error) {
 	if len(files) == 0 || len(globs) == 0 {
-		return nil
+		return nil, externalValidationContextError(ctx)
 	}
 	matched := make([]File, 0, len(files))
 	for _, f := range files {
+		if err := externalValidationContextError(ctx); err != nil {
+			return nil, err
+		}
 		for _, g := range globs {
 			ok, err := filepath.Match(g, f.Path)
 			if err != nil || !ok {
@@ -484,7 +547,7 @@ func matchFiles(files []File, globs []string) []File {
 			break
 		}
 	}
-	return matched
+	return matched, externalValidationContextError(ctx)
 }
 
 // Healthy reports whether every configured validator socket passes

@@ -21,10 +21,17 @@ if err != nil {
 }
 
 outcome := mgr.ValidateAll(ctx, files)
+if outcome.Err != nil {
+    return outcome.Err
+}
 if len(outcome.Errors) > 0 {
     return errors.New("rendered output rejected")
 }
 ```
+
+Cancellation makes the outcome an error even when every completed validator
+returned `valid`. Active socket I/O is interrupted and the connection is
+discarded. A partial fan-out is not a validation verdict.
 
 ## See Also
 

@@ -227,6 +227,9 @@ func (c *Coordinator) coalesceQueuedTriggers(first *events.ReconciliationTrigger
 
 // handleReconciliationTriggered orchestrates a reconciliation cycle.
 func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *events.ReconciliationTriggeredEvent) {
+	if context.Cause(ctx) != nil {
+		return
+	}
 	startTime := time.Now()
 	correlationID := event.CorrelationID()
 
@@ -239,21 +242,31 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 	c.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason, events.PropagateCorrelation(event)))
 
 	result, err := c.pipeline.Execute(ctx, c.storeProvider, rendercontext.RenderModeReconcile)
+	if cause := context.Cause(ctx); cause != nil {
+		c.logger.Debug("Discarding reconciliation result after authority expired",
+			"cause", cause,
+			"correlation_id", correlationID)
+		return
+	}
 	if err != nil {
-		c.handlePipelineFailure(err, event, startTime)
+		c.handlePipelineFailure(ctx, err, event, startTime)
 		return
 	}
 
 	// Pipeline succeeded - publish events for downstream components
-	c.handlePipelineSuccess(result, event, startTime)
+	c.handlePipelineSuccess(ctx, result, event, startTime)
 }
 
 // handlePipelineSuccess publishes events for successful render+validate.
 func (c *Coordinator) handlePipelineSuccess(
+	ctx context.Context,
 	result *pipeline.PipelineResult,
 	triggerEvent *events.ReconciliationTriggeredEvent,
 	startTime time.Time,
 ) {
+	if context.Cause(ctx) != nil {
+		return
+	}
 	coalescible := triggerEvent.Coalescible()
 
 	// Cache status patches for failure variant application.
@@ -275,6 +288,9 @@ func (c *Coordinator) handlePipelineSuccess(
 		coalescible,
 		events.PropagateCorrelation(triggerEvent),
 	)
+	if context.Cause(ctx) != nil {
+		return
+	}
 	c.eventBus.Publish(templateEvent)
 
 	// Publish ValidationCompletedEvent to trigger deployment scheduling
@@ -287,6 +303,9 @@ func (c *Coordinator) handlePipelineSuccess(
 		coalescible,
 		events.PropagateCorrelation(templateEvent),
 	)
+	if context.Cause(ctx) != nil {
+		return
+	}
 	c.eventBus.Publish(validationEvent)
 
 	// Publish ReconciliationCompletedEvent carrying the rendered resources so
@@ -303,6 +322,9 @@ func (c *Coordinator) handlePipelineSuccess(
 	// Cloned so the published event never aliases the pipeline result; set on
 	// the freshly-built local event before Publish (no subscriber holds it yet).
 	completed.Events = slices.Clone(result.Events)
+	if context.Cause(ctx) != nil {
+		return
+	}
 	c.eventBus.Publish(completed)
 
 	c.logger.Debug("Reconciliation completed",
@@ -318,10 +340,14 @@ func (c *Coordinator) handlePipelineSuccess(
 // events like ValidationFailedEvent or TemplateRenderFailedEvent receive proper status updates
 // on failure, not just on success.
 func (c *Coordinator) handlePipelineFailure(
+	ctx context.Context,
 	err error,
 	triggerEvent *events.ReconciliationTriggeredEvent,
 	startTime time.Time,
 ) {
+	if context.Cause(ctx) != nil {
+		return
+	}
 	correlationID := triggerEvent.CorrelationID()
 	duration := time.Since(startTime).Milliseconds()
 
@@ -341,6 +367,9 @@ func (c *Coordinator) handlePipelineFailure(
 	// ValidationCompletedEvent before ReconciliationCompletedEvent.
 	switch phase {
 	case string(pipeline.PhaseValidation):
+		if context.Cause(ctx) != nil {
+			return
+		}
 		c.eventBus.Publish(events.NewValidationFailedEvent(
 			[]string{err.Error()},
 			duration,
@@ -348,6 +377,9 @@ func (c *Coordinator) handlePipelineFailure(
 			events.PropagateCorrelation(triggerEvent),
 		))
 	default:
+		if context.Cause(ctx) != nil {
+			return
+		}
 		c.eventBus.Publish(events.NewTemplateRenderFailedEvent(
 			"", // No specific template name available from pipeline
 			err.Error(),
@@ -360,6 +392,9 @@ func (c *Coordinator) handlePipelineFailure(
 	// apply the renderFailed / deployFailed variant. May be nil if no
 	// successful render has happened yet (early bootstrap failure); the
 	// applier skips the apply in that case.
+	if context.Cause(ctx) != nil {
+		return
+	}
 	c.eventBus.Publish(events.NewReconciliationFailedEvent(
 		err.Error(),
 		phase,

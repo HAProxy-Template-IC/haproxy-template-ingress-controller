@@ -16,6 +16,7 @@ package proposalvalidator
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -38,6 +39,21 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
+
+type cancelingRejectingOutputValidator struct {
+	cancel       context.CancelCauseFunc
+	cause        error
+	cancelOnCall int
+	calls        int
+}
+
+func (v *cancelingRejectingOutputValidator) ValidateRenderedOutput(context.Context, *pipeline.PipelineResult) ([]string, error) {
+	v.calls++
+	if v.calls == v.cancelOnCall {
+		v.cancel(v.cause)
+	}
+	return nil, errors.New("rendered output rejected")
+}
 
 func defaultCapabilities() dataplane.Capabilities {
 	return dataplane.Capabilities{
@@ -233,6 +249,109 @@ func TestComponent_ValidateSync_UnchangedInvalidContent_Admits(t *testing.T) {
 	assert.Nil(t, result.Error)
 	require.NotNil(t, pipelineResult)
 	assert.NotEmpty(t, pipelineResult.ContentChecksum)
+}
+
+func TestComponent_ValidateSync_CanceledUnchangedInvalidContent_Denies(t *testing.T) {
+	authorityErr := errors.New("admission authority expired")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	outputValidator := &cancelingRejectingOutputValidator{
+		cancel:       cancel,
+		cause:        authorityErr,
+		cancelOnCall: 1,
+	}
+	component := New(&ComponentConfig{
+		Pipeline: createTestPipelineWithOutputValidator(
+			t,
+			testutil.MinimalHAProxyConfig,
+			outputValidator,
+		),
+		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{}),
+		Logger:            slog.Default(),
+		SyncOnly:          true,
+	})
+
+	pipelineResult, result := component.ValidateSync(ctx, map[string]*stores.StoreOverlay{})
+
+	assert.Nil(t, pipelineResult)
+	require.NotNil(t, result)
+	assert.False(t, result.Valid)
+	assert.Equal(t, "external", result.Phase)
+	assert.ErrorIs(t, result.Error, authorityErr)
+	assert.Equal(t, 1, outputValidator.calls)
+}
+
+func TestComponent_ValidateSync_CancellationDuringBaselineDenies(t *testing.T) {
+	authorityErr := errors.New("admission authority expired")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	outputValidator := &cancelingRejectingOutputValidator{
+		cancel:       cancel,
+		cause:        authorityErr,
+		cancelOnCall: 2,
+	}
+	component := New(&ComponentConfig{
+		Pipeline: createTestPipelineWithOutputValidator(
+			t,
+			testutil.MinimalHAProxyConfig,
+			outputValidator,
+		),
+		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{}),
+		Logger:            slog.Default(),
+		SyncOnly:          true,
+	})
+
+	pipelineResult, result := component.ValidateSync(ctx, map[string]*stores.StoreOverlay{})
+
+	assert.Nil(t, pipelineResult)
+	require.NotNil(t, result)
+	assert.False(t, result.Valid)
+	assert.Equal(t, "external", result.Phase)
+	assert.ErrorIs(t, result.Error, authorityErr)
+	assert.Equal(t, 2, outputValidator.calls)
+}
+
+func TestPipelineFailurePhase(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "external validation",
+			err: &pipeline.PipelineError{
+				Phase:           pipeline.PhaseValidation,
+				ValidationPhase: "external",
+				Cause:           errors.New("canceled"),
+			},
+			want: "external",
+		},
+		{
+			name: "validation without subphase",
+			err: &pipeline.PipelineError{
+				Phase: pipeline.PhaseValidation,
+				Cause: errors.New("canceled"),
+			},
+			want: "validation",
+		},
+		{
+			name: "render",
+			err: &pipeline.PipelineError{
+				Phase: pipeline.PhaseRender,
+				Cause: errors.New("render failed"),
+			},
+			want: "render",
+		},
+		{
+			name: "unexpected error",
+			err:  errors.New("unexpected"),
+			want: "render",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, pipelineFailurePhase(tt.err))
+		})
+	}
 }
 
 func TestComponent_ValidateSync_AdmissionSubjectOnlyDifference_Admits(t *testing.T) {

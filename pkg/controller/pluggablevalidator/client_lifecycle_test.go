@@ -16,8 +16,47 @@ package pluggablevalidator
 
 import (
 	"context"
+	"errors"
+	"io"
+	"net"
 	"testing"
+	"time"
 )
+
+type writeCountingConn struct {
+	writes int
+	closes int
+}
+
+func (c *writeCountingConn) Read([]byte) (int, error) { return 0, io.EOF }
+func (c *writeCountingConn) Write(p []byte) (int, error) {
+	c.writes++
+	return len(p), nil
+}
+func (c *writeCountingConn) Close() error {
+	c.closes++
+	return nil
+}
+func (c *writeCountingConn) LocalAddr() net.Addr              { return testAddr("local") }
+func (c *writeCountingConn) RemoteAddr() net.Addr             { return testAddr("remote") }
+func (c *writeCountingConn) SetDeadline(time.Time) error      { return nil }
+func (c *writeCountingConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *writeCountingConn) SetWriteDeadline(time.Time) error { return nil }
+
+type testAddr string
+
+func (a testAddr) Network() string { return "test" }
+func (a testAddr) String() string  { return string(a) }
+
+func validationRequest() *Request {
+	return &Request{
+		ProtocolVersion: ProtocolVersion,
+		Files: []File{{
+			Path:    "/etc/haproxy/haproxy.cfg",
+			Content: "global\n    daemon\n",
+		}},
+	}
+}
 
 func TestCancelWatcherStopIsIdempotent(t *testing.T) {
 	c := NewClient("test", "/tmp/test.sock", 0, 1)
@@ -36,4 +75,55 @@ func TestCancelWatcherJoinsCancellationCallback(t *testing.T) {
 	cancel()
 
 	stop()
+}
+
+func TestClientPreCanceledContextDoesNotAcquirePooledConnection(t *testing.T) {
+	conn := &writeCountingConn{}
+	client := NewClient("test", "/tmp/test.sock", time.Second, 1)
+	client.idle = []*pooledConn{{conn: conn, parked: time.Now()}}
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errors.New("validation authority expired"))
+	resp, err := client.Validate(ctx, validationRequest())
+
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if resp.Result != ResultError {
+		t.Fatalf("result=%q want %q", resp.Result, ResultError)
+	}
+	if conn.writes != 0 {
+		t.Fatalf("writes=%d want 0", conn.writes)
+	}
+	if len(client.idle) != 1 {
+		t.Fatalf("idle connections=%d want 1", len(client.idle))
+	}
+}
+
+func TestClientCancellationDuringDialDoesNotWrite(t *testing.T) {
+	conn := &writeCountingConn{}
+	client := NewClient("test", "/tmp/test.sock", time.Second, 1)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	client.dialer = func(context.Context, string) (net.Conn, error) {
+		cancel(errors.New("validation authority expired"))
+		return conn, nil
+	}
+
+	resp, err := client.Validate(ctx, validationRequest())
+
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if resp.Result != ResultError {
+		t.Fatalf("result=%q want %q", resp.Result, ResultError)
+	}
+	if conn.writes != 0 {
+		t.Fatalf("writes=%d want 0", conn.writes)
+	}
+	if conn.closes != 1 {
+		t.Fatalf("closes=%d want 1", conn.closes)
+	}
+	if client.inFlight != 0 {
+		t.Fatalf("in-flight connections=%d want 0", client.inFlight)
+	}
 }

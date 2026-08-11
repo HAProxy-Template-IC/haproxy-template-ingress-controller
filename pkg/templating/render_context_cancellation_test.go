@@ -16,12 +16,15 @@ package templating
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gitlab.com/haproxy-haptic/scriggo/native"
 )
 
 // Renders driven by a CANCELLABLE context take a different path through the
@@ -135,4 +138,202 @@ func TestRenderCancelledContextIsReported(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("render ignored a cancelled context — the watchdog is not running")
 	}
+}
+
+func fatalAfterCancellation(started chan<- struct{}) func(native.Env) string {
+	return func(env native.Env) string {
+		close(started)
+		<-env.Context().Done()
+		// Match the fatal cancellation Scriggo can expose at Template.Run.
+		env.Fatal(context.Cause(env.Context()))
+		return ""
+	}
+}
+
+func TestCancellationPanicIsReportedByEveryRenderEntryPoint(t *testing.T) {
+	renders := []struct {
+		name string
+		run  func(context.Context, *ScriggoEngine) error
+	}{
+		{
+			name: "render",
+			run: func(ctx context.Context, engine *ScriggoEngine) error {
+				_, err := engine.Render(ctx, "t", nil)
+				return err
+			},
+		},
+		{
+			name: "source map",
+			run: func(ctx context.Context, engine *ScriggoEngine) error {
+				_, _, err := engine.RenderWithSourceMap(ctx, "t", nil)
+				return err
+			},
+		},
+		{
+			name: "profiling",
+			run: func(ctx context.Context, engine *ScriggoEngine) error {
+				_, _, err := engine.RenderWithProfiling(ctx, "t", nil)
+				return err
+			},
+		},
+	}
+
+	for _, render := range renders {
+		t.Run(render.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			started := make(chan struct{})
+			engine, err := New(map[string]string{
+				"t": `{% var call = func() string { waitForCancellation(); return "done" } %}{{ call() }}`,
+			}, &Options{Declarations: map[string]any{
+				"waitForCancellation": fatalAfterCancellation(started),
+			}})
+			require.NoError(t, err)
+
+			go func() {
+				<-started
+				cancel()
+			}()
+
+			var renderErr error
+			require.NotPanics(t, func() {
+				renderErr = render.run(ctx, engine)
+			})
+			require.Error(t, renderErr)
+			var timeoutErr *RenderTimeoutError
+			require.ErrorAs(t, renderErr, &timeoutErr)
+			assert.ErrorIs(t, renderErr, context.Canceled)
+		})
+	}
+}
+
+func TestFatalRenderErrorStillPanicsWithActiveContext(t *testing.T) {
+	engine, err := New(map[string]string{
+		"t": `{{ regex_search("value", "[") }}`,
+	}, nil)
+	require.NoError(t, err)
+
+	assert.Panics(t, func() {
+		_, _ = engine.Render(context.Background(), "t", nil)
+	})
+}
+
+func TestCancellationDoesNotMaskFatalRenderError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	engine, err := New(map[string]string{
+		"t": `{{ cancelThenFail() }}`,
+	}, &Options{Declarations: map[string]any{
+		"cancelThenFail": func(env native.Env) string {
+			cancel()
+			env.Fatal(errors.New("unrelated template failure"))
+			return ""
+		},
+	}})
+	require.NoError(t, err)
+
+	assert.Panics(t, func() {
+		_, _ = engine.Render(ctx, "t", nil)
+	})
+}
+
+func TestCustomCancellationCausePanicIsReported(t *testing.T) {
+	cancellationCause := errors.New("leader term retired")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	started := make(chan struct{})
+	engine, err := New(map[string]string{
+		"t": `{% var call = func() string { waitForCancellation(); return "done" } %}{{ call() }}`,
+	}, &Options{Declarations: map[string]any{
+		"waitForCancellation": fatalAfterCancellation(started),
+	}})
+	require.NoError(t, err)
+
+	go func() {
+		<-started
+		cancel(cancellationCause)
+	}()
+
+	var renderErr error
+	require.NotPanics(t, func() {
+		_, renderErr = engine.Render(ctx, "t", nil)
+	})
+	var timeoutErr *RenderTimeoutError
+	require.ErrorAs(t, renderErr, &timeoutErr)
+	assert.ErrorIs(t, renderErr, cancellationCause)
+}
+
+func TestCancellationPanicMatcherUsesStructuralErrors(t *testing.T) {
+	cancellationCause := errors.New("leader term retired")
+
+	assert.True(t, isScriggoCancellationPanic(
+		fmt.Errorf("render stopped: %w", cancellationCause),
+		context.Canceled,
+		cancellationCause,
+	))
+	assert.False(t, isScriggoCancellationPanic(
+		errors.New("unrelated template failure"),
+		context.Canceled,
+		cancellationCause,
+	))
+}
+
+func TestRenderCannotSucceedAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	started := make(chan struct{})
+	engine, err := New(map[string]string{
+		"t": `{% var call = func() string { waitForCancellation(); return "done" } %}{{ call() }}`,
+	}, &Options{Declarations: map[string]any{
+		"waitForCancellation": func(env native.Env) string {
+			close(started)
+			<-env.Context().Done()
+			return ""
+		},
+	}})
+	require.NoError(t, err)
+
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	output, renderErr := engine.Render(ctx, "t", nil)
+	assert.Empty(t, output)
+	var timeoutErr *RenderTimeoutError
+	require.ErrorAs(t, renderErr, &timeoutErr)
+	assert.ErrorIs(t, renderErr, context.Canceled)
+}
+
+func TestTemplatePostProcessorCancellationIsReported(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	started := make(chan struct{})
+	engine, err := New(map[string]string{"t": "content"}, &Options{
+		Declarations: map[string]any{
+			"waitForCancellation": fatalAfterCancellation(started),
+		},
+		PostProcessors: map[string][]PostProcessorConfig{
+			"t": {{
+				Type: PostProcessorTypeTemplate,
+				Params: map[string]string{
+					"source": `{% var call = func() string { waitForCancellation(); return "done" } %}{{ call() }}`,
+				},
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	var renderErr error
+	require.NotPanics(t, func() {
+		_, renderErr = engine.Render(ctx, "t", nil)
+	})
+	var timeoutErr *RenderTimeoutError
+	require.ErrorAs(t, renderErr, &timeoutErr)
+	assert.ErrorIs(t, renderErr, context.Canceled)
 }

@@ -321,10 +321,92 @@ func TestCoordinator_FailureBeforeAnySuccessHasNilPatches(t *testing.T) {
 			"(StatusApplier guards on len(patches) == 0)")
 }
 
+func TestCoordinator_DiscardsPipelineResultsAfterCancellation(t *testing.T) {
+	tests := []struct {
+		name   string
+		result *pipeline.PipelineResult
+		err    error
+	}{
+		{
+			name: "success",
+			result: &pipeline.PipelineResult{
+				HAProxyConfig:  "global\n    daemon\n",
+				AuxiliaryFiles: &dataplane.AuxiliaryFiles{},
+			},
+		},
+		{
+			name: "failure",
+			err: &pipeline.PipelineError{
+				Phase: pipeline.PhaseValidation,
+				Cause: errors.New("validation failed"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bus, logger := testutil.NewTestBusAndLogger()
+			eventChan := bus.Subscribe("test-canceled-result", 100)
+			bus.Start()
+			authorityErr := errors.New("leader term ended")
+			ctx, cancel := context.WithCancelCause(context.Background())
+			coordinator := NewCoordinator(&CoordinatorConfig{
+				EventBus: bus,
+				Pipeline: &cancelingPipeline{
+					cancel: cancel,
+					cause:  authorityErr,
+					result: tt.result,
+					err:    tt.err,
+				},
+				StoreProvider: stores.NewRealStoreProvider(nil),
+				Logger:        logger,
+			})
+
+			coordinator.handleReconciliationTriggered(
+				ctx,
+				events.NewReconciliationTriggeredEvent("test", true),
+			)
+
+			started := false
+			for {
+				select {
+				case event := <-eventChan:
+					switch event.(type) {
+					case *events.ReconciliationStartedEvent:
+						started = true
+					case *events.TemplateRenderedEvent,
+						*events.ValidationCompletedEvent,
+						*events.ReconciliationCompletedEvent,
+						*events.TemplateRenderFailedEvent,
+						*events.ValidationFailedEvent,
+						*events.ReconciliationFailedEvent:
+						t.Fatalf("published %T after lifecycle cancellation", event)
+					}
+				default:
+					require.True(t, started, "coordinator must publish the start event before the pipeline runs")
+					return
+				}
+			}
+		})
+	}
+}
+
 // mockPipeline implements PipelineExecutor interface for testing.
 type mockPipeline struct {
 	result *pipeline.PipelineResult
 	err    error
+}
+
+type cancelingPipeline struct {
+	cancel context.CancelCauseFunc
+	cause  error
+	result *pipeline.PipelineResult
+	err    error
+}
+
+func (p *cancelingPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode, _ ...rendercontext.Option) (*pipeline.PipelineResult, error) {
+	p.cancel(p.cause)
+	return p.result, p.err
 }
 
 func (m *mockPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode, _ ...rendercontext.Option) (*pipeline.PipelineResult, error) {

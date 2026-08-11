@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -30,6 +31,10 @@ type PostProcessor interface {
 	// Process applies transformation to the input string.
 	// Returns the transformed output or an error if processing fails.
 	Process(input string) (string, error)
+}
+
+type contextPostProcessor interface {
+	processContext(ctx context.Context, templateName, input string) (string, error)
 }
 
 // PostProcessorType identifies the type of post-processor.

@@ -81,6 +81,29 @@ On each merged trigger the Coordinator SHALL publish ReconciliationStartedEvent,
 - **WHEN** a render succeeds
 - **THEN** the checksum in TemplateRenderedEvent SHALL be the one computed inside the pipeline, and downstream deployment and publishing SHALL reuse it rather than recomputing.
 
+### Requirement: Pipeline Authority Is Fail-Closed
+
+The pipeline SHALL check `context.Cause` before and after each render and
+validation stage and immediately before returning success. Cancellation SHALL
+return a phase-tagged `PipelineError` that wraps the context cause. The
+Coordinator SHALL publish no success or failure result events after its leader
+term context is canceled.
+
+#### Scenario: Output validator cancels its context
+
+- **WHEN** a rendered-output validator cancels the pipeline context and returns no diagnostic error
+- **THEN** the pipeline SHALL return a validation-phase error wrapping the cancellation cause.
+
+#### Scenario: Admission baseline comparison loses authority
+
+- **WHEN** proposal validation fails and the context is canceled while checking whether the live baseline has identical invalid content
+- **THEN** admission SHALL preserve the cancellation cause and deny the proposal instead of applying the unchanged-invalid exception.
+
+#### Scenario: Leader term ends during pipeline execution
+
+- **WHEN** the Coordinator's pipeline returns after the leader term context is canceled
+- **THEN** the Coordinator SHALL discard both successful and failed results without publishing result events.
+
 ### Requirement: Phase-Tagged Failure Fan-Out
 
 When `Pipeline.Execute` fails, the Coordinator SHALL extract the failing phase from the structured pipeline error and publish a phase-specific failure event first: ValidationFailedEvent when the validation phase failed, TemplateRenderFailedEvent otherwise. It SHALL then publish ReconciliationFailedEvent carrying the phase and the most recent successful render's status patches, so the status applier can apply the failure-variant conditions; when no successful render has happened yet, the patches are absent and the applier skips.

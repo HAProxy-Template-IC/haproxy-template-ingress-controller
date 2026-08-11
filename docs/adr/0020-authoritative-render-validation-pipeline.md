@@ -33,6 +33,13 @@ No success event is published before all stages pass. External-validator
 errors use pipeline phase `external`; warnings remain on the successful result
 and reach admission responses or reconciliation observability.
 
+Cancellation is not a verdict. The pipeline checks its authority between stages
+and before returning success, and an interrupted external-validator fan-out
+fails closed. A leader whose term context has ended discards the pipeline result
+without publishing either success or failure events from the retired term.
+The template boundary converts cancellation panics to `RenderTimeoutError`;
+fatal template errors still panic while the render context remains active.
+
 The pipeline caches successful results by a checksum over the config and
 auxiliary files. Identical content may reuse that verdict. A failed result is
 never cached.
