@@ -417,11 +417,14 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 		)
 	}
 
-	// Parse new object as unstructured (same type as stores use)
-	// This ensures consistent data types throughout reconciliation and webhook paths
-	obj := &unstructured.Unstructured{}
-	if err := json.Unmarshal(request.Object.Raw, obj); err != nil {
-		return deniedResponse(fmt.Sprintf("parsing object: %v", err), http.StatusBadRequest)
+	// DELETE requests may carry only OldObject. The controller's structural
+	// gate decides whether the operation has enough object data to validate.
+	var obj *unstructured.Unstructured
+	if len(request.Object.Raw) > 0 {
+		obj = &unstructured.Unstructured{}
+		if err := json.Unmarshal(request.Object.Raw, obj); err != nil {
+			return deniedResponse(fmt.Sprintf("parsing object: %v", err), http.StatusBadRequest)
+		}
 	}
 
 	// Parse old object (if present - for UPDATE/DELETE operations)
@@ -433,7 +436,11 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 		}
 	}
 
-	namespace, name := s.extractMetadata(obj)
+	metadataObject := obj
+	if metadataObject == nil {
+		metadataObject = oldObj
+	}
+	namespace, name := s.extractMetadata(metadataObject)
 
 	// Build validation context
 	ctx := &ValidationContext{

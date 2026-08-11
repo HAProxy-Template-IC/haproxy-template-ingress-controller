@@ -16,13 +16,18 @@ package dryrunvalidator
 
 import (
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -34,45 +39,181 @@ const (
 	phaseRender = "render"
 )
 
-// createOverlay builds the StoreOverlay that represents the admission
-// request's hypothetical state. DELETE yields an overlay with only the
-// deletion recorded, CREATE/UPDATE wrap the incoming object.
-//
-// Parameters:
-//   - namespace/name: Resource coordinates (name may be empty for CREATE
-//     with generateName)
-//   - object: The Kubernetes resource object (must be runtime.Object for
-//     CREATE/UPDATE)
-//   - operation: Admission operation (CREATE, UPDATE, DELETE)
-//   - requestID: Request ID for logging (can be empty for direct validation)
-func (c *Component) createOverlay(namespace, name string, object any, operation, requestID string) *stores.StoreOverlay {
-	// Handle DELETE first - it doesn't need an object
-	if operation == operationDelete {
-		return stores.NewStoreOverlayForDelete(namespace, name)
+type resourceAlias struct {
+	name          string
+	labelSelector map[string]string
+	fieldSelector *indexer.FieldSelectorMatcher
+}
+
+func buildResourceAliases(resources map[string]config.WatchedResource) (map[schema.GroupVersionResource][]resourceAlias, error) {
+	aliases := make(map[schema.GroupVersionResource][]resourceAlias)
+	names := make([]string, 0, len(resources))
+	for name := range resources {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		resource := resources[name]
+		gv, err := schema.ParseGroupVersion(resource.APIVersion)
+		if err != nil {
+			return nil, fmt.Errorf("parsing apiVersion for watched resource %q: %w", name, err)
+		}
+		var fieldSelector *indexer.FieldSelectorMatcher
+		if resource.FieldSelector != "" {
+			fieldSelector, err = indexer.NewFieldSelectorMatcher(resource.FieldSelector)
+			if err != nil {
+				return nil, fmt.Errorf("parsing fieldSelector for watched resource %q: %w", name, err)
+			}
+		}
+		key := schema.GroupVersionResource{Group: gv.Group, Version: gv.Version, Resource: resource.Resources}
+		aliases[key] = append(aliases[key], resourceAlias{
+			name:          name,
+			labelSelector: resource.LabelSelector,
+			fieldSelector: fieldSelector,
+		})
+	}
+	return aliases, nil
+}
+
+func (a resourceAlias) matches(object *unstructured.Unstructured) (bool, error) {
+	if object == nil {
+		return false, nil
+	}
+	labels := object.GetLabels()
+	for key, value := range a.labelSelector {
+		if labels[key] != value {
+			return false, nil
+		}
+	}
+	if a.fieldSelector == nil {
+		return true, nil
+	}
+	return a.fieldSelector.Matches(object.Object)
+}
+
+func (a resourceAlias) filtered() bool {
+	return len(a.labelSelector) > 0 || a.fieldSelector != nil
+}
+
+func (c *Component) createOverlays(aliases []resourceAlias, namespace, name string, object, oldObject any, operation string) (overlays map[string]*stores.StoreOverlay, subjectAliases []string, err error) {
+	var newResource *unstructured.Unstructured
+	if object != nil {
+		newResource, err = asUnstructured(object)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	var oldResource *unstructured.Unstructured
+	if oldObject != nil {
+		oldResource, err = asUnstructured(oldObject)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
-	// Convert the object to runtime.Object if possible
-	obj, ok := object.(runtime.Object)
-	if !ok {
-		// If not a runtime.Object, return empty overlay
-		// This shouldn't happen for K8s resources but handles edge cases
-		c.logger.Warn("Object is not runtime.Object",
-			"request_id", requestID,
-			"type", fmt.Sprintf("%T", object))
-		return stores.NewStoreOverlay()
+	overlays = make(map[string]*stores.StoreOverlay, len(aliases))
+	subjectAliases = make([]string, 0, len(aliases))
+	for _, alias := range aliases {
+		overlay, err := createAliasOverlay(alias, namespace, name, newResource, oldResource, operation)
+		if err != nil {
+			return nil, nil, err
+		}
+		overlays[alias.name] = overlay
+		if !overlay.IsEmpty() {
+			subjectAliases = append(subjectAliases, alias.name)
+		}
 	}
+	return overlays, subjectAliases, nil
+}
 
+func createAliasOverlay(alias resourceAlias, namespace, name string, newResource, oldResource *unstructured.Unstructured, operation string) (*stores.StoreOverlay, error) {
 	switch operation {
 	case operationCreate:
-		return stores.NewStoreOverlayForCreate(obj)
+		return createAliasOverlayForCreate(alias, newResource)
 	case operationUpdate:
-		return stores.NewStoreOverlayForUpdate(obj)
+		return createAliasOverlayForUpdate(alias, namespace, name, newResource, oldResource)
+	case operationDelete:
+		return createAliasOverlayForDelete(alias, namespace, name, oldResource)
 	default:
-		c.logger.Warn("Unknown operation type",
-			"request_id", requestID,
-			"operation", operation)
-		return stores.NewStoreOverlay()
+		return nil, fmt.Errorf("unsupported admission operation %q", operation)
 	}
+}
+
+func createAliasOverlayForCreate(alias resourceAlias, newResource *unstructured.Unstructured) (*stores.StoreOverlay, error) {
+	if newResource == nil {
+		return nil, fmt.Errorf("CREATE has no new object")
+	}
+	matches, err := alias.matches(newResource)
+	if err != nil {
+		return nil, fmt.Errorf("matching selector on store %q: %w", alias.name, err)
+	}
+	if !matches {
+		return stores.NewStoreOverlay(), nil
+	}
+	return stores.NewStoreOverlayForCreate(newResource), nil
+}
+
+func createAliasOverlayForUpdate(alias resourceAlias, namespace, name string, newResource, oldResource *unstructured.Unstructured) (*stores.StoreOverlay, error) {
+	if newResource == nil {
+		return nil, fmt.Errorf("UPDATE has no new object")
+	}
+	if oldResource == nil && alias.filtered() {
+		return nil, fmt.Errorf("UPDATE has no old object required by selector on store %q", alias.name)
+	}
+	oldMatches := oldResource == nil
+	if oldResource != nil {
+		var err error
+		oldMatches, err = alias.matches(oldResource)
+		if err != nil {
+			return nil, fmt.Errorf("matching old object selector on store %q: %w", alias.name, err)
+		}
+	}
+	newMatches, err := alias.matches(newResource)
+	if err != nil {
+		return nil, fmt.Errorf("matching new object selector on store %q: %w", alias.name, err)
+	}
+	switch {
+	case oldMatches && newMatches:
+		return stores.NewStoreOverlayForUpdate(newResource), nil
+	case oldMatches:
+		return stores.NewStoreOverlayForDelete(namespace, name), nil
+	case newMatches:
+		return stores.NewStoreOverlayForCreate(newResource), nil
+	default:
+		return stores.NewStoreOverlay(), nil
+	}
+}
+
+func createAliasOverlayForDelete(alias resourceAlias, namespace, name string, oldResource *unstructured.Unstructured) (*stores.StoreOverlay, error) {
+	if oldResource == nil && alias.filtered() {
+		return nil, fmt.Errorf("DELETE has no old object required by selector on store %q", alias.name)
+	}
+	if oldResource == nil {
+		return stores.NewStoreOverlayForDelete(namespace, name), nil
+	}
+	matches, err := alias.matches(oldResource)
+	if err != nil {
+		return nil, fmt.Errorf("matching deleted object selector on store %q: %w", alias.name, err)
+	}
+	if !matches {
+		return stores.NewStoreOverlay(), nil
+	}
+	return stores.NewStoreOverlayForDelete(namespace, name), nil
+}
+
+func asUnstructured(object any) (*unstructured.Unstructured, error) {
+	if resource, ok := object.(*unstructured.Unstructured); ok {
+		return resource, nil
+	}
+	if _, ok := object.(runtime.Object); ok {
+		converted, err := runtime.DefaultUnstructuredConverter.ToUnstructured(object)
+		if err != nil {
+			return nil, fmt.Errorf("converting %T to unstructured: %w", object, err)
+		}
+		return &unstructured.Unstructured{Object: converted}, nil
+	}
+	return nil, fmt.Errorf("object has unsupported type %T", object)
 }
 
 // simplifyError simplifies an error message based on the validation phase.
@@ -90,31 +231,24 @@ func (c *Component) simplifyError(phase string, err error) string {
 	}
 }
 
-// mapGVKToResourceType resolves an admission GVK string to the watched
-// resource's plural name — the key the overlay store is registered under.
-//
-// Resolution goes through the cluster's RESTMapper, so the plural comes from
-// discovery data (and, for CRDs, each CRD's own spec.names.plural). Any watched
-// resource resolves correctly, including CRDs with irregular or fully custom
-// plurals, with no hardcoded pluralization table (RULE #1: the controller stays
-// resource-agnostic). An unrecognised kind returns an error rather than a
-// guessed plural.
+// mapGVKToResourceAliases resolves an admission GVK to every configured store
+// alias backed by the same GVR.
 //
 // The GVK string is "group/version.Kind" or "version.Kind" — the identifier the
 // webhook registers its validators under.
-func (c *Component) mapGVKToResourceType(gvk string) (string, error) {
+func (c *Component) mapGVKToResourceAliases(gvk string) ([]resourceAlias, error) {
 	// Split off the Kind (the segment after the final dot); everything before
 	// it is the apiVersion ("group/version" or "version").
 	parts := strings.Split(gvk, ".")
 	if len(parts) < 2 {
-		return "", fmt.Errorf("invalid GVK format: %s", gvk)
+		return nil, fmt.Errorf("invalid GVK format: %s", gvk)
 	}
 	kind := parts[len(parts)-1]
 	apiVersion := strings.Join(parts[:len(parts)-1], ".")
 
 	gv, err := schema.ParseGroupVersion(apiVersion)
 	if err != nil {
-		return "", fmt.Errorf("invalid GVK %q: %w", gvk, err)
+		return nil, fmt.Errorf("invalid GVK %q: %w", gvk, err)
 	}
 
 	gk := schema.GroupKind{Group: gv.Group, Kind: kind}
@@ -131,7 +265,12 @@ func (c *Component) mapGVKToResourceType(gvk string) (string, error) {
 		}
 	}
 	if err != nil {
-		return "", fmt.Errorf("resolving resource type for GVK %q: %w", gvk, err)
+		return nil, fmt.Errorf("resolving resource type for GVK %q: %w", gvk, err)
 	}
-	return mapping.Resource.Resource, nil
+	key := mapping.Resource
+	aliases := c.aliasesByGVR[key]
+	if len(aliases) == 0 {
+		return nil, fmt.Errorf("GVK %q resolves to unconfigured resource %s", gvk, mapping.Resource.String())
+	}
+	return slices.Clone(aliases), nil
 }

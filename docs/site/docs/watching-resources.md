@@ -298,7 +298,9 @@ The playground can't reach external URLs, so this example doesn't run there — 
 
 ## Validating webhook scope
 
-Setting `enableValidationWebhook: true` on an entry registers that kind with the admission webhook, so creates/updates are rendered against an overlay store before being accepted. Set it only on the kinds you actually want validated in-band — the default is off to avoid dragging unrelated kinds (for example EndpointSlice churn) through the webhook path.
+Setting `enableValidationWebhook: true` on an entry registers that kind with the admission webhook, so creates and updates are rendered against overlay stores before being accepted. The controller maps the request's Kubernetes group, version, and kind back to every configured `watchedResources` key for that group, version, and resource tuple. The map key can differ from the Kubernetes plural, and multiple filtered aliases can watch the same tuple. Each alias receives the same selector transition its watcher applies: entering a selector adds the object, leaving it removes the object, and remaining inside updates it.
+
+Set the flag only on the kinds you want validated in-band. The default is off to avoid dragging unrelated kinds, such as EndpointSlice churn, through the webhook path. If any alias for a group, version, and resource tuple enables validation, the proposed object is overlaid on every alias for that tuple because all of those stores observe the same API write.
 
 ## Debounce override
 

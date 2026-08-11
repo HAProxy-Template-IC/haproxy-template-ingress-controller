@@ -293,7 +293,7 @@ func createDryRunValidator(
 		GeneralDir:        dirConfig.GeneralDir,
 	})
 
-	return buildDryRunValidator(bus, renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, logger), nil
+	return buildDryRunValidator(bus, renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, cfg.WatchedResources, logger)
 }
 
 // buildDryRunValidator constructs the watched-resource admission validator.
@@ -309,8 +309,9 @@ func buildDryRunValidator(
 	baseStoreProvider stores.StoreProvider,
 	outputValidator pipeline.RenderedOutputValidator,
 	gvrMapper meta.RESTMapper,
+	watchedResources map[string]coreconfig.WatchedResource,
 	logger *slog.Logger,
-) *dryrunvalidator.Component {
+) (*dryrunvalidator.Component, error) {
 	pipelineInstance := pipeline.New(&pipeline.PipelineConfig{
 		Renderer:        renderService,
 		Validator:       validationService,
@@ -338,6 +339,7 @@ func buildDryRunValidator(
 	return dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
 		ProposalValidator: proposalValidatorInstance,
 		RESTMapper:        gvrMapper,
+		WatchedResources:  watchedResources,
 		Logger:            logger,
 	})
 }

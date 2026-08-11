@@ -258,9 +258,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 
 // ValidateSync performs synchronous validation of proposed changes.
 //
-// This is the preferred method for webhook admission where the caller needs
-// an immediate response. Unlike event-driven validation, this blocks until
-// validation completes.
+// Unlike event-driven validation, this blocks until validation completes.
 //
 // On a validation failure, this method also runs the pipeline against the live
 // stores without the overlay. Admission remains possible only when both runs
@@ -277,14 +275,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 //     unchanged-invalid exception. Nil when no proposed-state output exists.
 //   - ValidationResult with valid/invalid status and error details.
 //
-// admissionSubjectOpts derives the render-context admission subject from the
-// proposed overlays: when the proposal is exactly one object in exactly one
-// store — the webhook single-resource admission shape — templates get
-// `admissionSubject` = {store, namespace, name} so route-scoped checks can
-// hard-fail only the resource under review. Bulk or HTTP-only proposals
-// return no option and render with an empty subject, which route-scoped
-// checks treat like a reconcile (warn + fail closed per route). Fully
-// resource-agnostic: only store name and object identity are read.
+// admissionSubjectOpts derives a subject for one-object, one-store proposals.
 func admissionSubjectOpts(overlays map[string]*stores.StoreOverlay) []rendercontext.Option {
 	var opts []rendercontext.Option
 	count := 0
@@ -316,6 +307,20 @@ func admissionSubjectOpts(overlays map[string]*stores.StoreOverlay) []rendercont
 }
 
 func (c *Component) ValidateSync(ctx context.Context, overlays map[string]*stores.StoreOverlay) (*pipeline.PipelineResult, *validation.ValidationResult) {
+	return c.validateSync(ctx, overlays, admissionSubjectOpts(overlays)...)
+}
+
+// ValidateSyncWithAdmissionSubject validates one admitted object across every
+// configured store alias affected by the request.
+func (c *Component) ValidateSyncWithAdmissionSubject(ctx context.Context, overlays map[string]*stores.StoreOverlay, storeAliases []string, namespace, name string) (*pipeline.PipelineResult, *validation.ValidationResult) {
+	var opts []rendercontext.Option
+	if len(storeAliases) > 0 {
+		opts = []rendercontext.Option{rendercontext.WithAdmissionSubjectStores(storeAliases, namespace, name)}
+	}
+	return c.validateSync(ctx, overlays, opts...)
+}
+
+func (c *Component) validateSync(ctx context.Context, overlays map[string]*stores.StoreOverlay, opts ...rendercontext.Option) (*pipeline.PipelineResult, *validation.ValidationResult) {
 	startTime := time.Now()
 
 	// Build ValidationContext from K8s overlays
@@ -334,7 +339,7 @@ func (c *Component) ValidateSync(ctx context.Context, overlays map[string]*store
 		}
 	}
 
-	outcome := c.runWithBaselineCheck(ctx, overlayProvider, admissionSubjectOpts(overlays)...)
+	outcome := c.runWithBaselineCheck(ctx, overlayProvider, opts...)
 	if outcome.Admit {
 		return outcome.PipelineResult, &validation.ValidationResult{
 			Valid:      true,

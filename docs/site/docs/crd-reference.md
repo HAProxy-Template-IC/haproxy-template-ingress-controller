@@ -93,6 +93,8 @@ The Helm chart ships `app.kubernetes.io/component: loadbalancer` (plus dynamical
 
 Defines which Kubernetes resources to watch. Each map key is an arbitrary name that appears in templates as `resources.<key>`. **Required** (at least one entry).
 
+More than one key can target the same Kubernetes group, version, and resource tuple, including with different selectors. Admission validation applies a proposed API write to every matching alias, so the dry-run view matches the post-admission watcher stores.
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `apiVersion` | string | Exactly one of `apiVersion` / `apiVersions` | — |

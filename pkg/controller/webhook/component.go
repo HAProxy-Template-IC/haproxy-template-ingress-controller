@@ -109,7 +109,7 @@ type MetricsRecorder interface {
 // --validate-socket mode) populate this slice from their non-fatal
 // diagnostics; the standard render+validate pipeline does not.
 type DryRunValidator interface {
-	ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string)
+	ValidateDirect(ctx context.Context, gvk, namespace, name string, object, oldObject any, operation string) (allowed bool, reason string, warnings []string)
 }
 
 // Config configures the webhook component.
@@ -482,7 +482,7 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 		}
 
 		// Basic structural validation runs inline before delegating to ValidateDirect.
-		if err := c.validateBasicStructure(valCtx.Object); err != nil {
+		if err := c.validateBasicStructure(validationObject(valCtx)); err != nil {
 			c.logger.Info("Basic validation failed",
 				"gvk", gvk,
 				"namespace", valCtx.Namespace,
@@ -525,6 +525,7 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 			valCtx.Namespace,
 			valCtx.Name,
 			valCtx.Object,
+			valCtx.OldObject,
 			valCtx.Operation,
 		)
 		if parent.Err() != nil {
@@ -555,6 +556,13 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 
 		return allowed, reason, warnings, nil
 	}
+}
+
+func validationObject(valCtx *webhook.ValidationContext) any {
+	if valCtx.Object != nil {
+		return valCtx.Object
+	}
+	return valCtx.OldObject
 }
 
 func (c *Component) recordValidationUnavailable(gvk string, valCtx *webhook.ValidationContext, start time.Time) {

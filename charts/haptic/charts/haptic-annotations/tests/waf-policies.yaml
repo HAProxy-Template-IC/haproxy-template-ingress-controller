@@ -242,7 +242,7 @@ validationTests:
       invisible until someone opens a stream.
     extraContext:
       renderMode: admission
-      admissionSubject: { store: ingresses, namespace: default, name: grpc-api }
+      admissionSubject: { stores: { ingresses: true }, namespace: default, name: grpc-api }
       waf: *wafIngresspermissions
     fixtures:
       ingresses:

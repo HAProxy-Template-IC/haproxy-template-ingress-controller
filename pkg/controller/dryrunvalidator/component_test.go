@@ -64,6 +64,20 @@ func newTestRESTMapper() meta.RESTMapper {
 	return m
 }
 
+func testWatchedResources() map[string]config.WatchedResource {
+	return map[string]config.WatchedResource{
+		"ingresses":      {APIVersion: "networking.k8s.io/v1", Resources: "ingresses"},
+		"services":       {APIVersion: "v1", Resources: "services"},
+		"configmaps":     {APIVersion: "v1", Resources: "configmaps"},
+		"secrets":        {APIVersion: "v1", Resources: "secrets"},
+		"endpoints":      {APIVersion: "v1", Resources: "endpoints"},
+		"endpointslices": {APIVersion: "discovery.k8s.io/v1", Resources: "endpointslices"},
+		"pods":           {APIVersion: "v1", Resources: "pods"},
+		"custom":         {APIVersion: "custom.example.io/v1beta1", Resources: "myresources"},
+		"mesh":           {APIVersion: "example.com/v1", Resources: "meshes"},
+	}
+}
+
 // resettableFakeMapper simulates a deferred discovery mapper whose cache
 // predates a late-registered CRD: RESTMapping returns NoMatch until Reset()
 // refreshes discovery, after which it delegates to an inner mapper.
@@ -84,22 +98,28 @@ func (m *resettableFakeMapper) Reset() { m.reset = true }
 // A late-registered CRD whose kind isn't in the mapper's initial discovery
 // cache must resolve after the validator refreshes discovery via Reset(),
 // rather than denying admission for the iteration's lifetime.
-func TestMapGVKToResourceType_ResetsOnNoMatchThenRetries(t *testing.T) {
+func TestMapGVKToResourceAliases_ResetsOnNoMatchThenRetries(t *testing.T) {
 	rm := &resettableFakeMapper{RESTMapper: newTestRESTMapper()}
-	c := &Component{logger: slog.Default(), restMapper: rm}
+	aliases, err := buildResourceAliases(testWatchedResources())
+	require.NoError(t, err)
+	c := &Component{logger: slog.Default(), restMapper: rm, aliasesByGVR: aliases}
 
-	resourceType, err := c.mapGVKToResourceType("networking.k8s.io/v1.Ingress")
+	resourceAliases, err := c.mapGVKToResourceAliases("networking.k8s.io/v1.Ingress")
 
 	require.NoError(t, err)
 	assert.True(t, rm.reset, "validator should Reset() the mapper on a NoMatch error")
-	assert.Equal(t, "ingresses", resourceType)
+	require.Len(t, resourceAliases, 1)
+	assert.Equal(t, "ingresses", resourceAliases[0].name)
 }
 
-func TestMapGVKToResourceType(t *testing.T) {
+func TestMapGVKToResourceAliases(t *testing.T) {
 	// Create a minimal component for testing
+	aliases, err := buildResourceAliases(testWatchedResources())
+	require.NoError(t, err)
 	c := &Component{
-		logger:     slog.Default(),
-		restMapper: newTestRESTMapper(),
+		logger:       slog.Default(),
+		restMapper:   newTestRESTMapper(),
+		aliasesByGVR: aliases,
 	}
 
 	tests := []struct {
@@ -118,7 +138,7 @@ func TestMapGVKToResourceType(t *testing.T) {
 			// A naive pluralizer produces "meshs"; the mapper knows "meshes".
 			name:        "irregular plural comes from the mapper",
 			gvk:         "example.com/v1.Mesh",
-			expected:    "meshes",
+			expected:    "mesh",
 			expectError: false,
 		},
 		{
@@ -160,7 +180,7 @@ func TestMapGVKToResourceType(t *testing.T) {
 		{
 			name:        "Custom resource with group",
 			gvk:         "custom.example.io/v1beta1.MyResource",
-			expected:    "myresources",
+			expected:    "custom",
 			expectError: false,
 		},
 		{
@@ -179,75 +199,154 @@ func TestMapGVKToResourceType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := c.mapGVKToResourceType(tt.gvk)
+			result, err := c.mapGVKToResourceAliases(tt.gvk)
 
 			if tt.expectError {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), "invalid GVK")
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, tt.expected, result)
+				require.Len(t, result, 1)
+				assert.Equal(t, tt.expected, result[0].name)
 			}
 		})
 	}
 }
 
-func TestCreateOverlay(t *testing.T) {
-	c := &Component{
-		logger: slog.Default(),
-	}
+func TestCreateAliasOverlay_SelectorTransitions(t *testing.T) {
+	aliases, err := buildResourceAliases(map[string]config.WatchedResource{
+		"selected": {
+			APIVersion:    "networking.k8s.io/v1",
+			Resources:     "ingresses",
+			FieldSelector: "spec.ingressClassName=haptic",
+		},
+	})
+	require.NoError(t, err)
+	alias := aliases[schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}][0]
+	matching := createTestIngressWithClass("test-ingress", "haptic")
+	nonMatching := createTestIngressWithClass("test-ingress", "other")
 
 	tests := []struct {
 		name                string
 		operation           string
-		object              any
+		newResource         *unstructured.Unstructured
+		oldResource         *unstructured.Unstructured
 		expectAdditions     int
 		expectModifications int
 		expectDeletions     int
 	}{
-		{
-			name:                "CREATE operation",
-			operation:           "CREATE",
-			object:              createTestIngress("test-ingress", "default"),
-			expectAdditions:     1,
-			expectModifications: 0,
-			expectDeletions:     0,
-		},
-		{
-			name:                "UPDATE operation",
-			operation:           "UPDATE",
-			object:              createTestIngress("test-ingress", "default"),
-			expectAdditions:     0,
-			expectModifications: 1,
-			expectDeletions:     0,
-		},
-		{
-			name:                "DELETE operation",
-			operation:           "DELETE",
-			object:              nil,
-			expectAdditions:     0,
-			expectModifications: 0,
-			expectDeletions:     1,
-		},
-		{
-			name:                "Unknown operation",
-			operation:           "UNKNOWN",
-			object:              createTestIngress("test-ingress", "default"),
-			expectAdditions:     0,
-			expectModifications: 0,
-			expectDeletions:     0,
-		},
+		{name: "create matching", operation: operationCreate, newResource: matching, expectAdditions: 1},
+		{name: "create non-matching", operation: operationCreate, newResource: nonMatching},
+		{name: "update remains matching", operation: operationUpdate, newResource: matching, oldResource: matching, expectModifications: 1},
+		{name: "update enters selector", operation: operationUpdate, newResource: matching, oldResource: nonMatching, expectAdditions: 1},
+		{name: "update leaves selector", operation: operationUpdate, newResource: nonMatching, oldResource: matching, expectDeletions: 1},
+		{name: "update remains excluded", operation: operationUpdate, newResource: nonMatching, oldResource: nonMatching},
+		{name: "delete matching", operation: operationDelete, oldResource: matching, expectDeletions: 1},
+		{name: "delete non-matching", operation: operationDelete, oldResource: nonMatching},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			overlay := c.createOverlay("default", "test-ingress", tt.object, tt.operation, "test-req")
-
+			overlay, err := createAliasOverlay(alias, "default", "test-ingress", tt.newResource, tt.oldResource, tt.operation)
+			require.NoError(t, err)
 			assert.Len(t, overlay.Additions, tt.expectAdditions)
 			assert.Len(t, overlay.Modifications, tt.expectModifications)
 			assert.Len(t, overlay.Deletions, tt.expectDeletions)
 		})
 	}
+}
+
+func TestCreateAliasOverlay_MissingOldObjectFailsClosedForFilteredStore(t *testing.T) {
+	aliases, err := buildResourceAliases(map[string]config.WatchedResource{
+		"selected": {
+			APIVersion:    "networking.k8s.io/v1",
+			Resources:     "ingresses",
+			FieldSelector: "spec.ingressClassName=haptic",
+		},
+	})
+	require.NoError(t, err)
+	alias := aliases[schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}][0]
+
+	_, err = createAliasOverlay(alias, "default", "app", createTestIngressWithClass("app", "haptic"), nil, operationUpdate)
+	require.Error(t, err)
+	_, err = createAliasOverlay(alias, "default", "app", nil, nil, operationDelete)
+	require.Error(t, err)
+	_, err = createAliasOverlay(alias, "default", "app", createTestIngressWithClass("app", "haptic"), nil, operationDelete)
+	require.Error(t, err)
+}
+
+func TestCreateAliasOverlay_RejectsUnsupportedOperation(t *testing.T) {
+	_, err := createAliasOverlay(
+		resourceAlias{name: "ingresses"},
+		"default",
+		"app",
+		createTestIngress("app", "default"),
+		nil,
+		"CONNECT",
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported admission operation")
+}
+
+func TestCreateOverlays_MultipleAliasesForOneGVR(t *testing.T) {
+	resources := map[string]config.WatchedResource{
+		"internal-routes": {
+			APIVersion:    "networking.k8s.io/v1",
+			Resources:     "ingresses",
+			FieldSelector: "spec.ingressClassName=internal",
+		},
+		"public-routes": {
+			APIVersion:    "networking.k8s.io/v1",
+			Resources:     "ingresses",
+			FieldSelector: "spec.ingressClassName=public",
+		},
+	}
+	aliases, err := buildResourceAliases(resources)
+	require.NoError(t, err)
+	c := &Component{aliasesByGVR: aliases, restMapper: newTestRESTMapper()}
+
+	mapped, err := c.mapGVKToResourceAliases("networking.k8s.io/v1.Ingress")
+	require.NoError(t, err)
+	overlays, subjects, err := c.createOverlays(
+		mapped,
+		"default",
+		"app",
+		createTestIngressWithClass("app", "internal"),
+		nil,
+		operationCreate,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"internal-routes"}, subjects)
+	assert.Len(t, overlays["internal-routes"].Additions, 1)
+	assert.True(t, overlays["public-routes"].IsEmpty())
+}
+
+func TestResourceAliasMatchesLabelSelector(t *testing.T) {
+	alias := resourceAlias{labelSelector: map[string]string{"tenant": "blue", "managed": "true"}}
+	resource := createTestIngress("app", "default")
+	resource.SetLabels(map[string]string{"tenant": "blue", "managed": "true", "extra": "kept"})
+	matches, err := alias.matches(resource)
+	require.NoError(t, err)
+	assert.True(t, matches)
+
+	resource.SetLabels(map[string]string{"tenant": "blue"})
+	matches, err = alias.matches(resource)
+	require.NoError(t, err)
+	assert.False(t, matches)
+}
+
+func TestMapGVKToResourceAliases_UsesConfiguredAliasNotPlural(t *testing.T) {
+	aliases, err := buildResourceAliases(map[string]config.WatchedResource{
+		"application-routes": {APIVersion: "networking.k8s.io/v1", Resources: "ingresses"},
+	})
+	require.NoError(t, err)
+	c := &Component{aliasesByGVR: aliases, restMapper: newTestRESTMapper()}
+
+	mapped, err := c.mapGVKToResourceAliases("networking.k8s.io/v1.Ingress")
+	require.NoError(t, err)
+	require.Len(t, mapped, 1)
+	assert.Equal(t, "application-routes", mapped[0].name)
 }
 
 func TestSimplifyError(t *testing.T) {
@@ -298,14 +397,28 @@ func TestNew(t *testing.T) {
 
 	proposalValidator := createMockProposalValidator(bus, logger)
 
-	component := New(&ComponentConfig{
+	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
+		WatchedResources:  testWatchedResources(),
 		Logger:            logger,
 	})
 
+	require.NoError(t, err)
 	require.NotNil(t, component)
 	assert.NotNil(t, component.logger)
+}
+
+func TestNewRejectsInvalidFieldSelector(t *testing.T) {
+	component, err := New(&ComponentConfig{
+		RESTMapper: newTestRESTMapper(),
+		WatchedResources: map[string]config.WatchedResource{
+			"routes": {APIVersion: "networking.k8s.io/v1", Resources: "ingresses", FieldSelector: "missing-equals"},
+		},
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, component)
 }
 
 // TestValidateDirect_UpdateSuccess tests the full flow for an UPDATE operation.
@@ -314,11 +427,13 @@ func TestValidateDirect_UpdateSuccess(t *testing.T) {
 
 	proposalValidator := createMockProposalValidator(bus, logger)
 
-	component := New(&ComponentConfig{
+	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
+		WatchedResources:  testWatchedResources(),
 		Logger:            logger,
 	})
+	require.NoError(t, err)
 
 	bus.Start()
 
@@ -327,6 +442,7 @@ func TestValidateDirect_UpdateSuccess(t *testing.T) {
 		"networking.k8s.io/v1.Ingress",
 		"staging",
 		"updated-ingress",
+		createTestIngress("updated-ingress", "staging"),
 		createTestIngress("updated-ingress", "staging"),
 		"UPDATE",
 	)
@@ -341,11 +457,13 @@ func TestValidateDirect_DeleteSuccess(t *testing.T) {
 
 	proposalValidator := createMockProposalValidator(bus, logger)
 
-	component := New(&ComponentConfig{
+	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
+		WatchedResources:  testWatchedResources(),
 		Logger:            logger,
 	})
+	require.NoError(t, err)
 
 	bus.Start()
 
@@ -355,6 +473,7 @@ func TestValidateDirect_DeleteSuccess(t *testing.T) {
 		"default",
 		"test-ingress",
 		nil,
+		createTestIngress("test-ingress", "default"),
 		"DELETE",
 	)
 
@@ -398,11 +517,13 @@ func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 		Logger:            logger,
 	})
 
-	component := New(&ComponentConfig{
+	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: noStoreProposalValidator,
+		WatchedResources:  testWatchedResources(),
 		Logger:            logger,
 	})
+	require.NoError(t, err)
 
 	bus.Start()
 
@@ -412,6 +533,7 @@ func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 		"default",
 		"test-ingress",
 		createTestIngress("test-ingress", "default"),
+		nil,
 		"CREATE",
 	)
 
@@ -425,11 +547,13 @@ func TestValidateDirect_Success(t *testing.T) {
 
 	proposalValidator := createMockProposalValidator(bus, logger)
 
-	component := New(&ComponentConfig{
+	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
+		WatchedResources:  testWatchedResources(),
 		Logger:            logger,
 	})
+	require.NoError(t, err)
 
 	bus.Start()
 
@@ -439,7 +563,36 @@ func TestValidateDirect_Success(t *testing.T) {
 		"default",
 		"test-ingress",
 		createTestIngress("test-ingress", "default"),
+		nil,
 		"CREATE",
+	)
+
+	assert.True(t, allowed)
+	assert.Empty(t, reason)
+}
+
+func TestValidateDirect_ConfiguredAliasDiffersFromPlural(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	proposalValidator := createMockProposalValidatorWithStores(bus, logger, "application-routes")
+	component, err := New(&ComponentConfig{
+		RESTMapper:        newTestRESTMapper(),
+		ProposalValidator: proposalValidator,
+		WatchedResources: map[string]config.WatchedResource{
+			"application-routes": {APIVersion: "networking.k8s.io/v1", Resources: "ingresses"},
+		},
+		Logger: logger,
+	})
+	require.NoError(t, err)
+	bus.Start()
+
+	allowed, reason, _ := component.ValidateDirect(
+		context.Background(),
+		"networking.k8s.io/v1.Ingress",
+		"default",
+		"app",
+		createTestIngress("app", "default"),
+		nil,
+		operationCreate,
 	)
 
 	assert.True(t, allowed)
@@ -452,11 +605,13 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 
 	proposalValidator := createMockProposalValidator(bus, logger)
 
-	component := New(&ComponentConfig{
+	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
+		WatchedResources:  testWatchedResources(),
 		Logger:            logger,
 	})
+	require.NoError(t, err)
 
 	bus.Start()
 
@@ -465,6 +620,7 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 		"invalid",
 		"default",
 		"test",
+		nil,
 		nil,
 		"CREATE",
 	)
@@ -507,11 +663,13 @@ func TestValidateDirect_AlwaysFailingTemplate_Denies(t *testing.T) {
 		Logger:            logger,
 	})
 
-	component := New(&ComponentConfig{
+	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: failingProposalValidator,
+		WatchedResources:  testWatchedResources(),
 		Logger:            logger,
 	})
+	require.NoError(t, err)
 
 	bus.Start()
 
@@ -521,6 +679,7 @@ func TestValidateDirect_AlwaysFailingTemplate_Denies(t *testing.T) {
 		"default",
 		"test-ingress",
 		createTestIngress("test-ingress", "default"),
+		nil,
 		"CREATE",
 	)
 
@@ -530,6 +689,10 @@ func TestValidateDirect_AlwaysFailingTemplate_Denies(t *testing.T) {
 
 // createMockProposalValidator creates a minimal ProposalValidator for testing.
 func createMockProposalValidator(bus *busevents.EventBus, logger *slog.Logger) *proposalvalidator.Component {
+	return createMockProposalValidatorWithStores(bus, logger, "ingresses", "services")
+}
+
+func createMockProposalValidatorWithStores(bus *busevents.EventBus, logger *slog.Logger, names ...string) *proposalvalidator.Component {
 	// Create minimal render service
 	engine, _ := templating.New(map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate}, nil)
 
@@ -553,10 +716,11 @@ func createMockProposalValidator(bus *busevents.EventBus, logger *slog.Logger) *
 	})
 
 	// Create base store provider
-	baseStoreProvider := stores.NewRealStoreProvider(map[string]stores.Store{
-		"ingresses": &storetest.MockStore{},
-		"services":  &storetest.MockStore{},
-	})
+	storeMap := make(map[string]stores.Store, len(names))
+	for _, name := range names {
+		storeMap[name] = &storetest.MockStore{}
+	}
+	baseStoreProvider := stores.NewRealStoreProvider(storeMap)
 
 	return proposalvalidator.New(&proposalvalidator.ComponentConfig{
 		EventBus:          bus,
@@ -581,4 +745,10 @@ func createTestIngress(name, namespace string) *unstructured.Unstructured {
 			},
 		},
 	}
+}
+
+func createTestIngressWithClass(name, class string) *unstructured.Unstructured {
+	resource := createTestIngress(name, "default")
+	resource.Object["spec"].(map[string]any)["ingressClassName"] = class
+	return resource
 }

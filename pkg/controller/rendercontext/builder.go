@@ -173,9 +173,9 @@ func WithRenderMode(mode RenderMode) Option {
 	}
 }
 
-// WithAdmissionSubject identifies the single watched resource under admission
-// review, exposed to templates as the `admissionSubject` map global
-// ({"store", "namespace", "name"}). Route-scoped template checks use it to
+// WithAdmissionSubject identifies one watched-resource alias under admission
+// review, exposed to templates as the `admissionSubject` map global.
+// Route-scoped template checks use it to
 // hard-fail only when the violating route belongs to the resource being
 // admitted; violations on other, already-present resources degrade to
 // warn-and-fail-closed-per-route so one bad existing object can never block
@@ -184,9 +184,26 @@ func WithRenderMode(mode RenderMode) Option {
 // unset (reconcile renders, config-proposal renders, bulk overlays), Build()
 // emits an empty map so templates can dig() it unconditionally.
 func WithAdmissionSubject(store, namespace, name string) Option {
+	return WithAdmissionSubjectStores([]string{store}, namespace, name)
+}
+
+// WithAdmissionSubjectStores identifies one admitted object across every
+// watched-resource alias whose contents the request changes.
+func WithAdmissionSubjectStores(aliases []string, namespace, name string) Option {
 	return func(b *Builder) {
+		storeSet := make(map[string]any, len(aliases))
+		for _, store := range aliases {
+			storeSet[store] = true
+		}
+		store := ""
+		if len(storeSet) == 1 {
+			for onlyAlias := range storeSet {
+				store = onlyAlias
+			}
+		}
 		b.admissionSubject = map[string]any{
 			"store":     store,
+			"stores":    storeSet,
 			"namespace": namespace,
 			"name":      name,
 		}

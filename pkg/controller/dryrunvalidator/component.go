@@ -27,9 +27,10 @@ import (
 	"log/slog"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -43,6 +44,7 @@ const ComponentName = "dryrun-validator"
 type Component struct {
 	proposalValidator *proposalvalidator.Component
 	restMapper        meta.RESTMapper
+	aliasesByGVR      map[schema.GroupVersionResource][]resourceAlias
 	logger            *slog.Logger
 }
 
@@ -51,51 +53,56 @@ type ComponentConfig struct {
 	// ProposalValidator is the component that performs render-validate pipeline.
 	ProposalValidator *proposalvalidator.Component
 
-	// RESTMapper resolves an admission request's GVK to the watched
-	// resource's plural (the overlay store key) using the cluster's
-	// discovery data. This keeps the validator resource-agnostic: any
-	// watched CRD — including one with an irregular or custom plural —
-	// resolves correctly, with no hardcoded pluralization table (RULE #1).
+	// RESTMapper resolves an admission request's GVK to its GVR.
 	RESTMapper meta.RESTMapper
+
+	// WatchedResources defines the configured store aliases for each GVR.
+	WatchedResources map[string]config.WatchedResource
 
 	// Logger is the structured logger.
 	Logger *slog.Logger
 }
 
 // New creates a new DryRunValidator component.
-func New(cfg *ComponentConfig) *Component {
+func New(cfg *ComponentConfig) (*Component, error) {
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
+	}
+	aliasesByGVR, err := buildResourceAliases(cfg.WatchedResources)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Component{
 		proposalValidator: cfg.ProposalValidator,
 		restMapper:        cfg.RESTMapper,
+		aliasesByGVR:      aliasesByGVR,
 		logger:            logger.With("component", ComponentName),
-	}
+	}, nil
 }
 
-// validateWithOverlay maps the GVK, builds an overlay store for the affected
-// resource, and runs the shared proposal pipeline. Returns whether the resource
-// is allowed, a user-facing denial reason, and pipeline warnings.
-func (c *Component) validateWithOverlay(ctx context.Context, gvk, namespace, name string, object any, operation, requestID string) (allowed bool, reason string, warnings []string) {
-	resourceType, err := c.mapGVKToResourceType(gvk)
+// validateWithOverlay builds selector-aware overlays for the request GVR and
+// runs the shared proposal pipeline.
+func (c *Component) validateWithOverlay(ctx context.Context, gvk, namespace, name string, object, oldObject any, operation, requestID string) (allowed bool, reason string, warnings []string) {
+	aliases, err := c.mapGVKToResourceAliases(gvk)
 	if err != nil {
 		return false, fmt.Sprintf("unsupported resource type: %v", err), nil
 	}
 
-	overlay := c.createOverlay(namespace, name, object, operation, requestID)
-	overlays := map[string]*stores.StoreOverlay{
-		resourceType: overlay,
+	overlays, subjectAliases, err := c.createOverlays(aliases, namespace, name, object, oldObject, operation)
+	if err != nil {
+		return false, fmt.Sprintf("building admission overlay: %v", err), nil
 	}
 
-	c.logger.Debug("Created store overlay for dry-run",
+	c.logger.Debug("Created store overlays for dry-run",
 		"request_id", requestID,
-		"resource_type", resourceType,
+		"resource_types", subjectAliases,
 		"operation", operation)
 
-	pipelineResult, result := c.proposalValidator.ValidateSync(ctx, overlays)
+	pipelineResult, result := c.proposalValidator.ValidateSyncWithAdmissionSubject(
+		ctx, overlays, subjectAliases, namespace, name,
+	)
 	warnings = append(warnings, result.Warnings...)
 	if !result.Valid {
 		c.logger.Info("Dry-run validation failed",
@@ -113,7 +120,7 @@ func (c *Component) validateWithOverlay(ctx context.Context, gvk, namespace, nam
 
 	c.logger.Debug("Dry-run validation passed",
 		"request_id", requestID,
-		"resource_type", resourceType,
+		"resource_types", subjectAliases,
 		"duration_ms", result.DurationMs)
 
 	// Surface template-recorded Warning events as admission warnings so the
@@ -166,19 +173,20 @@ func formatRenderedEventWarnings(events []templating.RenderedEvent) []string {
 //   - gvk: GroupVersionKind string (e.g., "networking.k8s.io/v1.Ingress")
 //   - namespace: Resource namespace
 //   - name: Resource name
-//   - object: The Kubernetes resource object
+//   - object: The proposed Kubernetes resource object
+//   - oldObject: The existing object for UPDATE and DELETE
 //   - operation: Admission operation (CREATE, UPDATE, DELETE)
 //
 // Returns:
 //   - allowed: Whether the resource passed validation
 //   - reason: Denial reason if not allowed, empty otherwise
 //   - warnings: Pipeline warnings surfaced through AdmissionResponse.Warnings
-func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string) {
+func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object, oldObject any, operation string) (allowed bool, reason string, warnings []string) {
 	c.logger.Debug("Direct validation request",
 		"gvk", gvk,
 		"namespace", namespace,
 		"name", name,
 		"operation", operation)
 
-	return c.validateWithOverlay(ctx, gvk, namespace, name, object, operation, "direct")
+	return c.validateWithOverlay(ctx, gvk, namespace, name, object, oldObject, operation, "direct")
 }

@@ -492,18 +492,22 @@ func TestComponent_createResourceValidator_MissingDryRunValidatorDenies(t *testi
 
 // mockDryRunValidator is a mock implementation of DryRunValidator.
 type mockDryRunValidator struct {
-	allowed  bool
-	reason   string
-	warnings []string
+	allowed   bool
+	reason    string
+	warnings  []string
+	object    any
+	oldObject any
 }
 
-func (m *mockDryRunValidator) ValidateDirect(_ context.Context, _, _, _ string, _ any, _ string) (allowed bool, reason string, warnings []string) {
+func (m *mockDryRunValidator) ValidateDirect(_ context.Context, _, _, _ string, object, oldObject any, _ string) (allowed bool, reason string, warnings []string) {
+	m.object = object
+	m.oldObject = oldObject
 	return m.allowed, m.reason, m.warnings
 }
 
 type contextBlockingDryRunValidator struct{}
 
-func (contextBlockingDryRunValidator) ValidateDirect(ctx context.Context, _, _, _ string, _ any, _ string) (allowed bool, reason string, warnings []string) {
+func (contextBlockingDryRunValidator) ValidateDirect(ctx context.Context, _, _, _ string, _, _ any, _ string) (allowed bool, reason string, warnings []string) {
 	<-ctx.Done()
 	return false, ctx.Err().Error(), nil
 }
@@ -576,6 +580,26 @@ func TestComponent_createResourceValidator_DryRunValidatorAllows(t *testing.T) {
 	assert.True(t, allowed)
 	assert.Empty(t, reason)
 	assert.NoError(t, err)
+}
+
+func TestComponent_createResourceValidator_DeleteUsesOldObject(t *testing.T) {
+	dryRunValidator := &mockDryRunValidator{allowed: true}
+	component := New(testutil.NewTestLogger(), &Config{DryRunValidator: dryRunValidator}, nil, nil)
+	validator := component.createResourceValidator("v1.ConfigMap")
+	oldObject := &unstructured.Unstructured{}
+	oldObject.SetName("test-config")
+
+	allowed, _, _, err := validator(&webhook.ValidationContext{
+		Operation: "DELETE",
+		Namespace: "default",
+		Name:      "test-config",
+		OldObject: oldObject,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, allowed)
+	assert.Nil(t, dryRunValidator.object)
+	assert.Same(t, oldObject, dryRunValidator.oldObject)
 }
 
 func TestComponent_createResourceValidator_DryRunValidatorDenies(t *testing.T) {

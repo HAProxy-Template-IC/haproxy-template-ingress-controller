@@ -108,7 +108,8 @@ templateSnippets:
               var subjStore = tostring(admissionSubject | dig("store") | fallback(""))
               var subjNs = tostring(admissionSubject | dig("namespace") | fallback(""))
               var subjName = tostring(admissionSubject | dig("name") | fallback(""))
-              var underAdmission = renderMode == "admission" && subjStore == res && subjNs == ns && subjName == name
+              var subjectMatchesStore = subjStore == res || tostring(admissionSubject | dig("stores", res) | fallback(false)) == "true"
+              var underAdmission = renderMode == "admission" && subjectMatchesStore && subjNs == ns && subjName == name
               // Scoped to the admission subject: a pre-existing violator must
               // never wedge an unrelated resource's admission.
               var violate = func(enf string, custom string, detail string) {
@@ -324,7 +325,7 @@ validationTests:
     description: A value above max is rejected at the offending resource's own admission.
     extraContext:
       renderMode: admission
-      admissionSubject: { store: ingresses, namespace: default, name: over-limit }
+      admissionSubject: { stores: { ingresses: true }, namespace: default, name: over-limit }
       governance:
         enabled: true
         rules:

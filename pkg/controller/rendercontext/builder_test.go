@@ -365,6 +365,18 @@ func TestBuilder_Build_AdmissionSubject(t *testing.T) {
 
 		subject := ctx["admissionSubject"].(map[string]any)
 		assert.Equal(t, "ingresses", subject["store"])
+		assert.Equal(t, map[string]any{"ingresses": true}, subject["stores"])
+		assert.Equal(t, "team-a", subject["namespace"])
+		assert.Equal(t, "app", subject["name"])
+	})
+
+	t.Run("multiple aliases expose the complete store set", func(t *testing.T) {
+		builder := NewBuilder(t.Context(), &config.Config{}, pathResolver, logger,
+			WithAdmissionSubjectStores([]string{"internal-routes", "public-routes"}, "team-a", "app"))
+		subject := builder.Build().Context["admissionSubject"].(map[string]any)
+
+		assert.Empty(t, subject["store"])
+		assert.Equal(t, map[string]any{"internal-routes": true, "public-routes": true}, subject["stores"])
 		assert.Equal(t, "team-a", subject["namespace"])
 		assert.Equal(t, "app", subject["name"])
 	})
