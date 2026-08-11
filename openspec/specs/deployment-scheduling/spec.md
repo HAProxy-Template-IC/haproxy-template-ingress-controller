@@ -244,6 +244,11 @@ The leader-only DriftPreventionMonitor SHALL arm a timer for the drift-preventio
 - **WHEN** a DeploymentCompletedEvent arrives before the timer expires
 - **THEN** the timer SHALL be reset to a full interval
 
+#### Scenario: Leadership loss disables drift checks
+
+- **WHEN** a LostLeadershipEvent arrives while the drift timer is armed
+- **THEN** the timer SHALL be disabled without publishing or re-arming a DriftPreventionTriggeredEvent
+
 #### Scenario: Stalled timer is unhealthy
 
 - **WHEN** the monitor records no timer activity for more than 1.5 times the interval

@@ -56,79 +56,36 @@ func TestDriftPreventionMonitor_ResetDriftTimer(t *testing.T) {
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
 	monitor.resetDriftTimer()
+	defer monitor.driftTimer.Stop()
 
-	monitor.mu.Lock()
-	defer monitor.mu.Unlock()
-
-	assert.NotNil(t, monitor.driftTimer)
-	assert.NotNil(t, monitor.driftTimerChan)
-	assert.True(t, monitor.timerActive)
+	assert.NotNil(t, monitor.driftTimer.Chan())
 	assert.False(t, monitor.lastDeploymentTime.IsZero())
 }
 
-func TestDriftPreventionMonitor_StopDriftTimer(t *testing.T) {
+func TestDriftPreventionMonitor_TimerChannel(t *testing.T) {
 	bus := testutil.NewTestBus()
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
-	// Start timer first
+	assert.Nil(t, monitor.driftTimer.Chan())
+
 	monitor.resetDriftTimer()
+	defer monitor.driftTimer.Stop()
 
-	monitor.stopDriftTimer()
-
-	monitor.mu.Lock()
-	defer monitor.mu.Unlock()
-
-	assert.False(t, monitor.timerActive)
-}
-
-func TestDriftPreventionMonitor_GetDriftTimerChan(t *testing.T) {
-	bus := testutil.NewTestBus()
-	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
-
-	t.Run("returns closed channel when no timer", func(t *testing.T) {
-		// Timer not started yet
-		ch := monitor.getDriftTimerChan()
-		require.NotNil(t, ch)
-
-		// Should be closed (will return immediately)
-		select {
-		case _, ok := <-ch:
-			assert.False(t, ok, "channel should be closed")
-		default:
-			t.Fatal("channel should have been closed")
-		}
-	})
-
-	t.Run("returns timer channel when active", func(t *testing.T) {
-		monitor.resetDriftTimer()
-
-		ch := monitor.getDriftTimerChan()
-		require.NotNil(t, ch)
-
-		// Channel should be the timer channel (not closed)
-		// We can't easily test this without waiting for the timer,
-		// so we just verify the channel is non-nil
-		assert.NotNil(t, ch)
-	})
+	assert.NotNil(t, monitor.driftTimer.Chan())
 }
 
 func TestDriftPreventionMonitor_HandleDeploymentCompleted(t *testing.T) {
 	bus := testutil.NewTestBus()
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
-	// Set initial state
 	monitor.resetDriftTimer()
+	defer monitor.driftTimer.Stop()
 	oldTime := monitor.lastDeploymentTime
 
-	// Small delay
 	time.Sleep(10 * time.Millisecond)
 
 	monitor.handleDeploymentCompleted()
 
-	monitor.mu.Lock()
-	defer monitor.mu.Unlock()
-
-	// Last deployment time should be updated
 	assert.True(t, monitor.lastDeploymentTime.After(oldTime))
 }
 
@@ -139,13 +96,11 @@ func TestDriftPreventionMonitor_HandleDriftTimerExpired(t *testing.T) {
 
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
-	// Initialize timer state
 	monitor.resetDriftTimer()
+	defer monitor.driftTimer.Stop()
 
-	// Handle timer expiration
 	monitor.handleDriftTimerExpired()
 
-	// Wait for DriftPreventionTriggeredEvent
 	timeout := time.After(500 * time.Millisecond)
 waitLoop:
 	for {
@@ -167,6 +122,7 @@ func TestDriftPreventionMonitor_HandleEvent(t *testing.T) {
 
 	t.Run("routes DeploymentCompletedEvent", func(t *testing.T) {
 		monitor.resetDriftTimer()
+		defer monitor.driftTimer.Stop()
 		oldTime := monitor.lastDeploymentTime
 
 		time.Sleep(10 * time.Millisecond)
@@ -178,14 +134,10 @@ func TestDriftPreventionMonitor_HandleEvent(t *testing.T) {
 		})
 		monitor.handleEvent(event)
 
-		monitor.mu.Lock()
-		defer monitor.mu.Unlock()
-
 		assert.True(t, monitor.lastDeploymentTime.After(oldTime))
 	})
 
 	t.Run("ignores unknown events", func(t *testing.T) {
-		// Should not panic
 		otherEvent := events.NewReconciliationCompletedEvent(0, nil, nil)
 		monitor.handleEvent(otherEvent)
 	})
@@ -196,16 +148,16 @@ func TestDriftPreventionMonitor_TimerTriggersEvent(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	// Use short interval for testing
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 50*time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	// Start monitor in goroutine
-	go monitor.Start(ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- monitor.Start(ctx)
+	}()
 
-	// Wait for drift prevention event
 	timeout := time.After(150 * time.Millisecond)
 waitLoop:
 	for {
@@ -217,6 +169,14 @@ waitLoop:
 		case <-timeout:
 			t.Fatal("timeout waiting for DriftPreventionTriggeredEvent from timer")
 		}
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("drift monitor did not stop")
 	}
 }
 

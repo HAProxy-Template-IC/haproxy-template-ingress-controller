@@ -38,11 +38,14 @@ for {
 true even after the timer's channel was drained, so a stale reference lingers
 until the next `Reset` or `Stop`.
 
-`Reset` implements trailing-edge debouncing — `pkg/controller/configchange` is the only current production user.
+`Reset` implements trailing-edge debouncing. Controller event loops use it for
+configuration coalescing, CRD discovery settling, and drift-prevention cadence.
 
 ## See Also
 
 - [`pkg/controller/configchange`](../configchange/) — uses trailing-edge `Reset` for reinit coalescing
+- [`pkg/controller/crdwatch`](../crdwatch/) — settles CRD discovery after changes
+- [`pkg/controller/deployer`](../deployer/) — owns the drift-prevention cadence
 
 ## License
 
