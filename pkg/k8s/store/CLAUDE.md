@@ -104,9 +104,10 @@ resources, _ := store.Get("default", "common-label")
 
 ```go
 type MemoryStore struct {
-    mu      sync.RWMutex
-    data    map[string][]any // Composite key -> pre-sorted resource slice
-    numKeys int              // Expected key count
+    mu        sync.RWMutex
+    data      map[string][]any            // Composite key -> pre-sorted resource slice
+    locations map[resourceIdentity]string // Resource identity -> composite key
+    numKeys   int                         // Expected key count
 }
 ```
 
@@ -114,6 +115,8 @@ type MemoryStore struct {
 
 - `map[string][]any`: handles non-unique keys naturally; per-bucket slice is kept
   sorted at insert time so reads can return a direct reference (zero-copy).
+- `locations`: makes namespace/name the owner of exactly one bucket, so an
+  `indexBy` change removes the old entry and inserts the new one atomically.
 - `sync.RWMutex`: multiple concurrent readers, single writer.
 
 There is **no** `allItems` cache or `dirty` flag — `List()` walks the data map
@@ -135,6 +138,7 @@ type resourceRef struct {
 type CachedStore struct {
     mu        sync.RWMutex
     refs      map[string][]resourceRef            // Composite key -> references
+    locations map[resourceIdentity]string         // Resource identity -> composite key
     cache     *lru.Cache[string, *cacheEntry]     // LRU cache: "ns/name" -> cached resource
     numKeys   int
     cacheTTL  time.Duration
@@ -150,6 +154,8 @@ type CachedStore struct {
 
 - `refs` map: stores only metadata (`namespace + name + index keys`) so the
   in-memory footprint per resource is tiny compared to a full Secret body.
+- `locations`: finds the previous bucket by namespace/name without scanning
+  every reference, and keeps a move inside one write-lock critical section.
 - `cache` is an actual `lru.Cache`, not a plain map — entries beyond
   `MaxCacheSize` (default `DefaultMaxCacheSize = 256`) are evicted LRU. TTL
   (`cfg.CacheTTL`, default `2m10s`) is checked on read.
@@ -207,10 +213,12 @@ If profiling shows lock contention, consider:
 
 ### MemoryStore Add / Update Pattern
 
-`Add` is a pure append — it does **not** dedupe. The dedupe (replace-by-namespace+name)
-lives in `Update`, which keeps the per-key bucket sorted so subsequent `Get`s
-can return the slice as-is. The shared key-validation helper is `validateKeyCount`,
-not an inline check, and the `StoreError` field is `Cause`, not `Err`.
+`Add` and `Update` identify Kubernetes resources by namespace/name. Before
+inserting, both remove that identity from the bucket recorded in `locations`;
+this also makes a changed index key an atomic move. Distinct identities still
+share a non-unique bucket. Resources without a name retain the legacy target-
+bucket behavior for non-Kubernetes test fixtures. The shared key-validation
+helper is `validateKeyCount`, and the `StoreError` field is `Cause`.
 
 ```go
 func (s *MemoryStore) Add(resource any, keys []string) error {
@@ -222,6 +230,10 @@ func (s *MemoryStore) Add(resource any, keys []string) error {
     }
 
     keyStr := makeKeyString(keys)
+    if identity, ok := identifyResource(resource); ok {
+        s.removeIdentityLocked(identity)
+        s.locations[identity] = keyStr
+    }
     s.data[keyStr] = append(s.data[keyStr], resource)
     sortResourceSlice(s.data[keyStr]) // zero-copy reads later
     return nil
@@ -236,22 +248,11 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
     }
 
     keyStr := makeKeyString(keys)
-    bucket, ok := s.data[keyStr]
-    if !ok {
-        s.data[keyStr] = []any{resource}
-        return nil
+    if identity, ok := identifyResource(resource); ok {
+        s.removeIdentityLocked(identity)
+        s.locations[identity] = keyStr
     }
-
-    ns, name := extractNamespaceName(resource)
-    for i, existing := range bucket {
-        existingNs, existingName := extractNamespaceName(existing)
-        if existingNs == ns && existingName == name {
-            bucket[i] = resource // ns/name unchanged → sort order preserved
-            return nil
-        }
-    }
-
-    s.data[keyStr] = append(bucket, resource)
+    s.data[keyStr] = append(s.data[keyStr], resource)
     sortResourceSlice(s.data[keyStr])
     return nil
 }
@@ -259,8 +260,8 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 
 **Key points:**
 
-- `Add` is unconditional append — duplicates are possible if the watcher's
-  delta logic is wrong. That's by design: cheap insert, dedupe lives in `Update`.
+- `Add` and `Update` allow distinct resources to share a bucket but never retain
+  one namespace/name identity in two buckets.
 - Per-bucket sort happens at write time so `Get(exact-key)` can return the
   internal slice directly (see the Immutability Contract in `MemoryStore.Get`).
 
@@ -315,11 +316,11 @@ func (s *CachedStore) Get(keys ...string) ([]any, error) {
 ### Resource Identity
 
 There is no `resourcesEqual` helper. The store identifies "same resource" by
-`(namespace, name)` via `extractNamespaceName` (see `common.go:55`) and uses
-that comparison inside `Update` and `Delete`. UID is **not** consulted, so a
-deleted-and-recreated resource looks identical to its predecessor as far as
-this store is concerned — that's correct, because the watcher generates
-`Update` (not `Add`+`Delete`) on a re-create.
+`(namespace, name)` via `identifyResource` and records the identity's current
+composite key in `locations`. UID is **not** consulted, so a deleted-and-
+recreated resource replaces its predecessor. Update and delete remove only that
+identity under the store's write lock, preserving siblings in a non-unique
+bucket.
 
 ```go
 nsA, nameA := extractNamespaceName(a)

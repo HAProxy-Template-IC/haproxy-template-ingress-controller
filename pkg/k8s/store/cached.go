@@ -45,6 +45,7 @@ type resourceRef struct {
 type CachedStore struct {
 	mu        sync.RWMutex
 	refs      map[string][]resourceRef        // Composite key -> slice of resource references
+	locations map[resourceIdentity]string     // Resource identity -> composite key
 	cache     *lru.Cache[string, *cacheEntry] // LRU cache: namespace/name -> cached resource
 	numKeys   int                             // Number of index keys
 	cacheTTL  time.Duration                   // Cache entry TTL
@@ -130,6 +131,7 @@ func NewCachedStore(cfg *CachedStoreConfig) (*CachedStore, error) {
 
 	return &CachedStore{
 		refs:      make(map[string][]resourceRef),
+		locations: make(map[resourceIdentity]string),
 		cache:     cache,
 		numKeys:   cfg.NumKeys,
 		cacheTTL:  cfg.CacheTTL,
@@ -273,7 +275,7 @@ func (s *CachedStore) ListContext(ctx context.Context) ([]any, error) {
 	return s.fetchRefs(ctx, allRefs)
 }
 
-// Add inserts a new resource into the store.
+// Add inserts a resource reference, replacing the same identity if present.
 func (s *CachedStore) Add(resource any, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -284,18 +286,24 @@ func (s *CachedStore) Add(resource any, keys []string) error {
 
 	ns, name := extractNamespaceName(resource)
 	keyStr := makeKeyString(keys)
+	if identity, ok := identifyResource(resource); ok {
+		s.removeReferenceLocked(identity)
+		s.locations[identity] = keyStr
+	}
 	s.refs[keyStr] = append(s.refs[keyStr], resourceRef{namespace: ns, name: name, indexKeys: keys})
 	if !s.projected {
 		// Non-projected: the informer delivered a full body, so cache it for
 		// free. Projected: the body is a husk — leave the value cache to be
 		// populated by the live API GET in fetchResourceByRef.
 		s.cacheResource(ns, name, resource)
+	} else {
+		s.cache.Remove(ns + "/" + name)
 	}
 
 	return nil
 }
 
-// Update modifies an existing resource or adds it if it doesn't exist.
+// Update modifies a resource reference and moves it if its index key changed.
 func (s *CachedStore) Update(resource any, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -306,21 +314,13 @@ func (s *CachedStore) Update(resource any, keys []string) error {
 
 	ns, name := extractNamespaceName(resource)
 	keyStr := makeKeyString(keys)
-	refs := s.refs[keyStr]
-
-	updated := false
-	for i, existingRef := range refs {
-		if existingRef.namespace == ns && existingRef.name == name {
-			// Update index keys in case they changed
-			refs[i].indexKeys = keys
-			updated = true
-			break
-		}
+	if identity, ok := identifyResource(resource); ok {
+		s.removeReferenceLocked(identity)
+		s.locations[identity] = keyStr
+	} else {
+		s.removeReferenceFromBucketLocked(keyStr, resourceIdentity{namespace: ns, name: name})
 	}
-	if !updated {
-		refs = append(refs, resourceRef{namespace: ns, name: name, indexKeys: keys})
-	}
-	s.refs[keyStr] = refs
+	s.refs[keyStr] = append(s.refs[keyStr], resourceRef{namespace: ns, name: name, indexKeys: keys})
 
 	if s.projected {
 		// Projected: the new body is a husk. Invalidate any stale full body
@@ -333,9 +333,9 @@ func (s *CachedStore) Update(resource any, keys []string) error {
 	return nil
 }
 
-// Delete removes the single resource identified by namespace/name from the
-// bucket addressed by keys, leaving any siblings that share the bucket in
-// place. Deleting a resource that is not present is a no-op.
+// Delete removes the single resource identified by namespace/name from its
+// recorded bucket, leaving any siblings in place. The keys validate shape.
+// Deleting a resource that is not present is a no-op.
 //
 // Only the deleted resource's cache entry is evicted. Purging the whole
 // bucket's entries would drop warm bodies still referenced elsewhere, forcing
@@ -348,17 +348,37 @@ func (s *CachedStore) Delete(namespace, name string, keys []string) error {
 		return err
 	}
 
-	keyStr := makeKeyString(keys)
+	identity := resourceIdentity{namespace: namespace, name: name}
+	if name == "" {
+		s.removeReferenceFromBucketLocked(makeKeyString(keys), identity)
+		s.cache.Remove(namespace + "/" + name)
+		return nil
+	}
+
+	s.removeReferenceLocked(identity)
+	s.cache.Remove(namespace + "/" + name)
+
+	return nil
+}
+
+func (s *CachedStore) removeReferenceLocked(identity resourceIdentity) {
+	keyStr, ok := s.locations[identity]
+	if !ok {
+		return
+	}
+	s.removeReferenceFromBucketLocked(keyStr, identity)
+	delete(s.locations, identity)
+}
+
+func (s *CachedStore) removeReferenceFromBucketLocked(keyStr string, identity resourceIdentity) {
 	refs, ok := s.refs[keyStr]
 	if !ok {
-		return nil
+		return
 	}
 
 	remaining := make([]resourceRef, 0, len(refs))
 	for _, ref := range refs {
-		if ref.namespace == namespace && ref.name == name {
-			// Same key shape as cacheResource.
-			s.cache.Remove(ref.namespace + "/" + ref.name)
+		if ref.namespace == identity.namespace && ref.name == identity.name {
 			continue
 		}
 		remaining = append(remaining, ref)
@@ -366,12 +386,9 @@ func (s *CachedStore) Delete(namespace, name string, keys []string) error {
 
 	if len(remaining) == 0 {
 		delete(s.refs, keyStr)
-		return nil
+		return
 	}
-
 	s.refs[keyStr] = remaining
-
-	return nil
 }
 
 // Clear removes all resources from the store.
@@ -380,6 +397,7 @@ func (s *CachedStore) Clear() error {
 	defer s.mu.Unlock()
 
 	s.refs = make(map[string][]resourceRef)
+	s.locations = make(map[resourceIdentity]string)
 	s.cache.Purge()
 
 	return nil

@@ -86,7 +86,7 @@ w, err := watcher.NewSingle(cfg, k8sClient)
 | `.List()` cost | O(n) in-memory | O(n) **API fetch** — avoid |
 | `.Get(keys...)` | O(1) | O(1) on cache hit, API call on miss |
 
-Both implement `types.Store`. `Get(keys...)` with fewer keys than `IndexBy` returns all resources whose composite key starts with those keys (prefix scan) — useful for one-to-many lookups like "all EndpointSlices for service X".
+Both implement `types.Store`. `Get(keys...)` with fewer keys than `IndexBy` returns all resources whose composite key starts with those keys (prefix scan) — useful for one-to-many lookups like "all EndpointSlices for service X". Each store owns a reverse `(namespace, name)` index, so an informer update that changes an `IndexBy` value moves the resource atomically instead of leaving it in both lookup buckets.
 
 ## Initial Sync
 
