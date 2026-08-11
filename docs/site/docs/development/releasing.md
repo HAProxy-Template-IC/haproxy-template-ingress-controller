@@ -34,6 +34,17 @@ Before releasing:
 2. **All tests passing** - CI pipeline green on main branch
 3. **Documentation updated** - Any new features documented
 
+## Publish a main snapshot
+
+Ordinary `main` pipelines build pipeline-scoped test images but don't publish the multi-architecture `main-<sha>` controller, SPOA-hub, and chart snapshot.
+
+1. Open **Build > Pipelines > New pipeline** in GitLab.
+2. Select the `main` branch.
+3. Add the variable `PUBLISH_MAIN_SNAPSHOT` with value `true`.
+4. Run the pipeline.
+
+The three snapshot publishers run as one dependency chain, so the chart is published only after both matching images succeed.
+
 ## Release process
 
 The main branch is protected, so releases are made via merge requests. CI automatically creates the tag when the `VERSION` file changes on main.

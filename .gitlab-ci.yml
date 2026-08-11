@@ -8,9 +8,13 @@ stages:
   - integration
   - deploy
 
+default:
+  interruptible: true
 
 # Prevent duplicate pipelines for MR and branch pushes
 workflow:
+  auto_cancel:
+    on_new_commit: interruptible
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     # Manually/API-triggered nightly test runs (SCHEDULE_KIND=nightly) may
@@ -52,6 +56,9 @@ variables:
   COVERAGE_PACKAGES: "./cmd/...,./pkg/compression/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/stores/...,./pkg/templating/...,./pkg/webhook/..."
   # CI image base path - tag is the build-input hash (see compute-ci-image-tag)
   CI_IMAGE_BASE: ${CI_REGISTRY_IMAGE}/ci
+  # Publish the multi-arch controller, SPOA-hub, and chart snapshot only from an
+  # explicit main-branch web/API/scheduled pipeline that sets this to "true".
+  PUBLISH_MAIN_SNAPSHOT: "false"
 
 # Reusable rules for path-based filtering.
 #
@@ -565,6 +572,15 @@ validate-helm-libraries:
     CHART_SNAPSHOT_VERSION: "0.0.0-main.g${CI_COMMIT_SHORT_SHA}"
     CHART_SNAPSHOT_APPVERSION: "main-${CI_COMMIT_SHORT_SHA}"
 
+.rules-main-snapshot-publish:
+  rules:
+    - if: >-
+        $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH &&
+        $PUBLISH_MAIN_SNAPSHOT == "true" &&
+        ($CI_PIPELINE_SOURCE == "web" ||
+        $CI_PIPELINE_SOURCE == "api" ||
+        $CI_PIPELINE_SOURCE == "schedule")
+
 # Stamp the SOURCE chart with the snapshot version the pulled image embeds.
 # The pre-rollout preflight hook hard-fails on chart/image version drift — by
 # design, for operators — and the snapshot image deliberately carries the
@@ -774,24 +790,19 @@ build-ingress-conformance-image:
     - make build-ingress-conformance-image CONFORMANCE_BAKE_KUBECONFIG=0
     - docker push ${INGRESS_CONFORMANCE_IMAGE}
 
-# Publish snapshot images from main branch (multi-arch, for users)
+# Publish snapshot images from an explicit main-branch pipeline (multi-arch, for users)
 # Produces images with tags: main-<short-sha>-haproxy<version>
 publish-main-snapshot:
   extends: .snapshot-build-base
   rules:
-    # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
-    # publishing, image pushes, pages deploys, or release tagging from cron.
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_TAG
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - !reference [.rules-main-snapshot-publish, rules]
+  interruptible: false
   variables:
     PLATFORMS: "linux/amd64,linux/arm64,linux/arm/v7"
     SNAPSHOT_TAG: "main-${CI_COMMIT_SHORT_SHA}"
     CREATE_DEFAULT_TAG: "true"
 
-# Publish snapshot chart from main branch
+# Publish the matching snapshot chart from the same explicit pipeline
 # Produces chart with version: 0.0.0-main.<short-sha>
 publish-chart-snapshot:
   stage: build
@@ -808,17 +819,13 @@ publish-chart-snapshot:
     # but still publishes the chart, which then references a non-existent hub
     # image and stalls every consumer's upgrade on ImagePullBackOff. Gating here
     # makes the snapshot atomic with its hub image: both publish, or neither.
-    # build-spoa-image-main shares this job's exact rules (main push, not
-    # schedule/tag), so the dependency is always satisfiable.
+    # All three publishers share the explicit-pipeline rule, so these
+    # dependencies are always satisfiable.
     - job: build-spoa-image-main
+    - job: publish-main-snapshot
   rules:
-    # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
-    # publishing, image pushes, pages deploys, or release tagging from cron.
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_TAG
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - !reference [.rules-main-snapshot-publish, rules]
+  interruptible: false
   before_script:
     - helm registry login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
@@ -1057,16 +1064,9 @@ prep-spoa-plugins:
     - saas-linux-small-amd64
   needs: []
   rules:
-    # Always fire on main pushes so the build-spoa-image-main publish
-    # has its mandatory `needs:` dep satisfied. The haptic snapshot,
-    # chart snapshot, and SPOA-hub snapshot all advance together per
-    # main commit; a CHANGELOG-only or controller-only main push that
-    # matches neither .rules-spoa nor .rules-spoa-chart would otherwise
-    # schedule build-spoa-image-main with no prep job, yielding a
-    # GitLab yaml-validation error ("prep-spoa-plugins does not exist
-    # in the pipeline") that manifests as a 0-job pipeline marked
-    # failed and blocks the merge gate of the next MR.
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # The explicit multi-arch publisher always needs the plugin bundle, even
+    # when the selected main commit did not change a SPOA input.
+    - !reference [.rules-main-snapshot-publish, rules]
     - !reference [.rules-spoa, rules]
     # build-spoa-image-snapshot has prep-spoa-plugins as a hard
     # `needs:` dep, so prep must trigger whenever the image build
@@ -1208,23 +1208,13 @@ build-spoa-image-snapshot:
     PLATFORMS: "linux/amd64"
     SPOA_TAG: "ci-${CI_PIPELINE_ID}"
 
-# Multi-arch publish from main branch. Always fires on main pushes so
-# the `main-latest` SPOA-hub snapshot tracks the haptic-controller and
-# chart snapshots in lockstep — operators pulling a `main-<sha>` set
-# get a coherent triple. `prep-spoa-plugins` mirrors this gate so the
-# mandatory `needs:` dependency is satisfied even on main pushes that
-# touch neither SPOA-image inputs nor chart YAML (e.g. controller-only
-# or CHANGELOG-only commits).
+# Multi-arch publish from an explicit main-branch pipeline. The controller,
+# chart, and SPOA-hub snapshot advance together.
 build-spoa-image-main:
   extends: .build-spoa-image-base
   rules:
-    # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
-    # publishing, image pushes, pages deploys, or release tagging from cron.
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_TAG
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - !reference [.rules-main-snapshot-publish, rules]
+  interruptible: false
   variables:
     PLATFORMS: "linux/amd64,linux/arm64,linux/arm/v7"
     SPOA_TAG: "main-${CI_COMMIT_SHORT_SHA}"
@@ -1235,6 +1225,7 @@ build-spoa-image-main:
 # Multi-arch release on version tags. Sign + attest jobs depend on this.
 build-spoa-image-release:
   extends: .build-spoa-image-base
+  interruptible: false
   rules:
     - if: $CI_COMMIT_TAG =~ /^v.*/
   variables:
@@ -1256,6 +1247,7 @@ build-spoa-image-release:
 # Cosign keyless sign-by-digest of the released image.
 sign-spoa-image:
   stage: build
+  interruptible: false
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
     - saas-linux-small-amd64
@@ -1280,6 +1272,7 @@ sign-spoa-image:
 # CycloneDX SBOM via syft, attached as a cosign attestation.
 attest-spoa-sbom:
   stage: build
+  interruptible: false
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
     - saas-linux-small-amd64
@@ -1325,7 +1318,7 @@ attest-spoa-sbom:
     - |
       if [ -n "${CI_COMMIT_TAG}" ]; then
         SPOA_SMOKE_TAG="${CI_COMMIT_TAG#v}"
-      elif [ "${CI_COMMIT_BRANCH}" = "${CI_DEFAULT_BRANCH}" ]; then
+      elif [ "${PUBLISH_MAIN_SNAPSHOT}" = "true" ]; then
         SPOA_SMOKE_TAG="main-${CI_COMMIT_SHORT_SHA}"
       else
         SPOA_SMOKE_TAG="ci-${CI_PIPELINE_ID}"
@@ -1340,6 +1333,7 @@ smoke-spoa-amd64:
     - if: $CI_COMMIT_TAG =~ /^v.*/
     - if: $CI_COMMIT_TAG
       when: never
+    - !reference [.rules-main-snapshot-publish, rules]
     # `.rules-spoa` governs main too — the bare default-branch rule it replaces
     # smoked the hub image on every main push, including prose-only merges. A
     # main push that changes no SPOA input rebuilds a byte-equivalent image, so
@@ -1368,15 +1362,9 @@ smoke-spoa-arm64:
       command: ["--mtu=1400"]
   rules:
     - if: $CI_COMMIT_TAG =~ /^v.*/
-    # Not on MR/feature pipelines: they build the snapshot amd64-only, so there
-    # is no multi-arch manifest to smoke (see the comment above). This `never`
-    # also covers non-`v` tags, where CI_COMMIT_BRANCH is unset and so compares
-    # unequal to the default branch — preserving today's behaviour of not running
-    # for them.
-    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
       when: never
-    # On main, gate on the SPOA inputs rather than running for every push.
-    - !reference [.rules-spoa, rules]
+    - !reference [.rules-main-snapshot-publish, rules]
   needs:
     - job: build-spoa-image-main
       optional: true
@@ -3180,6 +3168,7 @@ test-helm-defaults:
 # covers the controller and the chart (the "Helm chart" subsection).
 release-controller:
   stage: deploy
+  interruptible: false
   extends:
     - .goreleaser-base
   tags:
@@ -3238,6 +3227,7 @@ release-controller:
 # the same tag would fail, so this job only publishes the chart artifact.
 release-chart:
   stage: deploy
+  interruptible: false
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
     - saas-linux-medium-amd64
@@ -3282,6 +3272,7 @@ release-chart:
 # docs never advertise a version whose artifacts failed to publish.
 trigger-docs-release:
   stage: deploy
+  interruptible: false
   needs:
     - release-controller
     - release-chart
@@ -3418,6 +3409,7 @@ pages-preview-cleanup:
 # so we trigger on every main branch push instead
 trigger-pages:
   stage: deploy
+  interruptible: false
   # Wait for the playground bundle so the Pages deploy fetches THIS commit's
   # build-playground-wasm artifact, not the previous one (optional: docs still
   # deploy if the bundle job is ever ruled out). Only the bundle is needed —
@@ -3475,6 +3467,7 @@ create-release-tag:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
     - saas-linux-small-amd64
+  interruptible: false
   # No `needs:` — stage ordering makes this wait for the WHOLE pipeline,
   # so the full post-merge stack (unit, e2e matrix, conformance) gates every
   # release tag. `dependencies` still fetches the CI image tag dotenv.
