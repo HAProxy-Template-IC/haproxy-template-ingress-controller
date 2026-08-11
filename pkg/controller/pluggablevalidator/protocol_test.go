@@ -136,6 +136,113 @@ func TestDecodeResponse_HappyPath(t *testing.T) {
 	}
 }
 
+func TestDecodeResponse_ResultContract(t *testing.T) {
+	warning := Diagnostic{Path: "config.toml", Message: "deprecated setting"}
+	validationError := Diagnostic{Path: "config.toml", Message: "invalid setting"}
+	tests := []struct {
+		name       string
+		response   any
+		wantResult Result
+		wantErr    string
+	}{
+		{
+			name:       "valid without diagnostics",
+			response:   &Response{ProtocolVersion: ProtocolVersion, Result: ResultValid},
+			wantResult: ResultValid,
+		},
+		{
+			name:       "warning with warnings",
+			response:   &Response{ProtocolVersion: ProtocolVersion, Result: ResultWarning, Warnings: []Diagnostic{warning}},
+			wantResult: ResultWarning,
+		},
+		{
+			name:       "error with errors",
+			response:   &Response{ProtocolVersion: ProtocolVersion, Result: ResultError, Errors: []Diagnostic{validationError}},
+			wantResult: ResultError,
+		},
+		{
+			name: "error with warnings and errors",
+			response: &Response{
+				ProtocolVersion: ProtocolVersion,
+				Result:          ResultError,
+				Warnings:        []Diagnostic{warning},
+				Errors:          []Diagnostic{validationError},
+			},
+			wantResult: ResultError,
+		},
+		{
+			name: "missing result",
+			response: map[string]any{
+				"protocol_version": ProtocolVersion,
+				"warnings":         []Diagnostic{},
+				"errors":           []Diagnostic{},
+			},
+			wantErr: "missing result",
+		},
+		{
+			name:     "unknown result",
+			response: &Response{ProtocolVersion: ProtocolVersion, Result: Result("pending")},
+			wantErr:  `unsupported result "pending"`,
+		},
+		{
+			name:     "valid with warning",
+			response: &Response{ProtocolVersion: ProtocolVersion, Result: ResultValid, Warnings: []Diagnostic{warning}},
+			wantErr:  `use "warning"`,
+		},
+		{
+			name:     "valid with error",
+			response: &Response{ProtocolVersion: ProtocolVersion, Result: ResultValid, Errors: []Diagnostic{validationError}},
+			wantErr:  `use "error"`,
+		},
+		{
+			name:     "warning without diagnostics",
+			response: &Response{ProtocolVersion: ProtocolVersion, Result: ResultWarning},
+			wantErr:  `use "valid"`,
+		},
+		{
+			name: "warning with error",
+			response: &Response{
+				ProtocolVersion: ProtocolVersion,
+				Result:          ResultWarning,
+				Warnings:        []Diagnostic{warning},
+				Errors:          []Diagnostic{validationError},
+			},
+			wantErr: `use "error"`,
+		},
+		{
+			name:     "error without diagnostics",
+			response: &Response{ProtocolVersion: ProtocolVersion, Result: ResultError},
+			wantErr:  `use "valid"`,
+		},
+		{
+			name:     "error with warnings only",
+			response: &Response{ProtocolVersion: ProtocolVersion, Result: ResultError, Warnings: []Diagnostic{warning}},
+			wantErr:  `use "warning"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := DecodeResponse(bytes.NewReader(encodeFrameForTest(t, test.response)))
+			if test.wantErr != "" {
+				if err == nil {
+					t.Fatalf("DecodeResponse returned no error for %+v", test.response)
+				}
+				if !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("DecodeResponse error %q does not contain %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DecodeResponse: %v", err)
+			}
+			if got.Result != test.wantResult {
+				t.Fatalf("result=%q want %q", got.Result, test.wantResult)
+			}
+		})
+	}
+}
+
 func TestDecodeResponse_RejectsZeroLength(t *testing.T) {
 	frame := []byte{0, 0, 0, 0}
 	if _, err := DecodeResponse(bytes.NewReader(frame)); err == nil {

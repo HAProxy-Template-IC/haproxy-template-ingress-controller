@@ -20,6 +20,7 @@ package pluggablevalidator
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -143,14 +144,14 @@ type Diagnostic struct {
 // Response is the JSON payload a validator returns. Result is computed from
 // the warning/error counts per the wire-protocol contract.
 //
-// The unexported `synthetic` field marks responses produced by
-// ProtocolError as transport-level failures. Real validator responses
-// (parsed via DecodeResponse) leave it false. The cache uses this
-// marker to decide whether to memoise the response — synthetic ones
-// represent transient sidecar outages and must NOT be cached, while
-// real validator responses (including those with `path: ""`
-// diagnostics, e.g. plugin panics or file-level errors) are
-// deterministic functions of the input and SHOULD be cached.
+// The unexported `synthetic` field marks responses produced locally by
+// ProtocolError after transport or protocol-decode failures. Conforming
+// validator responses (parsed via DecodeResponse) leave it false. The cache
+// uses this marker to decide whether to memoise the response — synthetic ones
+// are not validator verdicts and must NOT be cached, while conforming responses
+// (including those with `path: ""` diagnostics, e.g. plugin panics or
+// file-level errors) are deterministic functions of the input and SHOULD be
+// cached.
 //
 // `synthetic` is unexported so JSON encoders skip it — the wire format
 // is unchanged.
@@ -163,9 +164,8 @@ type Response struct {
 	synthetic bool
 }
 
-// IsSynthetic reports whether the response was produced by ProtocolError
-// (transport-level failure surfaced as a Response). The cache layer
-// uses this to avoid memoising transient outages.
+// IsSynthetic reports whether the response was produced by ProtocolError.
+// The cache layer uses this to avoid memoising transport and decode failures.
 func (r *Response) IsSynthetic() bool {
 	return r != nil && r.synthetic
 }
@@ -262,7 +262,33 @@ func DecodeResponse(r io.Reader) (*Response, error) {
 	if resp.Errors == nil {
 		resp.Errors = []Diagnostic{}
 	}
+	if err := validateResponseResult(&resp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
 	return &resp, nil
+}
+
+func validateResponseResult(resp *Response) error {
+	if resp.Result == "" {
+		return errors.New(`missing result; use "valid", "warning", or "error"`)
+	}
+	if resp.Result != ResultValid && resp.Result != ResultWarning && resp.Result != ResultError {
+		return fmt.Errorf(`unsupported result %q; use "valid", "warning", or "error"`, resp.Result)
+	}
+
+	expected := ResultValid
+	if len(resp.Errors) > 0 {
+		expected = ResultError
+	} else if len(resp.Warnings) > 0 {
+		expected = ResultWarning
+	}
+	if resp.Result != expected {
+		return fmt.Errorf(
+			"result %q does not match %d warning(s) and %d error(s); use %q",
+			resp.Result, len(resp.Warnings), len(resp.Errors), expected,
+		)
+	}
+	return nil
 }
 
 // NarrowToUint32 converts a non-negative int to uint32, returning an error

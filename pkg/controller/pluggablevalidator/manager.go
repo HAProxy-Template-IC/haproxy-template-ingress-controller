@@ -441,11 +441,11 @@ func (m *Manager) validateOne(
 
 	// Cache real validator responses, including warning/error ones
 	// — those are deterministic functions of the input under the
-	// wire-protocol's purity contract. Do NOT cache transport
-	// failures (synthetic ProtocolError responses) so a transient
-	// sidecar outage doesn't poison subsequent admissions.
+	// wire-protocol's purity contract. Do NOT cache transport or
+	// protocol-decode failures (synthetic ProtocolError responses),
+	// since they are not validator verdicts.
 	if resp.IsSynthetic() {
-		m.logger.Debug("Transport failure (not cached)",
+		m.logger.Debug("Validator protocol failure (not cached)",
 			slog.String("validator", validatorName),
 			slog.String("path", file.Path))
 		return resp
