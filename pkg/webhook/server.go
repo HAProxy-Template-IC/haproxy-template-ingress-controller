@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -71,6 +72,8 @@ type Server struct {
 	boundAddr      string
 	httpServer     *http.Server
 	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	generation     *validatorGeneration
+	closed         bool
 
 	// listening is closed once the TLS listener has been bound to the
 	// configured port. Callers that need to know the server is actually
@@ -79,6 +82,38 @@ type Server struct {
 	// can read from Listening() — until then connection attempts fail with
 	// "connection refused" because Go's net.Listen hasn't returned yet.
 	listening chan struct{}
+}
+
+type validatorGeneration struct {
+	validators        map[string]ValidationFunc
+	onUnregisteredGVK func(gvk string)
+	onRetired         func()
+	inFlight          sync.WaitGroup
+	retireOnce        sync.Once
+}
+
+func newValidatorGeneration(
+	validators map[string]ValidationFunc,
+	onUnregisteredGVK func(gvk string),
+	onRetired func(),
+) *validatorGeneration {
+	return &validatorGeneration{
+		validators:        validators,
+		onUnregisteredGVK: onUnregisteredGVK,
+		onRetired:         onRetired,
+	}
+}
+
+func (g *validatorGeneration) retire() {
+	if g == nil {
+		return
+	}
+	g.retireOnce.Do(func() {
+		g.inFlight.Wait()
+		if g.onRetired != nil {
+			g.onRetired()
+		}
+	})
 }
 
 // NewServer creates a new webhook server with the given configuration.
@@ -114,11 +149,13 @@ func NewServer(config *ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
+	generation := newValidatorGeneration(make(map[string]ValidationFunc), config.OnUnregisteredGVK, nil)
 	return &Server{
 		config:            *config,
-		validators:        make(map[string]ValidationFunc),
+		validators:        generation.validators,
 		onUnregisteredGVK: config.OnUnregisteredGVK,
 		getCertificate:    getCertificate,
+		generation:        generation,
 		listening:         make(chan struct{}),
 	}, nil
 }
@@ -168,18 +205,6 @@ func (s *Server) RegisterValidator(gvk string, fn ValidationFunc) {
 	s.validators[gvk] = fn
 }
 
-// SetValidators REPLACES the whole validator table in one step.
-//
-// RegisterValidator only ever adds, so a caller that rebuilds its wiring —
-// a controller re-reading its config, say — cannot use it to drop a kind that
-// is no longer validated: the old closure would keep serving, holding state
-// the caller has already discarded. Replacing wholesale is what makes the
-// table match the caller's current intent exactly.
-//
-// The swap is atomic with respect to in-flight requests: validate() holds
-// RLock while it looks up and calls, so a request either sees the entire old
-// table or the entire new one, never a half-built mix. The map is copied, so
-// the caller may keep mutating theirs afterwards.
 // Addr returns the address the listener actually bound, or "" before it has.
 // Callers that configure Port 0 — tests, which must not fight over a fixed
 // port — read the kernel-assigned port from here once Listening() has closed.
@@ -201,15 +226,59 @@ func (s *Server) SetOnUnregisteredGVK(fn func(gvk string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onUnregisteredGVK = fn
+	s.generation.onUnregisteredGVK = fn
 }
 
+// SetValidators atomically replaces the validator table.
 func (s *Server) SetValidators(validators map[string]ValidationFunc) {
+	s.mu.RLock()
+	onUnregisteredGVK := s.onUnregisteredGVK
+	s.mu.RUnlock()
+	_ = s.ReplaceValidatorGeneration(validators, onUnregisteredGVK, nil)
+}
+
+// ReplaceValidatorGeneration installs one complete table and retires the old
+// table after all requests that acquired it have returned.
+func (s *Server) ReplaceValidatorGeneration(
+	validators map[string]ValidationFunc,
+	onUnregisteredGVK func(gvk string),
+	onRetired func(),
+) error {
 	replacement := make(map[string]ValidationFunc, len(validators))
 	maps.Copy(replacement, validators)
+	next := newValidatorGeneration(replacement, onUnregisteredGVK, onRetired)
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.validators = replacement
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("webhook server is closed")
+	}
+	previous := s.generation
+	s.generation = next
+	s.validators = next.validators
+	s.onUnregisteredGVK = next.onUnregisteredGVK
+	s.mu.Unlock()
+
+	previous.retire()
+	return nil
+}
+
+func (s *Server) retireValidatorGeneration() {
+	empty := newValidatorGeneration(make(map[string]ValidationFunc), nil, nil)
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	previous := s.generation
+	s.generation = empty
+	s.validators = empty.validators
+	s.onUnregisteredGVK = nil
+	s.mu.Unlock()
+
+	previous.retire()
 }
 
 // Start starts the HTTPS webhook server.
@@ -226,21 +295,10 @@ func (s *Server) SetValidators(validators map[string]ValidationFunc) {
 // "connection refused" until the listener finally binds. Callers that
 // need to gate on the bind read Listening().
 func (s *Server) Start(ctx context.Context) error {
+	defer s.retireValidatorGeneration()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc(s.config.Path, s.handleValidation)
-	// The same handler under a versioned path. The chart points the
-	// HAProxyTemplateConfig rule here so that a controller too old to understand
-	// a new config DENIES nothing: it does not serve this path, returns 404, and
-	// failurePolicy:Ignore turns that into "skipped" rather than "rejected".
-	//
-	// That distinction is the whole point. An old webhook does not fail to
-	// answer — it answers WRONGLY, denying a configuration the new controller
-	// validates and runs correctly seconds later. Preferring no answer to a
-	// wrong one is what makes an upgrade possible at all; the config is still
-	// validated, by the new controller's own load gate.
-	//
-	// Bump this suffix whenever the config's validation contract changes in a
-	// way an older controller would misjudge.
 	mux.HandleFunc("/healthz", s.handleHealthz)
 
 	addr := fmt.Sprintf("%s:%d", s.config.BindAddress, s.config.Port)
@@ -270,21 +328,25 @@ func (s *Server) Start(ctx context.Context) error {
 	s.mu.Unlock()
 	close(s.listening)
 
-	// Serve in a goroutine so Start() can still block on context
-	// cancellation for graceful shutdown handling.
-	errChan := make(chan error, 1)
+	serveDone := make(chan error, 1)
 	go func() {
-		if err := s.httpServer.Serve(tlsListener); err != nil && err != http.ErrServerClosed {
-			errChan <- err
+		err := s.httpServer.Serve(tlsListener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
 		}
+		serveDone <- err
 	}()
 
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		return s.httpServer.Shutdown(shutdownCtx)
-	case err := <-errChan:
+		shutdownErr := s.httpServer.Shutdown(shutdownCtx)
+		cancel()
+		if shutdownErr != nil {
+			shutdownErr = errors.Join(shutdownErr, s.httpServer.Close())
+		}
+		return errors.Join(shutdownErr, <-serveDone)
+	case err := <-serveDone:
 		return err
 	}
 }
@@ -338,9 +400,12 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 	gvk := s.getGVK(request)
 
 	s.mu.RLock()
-	validator, exists := s.validators[gvk]
-	onUnregistered := s.onUnregisteredGVK
+	generation := s.generation
+	generation.inFlight.Add(1)
+	validator, exists := generation.validators[gvk]
+	onUnregistered := generation.onUnregisteredGVK
 	s.mu.RUnlock()
+	defer generation.inFlight.Done()
 
 	if !exists {
 		if onUnregistered != nil {

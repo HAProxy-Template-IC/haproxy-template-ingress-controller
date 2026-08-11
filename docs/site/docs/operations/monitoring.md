@@ -341,7 +341,7 @@ Exposed when the validating admission webhook is enabled (`controller.webhook.en
 |--------|------|--------|-------------|
 | `haptic_webhook_requests_total` | Counter | `gvk`, `result` | Total admission requests by GroupVersionKind and result |
 | `haptic_webhook_request_duration_seconds` | Histogram | — | Time spent processing webhook requests |
-| `haptic_webhook_validation_total` | Counter | `gvk`, `result` | Validation outcomes per GVK. `result` is `allowed`, `denied`, or `unregistered` — the last meaning the API server sent an AdmissionReview for a kind no validator backs, which is then admitted **unchecked**. Those series carry the fixed sentinel `<unregistered>` as `gvk` to bound cardinality; any growth means a webhook rule is scoped wider than the registered validators |
+| `haptic_webhook_validation_total` | Counter | `gvk`, `result` | Validation outcomes per GVK. `result` is `allowed`, `denied`, or `unregistered`. An unregistered request is denied with status 503; growth of the fixed `<unregistered>` series means a webhook rule and the installed validators disagree. |
 
 **Key queries:**
 
@@ -385,7 +385,7 @@ These complement `haptic_events_published_total` / `haptic_event_subscribers` fr
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `haptic_events_dropped_total` | Counter | — | Drops from **critical** subscribers, because only those fire the bus's drop callback. It therefore tracks `haptic_events_dropped_critical_total` exactly and doesn't include observability drops |
-| `haptic_events_dropped_critical_total` | Counter | — | Drops from critical subscribers (alert if > 0 — indicates lost reconciliation work) |
+| `haptic_events_dropped_critical_total` | Counter | — | Drops from critical subscribers; totals survive iteration reconstruction so alerts can observe the failure |
 | `haptic_events_dropped_observability_total` | Gauge | — | Drops from observability-only subscribers (expected under load, non-alerting) |
 | `haptic_events_dropped_by_subscriber_total` | Counter | `subscriber`, `event_type` | Per-subscriber drop counts for diagnosing which component is falling behind |
 
@@ -726,7 +726,7 @@ groups:
           severity: critical
         annotations:
           summary: "Critical events dropped from event bus"
-          description: "A critical subscriber's buffer overflowed; reconciliation work has been lost"
+          description: "A critical subscriber's buffer overflowed; the controller restarted its iteration to reconstruct state"
 ```
 
 !!! note "Tuning alert thresholds"

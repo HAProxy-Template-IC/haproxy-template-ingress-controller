@@ -157,6 +157,8 @@ func (s ValidationState) String() string {
 // successful validation. This is critical for resources like IP blocklists
 // where we must not discard the old blocklist before knowing the new one is valid.
 type CacheEntry struct {
+	mutationRevision uint64
+
 	// URL is the source URL for this entry.
 	URL string
 
@@ -172,6 +174,7 @@ type CacheEntry struct {
 	// Pending version (fetched, awaiting validation)
 	PendingContent  string
 	PendingChecksum string
+	PendingRevision uint64
 	HasPending      bool
 
 	// ValidationState tracks the current state of this entry.
@@ -188,6 +191,12 @@ type CacheEntry struct {
 	// Configuration for this URL
 	Options FetchOptions
 	Auth    *AuthConfig
+}
+
+// PendingVersion identifies one pending content revision.
+type PendingVersion struct {
+	Checksum string
+	Revision uint64
 }
 
 // checksum computes SHA256 checksum of content.

@@ -15,8 +15,6 @@
 package httpstore
 
 import (
-	"slices"
-
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -36,9 +34,16 @@ type HTTPOverlay struct {
 	// pendingURLs contains URLs with pending content at overlay creation time.
 	// This is a snapshot - changes to HTTPStore after creation are not reflected.
 	pendingURLs []string
+	pending     map[string]overlayPendingContent
 
-	// store is the underlying HTTPStore providing access to pending content.
+	// store provides accepted fallback content for URLs outside this snapshot.
 	store *HTTPStore
+}
+
+type overlayPendingContent struct {
+	content  string
+	checksum string
+	revision uint64
 }
 
 // NewHTTPOverlay creates an overlay from the store's current pending state.
@@ -52,8 +57,25 @@ type HTTPOverlay struct {
 // Returns:
 //   - An HTTPOverlay with the current pending URLs snapshot
 func NewHTTPOverlay(store *HTTPStore) *HTTPOverlay {
+	store.mu.RLock()
+	pendingURLs := make([]string, 0)
+	pending := make(map[string]overlayPendingContent)
+	for url, entry := range store.cache {
+		if !entry.HasPending {
+			continue
+		}
+		pendingURLs = append(pendingURLs, url)
+		pending[url] = overlayPendingContent{
+			content:  entry.PendingContent,
+			checksum: entry.PendingChecksum,
+			revision: entry.PendingRevision,
+		}
+	}
+	store.mu.RUnlock()
+
 	return &HTTPOverlay{
-		pendingURLs: store.GetPendingURLs(),
+		pendingURLs: pendingURLs,
+		pending:     pending,
 		store:       store,
 	}
 }
@@ -77,7 +99,10 @@ func (o *HTTPOverlay) IsEmpty() bool {
 //   - content: The content string (pending preferred, otherwise accepted)
 //   - ok: True if content was found
 func (o *HTTPOverlay) GetContent(url string) (string, bool) {
-	return o.store.GetForValidation(url)
+	if pending, ok := o.pending[url]; ok {
+		return pending.content, true
+	}
+	return o.store.Get(url)
 }
 
 // PendingURLs returns the list of URLs with pending content.
@@ -91,5 +116,15 @@ func (o *HTTPOverlay) PendingURLs() []string {
 
 // HasPendingURL returns true if the given URL has pending content.
 func (o *HTTPOverlay) HasPendingURL(url string) bool {
-	return slices.Contains(o.pendingURLs, url)
+	_, ok := o.pending[url]
+	return ok
+}
+
+// PendingVersion returns the checksum and revision captured for url.
+func (o *HTTPOverlay) PendingVersion(url string) (checksum string, revision uint64, found bool) {
+	pending, ok := o.pending[url]
+	if !ok {
+		return "", 0, false
+	}
+	return pending.checksum, pending.revision, true
 }

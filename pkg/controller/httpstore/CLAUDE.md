@@ -77,8 +77,8 @@ Component.refreshURL()
     └── Content changed
         ├── Store in pending
         ├── triggerProposalValidation(url):
-        │     ├── Publish ProposalValidationRequestedEvent
-        │     │   (records its ID as pendingValidationID)
+        │     ├── Start an immutable validation batch, or queue behind the active one
+        │     ├── Publish ProposalValidationRequestedEvent for a new batch
         │     └── Publish HTTPResourceUpdatedEvent (observability sibling)
         └── Reset timer
 ```
@@ -91,19 +91,21 @@ subscription:
 
 ```
 ProposalValidationCompletedEvent received
-    │  (dropped if event.RequestID doesn't match the component's pendingValidationID)
+    │  (dropped if event.RequestID doesn't match the active validation batch)
     ▼
 event.Valid?
     │
     ├── true  → handleValidationSuccess()
-    │           For each URL with pending content:
-    │             ├── PromotePending() - pending → accepted
+    │           For each URL/checksum in that batch:
+    │             ├── PromotePendingVersion() - pending → accepted
     │             └── Publish HTTPResourceAcceptedEvent
     │           Then publish ReconciliationTriggeredEvent("http_content_validated")
     │
     └── false → handleValidationFailure(event.Phase, event.Error)
-                For each URL with pending content:
-                  └── RejectPending() - discard pending and log diagnostics
+                For each URL/checksum in that batch:
+                  └── RejectPendingVersion() - discard pending and log diagnostics
+
+Any pending URL outside the completed batch starts the next validation request.
 ```
 
 ## Template Usage
@@ -179,7 +181,7 @@ Published events (defined in `pkg/controller/events/`):
 
 | Event | When | Purpose |
 |-------|------|---------|
-| `ProposalValidationRequestedEvent` | Refresh produced new content; before promoting it | Asks the proposal pipeline to validate the pending HTTP content via `HTTPOverlay`. The component records `event.ID` as `pendingValidationID` so it can correlate the response |
+| `ProposalValidationRequestedEvent` | Refresh produced new content; before promoting it | Asks the proposal pipeline to validate one immutable pending-content batch and records its request ID and URL checksums |
 | `HTTPResourceUpdatedEvent` | Same call as above — sibling event for observability | Lets `commentator` / metrics see that content changed without subscribing to validation events |
 | `HTTPResourceAcceptedEvent` | After a matching `ProposalValidationCompletedEvent` with `Valid == true` | Observability that pending → accepted promotion happened |
 | `ReconciliationTriggeredEvent("http_content_validated", true)` | After a successful promotion (in `handleValidationSuccess`) | Coalescible reconciliation request so HAProxy picks up the new content |
@@ -188,7 +190,7 @@ Subscribed events:
 
 | Event | Action |
 |-------|--------|
-| `ProposalValidationCompletedEvent` | Match against `pendingValidationID`; branch on `event.Valid` to either promote or reject pending content |
+| `ProposalValidationCompletedEvent` | Match the active batch; promote or reject only URL versions with the checksums that batch validated |
 
 ## Common Pitfalls
 

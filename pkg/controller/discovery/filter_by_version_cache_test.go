@@ -90,6 +90,7 @@ func TestFilterByVersion_CacheHitReturnsCachedEndpointObject(t *testing.T) {
 	}
 
 	admitted, _ := c.filterByVersion(
+		t.Context(),
 		[]dataplane.Endpoint{candidate},
 		coreconfig.Credentials{
 			DataplaneUsername: "ignored-on-cache-hit",
@@ -135,7 +136,7 @@ func TestFilterByVersion_CacheHitDoesNotConsultLocalVersion(t *testing.T) {
 	}
 
 	// Must complete without panicking on the nil localVersion.
-	admitted, _ := c.filterByVersion(candidates, coreconfig.Credentials{})
+	admitted, _ := c.filterByVersion(t.Context(), candidates, coreconfig.Credentials{})
 
 	require.Len(t, admitted, 2,
 		"both already-admitted pods MUST come back — the cache lookup is "+
@@ -160,7 +161,7 @@ func TestFilterByVersion_EmptyCandidatesReturnsEmptyAdmitted(t *testing.T) {
 	c := admittedComponent(t)
 	c.admittedPods["stale-pod"] = &dataplane.Endpoint{PodName: "stale-pod"}
 
-	admitted, _ := c.filterByVersion(nil, coreconfig.Credentials{})
+	admitted, _ := c.filterByVersion(t.Context(), nil, coreconfig.Credentials{})
 
 	assert.Empty(t, admitted,
 		"empty candidate list MUST produce empty admitted list — "+

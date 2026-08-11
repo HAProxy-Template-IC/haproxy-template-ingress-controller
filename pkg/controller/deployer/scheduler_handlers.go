@@ -16,6 +16,7 @@ package deployer
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
@@ -406,8 +407,6 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	}
 	s.schedulerMutex.Unlock()
 
-	s.signalCompleted()
-
 	// Fast self-reschedule: a retryable per-pod failure (e.g. a transient DPA
 	// transaction-version conflict) is otherwise only re-driven by the 60s drift
 	// backstop, so the first retry can wait a full minute — a Gateway can sit
@@ -421,6 +420,8 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	case event.Total > 0 && event.Failed == 0:
 		s.cancelFailureRetry()
 	}
+
+	s.signalCompleted()
 }
 
 // scheduleFailureRetry arms (or re-arms) the single fast-retry timer after a
@@ -440,6 +441,9 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 func (s *DeploymentScheduler) scheduleFailureRetry(event *events.DeploymentCompletedEvent) {
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
+	if s.retryStopped {
+		return
+	}
 
 	if event.ContentChecksum != s.lastFailedRetryChecksum {
 		// A different render is failing now — start a fresh budget for it.
@@ -456,15 +460,68 @@ func (s *DeploymentScheduler) scheduleFailureRetry(event *events.DeploymentCompl
 
 	s.deployFailureRetries++
 	backoff := s.failureRetryBackoff(s.deployFailureRetries)
-	if s.retryTimer != nil {
-		s.retryTimer.Stop()
+	s.stopRetryTimerLocked()
+	s.retryGeneration++
+	generation := s.retryGeneration
+	workRevision := s.workRevision
+	s.retryCallbacks.Add(1)
+	var doneOnce sync.Once
+	done := func() {
+		doneOnce.Do(s.retryCallbacks.Done)
 	}
-	s.retryTimer = time.AfterFunc(backoff, s.rescheduleLastValidated)
+	s.retryTimerDone = done
+	s.retryTimer = time.AfterFunc(backoff, func() {
+		defer done()
+		s.runFailureRetry(generation, workRevision)
+	})
 
 	s.logger.Info("Deploy failed; scheduling fast retry",
 		"attempt", s.deployFailureRetries,
 		"backoff_ms", backoff.Milliseconds(),
 		"checksum", event.ContentChecksum)
+}
+
+func (s *DeploymentScheduler) runFailureRetry(generation, workRevision uint64) {
+	s.schedulerMutex.Lock()
+	if generation != s.retryGeneration {
+		s.schedulerMutex.Unlock()
+		return
+	}
+	s.retryTimer = nil
+	s.retryTimerDone = nil
+	if s.retryStopped || workRevision != s.workRevision {
+		s.schedulerMutex.Unlock()
+		return
+	}
+	s.schedulerMutex.Unlock()
+
+	s.rescheduleLastValidated(generation, workRevision)
+}
+
+func (s *DeploymentScheduler) stopRetryTimerLocked() {
+	s.retryGeneration++
+	if s.retryTimer == nil {
+		return
+	}
+	if s.retryTimer.Stop() && s.retryTimerDone != nil {
+		s.retryTimerDone()
+	}
+	s.retryTimer = nil
+	s.retryTimerDone = nil
+}
+
+func (s *DeploymentScheduler) stopFailureRetries() {
+	s.schedulerMutex.Lock()
+	s.retryStopped = true
+	s.stopRetryTimerLocked()
+	if s.state.pending != nil && s.state.pending.retryGeneration != 0 {
+		s.state.pending = nil
+	}
+	s.deployFailureRetries = 0
+	s.lastFailedRetryChecksum = ""
+	s.schedulerMutex.Unlock()
+
+	s.retryCallbacks.Wait()
 }
 
 // failureRetryBackoff returns the fast-retry backoff for the given 1-based
@@ -484,22 +541,10 @@ func (s *DeploymentScheduler) failureRetryBackoff(attempt int) time.Duration {
 	return backoff
 }
 
-// rescheduleLastValidated is the fast-retry timer callback. It re-dispatches the
-// last-validated render through the existing coalescing path, MIRRORING
-// performPodsDiscovered's snapshot: it never spawns a deploy — it only sets the
-// single state.pending slot, which the one runDeployLoop drains under its own
-// rate limit (waitDeployInterval still enforces minDeploymentInterval between
-// reloads).
-//
-// coalescible=false: when the timer fires this retry IS the newest thing for the
-// slot. A newer real render overwrites state.pending via latest-wins anyway
-// (and, being a fresh ValidationCompleted, resets the failure budget), so the
-// retry never clobbers newer work.
-//
-// Lock ordering: snapshot under s.mu, RELEASE it, then call scheduleOrQueue
-// (which takes schedulerMutex internally). s.mu and schedulerMutex are never held
-// at the same time here.
-func (s *DeploymentScheduler) rescheduleLastValidated() {
+// rescheduleLastValidated snapshots the last validated render, then installs it
+// only if the work and retry revisions captured when its timer was armed remain
+// current. It never starts a second deploy path.
+func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision uint64) {
 	// If leadership was lost (or we're shutting down) between the timer arming and
 	// firing, s.ctx is cancelled and the deploy loop has exited — don't repopulate
 	// state.pending for a term that's already over. handleLostLeadership stops the
@@ -525,7 +570,18 @@ func (s *DeploymentScheduler) rescheduleLastValidated() {
 		return
 	}
 
-	s.scheduleOrQueue(s.ctx, config, auxFiles, parsedConfig, endpoints, "deploy_failure_retry", correlationID, statusPatches, false /* coalescible */, contentChecksum)
+	s.installPending(s.ctx, &scheduledDeployment{
+		workRevision:    workRevision,
+		retryGeneration: generation,
+		config:          config,
+		auxFiles:        auxFiles,
+		parsedConfig:    parsedConfig,
+		endpoints:       endpoints,
+		reason:          "deploy_failure_retry",
+		correlationID:   correlationID,
+		statusPatches:   statusPatches,
+		contentChecksum: contentChecksum,
+	})
 }
 
 // cancelFailureRetry stops any armed fast-retry timer and resets the budget.
@@ -534,8 +590,9 @@ func (s *DeploymentScheduler) rescheduleLastValidated() {
 func (s *DeploymentScheduler) cancelFailureRetry() {
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
-	if s.retryTimer != nil {
-		s.retryTimer.Stop()
+	s.stopRetryTimerLocked()
+	if s.state.pending != nil && s.state.pending.retryGeneration != 0 {
+		s.state.pending = nil
 	}
 	s.deployFailureRetries = 0
 	s.lastFailedRetryChecksum = ""
@@ -583,13 +640,8 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	s.state.activeCorrelationID = ""
 	s.state.pending = nil
 
-	// Stop any armed fast-retry timer and reset its budget — a new leadership
-	// term must not fire a retry queued by the previous one. Inlined rather than
-	// calling cancelFailureRetry() (which would re-lock the schedulerMutex we
-	// already hold).
-	if s.retryTimer != nil {
-		s.retryTimer.Stop()
-	}
+	s.retryStopped = true
+	s.stopRetryTimerLocked()
 	s.deployFailureRetries = 0
 	s.lastFailedRetryChecksum = ""
 

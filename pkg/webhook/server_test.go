@@ -948,6 +948,71 @@ func TestServer_SetValidators_CopiesInput(t *testing.T) {
 	assert.Empty(t, unregistered, "the server's table must be unaffected by later caller mutations")
 }
 
+func TestServer_ReplaceValidatorGenerationRetiresAfterInflightRequest(t *testing.T) {
+	server := newTestServer(t, &ServerConfig{})
+	oldStarted := make(chan struct{})
+	oldRelease := make(chan struct{})
+	oldDone := make(chan struct{})
+	oldRetired := make(chan struct{})
+
+	require.NoError(t, server.ReplaceValidatorGeneration(map[string]ValidationFunc{
+		"v1.ConfigMap": func(*ValidationContext) (bool, string, []string, error) {
+			close(oldStarted)
+			<-oldRelease
+			return false, "old", nil, nil
+		},
+	}, nil, func() { close(oldRetired) }))
+	server.mu.RLock()
+	oldGeneration := server.generation
+	server.mu.RUnlock()
+
+	request := &admissionv1.AdmissionRequest{
+		Kind:      metav1.GroupVersionKind{Version: "v1", Kind: "ConfigMap"},
+		Operation: admissionv1.Create,
+		Object: runtime.RawExtension{
+			Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test"}}`),
+		},
+	}
+	go func() {
+		defer close(oldDone)
+		server.validate(request)
+	}()
+	<-oldStarted
+
+	replaceDone := make(chan error, 1)
+	go func() {
+		replaceDone <- server.ReplaceValidatorGeneration(map[string]ValidationFunc{
+			"v1.ConfigMap": func(*ValidationContext) (bool, string, []string, error) {
+				return false, "new", nil, nil
+			},
+		}, nil, nil)
+	}()
+	require.Eventually(t, func() bool {
+		server.mu.RLock()
+		defer server.mu.RUnlock()
+		return server.generation != oldGeneration
+	}, time.Second, time.Millisecond)
+
+	response := server.validate(request)
+	require.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "new")
+	select {
+	case <-oldRetired:
+		t.Fatal("old generation retired while its validator was still running")
+	default:
+	}
+	select {
+	case err := <-replaceDone:
+		t.Fatalf("replacement returned before the old generation drained: %v", err)
+	default:
+	}
+
+	close(oldRelease)
+	<-oldDone
+	<-oldRetired
+	require.NoError(t, <-replaceDone)
+}
+
 // sendConfigMapReview drives one ConfigMap AdmissionReview through the handler.
 func sendConfigMapReview(t *testing.T, server *Server) {
 	t.Helper()

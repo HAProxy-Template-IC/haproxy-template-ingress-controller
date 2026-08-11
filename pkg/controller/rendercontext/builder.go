@@ -20,6 +20,7 @@
 // Usage:
 //
 //	builder := rendercontext.NewBuilder(
+//	    ctx,
 //	    cfg,
 //	    pathResolver,
 //	    logger,
@@ -31,6 +32,7 @@ package rendercontext
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -53,6 +55,7 @@ import (
 // Use NewBuilder() to create a builder and functional options to configure it.
 type Builder struct {
 	// Required dependencies
+	readContext  context.Context
 	config       *config.Config
 	pathResolver *templating.PathResolver
 	logger       *slog.Logger
@@ -219,12 +222,14 @@ func WithTypedResources(types map[string]reflect.Type) Option {
 // NewBuilder creates a new context builder with required dependencies.
 //
 // Parameters:
+//   - ctx: Lifetime for store reads performed while rendering
 //   - cfg: Controller configuration (required)
 //   - pathResolver: Path resolver for file paths (required)
 //   - logger: Structured logger (required)
 //   - opts: Optional configuration via functional options
-func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logger *slog.Logger, opts ...Option) *Builder {
+func NewBuilder(ctx context.Context, cfg *config.Config, pathResolver *templating.PathResolver, logger *slog.Logger, opts ...Option) *Builder {
 	b := &Builder{
+		readContext:  ctx,
 		config:       cfg,
 		pathResolver: pathResolver,
 		logger:       logger,
@@ -289,6 +294,7 @@ func (b *Builder) Build() *BuildResult {
 			ResourceType: names.HAProxyPodsResourceType,
 			Logger:       b.logger,
 			IndexBy:      []string{"metadata.namespace", "metadata.name"},
+			readContext:  b.readContext,
 		}
 	}
 
@@ -440,6 +446,7 @@ func (b *Builder) addTypedResources(ctx map[string]any) {
 		}
 	}
 	ctx["resources"] = BuildResourcesValue(
+		b.readContext,
 		b.stores,
 		b.typedResourceTypes,
 		watchedNames,
@@ -507,6 +514,7 @@ const storeKindOnDemand = "on-demand"
 //
 // Inputs:
 //
+//   - ctx: lifetime for API-backed store reads performed by the returned closures.
 //   - resourceStores: per-name [stores.Store] for the resources the
 //     local controller has live watchers for. Looked up by name; a
 //     watched-resource name with no entry gets a struct field whose
@@ -535,6 +543,7 @@ const storeKindOnDemand = "on-demand"
 //     callback or one that always returns false keeps the historical
 //     eager-snapshot behaviour for every resource.
 func BuildResourcesValue(
+	ctx context.Context,
 	resourceStores map[string]stores.Store,
 	typedTypes map[string]reflect.Type,
 	watchedNames []string,
@@ -588,6 +597,7 @@ func BuildResourcesValue(
 				Logger:       logger,
 				IndexBy:      indexByFor(name),
 				LazySnapshot: lazyFor(name),
+				readContext:  ctx,
 			}
 		}
 		innerType := typebootstrap.BuildPerResourceStoreType(elemType)

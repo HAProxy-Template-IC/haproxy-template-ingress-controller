@@ -61,16 +61,18 @@ import (
 // markFired toggles whether the throttle's gate is closed (true =
 // "inside refractory") or open (false = "outside refractory" /
 // disabled when interval == 0).
-func throttleComponent(publishInterval time.Duration, markFired bool) *Component {
-	t := throttle.New(publishInterval)
+func throttleComponent(t *testing.T, publishInterval time.Duration, markFired bool) *Component {
+	t.Helper()
+	gate := throttle.New(publishInterval)
+	t.Cleanup(gate.Stop)
 	if markFired {
-		t.MarkFired()
+		gate.MarkFired()
 	}
 	return &Component{
 		logger:                testutil.NewTestLogger(),
 		renderedConfigs:       make(map[string]*renderedConfigEntry),
 		publishInterval:       publishInterval,
-		publishThrottle:       t,
+		publishThrottle:       gate,
 		lastPublishedChecksum: "",
 	}
 }
@@ -93,7 +95,7 @@ func TestProcessPublishWork_BuffersWhenWithinRefractoryAndNoPendingPublish(t *te
 	// publisher MUST NOT be invoked, and the renderedConfigs cache
 	// for the work's correlation ID MUST remain intact (the buffered
 	// publish will need it when the throttle timer fires).
-	c := throttleComponent(10*time.Second, true)
+	c := throttleComponent(t, 10*time.Second, true)
 	work := throttleWork(c, "corr-buffered", "fresh-checksum")
 
 	c.processPublishWork(t.Context(), work)
@@ -132,7 +134,7 @@ func TestProcessPublishWork_BuffersWhenWithinRefractoryAndDiscardsOldPending(t *
 	//   - Retain the old item's cache → renderedConfigs leaks entries
 	//     proportional to the throttle rate (every superseded pending
 	//     leaves a stale entry behind).
-	c := throttleComponent(10*time.Second, true)
+	c := throttleComponent(t, 10*time.Second, true)
 	oldWork := throttleWork(c, "corr-old-pending", "old-checksum")
 	newWork := throttleWork(c, "corr-new-pending", "new-checksum")
 
@@ -186,7 +188,7 @@ func TestProcessPublishWork_BuffersWhenWithinRefractoryAndDiscardsOldPending(t *
 // all-goroutines-blocked deadlock detector can catch. Running both paths
 // concurrently under a watchdog hangs pre-fix and completes post-fix.
 func TestProcessPublishWork_NoDeadlockWithLostLeadership(t *testing.T) {
-	c := throttleComponent(time.Hour, true) // gate closed → buffering+supersede branch
+	c := throttleComponent(t, time.Hour, true) // gate closed → buffering+supersede branch
 
 	mkWork := func(id string) *publishWorkItem {
 		// Seed a cache entry so the supersede path actually calls discardCachedConfig.

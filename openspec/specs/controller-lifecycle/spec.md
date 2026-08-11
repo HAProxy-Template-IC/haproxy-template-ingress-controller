@@ -48,17 +48,22 @@ Every component SHALL subscribe to the EventBus in its constructor, before `Even
 
 ### Requirement: Persistent Infrastructure Across Iterations
 
-The introspection HTTP server (debug port) and the metrics server SHALL be created once in `Run`, before the reinitialization loop, and reused by every iteration. Both SHALL be served with the main context — not the iteration context — so their listeners never rebind during rapid reinitializations. The first iteration SHALL set up routes and start serving; subsequent iterations SHALL only re-point the health checker and swap the metrics registry. At the start of every iteration the controller SHALL clear the persistent introspection registry, install a fresh per-iteration Prometheus registry via `SetRegistry` (so the previous iteration's metrics are garbage-collected), and create a fresh per-iteration health state. All other state — the EventBus, every component, all watchers, leader election, and the webhook server — SHALL be torn down and rebuilt per iteration.
+The introspection, metrics, and admission-webhook HTTP listeners SHALL be process-owned, started at most once, and reused by every later iteration. They SHALL be served with the main context — not the iteration context — so their sockets never rebind during rapid reinitializations. The first iteration SHALL start the configured listeners; subsequent iterations SHALL re-point the health checker and event source, swap the metrics registry, and atomically replace the webhook validator generation. An unexpected listener exit SHALL cancel the process context. `Run` SHALL wait for every process-owned server against one shared 29-second shutdown budget; if that budget expires, `Run` SHALL return so Kubernetes can replace the process. At the start of every iteration the controller SHALL clear the persistent introspection registry, install a fresh per-iteration Prometheus registry via `SetRegistry` (so the previous iteration's metrics are garbage-collected), and create a fresh per-iteration health state. The EventBus, every component, all watchers, leader election, and each webhook validator generation SHALL be iteration-owned and rebuilt.
 
 #### Scenario: Reinitialization does not rebind ports
 
 - **WHEN** a configuration change triggers an iteration restart
-- **THEN** the introspection and metrics listeners SHALL keep serving on their existing sockets without closing or rebinding.
+- **THEN** the introspection, metrics, and already-started webhook listeners SHALL keep serving on their existing sockets without closing or rebinding.
 
 #### Scenario: Metrics registry swapped per iteration
 
 - **WHEN** a new iteration begins on a controller whose metrics server is already running
 - **THEN** the server SHALL serve the new iteration's registry and the previous iteration's collectors SHALL no longer be scraped.
+
+#### Scenario: Persistent listener stops unexpectedly
+
+- **WHEN** a process-owned listener exits after binding while the process context remains live
+- **THEN** the controller SHALL cancel the active iteration and process, wait for every process-owned server within the shared shutdown budget, and return the listener failure.
 
 ### Requirement: Fail-Closed validationTests Load Gate
 
@@ -135,11 +140,25 @@ The metrics port SHALL be read only from the `METRICS_PORT` environment variable
 - **WHEN** the process receives SIGTERM
 - **THEN** the controller SHALL shut down gracefully and exit without reporting a failure.
 
-### Requirement: Shutdown Budget
+### Requirement: Authoritative Iteration Teardown
 
-Iteration teardown (on shutdown or reinitialization) SHALL first stop the leader-only components, then cancel the iteration context, then wait for all iteration goroutines to finish with a `ShutdownTimeout` of 25 seconds — deliberately below the Kubernetes default 30-second termination grace period so the process exits cleanly before the kubelet's SIGKILL — logging progress every 5 seconds while waiting, and finally run the registered cleanups.
+Iteration teardown SHALL cancel the iteration context first, then cancel and join the current leader term, then wait for every iteration-owned goroutine to finish. A component's `Start` method SHALL not return while child workers, informer loops, timers, mailbox intake goroutines, or synchronous event handlers it started can still act. Every blocking operation started by an event handler SHALL derive its context from the component's current `Start` call. Registered cleanups SHALL run only after that join, so a cleanup cannot close a dependency that an old worker can still use.
+
+An installed webhook validator generation SHALL be replaced with an empty fail-closed generation during teardown. The replacement SHALL wait for every request using the old generation before releasing its stores, pipeline, metrics, or pluggable-validator manager. The process-owned listener SHALL remain bound during this gap.
+
+The join SHALL use a `ShutdownTimeout` of 25 seconds — below the Kubernetes default 30-second termination grace period — and log progress every 5 seconds. If the timeout expires, the controller SHALL skip the cleanups and SHALL NOT start another iteration over the unjoined one. The process run SHALL end so Kubernetes can replace it.
+
+#### Scenario: Config change waits for the previous iteration
+
+- **WHEN** a configuration change cancels an iteration whose worker is still returning
+- **THEN** the next iteration SHALL not start and iteration cleanups SHALL not run until that worker has returned.
+
+#### Scenario: Cancellation interrupts an in-flight event handler
+
+- **WHEN** iteration cancellation occurs while an event handler is blocked in validation or rendering
+- **THEN** the operation's context SHALL be cancelled and the component SHALL return without waiting for its independent operation deadline.
 
 #### Scenario: Goroutine wait is bounded
 
 - **WHEN** iteration goroutines have not finished 25 seconds after teardown began
-- **THEN** the controller SHALL log a timeout warning and proceed with teardown instead of waiting indefinitely.
+- **THEN** the controller SHALL return a terminal teardown error without running cleanups or retrying the iteration.

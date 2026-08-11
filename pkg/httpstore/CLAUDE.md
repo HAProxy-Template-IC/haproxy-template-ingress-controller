@@ -40,11 +40,11 @@ The store maintains two content versions for each URL:
          │  HasPending: true                                 │
          └──────────────────────────────────────────────────┘
 
-Validation Success: PromotePending()
+Validation Success: PromotePendingVersion()
    └── PendingContent → AcceptedContent
        HasPending = false
 
-Validation Failure: RejectPending()
+Validation Failure: RejectPendingVersion()
    └── PendingContent discarded
        HasPending = false
        AcceptedContent preserved
@@ -70,6 +70,9 @@ content, err := store.Fetch(ctx, url, FetchOptions{
 
 // Refresh (stores in pending, returns true if content changed)
 changed, err := store.RefreshURL(ctx, url)
+
+// Refresh with exact-version ownership for asynchronous validation
+version, err := store.RefreshURLVersion(ctx, url)
 ```
 
 ### Cache Access
@@ -88,11 +91,11 @@ urls := store.GetPendingURLs()
 ### Validation Lifecycle
 
 ```go
-// After successful validation - promote pending to accepted
-promoted := store.PromotePending(url)
+// After successful validation - promote only the version that was validated
+promoted := store.PromotePendingVersion(url, version.Checksum, version.Revision)
 
-// After failed validation - discard pending, keep accepted
-rejected := store.RejectPending(url)
+// After failed validation - reject only the version that was validated
+rejected := store.RejectPendingVersion(url, version.Checksum, version.Revision)
 ```
 
 ### Test Fixtures
@@ -202,7 +205,9 @@ content, err := store.Fetch(ctx, url, FetchOptions{Critical: true}, nil)
 
 **Problem**: Pending content stays in pending state forever.
 
-**Solution**: Always call `PromotePending()` or `RejectPending()` after validation.
+**Solution**: Capture the `PendingVersion` returned by `RefreshURLVersion()` and
+finalize that exact version with `PromotePendingVersion()` or
+`RejectPendingVersion()`.
 
 ### Using Get() During Validation Render
 

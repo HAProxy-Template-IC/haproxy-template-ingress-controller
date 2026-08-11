@@ -77,49 +77,60 @@ func setupWebhook(
 	webhookPort int,
 	k8sClient *client.Client,
 	dryrunValidator *dryrunvalidator.Component, // Pre-created validator (may be nil)
+	pluggableMgrCleanup *sharedCleanup,
 	logger *slog.Logger,
 	metricsRecorder webhook.MetricsRecorder,
 	cancel context.CancelFunc,
 	errGroup *errgroup.Group,
-) {
+) error {
+	resourceAdmissionTimeout := effectiveResourceAdmissionTimeout(admissionTimeouts.Resource)
+
 	// Extract webhook rules from config
 	rules := webhook.ExtractWebhookRules(cfg)
 	if len(rules) == 0 {
-		logger.Debug("No webhook rules extracted (webhook enabled but no matching resources)")
-		return
+		infra.webhookMu.Lock()
+		sharedServer := infra.WebhookServer
+		infra.webhookMu.Unlock()
+		if sharedServer == nil {
+			logger.Debug("No webhook rules extracted; webhook setup skipped")
+			return nil
+		}
+		logger.Info("No webhook rules extracted; clearing the persistent validator table")
+	} else {
+		logger.Info("Webhook validation enabled", "rule_count", len(rules))
 	}
 
-	logger.Info("Webhook validation enabled", "rule_count", len(rules))
+	var mapper meta.RESTMapper
+	if len(rules) > 0 {
+		logger.Debug("Creating RESTMapper for resource kind resolution")
+		discoveryClient := k8sClient.Clientset().Discovery()
+		mapper = restmapper.NewDeferredDiscoveryRESTMapper(
+			memory.NewMemCacheClient(discoveryClient),
+		)
+	}
 
-	// Create RESTMapper for resolving resource kinds from GVR
-	// This uses the Kubernetes API discovery to get authoritative mappings
-	logger.Debug("Creating RESTMapper for resource kind resolution")
-	discoveryClient := k8sClient.Clientset().Discovery()
-	mapper := restmapper.NewDeferredDiscoveryRESTMapper(
-		memory.NewMemCacheClient(discoveryClient),
-	)
-
-	// Bind the admission listener once per PROCESS, not once per iteration.
-	// A component-owned listener closes on every config change, and the API
-	// server meanwhile admits unchecked under failurePolicy=Ignore (#110).
-	// The certificate is read from the mounted Secret directory per handshake,
-	// so cert-manager rotation is picked up without re-binding.
+	// Keep the admission listener bound while iterations replace validator generations.
 	sharedServer, err := infra.EnsureWebhookServer(procCtx, &pkgwebhook.ServerConfig{
 		Port:         webhookPort,
 		Path:         webhook.DefaultWebhookPath,
 		CertDir:      webhookCertDir,
 		ReadTimeout:  timeouts.HTTPServerTimeout,
-		WriteTimeout: admissionTimeouts.Resource + webhookWriteTimeoutHeadroom,
+		WriteTimeout: max(resourceAdmissionTimeout, timeouts.HTTPServerTimeout) + webhookWriteTimeoutHeadroom,
 	}, logger)
 	if err != nil {
-		// Match what startInErrGroup does for a component that fails to start:
-		// cancel the iteration. Continuing would run the controller with no
-		// admission gate at all, which is the failure this whole change exists
-		// to close — a bind error must not be quieter than the hole it leaves.
-		logger.Error("Webhook listener unavailable; cancelling the iteration rather than running ungated",
-			"error", err)
-		cancel()
-		return
+		return fmt.Errorf("starting webhook listener: %w", err)
+	}
+	serverRun := infra.currentWebhookRun()
+	if serverRun == nil {
+		return errors.New("persistent webhook server has no completion owner")
+	}
+	monitorPersistentWebhookRun(
+		procCtx, iterCtx, serverRun,
+		errGroup, logger, cancel,
+	)
+	var onGenerationRetired func()
+	if len(rules) > 0 && pluggableMgrCleanup != nil {
+		onGenerationRetired = pluggableMgrCleanup.Retain()
 	}
 
 	// Create webhook component with DryRunValidator for direct validation (no scatter-gather).
@@ -133,8 +144,9 @@ func setupWebhook(
 			Rules:                    rules,
 			CertDir:                  webhookCertDir,
 			DryRunValidator:          dryrunValidator,
-			ResourceAdmissionTimeout: admissionTimeouts.Resource,
+			ResourceAdmissionTimeout: resourceAdmissionTimeout,
 			Server:                   sharedServer,
+			OnGenerationRetired:      onGenerationRetired,
 		},
 		mapper,
 		metricsRecorder,
@@ -143,25 +155,48 @@ func setupWebhook(
 	// Start webhook component (tracked by errgroup for graceful shutdown)
 	startInErrGroup(errGroup, iterCtx, logger, cancel, "webhook component", webhookComponent.Start)
 
-	// Block here until the underlying TLS listener has bound. This
-	// ensures that by the time iteration setup advances and the
-	// controller's readiness probe transitions to healthy, admission
-	// requests are actually answerable. Without this gate, the API
-	// server's first AdmissionReview races the listener and bounces
-	// with "connection refused" — the chart's failurePolicy=Fail then
-	// rejects every Ingress create until enough time passes for kubelet
-	// retries to land on a bound listener. We bound the wait so a
-	// genuine startup failure (cert error, port already in use) doesn't
-	// block iteration setup forever; the errgroup still surfaces the
-	// underlying error.
 	select {
 	case <-webhookComponent.Listening():
 		logger.Info("Webhook component listening", "port", webhookPort)
+		return nil
 	case <-iterCtx.Done():
-		logger.Info("Iteration cancelled while waiting for webhook bind")
-	case <-time.After(30 * time.Second):
-		logger.Warn("Webhook component did not bind within 30s; proceeding (errgroup will surface any error)")
+		return context.Cause(iterCtx)
 	}
+}
+
+func effectiveResourceAdmissionTimeout(configured time.Duration) time.Duration {
+	if configured <= 0 {
+		return webhook.DefaultResourceAdmissionTimeout
+	}
+	return configured
+}
+
+func monitorPersistentWebhookRun(
+	procCtx context.Context,
+	iterCtx context.Context,
+	serverRun *persistentServerRun,
+	errGroup *errgroup.Group,
+	logger *slog.Logger,
+	iterationCancel context.CancelFunc,
+) {
+	startInErrGroup(errGroup, iterCtx, logger, iterationCancel, "persistent webhook server", func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-serverRun.Done():
+			if err := context.Cause(procCtx); err != nil {
+				return err
+			}
+			if err := context.Cause(ctx); err != nil {
+				return err
+			}
+			err := serverRun.Wait()
+			if err == nil {
+				err = errors.New("server exited without an error")
+			}
+			return &persistentWebhookServerError{err: err}
+		}
+	})
 }
 
 // errNoWebhookRules reports that no watched resource enables admission

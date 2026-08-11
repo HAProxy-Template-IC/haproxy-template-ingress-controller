@@ -102,6 +102,21 @@ func New(
 	if clientset == nil {
 		return nil, errors.New("clientset cannot be nil")
 	}
+	if config.LeaseDuration <= 0 {
+		return nil, errors.New("lease duration must be greater than zero")
+	}
+	if config.RenewDeadline <= 0 {
+		return nil, errors.New("renew deadline must be greater than zero")
+	}
+	if config.RetryPeriod <= 0 {
+		return nil, errors.New("retry period must be greater than zero")
+	}
+	if config.LeaseDuration <= config.RenewDeadline {
+		return nil, errors.New("lease duration must be greater than renew deadline")
+	}
+	if float64(config.RenewDeadline) <= leaderelection.JitterFactor*float64(config.RetryPeriod) {
+		return nil, errors.New("renew deadline must be greater than retry period with jitter")
+	}
 
 	if logger == nil {
 		logger = slog.Default()

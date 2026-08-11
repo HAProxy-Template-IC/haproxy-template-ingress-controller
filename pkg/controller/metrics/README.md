@@ -143,6 +143,8 @@ The `Metrics` struct is intentionally safe to use stand-alone (CLI validation, t
 
 The controller's reinitialisation loop creates a fresh `EventBus` on every config change. Using the global default registry would leak prior-iteration collectors into the new one and produce duplicate-registration panics. `NewMetrics` always takes a caller-provided registry, which the controller swaps per iteration; Prometheus sees a clean slate with the same metric names each time.
 
+Critical EventBus drop counters are the exception: the controller carries their totals into each new registry. A critical drop triggers the registry swap itself, so resetting those counters would hide the failure before the next Prometheus scrape.
+
 ### Resource-count tracking
 
 `ResourceCount` is a gauge with a `type` label. The component seeds it from `IndexSynchronizedEvent` (absolute counts per resource type) and then applies deltas from `ResourceIndexUpdatedEvent` (created − deleted), skipping events marked `IsInitialSync`. The running totals live in a `map[string]int` on the component struct, so gauge values match reality across churn without re-listing from the API server.

@@ -43,6 +43,8 @@ const DefaultMaxConnections = 4
 // closes underneath it.
 const idleClose = 30 * time.Second
 
+var errClientClosed = errors.New("validator client is closed")
+
 // Client speaks the HAPTIC validator wire protocol over a unix
 // socket. One Client maps to one configured validator: one socket
 // path, one timeout budget, one connection pool. Clients are safe
@@ -85,6 +87,7 @@ type Client struct {
 	cond     *sync.Cond    // broadcast on every release/discard so waiters wake without polling
 	idle     []*pooledConn // free connections
 	inFlight int           // checked-out + in-progress dial count
+	closed   bool
 }
 
 type pooledConn struct {
@@ -219,9 +222,7 @@ func retrySuffix(attempt int) string {
 // been idle-closed by the validator and deserve one retry; fresh
 // connections that fail are the real failure mode).
 //
-// Context cancellation is honored via a watchdog goroutine that
-// broadcasts on the cond when ctx fires; the waiter wakes, observes
-// the context state, and returns an error.
+// Context cancellation broadcasts on the cond so waiters can return.
 func (c *Client) acquire(ctx context.Context) (net.Conn, bool, error) {
 	// Wire ctx cancellation into the cond: when ctx fires, broadcast
 	// so any goroutine in cond.Wait below wakes up and re-checks.
@@ -232,6 +233,9 @@ func (c *Client) acquire(ctx context.Context) (net.Conn, bool, error) {
 	defer c.mu.Unlock()
 
 	for {
+		if c.closed {
+			return nil, false, errClientClosed
+		}
 		// Reuse any free, non-stale connection first.
 		if pc := c.popIdleLocked(); pc != nil {
 			c.inFlight++
@@ -247,6 +251,12 @@ func (c *Client) acquire(ctx context.Context) (net.Conn, bool, error) {
 				c.inFlight--
 				c.cond.Signal()
 				return nil, false, dialErr
+			}
+			if c.closed {
+				c.inFlight--
+				c.cond.Broadcast()
+				_ = conn.Close()
+				return nil, false, errClientClosed
 			}
 			return conn, true, nil
 		}
@@ -278,28 +288,28 @@ func (c *Client) popIdleLocked() *pooledConn {
 	return nil
 }
 
-// armCancelWatcher launches a goroutine that broadcasts on the cond
-// when the context is cancelled, so any goroutine in cond.Wait wakes
-// up and re-checks ctx.Err(). Returns a stop function the caller
-// MUST defer to avoid leaking the watcher goroutine on the happy
-// path.
+// armCancelWatcher wakes pool waiters on cancellation and returns a join function.
 func (c *Client) armCancelWatcher(ctx context.Context) func() {
 	if ctx.Done() == nil {
-		// context.Background() has no cancellation — nothing to
-		// watch.
 		return func() {}
 	}
-	stopped := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			c.mu.Lock()
-			c.cond.Broadcast()
-			c.mu.Unlock()
-		case <-stopped:
+	done := make(chan struct{})
+	var finishOnce sync.Once
+	finish := func() {
+		finishOnce.Do(func() { close(done) })
+	}
+	stop := context.AfterFunc(ctx, func() {
+		defer finish()
+		c.mu.Lock()
+		c.cond.Broadcast()
+		c.mu.Unlock()
+	})
+	return func() {
+		if stop() {
+			finish()
 		}
-	}()
-	return func() { close(stopped) }
+		<-done
+	}
 }
 
 // dialFresh always opens a new connection, bypassing the pool's
@@ -312,7 +322,15 @@ func (c *Client) dialFresh(ctx context.Context) (net.Conn, bool, error) {
 	defer stop()
 
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil, false, errClientClosed
+	}
 	for c.inFlight >= c.MaxConnections {
+		if c.closed {
+			c.mu.Unlock()
+			return nil, false, errClientClosed
+		}
 		if err := ctx.Err(); err != nil {
 			c.mu.Unlock()
 			return nil, false, fmt.Errorf("dialFresh: %w", err)
@@ -330,6 +348,15 @@ func (c *Client) dialFresh(ctx context.Context) (net.Conn, bool, error) {
 		c.mu.Unlock()
 		return nil, false, err
 	}
+	c.mu.Lock()
+	if c.closed {
+		c.inFlight--
+		c.cond.Broadcast()
+		c.mu.Unlock()
+		_ = conn.Close()
+		return nil, false, errClientClosed
+	}
+	c.mu.Unlock()
 	return conn, true, nil
 }
 
@@ -343,6 +370,12 @@ func (c *Client) release(conn net.Conn) {
 	_ = conn.SetDeadline(time.Time{})
 	c.mu.Lock()
 	c.inFlight--
+	if c.closed {
+		c.cond.Broadcast()
+		c.mu.Unlock()
+		_ = conn.Close()
+		return
+	}
 	c.idle = append(c.idle, &pooledConn{conn: conn, parked: time.Now()})
 	c.cond.Signal()
 	c.mu.Unlock()
@@ -375,8 +408,10 @@ func (c *Client) dial(ctx context.Context) (net.Conn, error) {
 // Used during iteration teardown.
 func (c *Client) Close() {
 	c.mu.Lock()
+	c.closed = true
 	conns := c.idle
 	c.idle = nil
+	c.cond.Broadcast()
 	c.mu.Unlock()
 	for _, pc := range conns {
 		_ = pc.conn.Close()

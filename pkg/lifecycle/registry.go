@@ -19,7 +19,7 @@
 // Responsibilities are split across files:
 //   - registry.go   — the Registry type plus Register / Count
 //   - startup.go    — StartAll and the startComponent goroutine logic
-//   - leader.go     — StartLeaderOnlyComponentsAsync
+//   - leader.go     — StartLeaderOnly
 //   - status.go     — Status, updateStatus
 package lifecycle
 
@@ -53,7 +53,7 @@ type registeredComponent struct {
 //
 //	// StartAll requires isLeader so leader-only components can be skipped
 //	// on follower replicas (they're started later via
-//	// StartLeaderOnlyComponentsAsync on the elected leader).
+//	// StartLeaderOnly on the elected leader).
 //	err := registry.StartAll(ctx, isLeader)
 type Registry struct {
 	components []*registeredComponent          // Stores pointers to avoid invalidation on slice growth

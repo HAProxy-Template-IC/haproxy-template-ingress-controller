@@ -543,7 +543,7 @@ rate(haptic_events_dropped_critical_total[5m])
 rate(haptic_events_dropped_by_subscriber_total[5m])
 ```
 
-A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is too slow to keep up with its event stream; look at the component owning that subscriber rather than trying to raise a buffer.
+A non-zero `haptic_events_dropped_total` rate means a critical subscriber was too slow to keep up. The controller restarts that iteration from authoritative state instead of continuing after lost coordination work. Use the per-subscriber metric to identify the component causing repeated restarts.
 
 ## Profiling
 

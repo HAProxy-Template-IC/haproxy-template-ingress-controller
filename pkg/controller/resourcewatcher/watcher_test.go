@@ -3,6 +3,7 @@ package resourcewatcher
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,8 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -30,6 +33,38 @@ func newFakeClient() *client.Client {
 		dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
 		"default",
 	)
+}
+
+type blockingResourceWatch struct {
+	watch.Interface
+	stopStarted chan struct{}
+	release     chan struct{}
+	stopOnce    sync.Once
+}
+
+func (w *blockingResourceWatch) Stop() {
+	w.stopOnce.Do(func() {
+		close(w.stopStarted)
+		<-w.release
+		w.Interface.Stop()
+	})
+}
+
+func newBlockingPodWatchClient() (*client.Client, *blockingResourceWatch) {
+	podGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+		runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{podGVR: "PodList"},
+	)
+	blockingWatch := &blockingResourceWatch{
+		Interface:   watch.NewRaceFreeFake(),
+		stopStarted: make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	fakeDynamicClient.PrependWatchReactor("*", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, blockingWatch, nil
+	})
+	return client.NewFromClientset(fake.NewClientset(), fakeDynamicClient, "default"), blockingWatch
 }
 
 func TestToGVR(t *testing.T) {
@@ -358,6 +393,72 @@ func TestStart_EmptyWatchers(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("Start() did not return after context cancellation")
 	}
+}
+
+func TestStart_WaitsForWatchersToStop(t *testing.T) {
+	k8sClient, blockingWatch := newBlockingPodWatchClient()
+	w, err := watcher.New(types.WatcherConfig{
+		GVR:       schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+		IndexBy:   []string{"metadata.namespace", "metadata.name"},
+		StoreType: types.StoreTypeMemory,
+		OnChange:  func(types.Store, types.ChangeStats) {},
+	}, k8sClient, slog.Default())
+	require.NoError(t, err)
+	rwc := &ResourceWatcherComponent{
+		watchers: map[string]*watcher.Watcher{"pods": w},
+		stores:   map[string]types.Store{"pods": w.Store()},
+		logger:   slog.Default(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- rwc.Start(ctx)
+	}()
+	syncCtx, stopSync := context.WithTimeout(t.Context(), time.Second)
+	defer stopSync()
+	require.NoError(t, rwc.WaitForAllSync(syncCtx))
+
+	cancel()
+	select {
+	case <-blockingWatch.stopStarted:
+	case <-time.After(time.Second):
+		t.Fatal("resource watch was not stopped")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("component returned before its watcher stopped: %v", err)
+	default:
+	}
+
+	close(blockingWatch.release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("component did not return after its watcher stopped")
+	}
+}
+
+func TestStart_PropagatesWatcherFailure(t *testing.T) {
+	w, err := watcher.New(types.WatcherConfig{
+		GVR:       schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+		IndexBy:   []string{"metadata.namespace", "metadata.name"},
+		StoreType: types.StoreTypeMemory,
+		OnChange:  func(types.Store, types.ChangeStats) {},
+	}, newFakeClient(), slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, w.Stop())
+	rwc := &ResourceWatcherComponent{
+		watchers: map[string]*watcher.Watcher{"pods": w},
+		stores:   map[string]types.Store{"pods": w.Store()},
+		logger:   slog.Default(),
+	}
+
+	err = rwc.Start(t.Context())
+	require.Error(t, err)
+	assert.ErrorContains(t, err, `watcher "pods" failed`)
+	assert.ErrorContains(t, err, "syncing cache")
 }
 
 // TestWaitForAllSync_EmptyWatchers verifies WaitForAllSync with no watchers.

@@ -90,6 +90,7 @@ type Component struct {
 	hasDataplanePort     bool
 	initialSyncComplete  bool // Set when ResourceSyncCompleteEvent for haproxy-pods is received
 	initialDiscoveryDone bool // Set after the first discovery is performed
+	lifecycleCtx         context.Context
 
 	// Version filtering state
 	localVersion   *dataplane.Version             // Local HAProxy version detected at startup
@@ -97,8 +98,12 @@ type Component struct {
 	pendingRetries map[string]*retryState         // Map of PodName → retry state for pending pods
 
 	// Retry timer for pending pods
-	retryTimer   *time.Timer
-	retryTimerMu sync.Mutex
+	retryTimer        *time.Timer
+	retryTimerDone    func()
+	retryTimerMu      sync.Mutex
+	retryCallbacks    sync.WaitGroup
+	retryGeneration   uint64
+	retryTimerStopped bool
 }
 
 // New creates a new Discovery event adapter component.
@@ -165,26 +170,35 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) 
 // startup synchronization. ResourceSyncCompleteEvent is buffered until EventBus.Start()
 // is called, so no events are missed.
 func (c *Component) Start(ctx context.Context) error {
-	// Stop any pending version-probe retry timer on shutdown so a queued
-	// AfterFunc can't fire after this (per-iteration) component's context is
-	// cancelled — which would publish discovery events onto the torn-down
-	// iteration's EventBus and keep the dead Component reachable for up to
-	// maxRetryInterval. Mirrors drift_monitor's stopDriftTimer teardown.
+	c.mu.Lock()
+	c.lifecycleCtx = ctx
+	c.mu.Unlock()
 	defer c.stopRetryTimer()
 
 	return c.Base.Start(ctx)
 }
 
-// stopRetryTimer stops any pending version-probe retry timer. Safe to call when
-// no timer is armed. time.Timer.Stop does not cancel an already-running
-// callback, but it prevents an armed-but-not-yet-fired timer from firing after
-// teardown, which is the leak this guards against.
+func (c *Component) lifecycleContext() context.Context {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.lifecycleCtx
+}
+
+// stopRetryTimer prevents new retries and joins callbacks already in progress.
 func (c *Component) stopRetryTimer() {
 	c.retryTimerMu.Lock()
-	defer c.retryTimerMu.Unlock()
+	c.retryTimerStopped = true
+	c.retryGeneration++
 	if c.retryTimer != nil {
-		c.retryTimer.Stop()
+		if c.retryTimer.Stop() && c.retryTimerDone != nil {
+			c.retryTimerDone()
+		}
+		c.retryTimer = nil
+		c.retryTimerDone = nil
 	}
+	c.retryTimerMu.Unlock()
+
+	c.retryCallbacks.Wait()
 }
 
 // HandleEvent implements component.EventHandler: it processes incoming

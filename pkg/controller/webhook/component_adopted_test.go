@@ -29,21 +29,8 @@ import (
 	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
 
-// TestAdoptedServer_SurvivesIterationTeardown pins the guarantee behind #110:
-// the admission listener belongs to the process, not to an iteration, so a
-// config change never leaves the API server dialling a dead port.
-//
-// The failure this prevents is silent on one path and loud on the other. The
-// chart pairs the HAProxyTemplateConfig webhook with failurePolicy=Ignore, so
-// an unreachable webhook is admitted WITHOUT a decision — which is how an
-// uncompilable config passed the gate during the very `helm upgrade` that
-// closed the listener. The Gateway API webhooks use failurePolicy=Fail, where
-// the same gap instead fails every apply with "connection refused". One hole,
-// two symptoms.
-//
-// The three phases are the whole contract: serving, still serving after the
-// owning iteration is torn down, and serving the NEW table once the next
-// iteration installs one.
+// TestAdoptedServer_SurvivesIterationTeardown keeps admission reachable while
+// iterations replace fail-closed validator generations (#110).
 func TestAdoptedServer_SurvivesIterationTeardown(t *testing.T) {
 	certPEM, keyPEM, pool := generateLoopbackCert(t)
 
@@ -66,9 +53,7 @@ func TestAdoptedServer_SurvivesIterationTeardown(t *testing.T) {
 	require.Contains(t, msg, "iteration-A")
 
 	// Phase 2 — the iteration is torn down, exactly as a config change does.
-	// The listener must stay bound and the previous table must keep judging: a
-	// slightly stale verdict is the point, because the alternative is no
-	// verdict at all.
+	// The listener stays bound with an empty fail-closed generation.
 	cancelA()
 	select {
 	case err := <-doneA:
@@ -78,11 +63,8 @@ func TestAdoptedServer_SurvivesIterationTeardown(t *testing.T) {
 	}
 
 	allowed, msg = post()
-	require.False(t, allowed,
-		"after iteration teardown the listener must still answer; an unreachable "+
-			"webhook is admitted silently under failurePolicy=Ignore (#110)")
-	require.Contains(t, msg, "iteration-A",
-		"the previous iteration's table must keep serving until the next one installs")
+	require.False(t, allowed, "iteration teardown must leave a fail-closed listener")
+	require.Contains(t, msg, "no validator registered")
 
 	// Phase 3 — iteration B takes over and its table replaces A's.
 	iterB, cancelB := context.WithCancel(procCtx)
@@ -133,6 +115,72 @@ func TestAdoptedServer_RejectsPartialReplacement(t *testing.T) {
 	require.Contains(t, message, "iteration-A")
 	require.NotContains(t, message, "iteration-B")
 	cancelA()
+}
+
+func TestAdoptedServer_TeardownRetiresPreviousTable(t *testing.T) {
+	certPEM, keyPEM, pool := generateLoopbackCert(t)
+	procCtx, procCancel := context.WithCancel(context.Background())
+	defer procCancel()
+
+	server := startServerOnFreePort(t, procCtx, certPEM, keyPEM)
+	post := admissionPoster(t, server.Addr(), pool)
+	iterA, cancelA := context.WithCancel(procCtx)
+	componentA := newAdoptingComponent(t, server, "iteration-A")
+	retiredA := make(chan struct{})
+	componentA.config.OnGenerationRetired = func() { close(retiredA) }
+	doneA := make(chan error, 1)
+	go func() { doneA <- componentA.Start(iterA) }()
+	<-componentA.Listening()
+
+	cancelA()
+	require.NoError(t, <-doneA)
+	select {
+	case <-retiredA:
+	case <-time.After(time.Second):
+		t.Fatal("component returned before its validator generation retired")
+	}
+
+	allowed, message := post()
+	require.False(t, allowed)
+	require.Contains(t, message, "no validator registered")
+	require.NotContains(t, message, "iteration-A")
+}
+
+func TestAdoptedServer_UsesIterationContext(t *testing.T) {
+	certPEM, keyPEM, pool := generateLoopbackCert(t)
+	procCtx, procCancel := context.WithCancel(context.Background())
+	defer procCancel()
+
+	server := startServerOnFreePort(t, procCtx, certPEM, keyPEM)
+	component := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&Config{
+			Server: server,
+			Rules: []WebhookRule{{
+				APIGroup:   "networking.k8s.io",
+				APIVersion: "v1",
+				Resource:   "ingresses",
+			}},
+			DryRunValidator: contextStateValidator{},
+		},
+		ingressRESTMapper(),
+		nil,
+	)
+	iterCtx, cancelIter := context.WithCancel(context.WithValue(procCtx, iterationContextKey{}, true))
+	done := make(chan error, 1)
+	go func() { done <- component.Start(iterCtx) }()
+	<-component.Listening()
+	post := admissionPoster(t, server.Addr(), pool)
+
+	allowed, message := post()
+	require.False(t, allowed)
+	require.Contains(t, message, "iteration context active")
+
+	cancelIter()
+	require.NoError(t, <-done)
+	allowed, message = post()
+	require.False(t, allowed)
+	require.Contains(t, message, "no validator registered")
 }
 
 // startServerOnFreePort binds the server to a free loopback port.
@@ -214,6 +262,20 @@ func (v staticDenyValidator) ValidateDirect(context.Context, string, string, str
 	return false, v.reason, nil
 }
 
+type contextStateValidator struct{}
+
+type iterationContextKey struct{}
+
+func (contextStateValidator) ValidateDirect(ctx context.Context, _, _, _ string, _ any, _ string) (allowed bool, reason string, warnings []string) {
+	if active, _ := ctx.Value(iterationContextKey{}).(bool); !active {
+		return false, "iteration context missing", nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err.Error(), nil
+	}
+	return false, "iteration context active", nil
+}
+
 // ingressRESTMapper resolves ingresses -> Ingress without a cluster.
 func ingressRESTMapper() meta.RESTMapper {
 	gv := schema.GroupVersion{Group: "networking.k8s.io", Version: "v1"}
@@ -253,8 +315,6 @@ func generateLoopbackCert(t *testing.T) (certPEM, keyPEM []byte, pool *x509.Cert
 	return certPEM, keyPEM, pool
 }
 
-// admissionPoster returns a function that sends one HAProxyTemplateConfig
-// AdmissionReview to addr and reports the decision.
 func admissionPoster(t *testing.T, addr string, pool *x509.CertPool) func() (allowed bool, message string) {
 	t.Helper()
 

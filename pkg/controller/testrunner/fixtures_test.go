@@ -1220,7 +1220,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 
 		renderCtx := map[string]any{}
 
-		auxFiles, err := runner.renderAuxiliaryFiles(context.Background(), engine, renderCtx, validationPaths)
+		auxFiles, err := runner.renderAuxiliaryFiles(t.Context(), engine, renderCtx, validationPaths)
 		require.NoError(t, err)
 		require.Len(t, auxFiles.MapFiles, 1)
 		assert.Equal(t, "backends.map", auxFiles.MapFiles[0].Path)
@@ -1247,7 +1247,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 
 		renderCtx := map[string]any{}
 
-		auxFiles, err := runner.renderAuxiliaryFiles(context.Background(), engine, renderCtx, validationPaths)
+		auxFiles, err := runner.renderAuxiliaryFiles(t.Context(), engine, renderCtx, validationPaths)
 		require.NoError(t, err)
 		require.Len(t, auxFiles.GeneralFiles, 1)
 		assert.Equal(t, "blocklist.txt", auxFiles.GeneralFiles[0].Filename)
@@ -1274,7 +1274,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 
 		renderCtx := map[string]any{}
 
-		auxFiles, err := runner.renderAuxiliaryFiles(context.Background(), engine, renderCtx, validationPaths)
+		auxFiles, err := runner.renderAuxiliaryFiles(t.Context(), engine, renderCtx, validationPaths)
 		require.NoError(t, err)
 		require.Len(t, auxFiles.SSLCertificates, 1)
 		assert.Equal(t, "server.pem", auxFiles.SSLCertificates[0].Path)
@@ -1294,7 +1294,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		auxFiles, err := runner.renderAuxiliaryFiles(context.Background(), engine, map[string]any{}, validationPaths)
+		auxFiles, err := runner.renderAuxiliaryFiles(t.Context(), engine, map[string]any{}, validationPaths)
 		require.NoError(t, err)
 		assert.Empty(t, auxFiles.MapFiles)
 		assert.Empty(t, auxFiles.GeneralFiles)
@@ -1318,7 +1318,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		_, err = runner.renderAuxiliaryFiles(context.Background(), engine, map[string]any{}, validationPaths)
+		_, err = runner.renderAuxiliaryFiles(t.Context(), engine, map[string]any{}, validationPaths)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "rendering map file")
 	})
@@ -1340,7 +1340,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		_, err = runner.renderAuxiliaryFiles(context.Background(), engine, map[string]any{}, validationPaths)
+		_, err = runner.renderAuxiliaryFiles(t.Context(), engine, map[string]any{}, validationPaths)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "rendering general file")
 	})
@@ -1362,7 +1362,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		_, err = runner.renderAuxiliaryFiles(context.Background(), engine, map[string]any{}, validationPaths)
+		_, err = runner.renderAuxiliaryFiles(t.Context(), engine, map[string]any{}, validationPaths)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "rendering SSL certificate")
 	})
@@ -1411,7 +1411,7 @@ func TestAssertDeterministic(t *testing.T) {
 		// The template engine adds a trailing newline, so we need to match that
 		firstConfig := "# Deterministic config\nfrontend test\n  bind *:80\n"
 		firstAuxFiles := &dataplane.AuxiliaryFiles{} // Empty but not nil
-		result := runner.assertDeterministic(context.Background(), assertion, firstConfig, firstAuxFiles, renderDeps)
+		result := runner.assertDeterministic(t.Context(), assertion, firstConfig, firstAuxFiles, renderDeps)
 
 		if !result.Passed {
 			t.Logf("Assertion failed with error: %s", result.Error)
@@ -1461,7 +1461,7 @@ func TestAssertDeterministic(t *testing.T) {
 		}
 
 		// Empty first config and nil aux files = no first render output
-		result := runner.assertDeterministic(context.Background(), assertion, "", nil, renderDeps)
+		result := runner.assertDeterministic(t.Context(), assertion, "", nil, renderDeps)
 
 		assert.False(t, result.Passed)
 		assert.Contains(t, result.Error, "first render produced no output")

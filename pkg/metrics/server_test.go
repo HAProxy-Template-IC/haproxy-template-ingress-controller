@@ -89,6 +89,34 @@ func TestServer_Start(t *testing.T) {
 	}
 }
 
+func TestServer_StartReportsUnexpectedPostBindClose(t *testing.T) {
+	server := NewServer("localhost:0", prometheus.NewRegistry())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- server.Start(ctx)
+	}()
+
+	<-server.Listening()
+	require.Eventually(t, func() bool {
+		resp, err := http.Get("http://" + server.Addr() + "/metrics")
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return true
+	}, time.Second, 5*time.Millisecond)
+	require.NoError(t, server.server.Close())
+
+	select {
+	case err := <-done:
+		require.ErrorContains(t, err, "server stopped unexpectedly")
+	case <-time.After(time.Second):
+		t.Fatal("Start did not report the stopped listener")
+	}
+}
+
 func TestServer_ServesMetrics(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	counter := NewCounter(registry, "test_requests_total", "Total test requests")

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -144,6 +145,122 @@ func TestHTTPStore_PendingContent(t *testing.T) {
 	pending, ok := store.GetForValidation(server.URL)
 	require.True(t, ok)
 	assert.Equal(t, "updated", pending)
+}
+
+func TestHTTPStore_RefreshURLVersionDoesNotCommitToReplacementEntry(t *testing.T) {
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			_, _ = w.Write([]byte("initial"))
+			return
+		}
+		close(refreshStarted)
+		<-releaseRefresh
+		_, _ = w.Write([]byte("stale"))
+	}))
+	defer server.Close()
+
+	store := New(slog.New(slog.NewTextHandler(os.Stderr, nil)), 0)
+	_, err := store.Fetch(t.Context(), server.URL, FetchOptions{}, nil)
+	require.NoError(t, err)
+
+	type refreshResult struct {
+		version *PendingVersion
+		err     error
+	}
+	result := make(chan refreshResult, 1)
+	go func() {
+		version, refreshErr := store.RefreshURLVersion(t.Context(), server.URL)
+		result <- refreshResult{version: version, err: refreshErr}
+	}()
+
+	select {
+	case <-refreshStarted:
+	case <-time.After(time.Second):
+		t.Fatal("refresh did not start")
+	}
+	store.LoadFixture(server.URL, "replacement")
+	close(releaseRefresh)
+
+	select {
+	case refresh := <-result:
+		require.NoError(t, refresh.err)
+		require.Nil(t, refresh.version)
+	case <-time.After(time.Second):
+		t.Fatal("refresh did not return")
+	}
+
+	entry := store.GetEntry(server.URL)
+	require.NotNil(t, entry)
+	require.Equal(t, "replacement", entry.AcceptedContent)
+	require.False(t, entry.HasPending)
+}
+
+func TestHTTPStore_RefreshURLVersionRejectsAcceptedContentABA(t *testing.T) {
+	oldRefreshStarted := make(chan struct{})
+	releaseOldRefresh := make(chan struct{})
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		switch requests.Add(1) {
+		case 1:
+			_, _ = w.Write([]byte("a"))
+		case 2:
+			close(oldRefreshStarted)
+			<-releaseOldRefresh
+			_, _ = w.Write([]byte("stale"))
+		case 3:
+			_, _ = w.Write([]byte("b"))
+		default:
+			_, _ = w.Write([]byte("a"))
+		}
+	}))
+	defer server.Close()
+
+	store := New(slog.New(slog.NewTextHandler(os.Stderr, nil)), 0)
+	_, err := store.Fetch(t.Context(), server.URL, FetchOptions{}, nil)
+	require.NoError(t, err)
+
+	type refreshResult struct {
+		version *PendingVersion
+		err     error
+	}
+	oldResult := make(chan refreshResult, 1)
+	go func() {
+		version, refreshErr := store.RefreshURLVersion(t.Context(), server.URL)
+		oldResult <- refreshResult{version: version, err: refreshErr}
+	}()
+
+	select {
+	case <-oldRefreshStarted:
+	case <-time.After(time.Second):
+		t.Fatal("old refresh did not start")
+	}
+
+	versionB, err := store.RefreshURLVersion(t.Context(), server.URL)
+	require.NoError(t, err)
+	require.NotNil(t, versionB)
+	require.True(t, store.PromotePendingVersion(server.URL, versionB.Checksum, versionB.Revision))
+
+	versionA, err := store.RefreshURLVersion(t.Context(), server.URL)
+	require.NoError(t, err)
+	require.NotNil(t, versionA)
+	require.True(t, store.PromotePendingVersion(server.URL, versionA.Checksum, versionA.Revision))
+
+	close(releaseOldRefresh)
+	select {
+	case refresh := <-oldResult:
+		require.NoError(t, refresh.err)
+		require.Nil(t, refresh.version)
+	case <-time.After(time.Second):
+		t.Fatal("old refresh did not return")
+	}
+
+	entry := store.GetEntry(server.URL)
+	require.NotNil(t, entry)
+	require.Equal(t, "a", entry.AcceptedContent)
+	require.False(t, entry.HasPending)
 }
 
 func TestHTTPStore_PromotePending(t *testing.T) {

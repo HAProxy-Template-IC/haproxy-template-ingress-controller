@@ -40,7 +40,8 @@ if err := server.Start(ctx); err != nil {
 **Features:**
 
 - Instance-based (not global)
-- Graceful shutdown support
+- Graceful shutdown that joins the HTTP serve loop
+- Immediate reporting of post-bind listener failures
 - OpenMetrics format support
 - Security headers (read timeout)
 - Helpful root handler with links

@@ -6,8 +6,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	controllerwebhook "gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
+
+func TestEffectiveResourceAdmissionTimeout(t *testing.T) {
+	assert.Equal(t, controllerwebhook.DefaultResourceAdmissionTimeout, effectiveResourceAdmissionTimeout(0))
+	assert.Equal(t, 3*time.Second, effectiveResourceAdmissionTimeout(3*time.Second))
+}
 
 // A later iteration's server config is deliberately ignored — the listener stays
 // bound across reinitializations and only the validator table changes. That is

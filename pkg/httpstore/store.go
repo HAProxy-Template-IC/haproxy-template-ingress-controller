@@ -36,11 +36,12 @@ import (
 //
 // Thread-safe for concurrent access.
 type HTTPStore struct {
-	mu         sync.RWMutex
-	cache      map[string]*CacheEntry // URL -> CacheEntry
-	httpClient *http.Client
-	logger     *slog.Logger
-	maxAge     time.Duration // Maximum time an entry can remain unused before eviction (0 = disabled)
+	mu                  sync.RWMutex
+	cache               map[string]*CacheEntry // URL -> CacheEntry
+	nextPendingRevision uint64
+	httpClient          *http.Client
+	logger              *slog.Logger
+	maxAge              time.Duration // Maximum time an entry can remain unused before eviction (0 = disabled)
 
 	// validationStuckAfter bounds how long an entry may sit in StateValidating.
 	// Only PromotePending/RejectPending leave that state, and both are driven by
@@ -261,94 +262,163 @@ func (s *HTTPStore) abandonStuckValidation(url string, stuckFor time.Duration) b
 //   - changed: true if content changed from accepted version
 //   - err: fetch error (nil if successful or 304 Not Modified)
 func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, err error) {
-	// Get current cache state
+	outcome, err := s.refreshURL(ctx, url)
+	return outcome.changed, err
+}
+
+// RefreshURLVersion refreshes a URL and returns the exact pending version it created.
+func (s *HTTPStore) RefreshURLVersion(ctx context.Context, url string) (*PendingVersion, error) {
+	outcome, err := s.refreshURL(ctx, url)
+	return outcome.pendingVersion(), err
+}
+
+type refreshSnapshot struct {
+	entry            *CacheEntry
+	mutationRevision uint64
+	options          FetchOptions
+	auth             *AuthConfig
+	etag             string
+	lastModified     string
+	acceptedChecksum string
+}
+
+type refreshOutcome struct {
+	version PendingVersion
+	changed bool
+}
+
+func (o refreshOutcome) pendingVersion() *PendingVersion {
+	if !o.changed {
+		return nil
+	}
+	return &o.version
+}
+
+func (s *HTTPStore) refreshSnapshot(url string) (refreshSnapshot, bool, error) {
 	s.mu.RLock()
 	entry, exists := s.cache[url]
 	if !exists {
 		s.mu.RUnlock()
-		return false, fmt.Errorf("URL not in cache: %s", url)
+		return refreshSnapshot{}, false, fmt.Errorf("URL not in cache: %s", url)
 	}
 
-	// Skip if already validating — unless the verdict is never coming.
 	if entry.ValidationState == StateValidating {
 		stuckFor := time.Since(entry.ValidationStartedAt)
 		s.mu.RUnlock()
 
 		if !s.abandonStuckValidation(url, stuckFor) {
-			return false, nil
+			return refreshSnapshot{}, false, nil
 		}
 
 		s.mu.RLock()
 		entry, exists = s.cache[url]
 		if !exists {
 			s.mu.RUnlock()
-			return false, fmt.Errorf("URL not in cache: %s", url)
+			return refreshSnapshot{}, false, fmt.Errorf("URL not in cache: %s", url)
 		}
 	}
 
-	opts := entry.Options
-	auth := entry.Auth
-	etag := entry.ETag
-	lastModified := entry.LastModified
-	acceptedChecksum := entry.AcceptedChecksum
+	snapshot := refreshSnapshot{
+		entry:            entry,
+		mutationRevision: entry.mutationRevision,
+		options:          entry.Options,
+		auth:             entry.Auth,
+		etag:             entry.ETag,
+		lastModified:     entry.LastModified,
+		acceptedChecksum: entry.AcceptedChecksum,
+	}
 	s.mu.RUnlock()
+	return snapshot, true, nil
+}
 
-	// Fetch with conditional headers
-	content, newEtag, newLastModified, err := s.fetchWithRetry(ctx, url, opts, auth, etag, lastModified)
+func (s *HTTPStore) updateRefreshMetadata(url string, snapshot *refreshSnapshot, etag, lastModified string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, exists := s.cache[url]
+	if !exists || entry != snapshot.entry || entry.mutationRevision != snapshot.mutationRevision ||
+		entry.HasPending || entry.AcceptedChecksum != snapshot.acceptedChecksum {
+		return
+	}
+	entry.ETag = etag
+	entry.LastModified = lastModified
+	entry.mutationRevision++
+}
+
+func (s *HTTPStore) commitPendingRefresh(
+	url, content, newChecksum, etag, lastModified string,
+	snapshot *refreshSnapshot,
+) (PendingVersion, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, exists := s.cache[url]
+	if !exists || entry != snapshot.entry || entry.mutationRevision != snapshot.mutationRevision ||
+		entry.HasPending || entry.AcceptedChecksum != snapshot.acceptedChecksum {
+		return PendingVersion{}, false
+	}
+
+	s.nextPendingRevision++
+	version := PendingVersion{Checksum: newChecksum, Revision: s.nextPendingRevision}
+	entry.PendingContent = content
+	entry.PendingChecksum = version.Checksum
+	entry.PendingRevision = version.Revision
+	entry.HasPending = true
+	entry.ValidationState = StateValidating
+	entry.ValidationStartedAt = time.Now()
+	entry.ETag = etag
+	entry.LastModified = lastModified
+	entry.mutationRevision++
+	return version, true
+}
+
+func (s *HTTPStore) refreshURL(ctx context.Context, url string) (refreshOutcome, error) {
+	snapshot, ready, err := s.refreshSnapshot(url)
+	if err != nil || !ready {
+		return refreshOutcome{}, err
+	}
+
+	content, newEtag, newLastModified, err := s.fetchWithRetry(
+		ctx,
+		url,
+		snapshot.options,
+		snapshot.auth,
+		snapshot.etag,
+		snapshot.lastModified,
+	)
 	if err != nil {
-		// 304 Not Modified: the server confirmed our cached copy is current.
-		// This is distinct from a 200 OK whose body happens to be empty.
 		if errors.Is(err, errNotModified) {
 			s.logger.Log(context.Background(), levelTrace, "content not modified (304)",
 				"url", url,
-				"etag", etag)
-			return false, nil
+				"etag", snapshot.etag)
+			return refreshOutcome{}, nil
 		}
 		s.logger.Warn("Refresh fetch failed",
 			"url", url,
 			"error", err)
-		return false, err
+		return refreshOutcome{}, err
 	}
 
-	// 200 OK — the body is fresh content (an empty body is a real change to
-	// empty, no longer misread as a 304). Check if it actually changed.
 	newChecksum := checksum(content)
-	if newChecksum == acceptedChecksum {
+	if newChecksum == snapshot.acceptedChecksum {
 		s.logger.Log(context.Background(), levelTrace, "content unchanged (same checksum)",
 			"url", url,
 			"checksum", newChecksum[:16]+"...")
-
-		// Update cache headers even if content unchanged
-		s.mu.Lock()
-		if e, ok := s.cache[url]; ok {
-			e.ETag = newEtag
-			e.LastModified = newLastModified
-		}
-		s.mu.Unlock()
-
-		return false, nil
+		s.updateRefreshMetadata(url, &snapshot, newEtag, newLastModified)
+		return refreshOutcome{}, nil
 	}
 
-	// Content changed - store as pending for validation
-	s.mu.Lock()
-	if e, ok := s.cache[url]; ok {
-		e.PendingContent = content
-		e.PendingChecksum = newChecksum
-		e.HasPending = true
-		e.ValidationState = StateValidating
-		e.ValidationStartedAt = time.Now()
-		e.ETag = newEtag
-		e.LastModified = newLastModified
+	version, committed := s.commitPendingRefresh(url, content, newChecksum, newEtag, newLastModified, &snapshot)
+	if !committed {
+		return refreshOutcome{}, nil
 	}
-	s.mu.Unlock()
 
 	s.logger.Debug("Content changed, stored as pending",
 		"url", url,
-		"old_checksum", acceptedChecksum[:min(16, len(acceptedChecksum))]+"...",
+		"old_checksum", snapshot.acceptedChecksum[:min(16, len(snapshot.acceptedChecksum))]+"...",
 		"new_checksum", newChecksum[:16]+"...",
 		"new_size", len(content))
-
-	return true, nil
+	return refreshOutcome{version: version, changed: true}, nil
 }
 
 // GetDelay returns the configured delay for a URL.

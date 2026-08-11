@@ -46,6 +46,7 @@ import (
 
 const (
 	resourcePods            = "pods"
+	indexFieldMetaName      = "metadata.name"
 	indexFieldMetaNamespace = "metadata.namespace"
 )
 
@@ -110,7 +111,7 @@ func New(
 		LabelSelector: cfg.PodSelector.MatchLabels,
 		IndexBy: []string{
 			indexFieldMetaNamespace,
-			"metadata.name",
+			indexFieldMetaName,
 		},
 	}
 
@@ -201,36 +202,40 @@ func New(
 //
 // This method:
 //   - Starts all watchers in separate goroutines
-//   - Returns immediately without blocking
 //   - Continues running until ctx is cancelled
+//   - Waits for every watcher to stop before returning
 //
 // Use WaitForAllSync() to wait for initial synchronization to complete.
 func (r *ResourceWatcherComponent) Start(ctx context.Context) error {
 	r.logger.Debug("Starting resource watchers", "count", len(r.watchers))
 
-	// Start all watchers in goroutines
+	watchers, watcherCtx := errgroup.WithContext(ctx)
 	for resourceTypeName, w := range r.watchers {
-		// Capture loop variables to avoid closure bug
 		name := resourceTypeName
 		resourceWatcher := w
 
-		go func() {
+		watchers.Go(func() error {
 			r.logger.Debug("Starting watcher", "resource_type", name)
 
-			if err := resourceWatcher.Start(ctx); err != nil {
-				r.logger.Error("Watcher failed",
-					"resource_type", name,
-					"error", err)
+			if err := resourceWatcher.Start(watcherCtx); err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+					return nil
+				}
+				return fmt.Errorf("watcher %q failed: %w", name, err)
 			}
-		}()
+			return nil
+		})
 	}
+	watchers.Go(func() error {
+		<-watcherCtx.Done()
+		return nil
+	})
 
 	r.logger.Debug("All resource watchers started")
-
-	// Wait for context cancellation
-	<-ctx.Done()
-
-	r.logger.Info("Resource watchers stopping")
+	if err := watchers.Wait(); err != nil {
+		return err
+	}
+	r.logger.Info("Resource watchers stopped")
 	return nil
 }
 

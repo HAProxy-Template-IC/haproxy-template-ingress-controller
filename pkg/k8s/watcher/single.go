@@ -44,12 +44,14 @@ import (
 type SingleWatcher struct {
 	config    types.SingleWatcherConfig
 	client    *client.Client
+	factory   dynamicinformer.DynamicSharedInformerFactory
 	informer  cache.SharedIndexInformer
 	stopCh    chan struct{}
 	synced    atomic.Bool   // True after initial sync completes
 	syncCh    chan struct{} // Closed when sync completes
 	stopOnce  sync.Once     // Ensures Stop() is idempotent
 	startOnce sync.Once     // Ensures Start() is idempotent
+	startErr  error
 
 	// lastWatchErrNanos is the UnixNano timestamp of the most recent watch
 	// connection error (0 = none), recorded by handleWatchError for observability.
@@ -121,7 +123,7 @@ func (w *SingleWatcher) createInformer() error {
 
 	// Create informer factory with field selector for specific resource name.
 	// The resyncPeriod enables periodic re-listing which recovers from missed watch events.
-	informerFactory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
+	w.factory = dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 		dynamicClient,
 		resyncPeriod,
 		w.config.Namespace,
@@ -132,7 +134,7 @@ func (w *SingleWatcher) createInformer() error {
 	)
 
 	// Get informer for resource
-	w.informer = informerFactory.ForResource(w.config.GVR).Informer()
+	w.informer = w.factory.ForResource(w.config.GVR).Informer()
 
 	// Register watch error handler for observability.
 	// The Reflector handles retry automatically with exponential backoff,
@@ -355,66 +357,80 @@ func (w *SingleWatcher) convertToUnstructured(obj any) *unstructured.Unstructure
 // logic (starting informer, syncing) only runs once, but each call will block until
 // the context is cancelled.
 func (w *SingleWatcher) Start(ctx context.Context) error {
-	var startErr error
-
-	// Ensure initialization only happens once
 	w.startOnce.Do(func() {
-		// Start informer
-		go w.informer.Run(w.stopCh)
-
-		if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
-			startErr = errors.New("syncing cache")
-			return
-		}
-
-		// Mark sync as complete atomically
-		w.synced.Store(true)
-
-		// Invoke OnSyncComplete with current state from cache.
-		// This ensures eventual consistency: even if updates arrived during the sync window
-		// (when OnChange callbacks are suppressed), the current state is delivered here.
-		// The callback is invoked even if no resource exists (nil argument).
-		if w.config.OnSyncComplete != nil {
-			resource := w.getCurrentResourceFromCache()
-			// Untyped nil, not the typed pointer: a nil pointer in an `any`
-			// makes a non-nil interface, so callers' `obj == nil` guards miss.
-			var current any
-			if resource != nil {
-				current = resource
-			}
-			if err := w.config.OnSyncComplete(current); err != nil {
-				if resource != nil {
-					slog.Warn("SingleWatcher OnSyncComplete callback failed",
-						"error", err,
-						"resource_name", resource.GetName(),
-						"resource_namespace", resource.GetNamespace())
-				} else {
-					slog.Warn("SingleWatcher OnSyncComplete callback failed",
-						"error", err)
-				}
-			} else {
-				if resource != nil {
-					slog.Debug("SingleWatcher OnSyncComplete succeeded",
-						"resource_name", resource.GetName(),
-						"resource_version", resource.GetResourceVersion())
-				} else {
-					slog.Debug("SingleWatcher OnSyncComplete succeeded - no resource in cache")
-				}
-			}
-		}
-
-		close(w.syncCh)
+		w.startErr = w.initialize(ctx)
 	})
 
-	// Return any error from initialization
-	if startErr != nil {
-		return startErr
+	if w.startErr != nil {
+		_ = w.Stop()
+		return w.startErr
 	}
 
-	// Wait for context cancellation
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case <-w.stopCh:
+	}
 
 	return w.Stop()
+}
+
+func (w *SingleWatcher) initialize(ctx context.Context) error {
+	stopOnCancel := context.AfterFunc(ctx, func() {
+		_ = w.Stop()
+	})
+	defer stopOnCancel()
+
+	w.factory.Start(w.stopCh)
+	if !cache.WaitForCacheSync(w.stopCh, w.informer.HasSynced) {
+		return watcherSyncError(ctx)
+	}
+	select {
+	case <-w.stopCh:
+		return watcherSyncError(ctx)
+	default:
+	}
+
+	w.synced.Store(true)
+	w.notifyInitialSync()
+	close(w.syncCh)
+	return nil
+}
+
+func watcherSyncError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.New("syncing cache")
+}
+
+func (w *SingleWatcher) notifyInitialSync() {
+	if w.config.OnSyncComplete == nil {
+		return
+	}
+	resource := w.getCurrentResourceFromCache()
+	var current any
+	if resource != nil {
+		current = resource
+	}
+	err := w.config.OnSyncComplete(current)
+	if err != nil {
+		if resource == nil {
+			slog.Warn("SingleWatcher OnSyncComplete callback failed", "error", err)
+			return
+		}
+		slog.Warn("SingleWatcher OnSyncComplete callback failed",
+			"error", err,
+			"resource_name", resource.GetName(),
+			"resource_namespace", resource.GetNamespace())
+		return
+	}
+	if resource == nil {
+		slog.Debug("SingleWatcher OnSyncComplete succeeded - no resource in cache")
+		return
+	}
+	slog.Debug("SingleWatcher OnSyncComplete succeeded",
+		"resource_name", resource.GetName(),
+		"resource_version", resource.GetResourceVersion())
 }
 
 // Stop stops watching the resource.
@@ -423,6 +439,7 @@ func (w *SingleWatcher) Start(ctx context.Context) error {
 func (w *SingleWatcher) Stop() error {
 	w.stopOnce.Do(func() {
 		close(w.stopCh)
+		w.factory.Shutdown()
 	})
 	return nil
 }

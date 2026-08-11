@@ -208,12 +208,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 		return
 	}
 
-	// Execute render-validate pipeline with timeout context
-	// Event handlers don't have a parent context, so we create one with a timeout
-	// to prevent validation from hanging indefinitely.
-	// The OverlayStoreProvider automatically enables validation mode
-	// (RenderService detects it and extracts HTTP overlay if present)
-	ctx, cancel := context.WithTimeout(context.Background(), validation.DefaultValidationTimeout)
+	ctx, cancel := context.WithTimeout(c.LifecycleContext(), validation.DefaultValidationTimeout)
 	defer cancel()
 	_, validationResult, err := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission, admissionSubjectOpts(req.Overlays)...)
 	if err != nil {

@@ -34,7 +34,7 @@ func TestNewBuilder(t *testing.T) {
 	pathResolver := &templating.PathResolver{}
 	logger := testutil.NewTestLogger()
 
-	builder := NewBuilder(cfg, pathResolver, logger)
+	builder := NewBuilder(t.Context(), cfg, pathResolver, logger)
 
 	require.NotNil(t, builder)
 	assert.Equal(t, cfg, builder.config)
@@ -53,6 +53,7 @@ func TestBuilder_WithOptions(t *testing.T) {
 	haproxyPodStore := &storetest.MockStore{}
 
 	builder := NewBuilder(
+		t.Context(),
 		cfg,
 		pathResolver,
 		logger,
@@ -77,7 +78,7 @@ func TestBuilder_Build_BasicContext(t *testing.T) {
 	}
 	logger := testutil.NewTestLogger()
 
-	builder := NewBuilder(cfg, pathResolver, logger)
+	builder := NewBuilder(t.Context(), cfg, pathResolver, logger)
 	res := builder.Build()
 	ctx := res.Context
 
@@ -127,7 +128,7 @@ func TestBuilder_Build_WithStores(t *testing.T) {
 		"services":  &storetest.MockStore{},
 	}
 
-	builder := NewBuilder(cfg, pathResolver, logger, WithStores(storeMap))
+	builder := NewBuilder(t.Context(), cfg, pathResolver, logger, WithStores(storeMap))
 	ctx := builder.Build().Context
 
 	// The legacy map[string]templating.ResourceStore fallback was
@@ -178,7 +179,7 @@ func TestBuilder_Build_WithTypedResources(t *testing.T) {
 		}),
 	}
 
-	builder := NewBuilder(cfg, pathResolver, logger,
+	builder := NewBuilder(t.Context(), cfg, pathResolver, logger,
 		WithStores(storeMap),
 		WithTypedResources(typedTypes),
 	)
@@ -204,7 +205,7 @@ func TestBuilder_Build_WithHAProxyPodStore(t *testing.T) {
 
 	haproxyPodStore := &storetest.MockStore{}
 
-	builder := NewBuilder(cfg, pathResolver, logger, WithHAProxyPodStore(haproxyPodStore))
+	builder := NewBuilder(t.Context(), cfg, pathResolver, logger, WithHAProxyPodStore(haproxyPodStore))
 	ctx := builder.Build().Context
 
 	controller := ctx["controller"].(map[string]templating.ResourceStore)
@@ -226,7 +227,7 @@ func TestBuilder_Build_WithExtraContext(t *testing.T) {
 	pathResolver := &templating.PathResolver{}
 	logger := testutil.NewTestLogger()
 
-	builder := NewBuilder(cfg, pathResolver, logger)
+	builder := NewBuilder(t.Context(), cfg, pathResolver, logger)
 	ctx := builder.Build().Context
 
 	// Check extraContext map is populated
@@ -246,14 +247,14 @@ func TestBuilder_Build_WithCurrentAuxFiles(t *testing.T) {
 	// With files: exposed under "currentFiles" as a *map[string]string
 	// (Scriggo pointer decl) that derefs to the provided map.
 	files := map[string]string{"tls-ticket-keys": "line1\nline2\nline3"}
-	ctx := NewBuilder(cfg, pathResolver, logger, WithCurrentAuxFiles(files)).Build().Context
+	ctx := NewBuilder(t.Context(), cfg, pathResolver, logger, WithCurrentAuxFiles(files)).Build().Context
 	got, ok := ctx["currentFiles"].(*map[string]string)
 	require.True(t, ok, "currentFiles must be *map[string]string, got %T", ctx["currentFiles"])
 	assert.Equal(t, files, *got)
 
 	// Without the option: still non-nil (empty) so templates index it
 	// without a nil guard.
-	ctxEmpty := NewBuilder(cfg, pathResolver, logger).Build().Context
+	ctxEmpty := NewBuilder(t.Context(), cfg, pathResolver, logger).Build().Context
 	gotEmpty, ok := ctxEmpty["currentFiles"].(*map[string]string)
 	require.True(t, ok)
 	assert.NotNil(t, *gotEmpty)
@@ -349,7 +350,7 @@ func TestBuilder_Build_AdmissionSubject(t *testing.T) {
 	logger := testutil.NewTestLogger()
 
 	t.Run("unset yields empty map", func(t *testing.T) {
-		builder := NewBuilder(&config.Config{}, pathResolver, logger)
+		builder := NewBuilder(t.Context(), &config.Config{}, pathResolver, logger)
 		ctx := builder.Build().Context
 
 		subject, ok := ctx["admissionSubject"].(map[string]any)
@@ -358,7 +359,7 @@ func TestBuilder_Build_AdmissionSubject(t *testing.T) {
 	})
 
 	t.Run("set exposes store, namespace, name", func(t *testing.T) {
-		builder := NewBuilder(&config.Config{}, pathResolver, logger,
+		builder := NewBuilder(t.Context(), &config.Config{}, pathResolver, logger,
 			WithAdmissionSubject("ingresses", "team-a", "app"))
 		ctx := builder.Build().Context
 
@@ -378,7 +379,7 @@ func TestBuilder_Build_AdmissionSubject(t *testing.T) {
 				},
 			},
 		}
-		builder := NewBuilder(cfg, pathResolver, logger)
+		builder := NewBuilder(t.Context(), cfg, pathResolver, logger)
 		ctx := builder.Build().Context
 
 		subject := ctx["admissionSubject"].(map[string]any)
@@ -411,7 +412,7 @@ func TestBuildResourcesValue_MemoizedTypedPointers(t *testing.T) {
 	newRender := func() reflect.Value {
 		storeMap := map[string]stores.Store{"ingresses": &storetest.MockStore{Items: []any{item}}}
 		typedTypes := map[string]reflect.Type{"ingresses": elemType}
-		res := BuildResourcesValue(storeMap, typedTypes, []string{"ingresses"}, indexBy, nil, nil, logger)
+		res := BuildResourcesValue(t.Context(), storeMap, typedTypes, []string{"ingresses"}, indexBy, nil, nil, logger)
 		return reflect.ValueOf(res).Elem().Field(0).Elem()
 	}
 	list := func(inner reflect.Value) reflect.Value { return inner.FieldByName("List").Call(nil)[0] }

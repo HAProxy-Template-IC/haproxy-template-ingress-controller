@@ -30,9 +30,9 @@ Registry
     ├── StartAll(ctx, isLeader) error
     │       └── Starts all registered components
     │
-    ├── StartLeaderOnlyComponentsAsync(ctx) (<-chan error, error)
-    │       └── Starts only leader-only components; returns once they're
-    │           subscription-ready, failures arrive on the error channel
+    ├── StartLeaderOnly(ctx) (*ComponentRun, error)
+    │       └── Returns once leader-only components are subscription-ready;
+    │           ComponentRun owns their final completion
     │
     └── Status() map[string]ComponentInfo
             └── Returns status of all components
@@ -68,7 +68,7 @@ Optional interface for components that can't subscribe to the bus during their
 constructor (typically leader-only components that subscribe inside `Start()`
 once they hold the lease). The registry waits for the returned channel to
 close before treating the component as ready, so
-`StartLeaderOnlyComponentsAsync` doesn't return (and the caller doesn't
+`StartLeaderOnly` doesn't return (and the caller doesn't
 restart the EventBus) before the late subscription is in place.
 
 ```go
@@ -104,12 +104,12 @@ if err := registry.StartAll(ctx, isLeader); err != nil {
 }
 
 // Later, when becoming leader
-errCh, err := registry.StartLeaderOnlyComponentsAsync(ctx)
+run, err := registry.StartLeaderOnly(ctx)
 if err != nil {
     return fmt.Errorf("failed to start leader components: %w", err)
 }
 go func() {
-    if err := <-errCh; err != nil {
+    if err := run.Wait(); err != nil {
         log.Error("Leader component failed", "err", err)
     }
 }()
@@ -127,7 +127,7 @@ for name, info := range registry.Status() {
 Status values (declared in `pkg/lifecycle/component.go`):
 
 - `StatusPending` — Registered but not yet started.
-- `StatusStarting` — Currently starting (transient; flipped before the `Start()` call returns control).
+- `StatusStarting` — `Start()` is running but the component hasn't signalled readiness.
 - `StatusRunning` — Running normally; consumers should treat the component as live.
 - `StatusStandby` — Intentionally inactive, waiting for an external condition. Used for leader-only components on followers: they're registered and ready, but won't be started until leadership is acquired. Distinct from `StatusPending`, which means "about to start".
 - `StatusFailed` — Failed to start or encountered a fatal error.

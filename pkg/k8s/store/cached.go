@@ -143,12 +143,20 @@ func NewCachedStore(cfg *CachedStoreConfig) (*CachedStore, error) {
 
 // Get retrieves all resources matching the provided index keys.
 func (s *CachedStore) Get(keys ...string) ([]any, error) {
+	return s.GetContext(context.Background(), keys...)
+}
+
+// GetContext retrieves matching resources and cancels in-flight API fetches with ctx.
+func (s *CachedStore) GetContext(ctx context.Context, keys ...string) ([]any, error) {
 	if len(keys) == 0 {
 		return nil, &StoreError{
 			Operation: opGet,
 			Keys:      keys,
 			Cause:     errors.New("at least one key required"),
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	if len(keys) > s.numKeys {
@@ -159,41 +167,47 @@ func (s *CachedStore) Get(keys ...string) ([]any, error) {
 		}
 	}
 
-	// Find matching resource references while holding RLock
-	s.mu.RLock()
-	var matchingRefs []resourceRef
+	return s.fetchRefs(ctx, s.matchingRefs(keys))
+}
 
+func (s *CachedStore) matchingRefs(keys []string) []resourceRef {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var matchingRefs []resourceRef
 	if len(keys) == s.numKeys {
-		// Exact match
 		keyStr := makeKeyString(keys)
 		if refs, ok := s.refs[keyStr]; ok {
 			matchingRefs = append(matchingRefs, refs...)
 		}
-	} else {
-		// Partial match
-		prefix := makeKeyString(keys) + "/"
-		for keyStr, refs := range s.refs {
-			if len(keyStr) >= len(prefix) && keyStr[:len(prefix)] == prefix {
-				matchingRefs = append(matchingRefs, refs...)
-			}
+		return matchingRefs
+	}
+
+	prefix := makeKeyString(keys) + "/"
+	for keyStr, refs := range s.refs {
+		if len(keyStr) >= len(prefix) && keyStr[:len(prefix)] == prefix {
+			matchingRefs = append(matchingRefs, refs...)
 		}
 	}
-	s.mu.RUnlock()
+	return matchingRefs
+}
 
-	// Fetch resources using namespace+name from references
-	// IMPORTANT: Don't hold any locks while calling fetchResourceByRef,
-	// as it may need to acquire a Lock to reset TTL
-	results := make([]any, 0, len(matchingRefs))
-	for _, ref := range matchingRefs {
-		resource, err := s.fetchResourceByRef(ref)
+func (s *CachedStore) fetchRefs(ctx context.Context, refs []resourceRef) ([]any, error) {
+	results := make([]any, 0, len(refs))
+	for _, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		resource, err := s.fetchResourceByRef(ctx, ref)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			// Skip resources that can't be fetched (may be deleted)
 			continue
 		}
 		results = append(results, resource)
 	}
-
-	return results, nil
+	return results, ctx.Err()
 }
 
 // ListCached returns only resources currently warm in the LRU cache —
@@ -223,6 +237,14 @@ func (s *CachedStore) ListCached() ([]any, error) {
 
 // List returns all resources in the store.
 func (s *CachedStore) List() ([]any, error) {
+	return s.ListContext(context.Background())
+}
+
+// ListContext returns all resources and cancels in-flight API fetches with ctx.
+func (s *CachedStore) ListContext(ctx context.Context) ([]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	var allRefs []resourceRef
 	for _, refs := range s.refs {
@@ -236,18 +258,7 @@ func (s *CachedStore) List() ([]any, error) {
 		"resource_count", len(allRefs),
 		"recommendation", "consider using store=full for frequently listed resources")
 
-	// Fetch all resources
-	results := make([]any, 0, len(allRefs))
-	for _, ref := range allRefs {
-		resource, err := s.fetchResourceByRef(ref)
-		if err != nil {
-			// Skip resources that can't be fetched
-			continue
-		}
-		results = append(results, resource)
-	}
-
-	return results, nil
+	return s.fetchRefs(ctx, allRefs)
 }
 
 // Add inserts a new resource into the store.
@@ -363,7 +374,7 @@ func (s *CachedStore) Clear() error {
 }
 
 // fetchResourceByRef fetches a resource from cache or API using a resource reference.
-func (s *CachedStore) fetchResourceByRef(ref resourceRef) (any, error) {
+func (s *CachedStore) fetchResourceByRef(ctx context.Context, ref resourceRef) (any, error) {
 	cacheKey := ref.namespace + "/" + ref.name
 
 	// Check cache first using Peek to avoid promoting before TTL check
@@ -387,7 +398,7 @@ func (s *CachedStore) fetchResourceByRef(ref resourceRef) (any, error) {
 
 	fetchStart := time.Now()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	if s.namespace != "" || ref.namespace != "" {
@@ -396,10 +407,10 @@ func (s *CachedStore) fetchResourceByRef(ref resourceRef) (any, error) {
 		if ns == "" {
 			ns = ref.namespace
 		}
-		resource, err = s.client.Resource(s.gvr).Namespace(ns).Get(ctx, ref.name, metav1.GetOptions{})
+		resource, err = s.client.Resource(s.gvr).Namespace(ns).Get(fetchCtx, ref.name, metav1.GetOptions{})
 	} else {
 		// Cluster-scoped resource
-		resource, err = s.client.Resource(s.gvr).Get(ctx, ref.name, metav1.GetOptions{})
+		resource, err = s.client.Resource(s.gvr).Get(fetchCtx, ref.name, metav1.GetOptions{})
 	}
 
 	fetchDuration := time.Since(fetchStart)
@@ -410,6 +421,9 @@ func (s *CachedStore) fetchResourceByRef(ref resourceRef) (any, error) {
 			Keys:      []string{ref.namespace, ref.name},
 			Cause:     err,
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	// Log cache miss with timing info
@@ -428,6 +442,9 @@ func (s *CachedStore) fetchResourceByRef(ref resourceRef) (any, error) {
 			Keys:      []string{ref.namespace, ref.name},
 			Cause:     err,
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	// Update cache with converted resource

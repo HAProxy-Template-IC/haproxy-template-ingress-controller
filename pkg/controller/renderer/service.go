@@ -247,9 +247,15 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	if err != nil {
 		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
+	if err := context.Cause(ctx); err != nil {
+		return nil, err
+	}
 
 	staticFiles, err := s.renderAuxiliaryFiles(ctx, renderContext)
 	if err != nil {
+		return nil, err
+	}
+	if err := context.Cause(ctx); err != nil {
 		return nil, err
 	}
 
@@ -259,6 +265,9 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	// the runtime renderResource() filter populated previously, so
 	// downstream consumers (resourceapplier) see no shape change.
 	if err := s.renderK8sResources(ctx, renderContext, renderedResourceCollector); err != nil {
+		return nil, err
+	}
+	if err := context.Cause(ctx); err != nil {
 		return nil, err
 	}
 
@@ -288,6 +297,9 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	// half-formed payload.
 	if err := renderedResourceCollector.Validate(); err != nil {
 		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
+	}
+	if err := context.Cause(ctx); err != nil {
+		return nil, err
 	}
 
 	return &RenderResult{
@@ -363,7 +375,7 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		opts = append(opts, rendercontext.WithHTTPFetcher(httpFetcher))
 	}
 
-	return rendercontext.NewBuilder(s.config, s.pathResolver, s.logger, opts...).Build()
+	return rendercontext.NewBuilder(ctx, s.config, s.pathResolver, s.logger, opts...).Build()
 }
 
 // renderAuxiliaryFiles renders all auxiliary files in parallel.

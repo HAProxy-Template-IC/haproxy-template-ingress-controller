@@ -33,7 +33,7 @@ Dependencies: Only standard library + k8s.io/api + k8s.io/apimachinery + k8s.io/
 ```
 pkg/webhook/
 ├── types.go         # ServerConfig, ValidationContext, ValidationFunc
-├── server.go        # HTTPS server, RegisterValidator, AdmissionReview dispatch
+├── server.go        # HTTPS server, validator generations, AdmissionReview dispatch
 ├── server_test.go   # Server tests
 ├── README.md        # User documentation
 └── CLAUDE.md        # This file
@@ -156,9 +156,8 @@ func TestWebhookEndToEnd(t *testing.T) {
 ```go
 // Good — ValidationContext has flat fields: Object / OldObject / Operation /
 // Namespace / Name / UID / UserInfo. There is no ctx.Request wrapper and no
-// ctx.Context — if you need a deadline, call context.WithTimeout(context.Background(), …)
-// inside the validator (the controller's own bridge in pkg/controller/webhook
-// imposes a 5s timeout this way).
+// ctx.Context — a caller that needs cancellation captures its lifecycle context
+// in the validator closure and derives the request deadline there.
 func validateIngress(ctx *webhook.ValidationContext) (bool, string, []string, error) {
     if ctx.Object == nil {
         return false, "object missing", nil, nil
@@ -241,7 +240,7 @@ func validateWithCache(ctx *webhook.ValidationContext) (bool, string, error) {
 }
 ```
 
-The `webhook.Server` itself uses a `sync.RWMutex` internally to guard the validator map; concurrency at the transport level is already correct.
+The server acquires one validator generation per request under its table lock. `ReplaceValidatorGeneration` swaps the complete table and waits for requests using the retired generation.
 
 ## Troubleshooting
 

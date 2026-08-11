@@ -57,16 +57,18 @@ import (
 //   - interval=0 (throttle disabled — gate always open)
 //   - markFired=false (fresh throttle — gate open, "outside refractory")
 //   - markFired=true  (throttle fired just now — gate closed, "inside refractory")
-func statusTriggerComponent(interval time.Duration, markFired bool) *Component {
-	t := throttle.New(interval)
+func statusTriggerComponent(t *testing.T, interval time.Duration, markFired bool) *Component {
+	t.Helper()
+	gate := throttle.New(interval)
+	t.Cleanup(gate.Stop)
 	if markFired {
-		t.MarkFired()
+		gate.MarkFired()
 	}
 	return &Component{
 		logger:            testutil.NewTestLogger(),
 		statusWorkPending: make(map[string]*statusWorkItem),
 		publishInterval:   interval,
-		statusThrottle:    t,
+		statusThrottle:    gate,
 	}
 }
 
@@ -75,7 +77,7 @@ func TestHandleStatusTrigger_NoThrottleProcessesImmediately(t *testing.T) {
 	// MUST call processAllPendingStatusWork directly. With an empty
 	// pending map, processAllPendingStatusWork has its own fast
 	// path that exits cleanly — no panic.
-	c := statusTriggerComponent(0, false)
+	c := statusTriggerComponent(t, 0, false)
 
 	require.NotPanics(t, func() { c.handleStatusTrigger(t.Context()) },
 		"publishInterval=0 must take the immediate-process branch — "+
@@ -90,7 +92,7 @@ func TestHandleStatusTrigger_OutsideRefractoryProcessesImmediately(t *testing.T)
 	// fire immediately. Empty pending map again so
 	// processAllPendingStatusWork's fast path keeps the test
 	// self-contained.
-	c := statusTriggerComponent(10*time.Second, false)
+	c := statusTriggerComponent(t, 10*time.Second, false)
 
 	require.NotPanics(t, func() { c.handleStatusTrigger(t.Context()) },
 		"outside refractory MUST process immediately (leading-edge throttle) "+
@@ -107,7 +109,7 @@ func TestHandleStatusTrigger_InsideRefractoryDefersToTimer(t *testing.T) {
 	// would crash trying to call processStatusWork on a nil
 	// publisher). The defer-to-timer contract requires the sentinel
 	// to remain in the map.
-	c := statusTriggerComponent(10*time.Second, true)
+	c := statusTriggerComponent(t, 10*time.Second, true)
 	const podKey = "haptic/rt-cfg/haproxy-pod-1"
 	sentinel := &statusWorkItem{
 		event: events.NewConfigAppliedToPodEvent(

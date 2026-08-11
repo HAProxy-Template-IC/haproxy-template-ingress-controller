@@ -158,6 +158,7 @@ func buildBenchmarkContext(
 	// the engine compiled against, so typed-access templates render identically
 	// to production; it's empty when no --schema-dir was supplied.
 	builder := rendercontext.NewBuilder(
+		context.Background(),
 		cfg,
 		pathResolver,
 		logger,

@@ -79,7 +79,7 @@ func TestProcessStatusWork_RequeuesUntilRuntimeConfigPublished(t *testing.T) {
 	c.statusWorkPendingMu.Lock()
 	c.statusWorkPending[key] = newer
 	c.statusWorkPendingMu.Unlock()
-	c.requeueStatusWork(work)
+	c.requeueStatusWork(ctx, work)
 	c.statusWorkPendingMu.Lock()
 	kept := c.statusWorkPending[key]
 	c.statusWorkPendingMu.Unlock()
@@ -124,7 +124,7 @@ func TestRequeueStatusWork_DropsAfterMaxRetries(t *testing.T) {
 	}
 	work := &statusWorkItem{event: event, retries: statusWorkMaxRetries}
 
-	c.requeueStatusWork(work)
+	c.requeueStatusWork(t.Context(), work)
 
 	c.statusWorkPendingMu.Lock()
 	_, pending := c.statusWorkPending[statusWorkKey(event)]

@@ -61,6 +61,36 @@ func TestClient_Validate_HappyPath(t *testing.T) {
 	}
 }
 
+func TestClient_ClosePreventsLaterValidation(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	if err := srv.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultValid,
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+
+	client := pv.NewClient("coraza", srv.SocketPath, 2*time.Second, 2)
+	if _, err := client.Validate(context.Background(), newRequest()); err != nil {
+		t.Fatalf("initial Validate: %v", err)
+	}
+	client.Close()
+
+	resp, err := client.Validate(context.Background(), newRequest())
+	if err != nil {
+		t.Fatalf("post-close transport failure must remain a protocol diagnostic: %v", err)
+	}
+	if resp.Result != pv.ResultError || len(resp.Errors) != 1 {
+		t.Fatalf("post-close response=%+v, want one protocol error", resp)
+	}
+	if !strings.Contains(resp.Errors[0].Message, "validator client is closed") {
+		t.Fatalf("post-close diagnostic=%q", resp.Errors[0].Message)
+	}
+	if got := len(srv.Requests()); got != 1 {
+		t.Fatalf("server saw %d requests after Close, want 1", got)
+	}
+}
+
 func TestClient_Validate_ConnectionRefused(t *testing.T) {
 	// Point at a path that doesn't exist; dial fails.
 	missing := filepath.Join(t.TempDir(), "missing.sock")

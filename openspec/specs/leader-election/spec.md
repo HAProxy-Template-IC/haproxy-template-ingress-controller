@@ -125,7 +125,7 @@ THEN it SHALL attempt to acquire the Lease at RetryPeriod intervals.
 
 ### Requirement: All-Replica and Leader-Only Component Sets
 
-Controller components SHALL be split into two lifecycle sets. The all-replica set — Reconciler, Discovery, HTTPStore, ProposalValidator, StatusApplier, ResourceApplier — SHALL run on every replica. The leader-only set — Coordinator, DriftPreventionMonitor, Deployer, DeploymentScheduler, ConfigPublisher, StatusUpdater — SHALL be started only after leadership is acquired and stopped when leadership is lost or the iteration ends. Stopping leader-only components SHALL cancel their dedicated context and pause briefly (100 ms graceful-stop delay) before returning.
+Controller components SHALL be split into two lifecycle sets. The all-replica set — Reconciler, Discovery, HTTPStore, ProposalValidator, StatusApplier, ResourceApplier — SHALL run on every replica. The leader-only set — Coordinator, DriftPreventionMonitor, Deployer, DeploymentScheduler, ConfigPublisher, StatusUpdater — SHALL be started only after leadership is acquired and stopped when leadership is lost or the iteration ends. Stopping leader-only components SHALL cancel their dedicated context and wait until every component and child worker in that term has returned.
 
 #### Scenario: Followers run only the all-replica set
 
@@ -135,7 +135,17 @@ Controller components SHALL be split into two lifecycle sets. The all-replica se
 #### Scenario: Leadership loss stops leader-only components
 
 - **WHEN** the leader loses the Lease
-- **THEN** its leader-only components SHALL be stopped via their leader-scoped context.
+- **THEN** its leader-only components SHALL be cancelled through client-go's leader-scoped callback context and joined before the stop callback returns.
+
+#### Scenario: Lease loss during component startup
+
+- **WHEN** leadership is lost before every leader-only component signals readiness
+- **THEN** startup SHALL unblock from the cancelled callback context, the EventBus SHALL remain paused, and the stop callback SHALL join every component that was started.
+
+#### Scenario: Delayed startup callback cannot revive a stopped term
+
+- **WHEN** the stop callback runs before a concurrently scheduled startup callback
+- **THEN** that startup callback SHALL observe the retired term and start no component.
 
 ### Requirement: Pause-Publish-Start Leadership Handoff
 
@@ -150,6 +160,11 @@ The leadership transition SHALL follow a strict ordering to prevent late-subscri
 
 - **WHEN** the leadership callback starts the leader-only components
 - **THEN** the EventBus SHALL NOT be restarted until all of them have signalled subscription readiness.
+
+#### Scenario: Canceled handoff does not replay buffered events
+
+- **WHEN** the leadership callback context is cancelled while components are becoming ready
+- **THEN** the EventBus SHALL NOT restart or replay the buffered leader events for that expired term.
 
 ### Requirement: Leader-Only Subscription Lifecycle
 

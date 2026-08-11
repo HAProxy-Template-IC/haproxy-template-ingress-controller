@@ -40,6 +40,9 @@ func createTestComponent(t *testing.T, bus *busevents.EventBus) *Component {
 	_, logger := testutil.NewTestBusAndLogger()
 	component, err := New(bus, logger)
 	require.NoError(t, err)
+	component.mu.Lock()
+	component.lifecycleCtx = t.Context()
+	component.mu.Unlock()
 	return component
 }
 
@@ -862,8 +865,8 @@ func TestComponent_ScheduleRetryTimerLocked_WithPendingRetries(t *testing.T) {
 	// Verify timer was scheduled
 	component.retryTimerMu.Lock()
 	assert.NotNil(t, component.retryTimer, "timer should be scheduled when pending retries exist")
-	component.retryTimer.Stop() // Clean up
 	component.retryTimerMu.Unlock()
 
 	component.mu.Unlock()
+	component.stopRetryTimer()
 }

@@ -65,7 +65,7 @@ type Registry struct {
 func NewRegistry() *Registry
 ```
 
-Creates a new instance-based registry. Each application iteration should create its own registry to avoid stale references.
+Creates a new instance-based registry. A process-owned server can retain one registry across application iterations and call `Clear()` before publishing the next iteration's variables.
 
 ```go
 func (r *Registry) Publish(path string, v Var)
@@ -149,7 +149,7 @@ func (s *Server) Setup()
 func (s *Server) Serve(ctx context.Context) error
 ```
 
-`Setup()` finalises the routes (call it after registering custom handlers and the health checker). `Serve()` starts the HTTP server and blocks until context is cancelled. Performs graceful shutdown with 10s timeout.
+`Setup()` finalises the routes after custom handlers are registered. `SetHealthChecker()` can replace the health callback while the server is running. `Serve()` starts the HTTP server and blocks until context cancellation or a listener failure. Shutdown joins the internal HTTP serve loop and has a 10-second grace period.
 
 Exposes endpoints:
 

@@ -31,11 +31,45 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 var configMapGVR = schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
+type blockingStopWatcher struct {
+	watch.Interface
+	stopStarted chan struct{}
+	release     chan struct{}
+	stopOnce    sync.Once
+}
+
+func (w *blockingStopWatcher) Stop() {
+	w.stopOnce.Do(func() {
+		close(w.stopStarted)
+		<-w.release
+		w.Interface.Stop()
+	})
+}
+
+func newBlockingWatchClient(t *testing.T) (*client.Client, *blockingStopWatcher) {
+	t.Helper()
+	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+		runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{configMapGVR: "ConfigMapList"},
+	)
+	blockingWatcher := &blockingStopWatcher{
+		Interface:   watch.NewRaceFreeFake(),
+		stopStarted: make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	fakeDynamicClient.PrependWatchReactor("*", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, blockingWatcher, nil
+	})
+	return client.NewFromClientset(kubefake.NewClientset(), fakeDynamicClient, "default"), blockingWatcher
+}
 
 func newTestClient(t *testing.T, objects ...runtime.Object) *client.Client {
 	t.Helper()
@@ -291,6 +325,39 @@ func TestWatcher_Start_ContextCancellation(t *testing.T) {
 		assert.NoError(t, err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for watcher to stop")
+	}
+}
+
+func TestWatcher_StartWaitsForInformerStop(t *testing.T) {
+	k8sClient, blockingWatcher := newBlockingWatchClient(t)
+	w, err := New(validWatcherConfig(), k8sClient, slog.Default())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- w.Start(ctx)
+	}()
+	require.Eventually(t, w.IsSynced, time.Second, 5*time.Millisecond)
+
+	cancel()
+	select {
+	case <-blockingWatcher.stopStarted:
+	case <-time.After(time.Second):
+		t.Fatal("informer watch was not stopped")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Start returned before the informer stopped: %v", err)
+	default:
+	}
+
+	close(blockingWatcher.release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Start did not return after the informer stopped")
 	}
 }
 

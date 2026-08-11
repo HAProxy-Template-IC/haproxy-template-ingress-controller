@@ -7,7 +7,7 @@ Event adapter around `pkg/httpstore.HTTPStore` plus the template-callable `HTTPS
 Templates can pull external content via `{% var blocklist = http.Fetch("https://example.com/list.txt", {"delay": "5m"}) %}`. The pure store in `pkg/httpstore` handles fetching, caching, and the two-version pending/accepted lifecycle without knowing about the controller's event bus. This package is the event adapter that wraps the pure store with:
 
 - A refresh timer per registered URL (driven by `delay` in the `http.Fetch` options).
-- Proposal-validation handling: when a refresh produces new pending content, the component publishes `ProposalValidationRequestedEvent` for the proposal pipeline to validate it; on the matching `ProposalValidationCompletedEvent` it branches on `event.Valid` to promote the pending content to accepted (and trigger a reconciliation) or discard it.
+- Proposal-validation handling: the component validates one immutable pending-content batch at a time. A matching completion finalizes only the URL versions in that batch; content refreshed during validation is queued in the next batch.
 - Periodic eviction of cache entries that templates haven't touched recently (`evictionMaxAge`, typically `2 × dataplane.driftPreventionInterval`).
 - Publishing `HTTPResourceUpdatedEvent` / `HTTPResourceAcceptedEvent` for accepted-state observability. Rejections are logged directly with the validation error, URL, and rejected and retained checksums.
 
@@ -33,7 +33,7 @@ The component runs on every replica (not leader-only) so all replicas have warm 
 
 ## Events
 
-- Subscribes: `ProposalValidationCompletedEvent` (the only subscription — branches on `event.Valid` to either promote or reject pending content; matched by request ID against the most recent `ProposalValidationRequestedEvent` this component published).
+- Subscribes: `ProposalValidationCompletedEvent` (the only subscription — matches the active immutable batch by request ID, then promotes or rejects only its URL versions).
 - Publishes: `ProposalValidationRequestedEvent` (asks the proposal pipeline to validate pending content), `HTTPResourceUpdatedEvent` (sibling observability event when a refresh produces new pending content), `HTTPResourceAcceptedEvent` (after validation promotes pending → accepted), and `ReconciliationTriggeredEvent("http_content_validated")` after a successful promotion so HAProxy picks up the new content. A rejected proposal is logged and discarded without publishing another event.
 
 ## Production vs Validation Render

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 
@@ -501,6 +503,42 @@ func TestSingleWatcher_StartIdempotency(t *testing.T) {
 	// Verify sync completed
 	if !w.synced.Load() {
 		t.Error("expected watcher to be synced after Start() completes")
+	}
+}
+
+func TestSingleWatcher_StartWaitsForInformerStop(t *testing.T) {
+	k8sClient, blockingWatcher := newBlockingWatchClient(t)
+	cfg := testWatcherConfig(nil)
+	w, err := NewSingle(&cfg, k8sClient)
+	if err != nil {
+		t.Fatalf("creating watcher: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- w.Start(ctx)
+	}()
+	require.Eventually(t, w.synced.Load, time.Second, 5*time.Millisecond)
+
+	cancel()
+	select {
+	case <-blockingWatcher.stopStarted:
+	case <-time.After(time.Second):
+		t.Fatal("informer watch was not stopped")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Start returned before the informer stopped: %v", err)
+	default:
+	}
+
+	close(blockingWatcher.release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Start did not return after the informer stopped")
 	}
 }
 

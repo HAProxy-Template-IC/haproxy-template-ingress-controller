@@ -91,8 +91,16 @@ func TestPublishWorker_DrainsDeployedWorkFirst(t *testing.T) {
 	c.enqueueDeployed(item("deployed:abc", true))
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go c.publishWorker(ctx)
+	done := make(chan struct{})
+	go func() {
+		c.publishWorker(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		c.publishThrottle.Stop()
+		<-done
+	}()
 
 	require.Eventually(t, func() bool {
 		return len(processedOrder(logBuf.String())) >= 3
@@ -194,6 +202,7 @@ func TestProcessPublishWork_ThrottledDeployedWorkStaysQueued(t *testing.T) {
 		publishThrottle:       throttle.New(time.Hour),
 		lastPublishedChecksum: "none",
 	}
+	defer c.publishThrottle.Stop()
 	c.publishThrottle.MarkFired()
 	require.False(t, c.publishThrottle.Available(), "premise: the gate must be closed")
 

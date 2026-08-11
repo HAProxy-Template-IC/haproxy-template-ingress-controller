@@ -9,7 +9,7 @@ The controller's renderer takes a `StoreProvider` rather than a raw `map[string]
 - A `RealStoreProvider` during normal reconciliation — backed directly by the live `pkg/k8s/store` instances.
 - An `OverlayStoreProvider` during webhook validation or proposal-validator runs — wraps the live providers with a `ValidationContext` of overlays so the proposed change appears in templates without modifying the actual stores.
 
-The package also defines its own `Store` interface (structurally identical to `pkg/k8s/types.Store`) and the `TypesStoreAdapter` that bridges them. The two stay structurally identical but are kept apart by `arch-go.yml` so `pkg/stores` can be consumed by the templating pipeline without dragging in `client-go`.
+The package also defines its own `Store` interface (structurally identical to `pkg/k8s/types.Store`) and the `TypesStoreAdapter` that bridges them. The optional `ContextGetter` and `ContextLister` interfaces let API-backed reads inherit a render's cancellation without changing the legacy `Store` method set. The two Store interfaces stay structurally identical but are kept apart by `arch-go.yml` so `pkg/stores` can be consumed by the templating pipeline without dragging in `client-go`.
 
 ## Quick Start
 

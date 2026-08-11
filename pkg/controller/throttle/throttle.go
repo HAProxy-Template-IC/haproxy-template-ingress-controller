@@ -41,8 +41,11 @@ import (
 type LeadingEdge struct {
 	interval time.Duration
 
-	mu       sync.Mutex
-	lastFire time.Time
+	mu        sync.Mutex
+	lastFire  time.Time
+	timer     *time.Timer
+	callbacks sync.WaitGroup
+	stopped   bool
 
 	firedCh chan struct{}
 }
@@ -63,11 +66,14 @@ func New(interval time.Duration) *LeadingEdge {
 // period since the last MarkFired call has elapsed. Callers should fire
 // immediately if true, else call ScheduleFlush to defer.
 func (t *LeadingEdge) Available() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.stopped {
+		return false
+	}
 	if t.interval <= 0 {
 		return true
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	return time.Since(t.lastFire) >= t.interval
 }
 
@@ -75,34 +81,70 @@ func (t *LeadingEdge) Available() bool {
 // fresh refractory window. Callers should invoke this after a successful
 // fire (typically inside the work that the worker just executed).
 func (t *LeadingEdge) MarkFired() {
-	if t.interval <= 0 {
-		return
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.stopped || t.interval <= 0 {
+		return
+	}
 	t.lastFire = time.Now()
+
+	hadSignal := false
+	select {
+	case <-t.firedCh:
+		hadSignal = true
+	default:
+	}
+	if t.timer != nil {
+		if t.timer.Stop() {
+			t.callbacks.Done()
+			t.scheduleLocked(t.interval)
+		}
+		return
+	}
+	if hadSignal {
+		t.scheduleLocked(t.interval)
+	}
 }
 
 // ScheduleFlush arms a one-shot timer that signals on FiredCh once the
-// remaining refractory period expires. Multiple calls within the same
-// refractory window are coalesced through the buffered FiredCh: only one
-// signal lands, additional calls schedule extra timers whose signals are
-// dropped (the worker only needs one wake-up to drain accumulated pending
-// work).
+// remaining refractory period expires. Multiple calls share one timer.
 //
 // If the throttle is disabled, ScheduleFlush is a no-op — callers should
 // gate it behind Available() in that case anyway.
 func (t *LeadingEdge) ScheduleFlush() {
-	if t.interval <= 0 {
+	t.mu.Lock()
+	if t.stopped || t.interval <= 0 || t.timer != nil {
+		t.mu.Unlock()
 		return
 	}
-	t.mu.Lock()
 	remaining := t.interval - time.Since(t.lastFire)
-	t.mu.Unlock()
 	if remaining < time.Millisecond {
 		remaining = time.Millisecond
 	}
-	time.AfterFunc(remaining, func() {
+	t.scheduleLocked(remaining)
+	t.mu.Unlock()
+}
+
+func (t *LeadingEdge) scheduleLocked(delay time.Duration) {
+	t.callbacks.Add(1)
+	t.timer = time.AfterFunc(delay, func() {
+		defer t.callbacks.Done()
+
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if t.stopped {
+			t.timer = nil
+			return
+		}
+		remaining := t.interval - time.Since(t.lastFire)
+		if remaining > 0 {
+			if remaining < time.Millisecond {
+				remaining = time.Millisecond
+			}
+			t.scheduleLocked(remaining)
+			return
+		}
+		t.timer = nil
 		select {
 		case t.firedCh <- struct{}{}:
 		default:
@@ -116,4 +158,24 @@ func (t *LeadingEdge) ScheduleFlush() {
 // rather than per-item delivery.
 func (t *LeadingEdge) FiredCh() <-chan struct{} {
 	return t.firedCh
+}
+
+// Stop cancels pending wakeups and waits for any running timer callback.
+func (t *LeadingEdge) Stop() {
+	t.mu.Lock()
+	t.stopped = true
+	if t.timer != nil && t.timer.Stop() {
+		t.timer = nil
+		t.callbacks.Done()
+	}
+	t.mu.Unlock()
+
+	t.callbacks.Wait()
+	for {
+		select {
+		case <-t.firedCh:
+		default:
+			return
+		}
+	}
 }

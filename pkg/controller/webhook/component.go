@@ -12,15 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package webhook provides the webhook adapter component that bridges
-// the pure webhook library to the event-driven controller architecture.
-//
-// The webhook component manages the lifecycle of admission webhooks including:
-//   - HTTPS webhook server
-//   - Integration with controller validators
-//
-// Note: TLS certificates are fetched from Kubernetes Secret via API.
-// ValidatingWebhookConfiguration is created by Helm at installation time.
+// Package webhook connects the admission server to controller validation.
 package webhook
 
 import (
@@ -68,7 +60,8 @@ const (
 	// longest validator deadline. The API server's own timeout remains the
 	// authoritative outer bound; this only prevents net/http from cutting off a
 	// valid response before that bound.
-	webhookResponseGrace = 2 * time.Second
+	webhookResponseGrace        = 2 * time.Second
+	validationUnavailableReason = "validation is unavailable; retry after controller initialization"
 )
 
 // Component is the webhook adapter component that manages webhook lifecycle.
@@ -156,20 +149,11 @@ type Config struct {
 	// timeoutSeconds value so the controller can return a structured decision.
 	ResourceAdmissionTimeout time.Duration
 
-	// Server, when set, is an already-bound webhook server this component
-	// ADOPTS instead of creating and owning one.
-	//
-	// The controller rebuilds every component on each config change, so a
-	// component-owned listener closes and re-binds on every reinitialization —
-	// a multi-second window in which the API server dials a dead port and, under
-	// failurePolicy=Ignore, admits the very config change that opened it (#110).
-	// Hoisting the listener to process lifetime and swapping only the validator
-	// table closes that window: an iteration installs its table and, on
-	// teardown, leaves the previous one serving until the next install.
-	//
-	// The adopting component MUST NOT shut this server down — it belongs to the
-	// caller, and stopping it is precisely the hole being fixed.
+	// Server is a caller-owned listener; the component replaces only its validator generation.
 	Server *webhook.Server
+
+	// OnGenerationRetired releases resources captured by the installed table.
+	OnGenerationRetired func()
 }
 
 // New creates a new webhook component.
@@ -221,6 +205,13 @@ func (c *Component) Listening() <-chan struct{} {
 //
 // The server continues running until the context is cancelled.
 func (c *Component) Start(ctx context.Context) error {
+	defer func() {
+		if c.config.OnGenerationRetired != nil {
+			c.config.OnGenerationRetired()
+			c.config.OnGenerationRetired = nil
+		}
+	}()
+
 	c.logger.Info("Starting webhook component",
 		"port", c.config.Port,
 		"path", c.config.Path)
@@ -232,7 +223,10 @@ func (c *Component) Start(ctx context.Context) error {
 	if c.config.Server != nil {
 		return c.startAdopted(ctx)
 	}
+	return c.startOwned(ctx)
+}
 
+func (c *Component) startOwned(ctx context.Context) error {
 	// Validate a certificate source is configured.
 	if c.config.CertDir == "" {
 		if len(c.config.CertPEM) == 0 {
@@ -272,14 +266,16 @@ func (c *Component) Start(ctx context.Context) error {
 
 	// Create server context
 	c.serverCtx, c.serverCancel = context.WithCancel(ctx)
+	defer c.serverCancel()
 
 	// Start server in goroutine
 	serverErrCh := make(chan error, 1)
 	go func() {
-		if err := c.server.Start(c.serverCtx); err != nil {
+		err := c.server.Start(c.serverCtx)
+		if err != nil {
 			c.logger.Error("Webhook server error", "error", err)
-			serverErrCh <- err
 		}
+		serverErrCh <- err
 	}()
 
 	// Wait for the underlying listener to actually bind before logging
@@ -292,8 +288,16 @@ func (c *Component) Start(ctx context.Context) error {
 	case <-c.server.Listening():
 		close(c.listening)
 	case err := <-serverErrCh:
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err == nil {
+			err = errors.New("webhook server stopped before binding")
+		}
 		return fmt.Errorf("webhook server failed before bind: %w", err)
 	case <-ctx.Done():
+		c.serverCancel()
+		<-serverErrCh
 		return ctx.Err()
 	}
 
@@ -307,29 +311,28 @@ func (c *Component) Start(ctx context.Context) error {
 	// fixed CertPEM/KeyPEM fallback (tests) is only refreshed on restart.
 	select {
 	case err := <-serverErrCh:
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err == nil {
+			err = errors.New("webhook server stopped unexpectedly")
+		}
 		return fmt.Errorf("webhook server failed: %w", err)
 	case <-ctx.Done():
 		c.logger.Info("Webhook component shutting down")
 		c.serverCancel()
-		return nil
+		return <-serverErrCh
 	}
 }
 
 // startAdopted runs the component against a caller-owned, already-bound server.
 //
-// It installs this iteration's validator table and then does nothing until the
-// iteration ends — deliberately: the listener, its port and its TLS material
-// belong to the caller and outlive this component. Returning without stopping
-// the server is what keeps the admission gate answerable across a config
-// reinitialization; the previous table keeps serving until the next iteration
-// installs its own, so a request in the gap gets a verdict from slightly older
-// wiring rather than the silent admit an unreachable webhook produces.
+// It installs this iteration's validator table. On teardown it replaces that
+// table with an empty fail-closed generation and drains every active request;
+// the caller-owned listener remains bound for the next iteration.
 func (c *Component) startAdopted(ctx context.Context) error {
 	c.server = c.config.Server
-
-	// Point the unregistered-GVK reporter at THIS iteration's metrics recorder.
-	// The server outlives the recorder that was current when it was built.
-	c.server.SetOnUnregisteredGVK(c.reportUnregisteredGVK)
+	c.serverCtx = ctx
 
 	if err := c.registerValidators(); err != nil {
 		return err
@@ -345,7 +348,10 @@ func (c *Component) startAdopted(ctx context.Context) error {
 		"path", c.config.Path)
 
 	<-ctx.Done()
-	c.logger.Info("Webhook component shutting down; leaving the shared listener bound")
+	if err := c.server.ReplaceValidatorGeneration(nil, nil, nil); err != nil {
+		c.logger.Debug("Persistent webhook server stopped while retiring validators", "error", err)
+	}
+	c.logger.Info("Webhook validators retired; leaving the shared listener bound")
 	return nil
 }
 
@@ -399,10 +405,8 @@ func (c *Component) resolveKind(apiGroup, apiVersion, resource string) (string, 
 // This is called automatically during Start() after the server is created.
 // It uses RESTMapper to resolve resource names to kinds.
 //
-// The table is built in full and installed in ONE SetValidators call rather
-// than registered kind by kind. Incremental registration can only ever add, so
-// it cannot express "this kind is no longer validated" — and it would leave the
-// server serving a half-built table for the duration of the loop.
+// The table is built in full and installed as one generation. Incremental
+// registration cannot remove a kind and exposes a half-built table.
 func (c *Component) registerValidators() error {
 	c.logger.Info("Registering validators")
 	if len(c.config.Rules) > 0 && c.dryRunValidator == nil {
@@ -436,7 +440,14 @@ func (c *Component) registerValidators() error {
 		validators[gvk] = c.createResourceValidator(gvk)
 	}
 
-	c.server.SetValidators(validators)
+	if err := c.server.ReplaceValidatorGeneration(
+		validators,
+		c.reportUnregisteredGVK,
+		c.config.OnGenerationRetired,
+	); err != nil {
+		return fmt.Errorf("installing webhook validator generation: %w", err)
+	}
+	c.config.OnGenerationRetired = nil
 	return nil
 }
 
@@ -464,6 +475,12 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 			"namespace", valCtx.Namespace,
 			"name", valCtx.Name)
 
+		parent := c.serverCtx
+		if parent != nil && parent.Err() != nil {
+			c.recordValidationUnavailable(gvk, valCtx, start)
+			return false, validationUnavailableReason, nil, nil
+		}
+
 		// Basic structural validation runs inline before delegating to ValidateDirect.
 		if err := c.validateBasicStructure(valCtx.Object); err != nil {
 			c.logger.Info("Basic validation failed",
@@ -483,18 +500,8 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 
 		// Dry-run validation (synchronous call into dryrunvalidator.ValidateDirect).
 		if c.dryRunValidator == nil {
-			c.logger.Error("No dry-run validator configured; denying resource",
-				"gvk", gvk,
-				"namespace", valCtx.Namespace,
-				"name", valCtx.Name)
-
-			duration := time.Since(start).Seconds()
-			if c.metrics != nil {
-				c.metrics.RecordWebhookRequest(gvk, "denied", duration)
-				c.metrics.RecordWebhookValidation(gvk, "denied")
-			}
-
-			return false, "validation is unavailable; retry after controller initialization", nil, nil
+			c.recordValidationUnavailable(gvk, valCtx, start)
+			return false, validationUnavailableReason, nil, nil
 		}
 
 		// Derive from c.serverCtx (set in Start()) so iteration shutdown
@@ -506,7 +513,6 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 		// yet — happens in unit tests that call this validator without
 		// going through Start(); in production Start() always sets
 		// serverCtx before RegisterValidator wires this closure up.
-		parent := c.serverCtx
 		if parent == nil {
 			parent = context.Background()
 		}
@@ -521,6 +527,10 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 			valCtx.Object,
 			valCtx.Operation,
 		)
+		if parent.Err() != nil {
+			c.recordValidationUnavailable(gvk, valCtx, start)
+			return false, validationUnavailableReason, nil, nil
+		}
 
 		// Record metrics
 		duration := time.Since(start).Seconds()
@@ -544,6 +554,18 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 			"duration_ms", time.Since(start).Milliseconds())
 
 		return allowed, reason, warnings, nil
+	}
+}
+
+func (c *Component) recordValidationUnavailable(gvk string, valCtx *webhook.ValidationContext, start time.Time) {
+	c.logger.Error("Validation unavailable; denying resource",
+		"gvk", gvk,
+		"namespace", valCtx.Namespace,
+		"name", valCtx.Name)
+
+	if c.metrics != nil {
+		c.metrics.RecordWebhookRequest(gvk, "denied", time.Since(start).Seconds())
+		c.metrics.RecordWebhookValidation(gvk, "denied")
 	}
 }
 

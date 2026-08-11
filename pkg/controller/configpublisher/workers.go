@@ -66,6 +66,10 @@ func (c *Component) discardCachedConfig(correlationID string) {
 // the latest buffered item when publishThrottle.FiredCh() signals.
 func (c *Component) publishWorker(ctx context.Context) {
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+
 		// Deploy-driven work first, and drain ALL of it before touching
 		// validation work. A select picks uniformly at random among ready
 		// cases, so with validation publishes arriving continuously a deployed
@@ -101,16 +105,15 @@ func (c *Component) publishWorker(ctx context.Context) {
 
 		select {
 		case work := <-c.publishWork:
+			if ctx.Err() != nil {
+				return
+			}
 			c.processPublishWork(ctx, work)
 		case <-c.deployedTrigger:
 			// Wake only; the drain at the top of the loop takes the item.
 		case <-c.publishThrottle.FiredCh():
 			c.flushPendingPublish(ctx)
 		case <-ctx.Done():
-			// Flush any buffered publish before shutdown. The lifecycle ctx is
-			// already cancelled, so detach from its cancellation (WithoutCancel)
-			// so the final write isn't instantly aborted.
-			c.flushPendingPublish(context.WithoutCancel(ctx))
 			return
 		}
 	}
@@ -118,6 +121,10 @@ func (c *Component) publishWorker(ctx context.Context) {
 
 // processPublishWork decides whether to publish immediately or buffer for throttle.
 func (c *Component) processPublishWork(ctx context.Context, work *publishWorkItem) {
+	if ctx.Err() != nil {
+		return
+	}
+
 	c.logger.Debug("Processing publish work",
 		"config_name", work.templateConfig.Name,
 		"config_namespace", work.templateConfig.Namespace,
@@ -178,6 +185,10 @@ func (c *Component) processPublishWork(ctx context.Context, work *publishWorkIte
 
 // flushPendingPublish publishes the buffered work item (if any) when the throttle timer expires.
 func (c *Component) flushPendingPublish(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+
 	deployWork := c.takeDeployed()
 
 	c.pendingMu.Lock()
@@ -286,8 +297,14 @@ func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
 // validationFailedWorker processes validation failed work items asynchronously.
 func (c *Component) validationFailedWorker(ctx context.Context) {
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		select {
 		case work := <-c.validationFailedWork:
+			if ctx.Err() != nil {
+				return
+			}
 			c.processValidationFailedWork(ctx, work)
 		case <-ctx.Done():
 			return
@@ -355,16 +372,18 @@ func (c *Component) processValidationFailedWork(ctx context.Context, work *valid
 // worker flushes them when statusThrottle.FiredCh() signals.
 func (c *Component) statusWorker(ctx context.Context) {
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		select {
 		case <-c.statusWorkTrigger:
+			if ctx.Err() != nil {
+				return
+			}
 			c.handleStatusTrigger(ctx)
 		case <-c.statusThrottle.FiredCh():
 			c.processAllPendingStatusWork(ctx)
 		case <-ctx.Done():
-			// Flush any pending status updates before shutdown. The lifecycle
-			// ctx is already cancelled, so detach from its cancellation
-			// (WithoutCancel) so the final writes aren't instantly aborted.
-			c.processAllPendingStatusWork(context.WithoutCancel(ctx))
 			return
 		}
 	}
@@ -405,6 +424,10 @@ func (c *Component) handleStatusTrigger(ctx context.Context) {
 //     handleConfigAppliedToPod guarantee that whatever the map holds is
 //     the most recent event seen for that pod up to the pop.
 func (c *Component) processAllPendingStatusWork(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+
 	c.statusWorkPendingMu.Lock()
 	if len(c.statusWorkPending) == 0 {
 		c.statusWorkPendingMu.Unlock()
@@ -474,7 +497,7 @@ func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem)
 	defer cancel()
 
 	if err := c.publisher.UpdateDeploymentStatus(updateCtx, &update); err != nil {
-		if errors.Is(err, configpublisher.ErrRuntimeConfigNotPublished) {
+		if errors.Is(err, configpublisher.ErrRuntimeConfigNotPublished) && ctx.Err() == nil {
 			// Startup race: the first deployment to the pods completes a few
 			// hundred milliseconds before the initial HAProxyCfg publish
 			// lands, so this pod's status SSA found no resource. Dropping the
@@ -487,7 +510,7 @@ func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem)
 				"pod_name", event.PodName,
 				"retries", work.retries,
 			)
-			c.requeueStatusWork(work)
+			c.requeueStatusWork(ctx, work)
 			return
 		}
 		c.logger.Warn("Failed to update deployment status",
@@ -518,7 +541,10 @@ const statusWorkMaxRetries = 30
 // requeueStatusWork puts a not-yet-appliable status update back into the
 // pending map — unless a newer update for the same pod arrived meanwhile —
 // and arms a short timer to wake the status worker again.
-func (c *Component) requeueStatusWork(work *statusWorkItem) {
+func (c *Component) requeueStatusWork(ctx context.Context, work *statusWorkItem) {
+	if ctx.Err() != nil {
+		return
+	}
 	if work.retries >= statusWorkMaxRetries {
 		c.logger.Warn("Dropping pod status update after max retries, HAProxyCfg still not published",
 			"runtime_config_name", work.event.RuntimeConfigName,
@@ -539,10 +565,7 @@ func (c *Component) requeueStatusWork(work *statusWorkItem) {
 	c.statusWorkPending[key] = work
 	c.statusWorkPendingMu.Unlock()
 
-	time.AfterFunc(statusWorkRetryDelay, func() {
-		select {
-		case c.statusWorkTrigger <- struct{}{}:
-		default:
-		}
-	})
+	if c.statusRetrySignals != nil {
+		c.statusRetrySignals.Schedule(ctx, statusWorkRetryDelay, c.statusWorkTrigger)
+	}
 }

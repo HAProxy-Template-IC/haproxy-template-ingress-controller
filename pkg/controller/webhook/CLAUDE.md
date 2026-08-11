@@ -1,228 +1,63 @@
-# pkg/controller/webhook - Webhook Adapter Component
+# pkg/controller/webhook
 
-Development context for the webhook adapter component.
+This package connects the pure HTTPS server in `pkg/webhook` to the synchronous
+`DryRunValidator` and the controller's webhook metrics.
 
-**API Documentation**: See `pkg/controller/webhook/README.md`
-**Pure Library**: See `pkg/webhook/CLAUDE.md`
+## Responsibilities
 
-## When to Work Here
+- Resolve configured GroupVersionResources to GroupVersionKinds.
+- Build one complete validator table for the watched-resource rules.
+- Run structural checks and `DryRunValidator.ValidateDirect` synchronously.
+- Apply the controller-side admission deadline and record decisions.
 
-Modify this package when:
+Certificate provisioning and `ValidatingWebhookConfiguration` resources belong
+to the Helm chart. Render and HAProxy validation belong to
+`pkg/controller/dryrunvalidator` and `pkg/controller/proposalvalidator`.
 
-- Changing the bridge between the pure webhook server and the dry-run validator
-- Adding or adjusting per-GVK registration logic
-- Wiring metric or log signals around webhook requests
+## Lifecycle
 
-**DO NOT** modify this package for:
+Production passes a process-owned `*pkg/webhook.Server` in `Config.Server`. The
+component installs its complete table with `ReplaceValidatorGeneration`; it
+never starts or stops the shared listener. On iteration teardown it installs an
+empty fail-closed generation. Replacement waits for requests using the retired
+generation, then calls `OnGenerationRetired` to release captured iteration
+dependencies.
 
-- HTTPS server / `RegisterValidator` / `Start` mechanics (including cert hot-reload from `CertDir`) → `pkg/webhook`
-- TLS certificate provisioning → the chart's cert-manager `Certificate`/Secret plumbing and the mount the controller points `CertDir` at
-- `ValidatingWebhookConfiguration` lifecycle → handled outside the controller (chart + cluster admin)
-- Validation business logic (overlay stores, render+validate) → `pkg/controller/dryrunvalidator`
+If `Config.Server` is nil, the component owns the server. This mode is useful for
+tests and standalone composition. `Start` binds the listener, serves until
+cancellation or failure, shuts it down, and joins the serve loop.
 
-## Package Purpose
+The persistent listener reads the mounted `tls.crt` and `tls.key` through
+`CertDir` and reloads changed certificate content during TLS handshakes.
 
-Thin glue between three things:
+## Admission contract
 
-1. The pure HTTPS server in `pkg/webhook` (handles TLS, AdmissionReview decode/encode, validator dispatch).
-2. The `DryRunValidator` interface (synchronous `ValidateDirect` call into the validation pipeline).
-3. The controller's metrics surface (per-GVK request and decision counters).
+The chart creates rules only for watched resources with
+`enableValidationWebhook: true`. Every rule uses `failurePolicy: Fail` and a
+10-second API-server timeout. There is no `HAProxyTemplateConfig` admission
+webhook; set-level config validation follows ADR-0016.
 
-It does **not** generate or fetch certificates, manage `ValidatingWebhookConfiguration`, or publish webhook-lifecycle events. The mounted cert directory comes into the component via `Config.CertDir`, and the pure server reads + hot-reloads the cert files from it; the chart owns the `ValidatingWebhookConfiguration` and the CA-bundle injection.
+Registration is atomic. A rule without a dry-run validator fails component
+startup. A request without a registered validator is denied with status 503,
+and a validation canceled by iteration teardown is denied as unavailable.
 
-## Architecture Pattern
+Each registered validator:
 
-```
-                   pkg/webhook (pure)            pkg/controller/webhook
-                   ┌──────────────┐              ┌──────────────────────┐
-TLS request ─────► │ Server       │ ──register── │ Component            │
-                   │ - HTTPS+AR   │              │ - Per-GVK            │
-                   │ - dispatch   │ ◄──validate──│   ValidationFunc     │
-                   └──────────────┘              │ - calls DryRun-      │
-                                                 │   Validator.Validate │
-                                                 │   Direct(ctx, ...)   │
-                                                 └──────────┬───────────┘
-                                                            │
-                                                            ▼
-                                              pkg/controller/dryrunvalidator
-                                              (overlay stores, render+validate
-                                               via proposalvalidator)
-```
+1. Checks basic object structure.
+2. Derives a 9-second deadline from the iteration context.
+3. Calls `DryRunValidator.ValidateDirect` with the proposed object.
+4. Returns its allow, reason, and warning result and records metrics.
 
-## Component Lifecycle
+Keep validation synchronous. The API server waits for the AdmissionReview
+response, so detached work would return before the gate has made a decision.
 
-### Construction
+## Tests
 
-```go
-component := webhook.New(logger, &webhook.Config{
-    Port:            9443,
-    Path:            "/validate",
-    CertDir:         "/etc/webhook/certs", // mounted cert Secret; server reads + hot-reloads tls.crt/tls.key
-    Rules:           rules,               // []WebhookRule -- per-GVK list
-    DryRunValidator: dryRunComponent,     // implements ValidateDirect
-    ResourceAdmissionTimeout: 9 * time.Second,
-    ConfigAdmissionTimeout:   29 * time.Second,
-}, restMapper, metricsRecorder)
-```
+- `component_test.go` covers rule resolution, validation decisions, deadlines,
+  and metrics.
+- `component_adopted_test.go` covers atomic generation replacement, fail-closed
+  teardown, and request draining on the shared listener.
+- `pkg/webhook/server_test.go` covers TLS and AdmissionReview handling.
 
-There are no `Namespace`, `ServiceName`, or `CABundle` fields on the config — those concerns live in the Helm chart's `ValidatingWebhookConfiguration` and the chart-managed Secret.
-
-### Start
-
-`Start(ctx)` instantiates the underlying `*pkg/webhook.Server`, registers one bridge `ValidationFunc` per GVK in `Rules`, then blocks inside `server.Start(ctx)` until the context is cancelled. Cancelling triggers the pure server's graceful shutdown.
-
-This component does not run its own rotation loop, but the cert is still hot-reloaded: the controller points `Config.CertDir` at the mounted cert Secret, and the underlying `pkg/webhook.Server` reads `tls.crt`/`tls.key` from that directory and re-parses them on content change. A cert-manager renewal written to the mounted Secret is served within ~a minute, with no iteration restart, pod restart, or dedicated cert event.
-
-## Validator Bridge
-
-The component creates one bridge per GVK via `createResourceValidator(gvk)`,
-called from `RegisterValidator` once per `Rules` entry. The real shape:
-
-```go
-func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
-    return func(valCtx *webhook.ValidationContext) (bool, string, error) {
-        // 1. Inline structural validation runs first; if it fails, we
-        //    short-circuit before even constructing the dryrun pipeline.
-        if err := c.validateBasicStructure(valCtx.Object); err != nil {
-            return false, err.Error(), nil
-        }
-
-        // 2. Fail-open if no DryRunValidator is configured (e.g. early in
-        //    startup before the proposal pipeline is wired up).
-        if c.dryRunValidator == nil {
-            return true, "", nil
-        }
-
-        // 3. Configurable internal deadline — the chart uses 9s here
-        //    (Config.ResourceAdmissionTimeout), in addition to the API server's
-        //    `timeoutSeconds` on the ValidatingWebhookConfiguration.
-        parent := c.serverCtx  // allows iteration shutdown to cancel in-flight validations
-        if parent == nil {
-            parent = context.Background()  // nil only in unit tests that skip Start()
-        }
-        ctx, cancel := context.WithTimeout(parent, c.config.ResourceAdmissionTimeout)
-        defer cancel()
-
-        // 4. Direct synchronous call into the proposal pipeline.
-        //    ValidationContext has flat fields — no Request / Context wrapper.
-        allowed, reason, warnings := c.dryRunValidator.ValidateDirect(
-            ctx, gvk,
-            valCtx.Namespace,
-            valCtx.Name,
-            valCtx.Object,        // *unstructured.Unstructured
-            valCtx.Operation,     // already a string ("CREATE" / "UPDATE" / "DELETE")
-        )
-        return allowed, reason, warnings, nil
-    }
-}
-```
-
-Two deadlines apply, in this order:
-
-1. The component's configurable `context.WithTimeout` around validation. The
-   chart defaults watched resources to 9 seconds and HAProxyTemplateConfig to
-   29 seconds because prospective-config validation compiles and strictly
-   renders the entire template set.
-2. The API server's `timeoutSeconds` on the `ValidatingWebhookConfiguration`
-   (defaults: watched resources 10 seconds, HAProxyTemplateConfig 30 seconds)
-   cuts the whole HTTP request if either deadline doesn't fire first.
-
-The chart validates both outer values to `2..30` and derives each controller
-deadline one second shorter. Watched-resource timeout remains fail closed. A
-HAProxyTemplateConfig timeout is admitted with a warning because its
-`failurePolicy: Ignore` is specifically intended to preserve operator recovery;
-the daemon load gate remains authoritative.
-
-### Merged-set admission
-
-`ConfigValidator` judges the config the controller would actually **load**, not
-the object being applied. It substitutes the prospective object into the
-controller's configured set (`ConfigValidatorConfig.MergeWithSiblings`, wired in
-`pkg/controller/webhook.go` to fetch the others and run `conversion.MergeSpecs`)
-and validates the merge.
-
-Validating one object of a merged set in isolation would deny every apply: since
-ADR-0014 a template-library object carries no `podSelector`, and the operator's
-own object is missing every library it overrides.
-
-An object the controller does **not** merge is validated standalone, exactly as
-before — self-contained is the right frame for a config this controller does not
-assemble, and skipping it would silently weaken the gate for hand-written
-configs (`TestHAProxyTemplateConfigAdmission_Rejects*` cover precisely that
-case). Only a merge *failure* admits with a warning, the same posture as
-effective-config resolution: a transient apiserver blip must not block an
-operator's recovery apply, and the load gate still enforces deterministically.
-
-### Version-gated deferral (rolling-upgrade skew)
-
-`ConfigValidator` also admits-with-warning on a template **compile** or
-**render** failure when it detects a version skew: the prospective config's
-`app.kubernetes.io/version` label differs from the SAME label on the
-controller's currently-running config (`ConfigValidatorConfig.RunningConfigVersion`,
-threaded from the loaded CR's labels in `iteration.go`). This is the
-rolling-`helm upgrade` window where a new config uses an engine feature (e.g. a
-new template builtin) that an old pod still serving admission can't compile — a
-hard deny that `failurePolicy: Ignore` doesn't cover. The target controller's
-fail-closed load gate re-validates, so deferring only moves an
-engine-version-dependent verdict to the version that can judge it. Comparing the
-two chart-stamped labels (rather than the controller's build version, which is
-set by a different mechanism — ldflag `main.version` — and would mismatch the
-chart label on snapshot builds) keeps steady state matching; skew is plain label
-inequality, so it works for snapshot chart versions too. **Only** template compile/render errors defer — `haproxy -c` and
-`validationTests` failures always deny, because they're engine-version-independent
-and admitting them would let a genuinely-broken config crash-loop the new
-controller, defeating the load gate. In steady state (matching versions) every
-failure denies as before, preserving early typo detection.
-
-Within the HAProxyTemplateConfig deadline, `ConfigValidator` gives embedded
-`validationTests` the same suite-size-scaled run budget as the daemon load gate,
-capped by the time remaining after schema bootstrap and strict prospective
-rendering. Do not add a second fixed admission-test timeout: the chart's own
-suite is large enough to exceed a small constant, and the configurable parent
-deadline already provides the required bound and API-server response margin.
-
-## Metrics
-
-`MetricsRecorder` (the small interface this package depends on, *not* the full `*pkg/controller/metrics.Component`) gets two calls per request:
-
-```go
-type MetricsRecorder interface {
-    RecordWebhookRequest(gvk, result string, durationSeconds float64)
-    RecordWebhookValidation(gvk, result string)
-}
-```
-
-Both are no-ops when `metrics` is nil — the component degrades gracefully so unit tests don't have to wire a real recorder.
-
-## Testing Strategy
-
-Three layers, only the first two live in this package:
-
-| Layer | Where | What it covers |
-|-------|-------|----------------|
-| Unit | `component_test.go` | Defaulting, `Config` validation, `bridgeForGVK` calls `DryRunValidator` with the right arguments |
-| Behavioural | `component_test.go` | Mock `DryRunValidator` returning allow/deny/error → HTTP response shape via the embedded `pkg/webhook.Server` |
-| Integration | `tests/acceptance` | End-to-end: API server fires admission request, full pipeline runs, response observed |
-
-Use the test helpers in `pkg/webhook/server_test.go` (cert generation, AdmissionReview construction) rather than re-implementing them here.
-
-## Common Pitfalls
-
-### Treating `ValidateDirect` as Async
-
-The webhook handler runs synchronously — the API server is holding a request open. Returning before `ValidateDirect` completes (via a goroutine, channel, or fire-and-forget event) means the response goes back as "allowed" with no actual check. Always block.
-
-### Returning errors as deny
-
-`(false, "internal error", nil)` denies the admission request. `(false, "", err)` causes the pure server to return HTTP 500, which the API server treats as failure-policy (`Fail` → reject, `Ignore` → admit). Pick deliberately based on whether the failure should block the user's `kubectl apply`.
-
-### Passing the controller's full Metrics struct
-
-The component depends on the small `MetricsRecorder` interface, not the heavy `*pkg/controller/metrics.Component`. Wire `metrics.Metrics()` (which returns `*pkg/controller/metrics.Metrics` — itself implementing `RecordWebhookRequest`/`RecordWebhookValidation`) so the component remains testable without dragging the whole event bus into unit tests.
-
-## Resources
-
-- Pure webhook library: `pkg/webhook/CLAUDE.md`
-- DryRunValidator: `pkg/controller/dryrunvalidator/CLAUDE.md`
-- Cert lifecycle: the chart-managed cert-manager Secret/`ValidatingWebhookConfiguration`, mounted and pointed at via `Config.CertDir`, then served + hot-reloaded by `pkg/webhook`
-- Architecture: `/docs/site/docs/development/design.md`
+See `pkg/controller/webhook/README.md`, `pkg/webhook/CLAUDE.md`, and
+`docs/adr/0016-one-config-kind-many-instances-pre-rollout-validation.md`.

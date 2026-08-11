@@ -27,6 +27,7 @@ package crdwatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -104,12 +105,13 @@ type Component struct {
 	// channel has capacity 1 and a queued reload subsumes this one).
 	trigger func()
 
-	debounce        time.Duration
-	recheckInterval time.Duration
-	stableChecks    int
-	maxErrorStreak  int
-	synced          atomic.Bool
-	pending         chan struct{}
+	debounce         time.Duration
+	recheckInterval  time.Duration
+	stableChecks     int
+	maxErrorStreak   int
+	waitForCacheSync func(<-chan struct{}, ...cache.InformerSynced) bool
+	synced           atomic.Bool
+	pending          chan struct{}
 }
 
 // New creates the CRD watch component.
@@ -120,16 +122,17 @@ type Component struct {
 //   - shouldReload / trigger: see field docs.
 func New(k8sClient *client.Client, groups map[string]bool, shouldReload func() (bool, error), trigger func(), logger *slog.Logger) *Component {
 	return &Component{
-		k8sClient:       k8sClient,
-		logger:          logger.With("component", ComponentName),
-		groups:          groups,
-		shouldReload:    shouldReload,
-		trigger:         trigger,
-		debounce:        DefaultDebounce,
-		recheckInterval: DefaultRecheckInterval,
-		stableChecks:    DefaultStableChecks,
-		maxErrorStreak:  DefaultMaxErrorStreak,
-		pending:         make(chan struct{}, 1),
+		k8sClient:        k8sClient,
+		logger:           logger.With("component", ComponentName),
+		groups:           groups,
+		shouldReload:     shouldReload,
+		trigger:          trigger,
+		debounce:         DefaultDebounce,
+		recheckInterval:  DefaultRecheckInterval,
+		stableChecks:     DefaultStableChecks,
+		maxErrorStreak:   DefaultMaxErrorStreak,
+		waitForCacheSync: cache.WaitForCacheSync,
+		pending:          make(chan struct{}, 1),
 	}
 }
 
@@ -202,12 +205,18 @@ func (c *Component) Start(ctx context.Context) error {
 		return fmt.Errorf("adding CRD event handler: %w", err)
 	}
 
-	stopCh := make(chan struct{})
-	defer close(stopCh)
-	go informer.Run(stopCh)
+	informerCtx, stopInformer := context.WithCancel(ctx)
+	factory.Start(informerCtx.Done())
+	defer func() {
+		stopInformer()
+		factory.Shutdown()
+	}()
 
-	if !cache.WaitForCacheSync(ctx.Done(), informer.HasSynced) {
-		return ctx.Err()
+	if !c.waitForCacheSync(informerCtx.Done(), informer.HasSynced) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return errors.New("CRD informer cache sync failed")
 	}
 	c.synced.Store(true)
 	c.logger.Debug("CRD watch synced", "groups", len(c.groups))

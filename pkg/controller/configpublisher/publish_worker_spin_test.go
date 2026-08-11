@@ -20,10 +20,6 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
-	configpublisherk8s "gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
 // The worker must not spin while a deployed item waits for the throttle gate.
@@ -47,12 +43,6 @@ func TestPublishWorker_DoesNotSpinWhileThrottleGateIsClosed(t *testing.T) {
 		publishWork:     make(chan *publishWorkItem, 4),
 		deployedTrigger: make(chan struct{}, 1),
 		publishThrottle: throttle.New(time.Hour),
-		// The shutdown flush publishes whatever is still queued, so the
-		// publisher must be real enough to be called.
-		publisher: configpublisherk8s.NewWithListers(
-			k8sfake.NewClientset(), fake.NewSimpleClientset(), nil,
-			slog.New(slog.NewTextHandler(logBuf, nil))),
-		eventBus: busevents.NewEventBus(8),
 	}
 
 	// Close the gate, then queue deploy work behind it.
@@ -67,14 +57,20 @@ func TestPublishWorker_DoesNotSpinWhileThrottleGateIsClosed(t *testing.T) {
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go c.publishWorker(ctx)
+	done := make(chan struct{})
+	go func() {
+		c.publishWorker(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		c.publishThrottle.Stop()
+		<-done
+	}()
 
 	// Long enough that a spinning loop racks up thousands of iterations.
 	time.Sleep(200 * time.Millisecond)
 
-	// Assert BEFORE cancelling: the shutdown path flushes whatever is queued,
-	// so cancelling first would empty the queue and hide the second assertion.
-	//
 	// Each spin iteration re-enters processPublishWork, which logs one buffering
 	// record before requeueing. One or two is the honest ceiling for a worker
 	// that blocks; the broken version produced these as fast as the CPU allowed.
@@ -86,8 +82,6 @@ func TestPublishWorker_DoesNotSpinWhileThrottleGateIsClosed(t *testing.T) {
 	// The item must still be queued, not dropped, and not published early.
 	assert.Equal(t, 1, c.deployedQueueDepth(),
 		"the deploy item must stay queued while the gate is closed")
-
-	cancel()
 }
 
 // Declining to drain must not strand the item.
@@ -126,8 +120,16 @@ func TestPublishWorker_QueuedDeployWorkStillFlushesWhenGateReopens(t *testing.T)
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go c.publishWorker(ctx)
+	done := make(chan struct{})
+	go func() {
+		c.publishWorker(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		c.publishThrottle.Stop()
+		<-done
+	}()
 
 	// The queue emptying is the behaviour that matters: the item left the queue
 	// on the flush path rather than sitting there forever. (It leaves via
