@@ -244,18 +244,18 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	// enabled, additionally returns per-snippet include stats (nil otherwise), so
 	// this is behaviour-neutral in production.
 	haproxyConfig, includeStats, err := s.engine.RenderWithProfiling(ctx, names.MainTemplateName, renderContext)
+	if resourceErr := bctx.Err(ctx); resourceErr != nil {
+		return nil, resourceErr
+	}
 	if err != nil {
 		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
-	if err := context.Cause(ctx); err != nil {
-		return nil, err
-	}
 
 	staticFiles, err := s.renderAuxiliaryFiles(ctx, renderContext)
-	if err != nil {
-		return nil, err
+	if resourceErr := bctx.Err(ctx); resourceErr != nil {
+		return nil, resourceErr
 	}
-	if err := context.Cause(ctx); err != nil {
+	if err != nil {
 		return nil, err
 	}
 
@@ -264,11 +264,12 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	// parsed and registered with the same RenderedResourceCollector
 	// the runtime renderResource() filter populated previously, so
 	// downstream consumers (resourceapplier) see no shape change.
-	if err := s.renderK8sResources(ctx, renderContext, renderedResourceCollector); err != nil {
-		return nil, err
+	resourceRenderErr := s.renderK8sResources(ctx, renderContext, renderedResourceCollector)
+	if resourceErr := bctx.Err(ctx); resourceErr != nil {
+		return nil, resourceErr
 	}
-	if err := context.Cause(ctx); err != nil {
-		return nil, err
+	if resourceRenderErr != nil {
+		return nil, resourceRenderErr
 	}
 
 	// Merge static and dynamic (FileRegistry) auxiliary files
@@ -282,8 +283,12 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	// whose post-config-delete phase deletes the missing map, breaking
 	// every subsequent HAProxy reload until the offending Ingress is
 	// removed.
-	if err := validateAuxiliaryFilesConsistency(haproxyConfig, auxiliaryFiles); err != nil {
-		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
+	consistencyErr := validateAuxiliaryFilesConsistency(haproxyConfig, auxiliaryFiles)
+	if resourceErr := bctx.Err(ctx); resourceErr != nil {
+		return nil, resourceErr
+	}
+	if consistencyErr != nil {
+		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, consistencyErr)
 	}
 
 	auxFileCount := len(auxiliaryFiles.MapFiles) +
@@ -295,11 +300,12 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	// Validate rendered resources before surfacing them. Any structural
 	// problem aborts the render so the deployment scheduler doesn't get a
 	// half-formed payload.
-	if err := renderedResourceCollector.Validate(); err != nil {
-		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
+	collectorErr := renderedResourceCollector.Validate()
+	if resourceErr := bctx.Err(ctx); resourceErr != nil {
+		return nil, resourceErr
 	}
-	if err := context.Cause(ctx); err != nil {
-		return nil, err
+	if collectorErr != nil {
+		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, collectorErr)
 	}
 
 	return &RenderResult{
@@ -467,7 +473,8 @@ func (s *RenderService) RenderSourceMaps(ctx context.Context, provider stores.St
 	}
 	// Source-map introspection is read-only provenance, not enforcement — use
 	// the lenient reconcile mode so it never fails on a conflict.
-	renderCtx := s.buildRenderingContext(ctx, provider, rendercontext.RenderModeReconcile).Context
+	bctx := s.buildRenderingContext(ctx, provider, rendercontext.RenderModeReconcile)
+	renderCtx := bctx.Context
 	out := make(map[string]TemplateSourceMap)
 	add := func(name string) {
 		if raw, spans, err := sm.RenderWithSourceMap(ctx, name, renderCtx); err == nil {
@@ -489,6 +496,9 @@ func (s *RenderService) RenderSourceMaps(ctx context.Context, provider stores.St
 	// displayed lines against this raw source map to attribute each one.
 	for name := range s.config.K8sResources {
 		add(name)
+	}
+	if err := bctx.Err(ctx); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

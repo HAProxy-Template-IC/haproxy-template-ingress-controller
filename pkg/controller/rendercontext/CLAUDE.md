@@ -43,11 +43,14 @@ builder := rendercontext.NewBuilder(
     rendercontext.WithCurrentConfig(currentConfig), // optional; nil on first deploy
 )
 
-// Build returns a *BuildResult with four fields: Context (map[string]any),
-// FileRegistry, StatusPatchCollector, and RenderedResourceCollector.
+// Build returns the context plus its output collectors and ResourceErrors.
 res := builder.Build()
 ctx := res.Context
 ```
+
+Call `res.Err(ctx)` after each render phase. It preserves the context cause and
+rejects store-read, ambiguous-lookup, and typed-materialization failures that
+the template-facing value-only methods can't return directly.
 
 ## Context Structure
 

@@ -55,8 +55,8 @@ func toString(v any) string {
 	}
 }
 
-// StoreWrapper wraps a stores.Store to provide template-friendly methods
-// (no error returns; errors are logged) AND pins a single per-render
+// StoreWrapper wraps a stores.Store with template-friendly value-only methods,
+// records read failures for the render boundary, and pins a single per-render
 // snapshot of the underlying store so every read in one render — List(),
 // Fetch(), or GetSingle() — observes the same state.
 //
@@ -118,10 +118,11 @@ func toString(v any) string {
 // Resources in stores are already converted (floats to ints) at storage
 // time, so StoreWrapper passes data through without additional processing.
 type StoreWrapper struct {
-	Store        stores.Store
-	ResourceType string
-	Logger       *slog.Logger
-	readContext  context.Context
+	Store          stores.Store
+	ResourceType   string
+	Logger         *slog.Logger
+	readContext    context.Context
+	resourceErrors *ResourceErrorCollector
 
 	// IndexBy mirrors the JSONPath expressions the underlying store uses
 	// to index resources. Required for snapshot-served Fetch/GetSingle.
@@ -191,6 +192,10 @@ func (w *StoreWrapper) warnReadFailure(message string, args ...any) {
 	}
 }
 
+func (w *StoreWrapper) recordReadFailure(err error) {
+	w.resourceErrors.Record(err)
+}
+
 func (w *StoreWrapper) prepareSnapshotIndex() {
 	if len(w.IndexBy) == 0 {
 		w.Logger.Warn("StoreWrapper has no IndexBy; Fetch/GetSingle will bypass the snapshot",
@@ -200,6 +205,7 @@ func (w *StoreWrapper) prepareSnapshotIndex() {
 
 	idx, err := indexer.New(indexer.Config{IndexBy: w.IndexBy})
 	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q could not build its snapshot index: %w", w.ResourceType, err))
 		w.Logger.Warn("Failed to build snapshot indexer; Fetch/GetSingle will bypass the snapshot",
 			"resource_type", w.ResourceType,
 			"index_by", w.IndexBy,
@@ -214,6 +220,7 @@ func (w *StoreWrapper) loadInitialSnapshot() []any {
 	if !w.LazySnapshot {
 		items, err := w.listStore()
 		if err != nil {
+			w.recordReadFailure(fmt.Errorf("resource %q List failed: %w", w.ResourceType, err))
 			w.warnReadFailure("Failed to list resources for snapshot",
 				"resource_type", w.ResourceType, "error", err)
 			return nil
@@ -230,6 +237,7 @@ func (w *StoreWrapper) loadInitialSnapshot() []any {
 	}
 	items, err := lister.ListCached()
 	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q cached snapshot failed: %w", w.ResourceType, err))
 		w.warnReadFailure("Failed to list cached resources for snapshot prime",
 			"resource_type", w.ResourceType, "error", err)
 		return nil
@@ -261,6 +269,7 @@ func (w *StoreWrapper) loadSnapshot() {
 func (w *StoreWrapper) getWithoutSnapshotIndex(stringKeys []string, op string) []any {
 	items, err := w.getStore(stringKeys...)
 	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q %s lookup %q failed: %w", w.ResourceType, op, stringKeys, err))
 		w.warnReadFailure("Failed to get resources from store (no snapshot index)",
 			"resource_type", w.ResourceType,
 			"op", op,
@@ -297,6 +306,7 @@ func (w *StoreWrapper) getExact(stringKeys []string, op string) []any {
 
 	items, err := w.getStore(stringKeys...)
 	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q %s lookup %q failed: %w", w.ResourceType, op, stringKeys, err))
 		w.warnReadFailure("Failed to fetch single key for lazy snapshot",
 			"resource_type", w.ResourceType,
 			"op", op,
@@ -341,6 +351,7 @@ func (w *StoreWrapper) indexItemLocked(item any) {
 	}
 	keys, err := w.indexer.ExtractKeys(item)
 	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q could not index a snapshot item: %w", w.ResourceType, err))
 		// Item appears but isn't reachable via keyed lookup.
 		// Mirrors what would happen if the underlying store had
 		// also failed to extract keys.
@@ -443,14 +454,14 @@ func (w *StoreWrapper) get(stringKeys []string, op string) []any {
 //
 // Accepts any arguments for template compatibility.
 //
-// If an error occurs during snapshot loading, it's logged and an empty
-// slice is returned.
+// A failed read returns an empty slice to the template and fails the render at
+// its next phase boundary.
 func (w *StoreWrapper) Fetch(keys ...any) []any {
 	stringKeys := make([]string, len(keys))
 	for i, key := range keys {
 		stringKeys[i] = toString(key)
 	}
-	return w.get(stringKeys, "fetch")
+	return w.get(stringKeys, "Fetch")
 }
 
 // GetSingle performs O(1) indexed lookup over the per-render snapshot
@@ -474,23 +485,26 @@ func (w *StoreWrapper) Fetch(keys ...any) []any {
 //   - nil if no resources match (this is NOT an error - allows templates
 //     to check existence)
 //   - The single matching resource if exactly one matches
-//   - nil + logs error if multiple resources match (ambiguous lookup)
+//   - nil if multiple resources match; the ambiguity then fails the render
 //
-// If an error occurs during snapshot loading, it's logged and nil is
-// returned.
+// A failed read returns nil to the template and fails the render at its next
+// phase boundary.
 func (w *StoreWrapper) GetSingle(keys ...any) any {
 	stringKeys := make([]string, len(keys))
 	for i, key := range keys {
 		stringKeys[i] = toString(key)
 	}
 
-	items := w.get(stringKeys, "get_single")
+	items := w.get(stringKeys, "GetSingle")
 
 	if len(items) == 0 {
 		return nil
 	}
 
 	if len(items) > 1 {
+		w.recordReadFailure(fmt.Errorf(
+			"resource %q GetSingle lookup %q matched %d objects; use Fetch or configure unique indexBy values",
+			w.ResourceType, stringKeys, len(items)))
 		w.Logger.Error("GetSingle found multiple resources (ambiguous lookup)",
 			"resource_type", w.ResourceType,
 			"keys", stringKeys,

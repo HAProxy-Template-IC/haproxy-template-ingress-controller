@@ -58,6 +58,7 @@ cached, _ := store.NewCachedStore(&store.CachedStoreConfig{
 - The cache is keyed by `namespace/name`, separate from the index composite key — multiple references can share the same index key while each has its own cache entry.
 - **`List` forces a fetch for every reference.** Use it only for small collections or debugging; prefer `MemoryStore` for templates that iterate everything.
 - The implementation releases the store lock *before* dispatching API calls so one slow fetch doesn't block other lookups.
+- A stale reference whose API object returns `NotFound` is skipped. Every other API error aborts the read; callers never receive a partial result set.
 - **`Projected` mode** (set by the watcher for every on-demand kind): the informer feeding the store delivers body-stripped objects (only `indexBy` / field-selector / identity fields survive — see [ADR-0012](../../../docs/adr/0012-on-demand-projection-and-access-gated-reconcile.md)). In this mode `Add`/`Update` do **not** cache the stripped body; the value cache is populated solely by the live API GET (full body), and `Update`/`Delete` invalidate any stale entry. This shrinks the informer's resident memory without ever serving a husk to a render read.
 
 In the controller the TTL is auto-derived from `dataplane.driftPreventionInterval × 2.2` (see `pkg/controller/resourcewatcher/watcher.go`) — it's **not** a user-configurable CRD field. That derivation means a cached entry stays warm for slightly longer than the drift prevention window, so it's already there when the next reconciliation fires.

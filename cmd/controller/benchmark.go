@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -236,7 +237,8 @@ func runSingleTestBenchmark(
 
 	httpStore := createHTTPStoreForBenchmark(httpFixtures, logger)
 
-	renderCtx := buildBenchmarkContext(cfg, storeMap, validationPaths, httpStore, typedResourceTypes, logger)
+	bctx := buildBenchmarkContext(cfg, storeMap, validationPaths, httpStore, typedResourceTypes, logger)
+	renderCtx := bctx.Context
 
 	// Fold in the _global + per-test extraContext baseline so the benchmark
 	// renders each test exactly as the load gate does (e.g. against the isolated
@@ -247,6 +249,9 @@ func runSingleTestBenchmark(
 
 	// Warm up (one render to eliminate any JIT effects)
 	_, err = renderAllFiles(engine, cfg, renderCtx)
+	if resourceErr := bctx.Err(context.Background()); resourceErr != nil {
+		return nil, resourceErr
+	}
 	if err != nil {
 		return nil, fmt.Errorf("warm-up render failed: %w", err)
 	}
@@ -259,6 +264,9 @@ func runSingleTestBenchmark(
 
 	for i := 0; i < benchmarkIterations; i++ {
 		iterResult, err := renderAllFiles(engine, cfg, renderCtx)
+		if resourceErr := bctx.Err(context.Background()); resourceErr != nil {
+			return nil, resourceErr
+		}
 		if err != nil {
 			return nil, fmt.Errorf("render iteration %d failed: %w", i+1, err)
 		}

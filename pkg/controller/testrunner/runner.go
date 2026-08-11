@@ -37,6 +37,7 @@ import (
 	"sync"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -410,15 +411,12 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 			result.Duration = time.Since(startTime)
 			return result, true
 		}
-		result.RenderError = dataplane.SimplifyRenderingError(err)
-
-		// Add rendering failure as assertion for completeness
-		result.Assertions = append(result.Assertions, AssertionResult{
-			Type:        "rendering",
-			Description: "Template rendering failed",
-			Passed:      false,
-			Error:       result.RenderError,
-		})
+		recordRenderFailure(&result, err)
+		if isResourceInputError(err) {
+			result.Passed = false
+			result.Duration = time.Since(startTime)
+			return result, false
+		}
 		// Don't return early - continue to run assertions
 		// Some tests expect rendering to fail (negative tests with rendering_error assertions)
 	} else {
@@ -436,7 +434,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 6. Build template context for JSONPath assertions
-	templateContext := r.buildRenderingContext(ctx, fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles)
+	templateContext := r.buildRenderingContext(ctx, fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles).Context
 
 	// 7. Create render dependencies for deterministic assertion (if needed)
 	renderDeps := &RenderDependencies{
@@ -465,6 +463,21 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 
 	result.Duration = time.Since(startTime)
 	return result, incomplete
+}
+
+func recordRenderFailure(result *TestResult, err error) {
+	result.RenderError = dataplane.SimplifyRenderingError(err)
+	result.Assertions = append(result.Assertions, AssertionResult{
+		Type:        "rendering",
+		Description: "Template rendering failed",
+		Passed:      false,
+		Error:       result.RenderError,
+	})
+}
+
+func isResourceInputError(err error) bool {
+	var resourceInputErr *rendercontext.ResourceInputError
+	return errors.As(err, &resourceInputErr)
 }
 
 // parseCurrentConfig parses the optional `currentConfig` block from a test

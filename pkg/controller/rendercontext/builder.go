@@ -242,16 +242,14 @@ func NewBuilder(ctx context.Context, cfg *config.Config, pathResolver *templatin
 	return b
 }
 
-// BuildResult is the bundle returned from Build(). Callers that only need a
-// subset (e.g. just the context map for a benchmark or test fixture) read the
-// relevant field; the unused collectors are then garbage-collected with the
-// result struct.
+// BuildResult is the context and render-scoped collectors returned from Build().
 type BuildResult struct {
 	Context                   map[string]any
 	FileRegistry              *FileRegistry
 	StatusPatchCollector      *templating.StatusPatchCollector
 	RenderedResourceCollector *templating.RenderedResourceCollector
 	EventCollector            *templating.EventCollector
+	ResourceErrors            *ResourceErrorCollector
 }
 
 // Build creates the template rendering context, file registry, status patch
@@ -276,6 +274,8 @@ type BuildResult struct {
 //	  "extraContext": map from config,
 //	}
 func (b *Builder) Build() *BuildResult {
+	resourceErrors := NewResourceErrorCollector()
+
 	// Create controller namespace with typed ResourceStore values. The
 	// haproxy-pods watcher is auto-injected by ResourceWatcherComponent
 	// with a fixed IndexBy of ["metadata.namespace", "metadata.name"]
@@ -290,11 +290,12 @@ func (b *Builder) Build() *BuildResult {
 	if b.haproxyPodStore != nil {
 		b.logger.Debug("Wrapping HAProxy pods store for rendering context")
 		controller["haproxy_pods"] = &StoreWrapper{
-			Store:        b.haproxyPodStore,
-			ResourceType: names.HAProxyPodsResourceType,
-			Logger:       b.logger,
-			IndexBy:      []string{"metadata.namespace", "metadata.name"},
-			readContext:  b.readContext,
+			Store:          b.haproxyPodStore,
+			ResourceType:   names.HAProxyPodsResourceType,
+			Logger:         b.logger,
+			IndexBy:        []string{"metadata.namespace", "metadata.name"},
+			readContext:    b.readContext,
+			resourceErrors: resourceErrors,
 		}
 	}
 
@@ -375,7 +376,7 @@ func (b *Builder) Build() *BuildResult {
 	// BuildEngineDeclarations for the matching declaration shape).
 	// One field per watched resource — typed `[]*GeneratedT` when the
 	// schema resolved, untyped `[]any` when it didn't.
-	b.addTypedResources(templateContext)
+	b.addTypedResources(templateContext, resourceErrors)
 
 	// Merge extraContext variables into top-level context
 	MergeExtraContextInto(templateContext, b.config)
@@ -398,6 +399,7 @@ func (b *Builder) Build() *BuildResult {
 		StatusPatchCollector:      statusPatchCollector,
 		RenderedResourceCollector: renderedResourceCollector,
 		EventCollector:            eventCollector,
+		ResourceErrors:            resourceErrors,
 	}
 }
 
@@ -426,7 +428,7 @@ func (b *Builder) Build() *BuildResult {
 // Method receiver rather than free function so the closures can
 // capture `b.stores` / `b.config.WatchedResources` / `b.logger`
 // without threading them as arguments.
-func (b *Builder) addTypedResources(ctx map[string]any) {
+func (b *Builder) addTypedResources(ctx map[string]any, resourceErrors *ResourceErrorCollector) {
 	// Single source of truth — delegates to BuildResourcesValue so
 	// production renderer, testrunner, and any other consumer
 	// produce byte-identical struct shapes. No dual-shape: the
@@ -445,7 +447,7 @@ func (b *Builder) addTypedResources(ctx map[string]any) {
 			watchedNames = append(watchedNames, name)
 		}
 	}
-	ctx["resources"] = BuildResourcesValue(
+	ctx["resources"] = buildResourcesValue(
 		b.readContext,
 		b.stores,
 		b.typedResourceTypes,
@@ -480,6 +482,7 @@ func (b *Builder) addTypedResources(ctx map[string]any) {
 			return ""
 		},
 		b.logger,
+		resourceErrors,
 	)
 }
 
@@ -552,6 +555,20 @@ func BuildResourcesValue(
 	apiVersionFor func(name string) string,
 	logger *slog.Logger,
 ) any {
+	return buildResourcesValue(ctx, resourceStores, typedTypes, watchedNames, indexByFor, lazyFor, apiVersionFor, logger, nil)
+}
+
+func buildResourcesValue(
+	ctx context.Context,
+	resourceStores map[string]stores.Store,
+	typedTypes map[string]reflect.Type,
+	watchedNames []string,
+	indexByFor func(name string) []string,
+	lazyFor func(name string) bool,
+	apiVersionFor func(name string) string,
+	logger *slog.Logger,
+	resourceErrors *ResourceErrorCollector,
+) any {
 	if indexByFor == nil {
 		indexByFor = func(string) []string { return nil }
 	}
@@ -592,16 +609,17 @@ func BuildResourcesValue(
 		var wrapper *StoreWrapper
 		if store != nil {
 			wrapper = &StoreWrapper{
-				Store:        store,
-				ResourceType: name,
-				Logger:       logger,
-				IndexBy:      indexByFor(name),
-				LazySnapshot: lazyFor(name),
-				readContext:  ctx,
+				Store:          store,
+				ResourceType:   name,
+				Logger:         logger,
+				IndexBy:        indexByFor(name),
+				LazySnapshot:   lazyFor(name),
+				readContext:    ctx,
+				resourceErrors: resourceErrors,
 			}
 		}
 		innerType := typebootstrap.BuildPerResourceStoreType(elemType)
-		innerValue := buildPerResourceStoreValue(innerType, wrapper, elemType, name, apiVersionFor(name), logger)
+		innerValue := buildPerResourceStoreValue(innerType, wrapper, elemType, name, apiVersionFor(name), logger, resourceErrors)
 		fields = append(fields, reflect.StructField{
 			Name: typegen.GoFieldName(name),
 			Type: reflect.PointerTo(innerType),
@@ -639,6 +657,7 @@ func buildPerResourceStoreValue(
 	resourceName string,
 	apiVersion string,
 	logger *slog.Logger,
+	resourceErrors *ResourceErrorCollector,
 ) reflect.Value {
 	ptr := reflect.New(innerType)
 	elem := ptr.Elem()
@@ -704,7 +723,7 @@ func buildPerResourceStoreValue(
 		}
 		items := wrapper.List()
 		return []reflect.Value{
-			adaptSliceForResource(items, listReturnType, elemType, resourceName, "List", logger, wrapItem),
+			adaptSliceForResource(items, listReturnType, elemType, resourceName, "List", logger, resourceErrors, wrapItem),
 		}
 	}))
 
@@ -716,7 +735,7 @@ func buildPerResourceStoreValue(
 		keys := args[0].Interface().([]any)
 		items := wrapper.Fetch(keys...)
 		return []reflect.Value{
-			adaptSliceForResource(items, fetchReturnType, elemType, resourceName, "Fetch", logger, wrapItem),
+			adaptSliceForResource(items, fetchReturnType, elemType, resourceName, "Fetch", logger, resourceErrors, wrapItem),
 		}
 	}))
 
@@ -727,7 +746,7 @@ func buildPerResourceStoreValue(
 		keys := args[0].Interface().([]any)
 		item := wrapper.GetSingle(keys...)
 		return []reflect.Value{
-			adaptSingleForResource(item, getSingleReturnType, elemType, resourceName, logger, wrapItem),
+			adaptSingleForResource(item, getSingleReturnType, elemType, resourceName, logger, resourceErrors, wrapItem),
 		}
 	}))
 
@@ -745,6 +764,7 @@ func adaptSliceForResource(
 	elemType reflect.Type,
 	resourceName, op string,
 	logger *slog.Logger,
+	resourceErrors *ResourceErrorCollector,
 	wrapItem func(any) (reflect.Value, error),
 ) reflect.Value {
 	if elemType == nil {
@@ -758,15 +778,13 @@ func adaptSliceForResource(
 		}
 		return out
 	}
-	// Typed: each item becomes *T via the per-render memoized wrapItem (same
-	// *T for the same snapshot item across List/Fetch/GetSingle calls). If
-	// wrapping fails for a single item we log and skip that entry rather than
-	// abort the whole call — partial data is better than no data for a single
-	// bad shape.
+	// Typed: each item becomes *T via the per-render memoized wrapItem. A
+	// failed conversion is recorded so the render can't publish partial input.
 	out := reflect.MakeSlice(returnType, 0, len(items))
 	for _, item := range items {
 		ptr, err := wrapItem(item)
 		if err != nil {
+			resourceErrors.Record(fmt.Errorf("resource %q %s could not materialize its typed object: %w", resourceName, op, err))
 			logger.Warn("Typed resource: WrapInto failed; skipping item",
 				"resource", resourceName, "op", op, "error", err)
 			continue
@@ -785,6 +803,7 @@ func adaptSingleForResource(
 	elemType reflect.Type,
 	resourceName string,
 	logger *slog.Logger,
+	resourceErrors *ResourceErrorCollector,
 	wrapItem func(any) (reflect.Value, error),
 ) reflect.Value {
 	if item == nil {
@@ -801,6 +820,7 @@ func adaptSingleForResource(
 	// same snapshot item within this render.
 	ptr, err := wrapItem(item)
 	if err != nil {
+		resourceErrors.Record(fmt.Errorf("resource %q GetSingle could not materialize its typed object: %w", resourceName, err))
 		logger.Warn("Typed resource: WrapInto failed; returning nil",
 			"resource", resourceName, "op", "GetSingle", "error", err)
 		return reflect.Zero(returnType)

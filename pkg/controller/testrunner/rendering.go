@@ -119,7 +119,8 @@ type RenderOutput struct {
 // include-stats (when profiling) bundled in a RenderOutput, plus the render error.
 func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string, testExtraContext map[string]any) (RenderOutput, error) {
 	// Build rendering context with fixture stores
-	renderCtx := r.buildRenderingContext(ctx, storeMap, validationPaths, httpStore, currentConfig, currentFiles)
+	bctx := r.buildRenderingContext(ctx, storeMap, validationPaths, httpStore, currentConfig, currentFiles)
+	renderCtx := bctx.Context
 
 	mergeTestExtraContext(renderCtx, testExtraContext)
 
@@ -133,12 +134,18 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 	} else {
 		haproxyConfig, err = engine.Render(ctx, names.MainTemplateName, renderCtx)
 	}
+	if resourceErr := bctx.Err(ctx); resourceErr != nil {
+		return RenderOutput{}, resourceErr
+	}
 	if err != nil {
 		return RenderOutput{}, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
 
 	// Render auxiliary files using worker-specific engine (pre-declared files)
 	staticFiles, err := r.renderAuxiliaryFiles(ctx, engine, renderCtx, validationPaths)
+	if resourceErr := bctx.Err(ctx); resourceErr != nil {
+		return RenderOutput{}, resourceErr
+	}
 	if err != nil {
 		return RenderOutput{}, fmt.Errorf("rendering auxiliary files: %w", err)
 	}
@@ -150,6 +157,9 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 	k8sResources := make(map[string]string, len(r.config.K8sResources))
 	for name := range r.config.K8sResources {
 		rendered, err := engine.Render(ctx, name, renderCtx)
+		if resourceErr := bctx.Err(ctx); resourceErr != nil {
+			return RenderOutput{}, resourceErr
+		}
 		if err != nil {
 			return RenderOutput{}, fmt.Errorf("rendering k8sResources %s: %w", name, err)
 		}
@@ -346,7 +356,7 @@ func collectEvents(renderCtx map[string]any) string {
 //   - Creates PathResolver from ValidationPaths (not from config.Dataplane)
 //   - Separates haproxy-pods store from resource stores
 //   - Accepts optional currentConfig for slot-aware server assignment testing
-func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string) map[string]any {
+func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string) *rendercontext.BuildResult {
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
@@ -376,7 +386,7 @@ func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]
 		rendercontext.WithCapabilities(r.capabilities),
 	)
 
-	return builder.Build().Context
+	return builder.Build()
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) using worker-specific engine.

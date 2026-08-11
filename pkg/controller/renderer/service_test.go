@@ -16,6 +16,7 @@ package renderer
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"reflect"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	controllernames "gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -51,7 +53,9 @@ func (m *mockStoreProvider) StoreNames() []string {
 
 // mockTypedStore implements both stores.Store and types.Store for testing.
 type mockTypedStore struct {
-	items []any
+	items   []any
+	listErr error
+	getErr  error
 }
 
 func (m *mockTypedStore) Add(resource any, keys []string) error {
@@ -68,11 +72,11 @@ func (m *mockTypedStore) Delete(_, _ string, _ []string) error {
 }
 
 func (m *mockTypedStore) List() ([]any, error) {
-	return m.items, nil
+	return m.items, m.listErr
 }
 
 func (m *mockTypedStore) Get(keys ...string) ([]any, error) {
-	return nil, nil
+	return nil, m.getErr
 }
 
 func (m *mockTypedStore) Clear() error {
@@ -263,6 +267,44 @@ func TestRenderService_Render_WithStores(t *testing.T) {
 	assert.Contains(t, result.HAProxyConfig, "global")
 	assert.Contains(t, result.HAProxyConfig, "# ingress: ingress1")
 	assert.Contains(t, result.HAProxyConfig, "# ingress: ingress2")
+}
+
+func TestRenderService_Render_FailsClosedOnResourceReadError(t *testing.T) {
+	readErr := errors.New("apiserver unavailable")
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: `{% for _, item := range resources.widgets.List() %}{{ item }}{% end %}`,
+		},
+		WatchedResources: map[string]config.WatchedResource{
+			"widgets": {
+				APIVersion: "example.io/v1",
+				Resources:  "widgets",
+			},
+		},
+		Dataplane: testDataplaneConfig(),
+	}
+	decls := typebootstrap.BuildEngineDeclarations(&typebootstrap.Result{}, "widgets")
+	engine, err := templating.New(
+		map[string]string{controllernames.MainTemplateName: cfg.HAProxyConfig.Template},
+		&templating.Options{EntryPoints: []string{controllernames.MainTemplateName}, Declarations: decls},
+	)
+	require.NoError(t, err)
+
+	svc := NewRenderService(&RenderServiceConfig{
+		Engine:       engine,
+		Config:       cfg,
+		Logger:       slog.Default(),
+		Capabilities: defaultCapabilities(),
+	})
+	provider := &mockStoreProvider{storeMap: map[string]stores.Store{
+		"widgets": &mockTypedStore{listErr: readErr},
+	}}
+
+	result, err := svc.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+
+	assert.Nil(t, result)
+	require.ErrorIs(t, err, readErr)
+	assert.Contains(t, err.Error(), "reading template resources")
 }
 
 func TestRenderService_Render_WithMapFiles(t *testing.T) {

@@ -26,10 +26,15 @@ builder := rendercontext.NewBuilder(
 
 res := builder.Build()
 // res.Context is map[string]any ready to pass to engine.Render
-// res.FileRegistry, res.StatusPatchCollector, res.RenderedResourceCollector are also available
+// res.FileRegistry and the other output collectors are also available
+// res.Err(ctx) reports cancellation or deferred resource-input failures
 ```
 
 `ctx`, `cfg`, `pathResolver`, and `logger` are required positional arguments. The context cancels API-backed store reads when the render ends. Everything else is supplied through functional options. Omitting an option just leaves the corresponding context key unset (templates that try to read it will see `nil`).
+
+Store methods remain value-only for Scriggo, but they record read failures,
+ambiguous `GetSingle` results, and typed conversion failures in the returned
+`BuildResult`. Rendering callers must check `res.Err(ctx)` before accepting output.
 
 ## Context Keys
 
