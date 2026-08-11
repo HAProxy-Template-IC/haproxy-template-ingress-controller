@@ -22,7 +22,8 @@
  *   data-scenario   preset name -> fetch BOTH config+resources from the bundle (no inline block needed)
  *   data-resources  preset name -> resources when the config is inline
  *   data-version    HAProxy target version (default 3.4)
- *   data-tab        output tab to open on (haproxy.cfg|maps|files|certs|status|applied|resources|trace|tests)
+ *   data-tab        output tab to open on
+ *                   (haproxy.cfg|maps|files|certs|status|applied|resources|trace|tests|migration)
  *                   — "tests" auto-runs the config's spec.validationTests on load
  *   data-focus      [file:]start-end | file — highlight/scroll to the important lines
  *   data-facade     for scenario embeds: show a section of the bundled config

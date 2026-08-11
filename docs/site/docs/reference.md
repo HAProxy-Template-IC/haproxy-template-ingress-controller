@@ -321,7 +321,6 @@ For HAProxy behind a layer-4 load balancer. See [PROXY protocol](haproxy-deploym
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.config.includeMigrationCoverage` | bool | `false` | Emit `spec.migrationCoverage` into the rendered config. Off because nothing in the cluster reads it — it documents annotation coverage for tooling, and the playground gets it from a build-time chart render. |
 | `controller.config.credentialsSecretRef.name` | string | Auto-generated | Secret containing Dataplane API credentials |
 | `controller.config.credentialsSecretRef.namespace` | string | `""` | Credentials secret namespace |
 | `controller.config.podSelector.matchLabels` | map | `{app.kubernetes.io/component: loadbalancer}` | Labels to match HAProxy pods |

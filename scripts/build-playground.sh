@@ -2,8 +2,9 @@
 # Build the self-contained, per-version browser-playground bundle into <output-dir>.
 #
 # Produces everything the /playground/<version>/ page needs, all relative-linked:
-#   index.html  playground.worker.js  starter.config.yaml  starter.resources.yaml
+#   index.html  playground.worker.js  migration-assets.mjs  starter.config.yaml
 #   wasm_exec.js  playground.wasm(+.br)  schemas.json(+.br)  presets/*.yaml
+#   migration/*.json
 #
 # The <version> is stamped onto <html data-version="..."> so the version selector
 # knows which build this is. Immutability comes from the per-version directory in
@@ -26,7 +27,7 @@ command -v go >/dev/null || { echo "go not found" >&2; exit 1; }
 mkdir -p "$OUT"
 
 echo "==> shell -> $OUT"
-cp "$WEB/index.html" "$WEB/editor.js" "$WEB/tryout.js" "$WEB/tryout-template.sh" \
+cp "$WEB/index.html" "$WEB/editor.js" "$WEB/migration-assets.mjs" "$WEB/tryout.js" "$WEB/tryout-template.sh" \
    "$WEB/playground.worker.js" "$WEB/starter.config.yaml" "$WEB/starter.resources.yaml" \
    "$WEB/crd.config.yaml" "$WEB/crd.resources.yaml" "$OUT/"
 cp -r "$WEB/vendor" "$OUT/vendor"   # committed CodeMirror bundle (no CDN at runtime)

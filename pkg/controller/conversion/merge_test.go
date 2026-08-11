@@ -124,21 +124,6 @@ func TestMergeSpecs(t *testing.T) {
 			}},
 		},
 		{
-			name: "migrationCoverage accumulates across every contributing library, operator last",
-			sources: []*unstructured.Unstructured{
-				source("haproxytech", map[string]any{"migrationCoverage": []any{map[string]any{"source": "haproxytech"}}}),
-				source("haproxy-ingress", map[string]any{"migrationCoverage": []any{map[string]any{"source": "haproxy-ingress"}}}),
-				source("nginx-ingress", map[string]any{"migrationCoverage": []any{map[string]any{"source": "ingress-nginx"}}}),
-				source("overrides", map[string]any{"migrationCoverage": []any{map[string]any{"source": "custom"}}}),
-			},
-			want: map[string]any{"migrationCoverage": []any{
-				map[string]any{"source": "haproxytech"},
-				map[string]any{"source": "haproxy-ingress"},
-				map[string]any{"source": "ingress-nginx"},
-				map[string]any{"source": "custom"},
-			}},
-		},
-		{
 			name: "two libraries contributing validationTests._global fixtures coexist",
 			sources: []*unstructured.Unstructured{
 				source("base", map[string]any{"validationTests": map[string]any{
@@ -244,8 +229,7 @@ func TestMergeSpecs_IdentityComesFromTheLastSource(t *testing.T) {
 // through to them.
 func TestMergeSpecs_DoesNotMutateSources(t *testing.T) {
 	base := source("base", map[string]any{
-		"templateSnippets":  map[string]any{"a": snippet("A")},
-		"migrationCoverage": []any{map[string]any{"source": "haproxytech"}},
+		"templateSnippets": map[string]any{"a": snippet("A")},
 	})
 	overrides := source("overrides", map[string]any{
 		"templateSnippets": map[string]any{"a": snippet("overridden")},
@@ -255,8 +239,7 @@ func TestMergeSpecs_DoesNotMutateSources(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, map[string]any{
-		"templateSnippets":  map[string]any{"a": snippet("A")},
-		"migrationCoverage": []any{map[string]any{"source": "haproxytech"}},
+		"templateSnippets": map[string]any{"a": snippet("A")},
 	}, base.Object["spec"], "the first source must be untouched")
 }
 

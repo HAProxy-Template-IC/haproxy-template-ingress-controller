@@ -128,12 +128,6 @@ type HAProxyTemplateLibrarySpec struct {
 	// not. The reserved `_global` entry accumulates instead.
 	// +optional
 	ValidationTests map[string]ValidationTest `json:"validationTests,omitempty"`
-
-	// MigrationCoverage declares how a migration source's annotations are
-	// handled. Opaque to the controller; consumed by the playground's
-	// migration report.
-	// +optional
-	MigrationCoverage []MigrationCoverageSource `json:"migrationCoverage,omitempty"`
 }
 
 // HAProxyTemplateLibraryStatus reports what the controller observed.

@@ -32,8 +32,7 @@ in-place edit leaves the revision untouched, which is why it takes effect
 immediately.
 
 The merge uses the same primitive Helm's `mustMergeOverwrite` does, so the result
-is what a chart-side merge would have produced. `migrationCoverage` accumulates
-instead of being overwritten, and `validationTests` from every source are combined — a test name
+is what a chart-side merge would have produced. `validationTests` from every source are combined — a test name
 defined by two sources is an error naming both. See
 [ADR-0017](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/adr/0017-template-library-kind.md).
 

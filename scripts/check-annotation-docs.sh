@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # check-annotation-docs.sh — pin the vendor annotation-library reference pages
-# against the libraries' migrationCoverage declarations.
+# against the libraries' _migrationCoverage declarations.
 #
 # For each vendor library the script:
 #   1. Extracts the DECLARED annotation inventory (key + status) from the
-#      library's `migrationCoverage:` block — the same block
+#      library's `_migrationCoverage:` block — the same block
 #      check-migration-coverage.sh pins against the template read-set, so the
 #      inventory is guaranteed to match what the chart actually ships.
 #   2. For every annotation with status `supported` or `different` (i.e. the
@@ -31,10 +31,10 @@ DOCS=docs/site/docs/libraries
 FAILED=0
 
 # extract_declared <coverage-file> — `<key> <status>` pairs from the
-# migrationCoverage block (same extraction as check-migration-coverage.sh).
+# _migrationCoverage block (same extraction as check-migration-coverage.sh).
 extract_declared() {
   awk '
-    /^migrationCoverage:/ { in_cov = 1; next }
+    /^_migrationCoverage:/ { in_cov = 1; next }
     in_cov && /^[A-Za-z_]/ { in_cov = 0 }
     !in_cov { next }
     /^[ ]+[a-z0-9.-]+\/[a-z0-9.-]+:[ ]*$/ {
@@ -74,7 +74,7 @@ check_library() {
   local declared
   declared="$(extract_declared "$coverage_file")"
   if [ -z "$declared" ]; then
-    echo "FAIL [$name]: migrationCoverage block in $coverage_file declares no annotations"
+    echo "FAIL [$name]: _migrationCoverage block in $coverage_file declares no annotations"
     FAILED=1
     return
   fi
@@ -136,7 +136,7 @@ check_library haproxytech haproxy.org \
 if [ "$FAILED" -ne 0 ]; then
   echo
   echo "Annotation docs drift detected. Every supported/different annotation a"
-  echo "vendor library declares in its migrationCoverage must have a reference"
+  echo "vendor library declares in its _migrationCoverage must have a reference"
   echo "entry on the library's docs page."
   exit 1
 fi

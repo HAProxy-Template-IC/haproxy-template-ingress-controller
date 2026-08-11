@@ -8,6 +8,8 @@
 {{- if hasKey $controller "cache" }}{{- fail "controller.cache has moved to the top-level cache tree; use cache.varnish instead." }}{{- end }}
 {{- if hasKey $controller "rateLimit" }}{{- fail "controller.rateLimit has moved to the top-level rateLimit tree; use rateLimit.shared instead." }}{{- end }}
 {{- if hasKey $controller "defaultSSLCertificate" }}{{- fail "controller.defaultSSLCertificate has moved to the top-level defaultSSLCertificate tree." }}{{- end }}
+{{- if hasKey $controller.config "includeMigrationCoverage" }}{{- fail "controller.config.includeMigrationCoverage was removed because migration coverage is no longer a CRD field. Remove the value." }}{{- end }}
+{{- if hasKey $controller.config "migrationCoverage" }}{{- fail "controller.config.migrationCoverage was removed because migration coverage is no longer a CRD field. Remove the value." }}{{- end }}
 {{- $configuredExtraContext := dig "templatingSettings" "extraContext" dict ($controller.config | default dict) }}
 {{- /* Trace export needs the vector sidecar: spans are built from access-log
        records inside vector, so an OTLP endpoint without it exports nothing and
@@ -294,7 +296,7 @@
        explicitly rather than deleting the rest: an allowlist cannot leak a
        future field into an object whose schema has no room for it. */ -}}
 {{- $content := dict }}
-{{- range $key := (list "templatingSettings" "templateSnippets" "maps" "files" "sslCertificates" "k8sResources" "haproxyConfig" "validationTests" "migrationCoverage") }}
+{{- range $key := (list "templatingSettings" "templateSnippets" "maps" "files" "sslCertificates" "k8sResources" "haproxyConfig" "validationTests") }}
   {{- with (index $library.config $key) }}
     {{- $_ := set $content $key . }}
   {{- end }}
@@ -345,7 +347,6 @@ spec:
          NOT part of the CRD has to be dropped here or server-side apply rejects
          the whole object ("field not declared in schema") and `helm upgrade`
          fails. Chart-time-only switches belong in this list. */ -}}
-  {{- $_ := unset $config "includeMigrationCoverage" }}
   {{- with $config.credentialsSecretRef }}
     {{- $_ := set . "name" (.name | default (include "haptic.dataplane.credentialsSecretName" $)) }}
   {{- end }}
@@ -1333,11 +1334,6 @@ spec:
       {{- end }}
     {{- end }}
     {{- $_ := set $config "validators" $merged }}
-  {{- end }}
-  {{- /* Library content stays on the library objects; the controller merges.
-         Emitted only on request: nothing in a cluster reads it (!1492). */ -}}
-  {{- if not .Values.controller.config.includeMigrationCoverage }}
-    {{- $_ := unset $config "migrationCoverage" }}
   {{- end }}
   {{- /* No default-ssl-cert fixture rewrite needed: ssl.yaml's _global test
          pins a synthetic default certificate (extraContext.tls.defaultCertificate

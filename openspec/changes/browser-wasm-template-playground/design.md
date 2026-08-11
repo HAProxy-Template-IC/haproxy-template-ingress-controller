@@ -49,7 +49,7 @@ This satisfies "version-specific playgrounds OR a selector" with the superset of
 
 ### D4. Prepopulation via CI-pre-rendered Helm presets (v1)
 
-`haptic.mergeLibraries` does value-dependent injects/unsets, `tpl`-evaluated enable predicates, union-merged shared `watchedResources`, and order-sensitive passes — not safely decomposable client-side. CI runs real `helm template` per preset and ships the merged `HAProxyTemplateConfig` as a static asset; the UI offers a preset dropdown plus paste-your-own and the `byo-crd` minimal starter. An optional **Helm-in-WASM v2** module (the `chartrender.go` import set compiles to `js/wasm` at ~5.14 MB brotli) can later run the genuine loader for arbitrary toggles, lazily loaded only when requested.
+`haptic.prepareLibraries` does value-dependent injects/unsets, `tpl`-evaluated enable predicates, union-merged shared `watchedResources`, and order-sensitive passes — not safely decomposable client-side. CI runs real `helm template` per preset and ships the merged `HAProxyTemplateConfig` as a static asset; the UI offers a preset dropdown plus paste-your-own and the `byo-crd` minimal starter. Annotation migration coverage stays outside that config: the build extracts one asset per source from the chart declarations and generates a preset-to-source manifest from the libraries the Helm render actually enabled. An optional **Helm-in-WASM v2** module (the `chartrender.go` import set compiles to `js/wasm` at ~5.14 MB brotli) can later run the genuine loader for arbitrary toggles, lazily loaded only when requested.
 
 ### D5. Size: client-native severance — investigated and DEFERRED
 

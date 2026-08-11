@@ -65,10 +65,17 @@ The playground SHALL offer four ways to populate its editors: (a) all-libraries 
 
 Per-library enable/disable SHALL be served as CI-pre-rendered Helm presets (v1). The client SHALL NOT reimplement `haptic.mergeLibraries`. An optional, lazily-loaded in-WASM Helm-merge module MAY provide arbitrary library combinations (v2) by running the genuine chart loader.
 
+Migration coverage SHALL be published as separate per-source tooling assets. The build SHALL derive each preset's source list from the annotation libraries its Helm render enabled, and the browser SHALL pass the selected coverage to the WASM module separately from the HAProxyTemplateConfig.
+
 #### Scenario: Selecting a library preset
 
 - **WHEN** a user selects a library configuration in the playground
 - **THEN** the resulting `HAProxyTemplateConfig` is one produced by the real `helm template` at build time, not assembled by client-side merge logic
+
+#### Scenario: Selecting a migration preset
+
+- **WHEN** a user selects a preset with an annotation compatibility library
+- **THEN** the browser loads that library's coverage asset without adding tooling metadata to the config editor
 
 ### Requirement: HAProxy version selector
 
@@ -95,7 +102,7 @@ The playground SHALL expose a controller/chart-version selector that lazy-loads 
 
 ### Requirement: Per-version asset publishing
 
-Each release's CI SHALL publish an immutable, content-hashed asset bundle for the playground — the WASM module, its matching `wasm_exec.js` from the same Go toolchain, the rendered presets, and the schema bundles — and SHALL append the release to a `versions.json` index. The `wasm_exec.js` SHALL be the exact toolchain version that built the WASM and SHALL NOT be shared across versions.
+Each release's CI SHALL publish an immutable, content-hashed asset bundle for the playground — the WASM module, its matching `wasm_exec.js` from the same Go toolchain, the rendered presets, migration assets, and the schema bundles — and SHALL append the release to a `versions.json` index. The `wasm_exec.js` SHALL be the exact toolchain version that built the WASM and SHALL NOT be shared across versions.
 
 #### Scenario: Tag pipeline publishes a version bundle
 
@@ -150,7 +157,7 @@ The playground SHALL preserve the last successful render when a new input fails,
 
 ### Requirement: Shareable and persistent state
 
-The playground SHALL encode its state (versions, config, resources, library selection, active preset) into the URL for sharing and SHALL autosave to local storage, both without a server round-trip.
+The playground SHALL encode its state (versions, config, resources, migration source selection, library selection, active preset) into the URL for sharing and SHALL autosave to local storage, both without a server round-trip.
 
 #### Scenario: Share via URL
 

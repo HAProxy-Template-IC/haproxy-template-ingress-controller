@@ -17,7 +17,7 @@
 # keys the library templates actually read against this map (both ways).
 # Adding an annotation handler without declaring it here — or declaring a
 # supported/different/fails annotation nothing reads — fails `make lint`.
-migrationCoverage:
+_migrationCoverage:
   - source: ingress-nginx
     detect:
       ingressClasses: ["nginx"]

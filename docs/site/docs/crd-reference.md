@@ -493,18 +493,6 @@ validators:
 
 See [Pluggable Validators](./operations/pluggable-validators.md) for the wire protocol, sidecar wiring, and routing examples.
 
-### `migrationCoverage`
-
-Per-migration-source annotation coverage declarations (optional).
-
-| Field | Type | Required | Default |
-|-------|------|----------|---------|
-| `source` | string | Yes | — (source controller name, unique) |
-| `detect` | object | No | — (`ingressClasses`, `annotationPrefixes`) |
-| `annotations` | `map[string]object` | No | — (source annotation keys → migration classification) |
-
-The controller treats this as opaque data — it's contributed by the template libraries and merged by the Helm chart; no entry influences rendering or reconciliation. It powers the migration report in the [playground](/playground/), which reads it from a build-time chart render rather than from a cluster. Because nothing in a cluster reads it, the chart doesn't emit it by default; set `controller.config.includeMigrationCoverage=true` if you want it stored. See [Migrating](./migrating.md).
-
 ### `controller`
 
 Controller-level settings for leader election and config publishing.
@@ -643,7 +631,6 @@ A second kind carrying template-library *content* only, referenced from a config
 | `k8sResources` | map | No | Same shape as [`k8sResources`](#k8sresources) |
 | `templatingSettings` | object | No | Template-context defaults; the config merges last, so an operator always wins |
 | `haproxyConfig` | object | No | Exactly one member of a merged set supplies it |
-| `migrationCoverage` | array | No | Same shape as [`migrationCoverage`](#migrationcoverage) |
 
 A library carries **no** `podSelector`, `watchedResources`, `dataplane`, `validators`, `controller` or `logging` — it can't redefine the controller's operational identity.
 

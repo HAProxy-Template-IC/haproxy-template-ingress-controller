@@ -9,7 +9,7 @@
 # Status vocabulary: supported | different | dropped | fails (see the
 # nginx-ingress coverage file header and scripts/check-migration-coverage.sh
 # for the drift-pinning contract).
-migrationCoverage:
+_migrationCoverage:
   - source: haproxy-ingress
     detect:
       ingressClasses: ["haproxy"]

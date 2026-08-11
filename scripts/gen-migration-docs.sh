@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # gen-migration-docs.sh — render the per-source annotation-support tables in
-# docs/site/docs/migrating.md FROM the vendor libraries' migrationCoverage
+# docs/site/docs/migrating.md FROM the vendor libraries' _migrationCoverage
 # declarations, so the migration guide can never drift from the template code
 # (whose reads are in turn pinned to the coverage by check-migration-coverage.sh).
 #
@@ -52,16 +52,16 @@ SOURCE_ORDER = ["ingress-nginx", "haproxy-ingress", "haproxytech"]
 
 
 def load_coverage_block(path):
-    """Return the migrationCoverage list from a file that may also contain
+    """Return the _migrationCoverage list from a file that may also contain
     unrelated top-level YAML (haproxytech's library.yaml). Slices the block
-    from the `migrationCoverage:` line at column 0 to the next column-0 key
+    from the `_migrationCoverage:` line at column 0 to the next column-0 key
     (or EOF) and parses just that."""
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
     lines = text.splitlines(keepends=True)
     out, capturing = [], False
     for line in lines:
-        if line.startswith("migrationCoverage:"):
+        if line.startswith("_migrationCoverage:"):
             capturing = True
             out.append(line)
             continue
@@ -71,9 +71,9 @@ def load_coverage_block(path):
                 break
             out.append(line)
     if not out:
-        raise SystemExit(f"{path}: no top-level migrationCoverage block found")
+        raise SystemExit(f"{path}: no top-level _migrationCoverage block found")
     data = yaml.safe_load("".join(out))
-    return data["migrationCoverage"]
+    return data["_migrationCoverage"]
 
 
 sources = {}
@@ -145,7 +145,7 @@ for source in SOURCE_ORDER:
 if check:
     if new_doc != doc:
         sys.stderr.write(
-            "migrating.md is out of date with migrationCoverage.\n"
+            "migrating.md is out of date with _migrationCoverage.\n"
             "Run scripts/gen-migration-docs.sh and commit the result.\n"
         )
         sys.exit(1)

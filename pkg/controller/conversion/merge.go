@@ -31,14 +31,7 @@ import (
 )
 
 const (
-	// migrationCoverageKey is one of the two spec fields that accumulate across
-	// a merged set instead of being overwritten. It is a list of per-source
-	// declarations, one per contributing template library, so an overwrite
-	// would keep only the last library's entry and silently make the
-	// migration report under-report.
-	migrationCoverageKey = "migrationCoverage"
-
-	// validationTestsKey is the other accumulating field. Tests are unioned
+	// validationTestsKey is an accumulating field. Tests are unioned
 	// per source rather than mergo-merged: a deep map merge of two tests
 	// sharing a name produces a hybrid neither author wrote (one side's
 	// assertions over the other side's surviving fixtures) with no error and
@@ -88,9 +81,8 @@ type SpecOverride struct {
 // `mustMergeOverwrite` makes (vendor/github.com/Masterminds/sprig/v3/dict.go),
 // against the same vendored mergo, starting from the same empty accumulator.
 //
-// Two spec fields never reach mergo:
+// One spec field never reaches mergo:
 //
-//   - migrationCoverage accumulates (a list of per-source declarations);
 //   - validationTests are unioned per source through UnionValidationTests —
 //     error on a non-`_global` duplicate, `_global` contributions accumulate —
 //     because a mergo deep-merge of two same-named tests silently fabricates a
@@ -115,13 +107,12 @@ func MergeSpecs(sources []*unstructured.Unstructured) (*unstructured.Unstructure
 	}
 
 	merged := map[string]any{}
-	coverage := []any{}
 	definedBy := map[string]map[string]string{} // section -> name -> source
 	var testSources []ValidationTestSource
 	var overrides []SpecOverride
 
 	for i, source := range sources {
-		spec, err := prepareSourceSpec(source, &coverage, &testSources)
+		spec, err := prepareSourceSpec(source, &testSources)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -150,10 +141,6 @@ func MergeSpecs(sources []*unstructured.Unstructured) (*unstructured.Unstructure
 		if err := mergo.MergeWithOverwrite(&merged, spec); err != nil {
 			return nil, nil, fmt.Errorf("merging spec of %s: %w", source.GetName(), err)
 		}
-	}
-
-	if len(coverage) > 0 {
-		merged[migrationCoverageKey] = coverage
 	}
 
 	if len(testSources) > 0 {
@@ -226,10 +213,9 @@ func validateAPIVersion(resource *unstructured.Unstructured) error {
 	return nil
 }
 
-// prepareSourceSpec validates one source's type, pulls the two accumulating
-// fields out of its spec (migrationCoverage into coverage, validationTests
-// into testSources), and returns the remaining spec for mergo.
-func prepareSourceSpec(source *unstructured.Unstructured, coverage *[]any, testSources *[]ValidationTestSource) (map[string]any, error) {
+// prepareSourceSpec validates one source's type, pulls validationTests out of
+// its spec, and returns the remaining spec for mergo.
+func prepareSourceSpec(source *unstructured.Unstructured, testSources *[]ValidationTestSource) (map[string]any, error) {
 	if err := validateMergeSourceType(source); err != nil {
 		return nil, fmt.Errorf("%s: %w", source.GetName(), err)
 	}
@@ -237,11 +223,6 @@ func prepareSourceSpec(source *unstructured.Unstructured, coverage *[]any, testS
 	spec, err := extractSpec(source)
 	if err != nil {
 		return nil, err
-	}
-
-	if entries, ok := spec[migrationCoverageKey].([]any); ok {
-		*coverage = append(*coverage, entries...)
-		delete(spec, migrationCoverageKey)
 	}
 
 	tests, ok, err := extractValidationTests(spec, source.GetName())

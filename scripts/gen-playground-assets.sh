@@ -24,17 +24,65 @@ SCHEMA_DIR="$REPO/tests/schemas"
 command -v helm >/dev/null || { echo "helm not found" >&2; exit 1; }
 command -v yq   >/dev/null || { echo "yq not found" >&2; exit 1; }
 
-mkdir -p "$OUT/presets"
+mkdir -p "$OUT/presets" "$OUT/migration"
+echo '{}' > "$OUT/migration/presets.json"
 
 echo "==> schema bundle -> $OUT/schemas.json"
 (cd "$REPO" && go run scripts/gen_playground_schema_bundle.go "$SCHEMA_DIR") > "$OUT/schemas.json"
 
-# render_config <preset-id> <api-versions:yes|no> <overrides…>
+set_preset_sources() {
+  local id="$1" sources_csv="$2" sources_json tmp
+  sources_json="$(SOURCES_CSV="$sources_csv" yq -n -o=json -I=0 'strenv(SOURCES_CSV) | split(",") | map(select(. != ""))')"
+  tmp="$OUT/migration/.presets.json"
+  PRESET_ID="$id" SOURCES_JSON="$sources_json" \
+    yq -o=json -I=0 '. + {strenv(PRESET_ID): env(SOURCES_JSON)}' "$OUT/migration/presets.json" > "$tmp"
+  mv "$tmp" "$OUT/migration/presets.json"
+}
+
+set_preset_sources starter ""
+set_preset_sources crd ""
+
+declare -A coverage_source_by_library=()
+declare -A coverage_library_by_source=()
+
+register_coverage() {
+  local file="$1" relative library source count
+  relative="${file#"$CHART/charts/"}"
+  library="${relative%%/*}"
+  count="$(yq '._migrationCoverage | length' "$file")"
+  source="$(yq -r '._migrationCoverage[0].source' "$file")"
+  if [ "$count" -ne 1 ]; then
+    echo "FAIL [$library]: $file must declare exactly one migration source" >&2
+    exit 1
+  fi
+  if [[ ! "$library" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] ||
+     [[ ! "$source" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+    echo "FAIL [$library]: unsafe migration source id $source" >&2
+    exit 1
+  fi
+  if [ -n "${coverage_source_by_library[$library]+x}" ]; then
+    echo "FAIL [$library]: more than one file declares migration coverage" >&2
+    exit 1
+  fi
+  if [ -n "${coverage_library_by_source[$source]+x}" ]; then
+    echo "FAIL [$source]: declared by both ${coverage_library_by_source[$source]} and $library" >&2
+    exit 1
+  fi
+  coverage_source_by_library[$library]="$source"
+  coverage_library_by_source[$source]="$library"
+  yq -o=json -I=0 '._migrationCoverage[0]' "$file" > "$OUT/migration/$source.json"
+}
+
+while IFS= read -r coverage_file; do
+  register_coverage "$coverage_file"
+done < <(grep -rl --include='*.yaml' '^_migrationCoverage:' "$CHART/charts" | LC_ALL=C sort)
+
+# render_config <preset-id> <api-versions:yes|no> <coverage-sources> <overrides…>
 # Each override is `key=value`, prefixed with `controller.templateLibraries.`
 # unless it carries a `raw:` prefix (then it is passed to --set verbatim, for
 # non-templateLibraries values like spoaHub.*).
 render_config() {
-  local id="$1" apiver="$2"; shift 2
+  local id="$1" apiver="$2" expected_sources="$3"; shift 3
   local sets=() av=()
   local kv
   for kv in "$@"; do
@@ -42,8 +90,6 @@ render_config() {
     else sets+=(--set "controller.templateLibraries.$kv"); fi
   done
   [ "$apiver" = yes ] && av=(--api-versions=gateway.networking.k8s.io/v1/GatewayClass)
-  # The playground is the only consumer; the chart omits it by default (!1492).
-  sets+=(--set controller.config.includeMigrationCoverage=true)
   echo "==> $id config -> $OUT/presets/$id.config.yaml"
   # The chart renders one HAProxyTemplateConfig plus one HAProxyTemplateLibrary
   # per enabled library (ADR-0017), but the playground shows and renders a
@@ -52,25 +98,42 @@ render_config() {
   local rendered="$OUT/presets/.$id.multi.yaml"
   helm template "$CHART" --namespace default "${av[@]}" "${sets[@]}" \
     | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' > "$rendered"
+
+  local actual_sources=() slug
+  while IFS= read -r slug; do
+    if [ -n "${coverage_source_by_library[$slug]+x}" ]; then
+      actual_sources+=("${coverage_source_by_library[$slug]}")
+    fi
+  done < <(yq -r 'select(.kind == "HAProxyTemplateLibrary") | .metadata.labels."haproxy-haptic.org/template-library"' "$rendered")
+  local actual_csv
+  actual_csv="$(IFS=,; echo "${actual_sources[*]}")"
+  if [ "$actual_csv" != "$expected_sources" ]; then
+    echo "FAIL [$id]: migration sources $actual_csv, expected $expected_sources" >&2
+    exit 1
+  fi
+  set_preset_sources "$id" "$actual_csv"
+
   (cd "$REPO" && go run ./cmd/controller validate -f "$rendered" --dump-merged) \
     > "$OUT/presets/$id.config.yaml"
+  if yq -e '.migrationCoverage != null or ._migrationCoverage != null' "$OUT/presets/$id.config.yaml" >/dev/null 2>&1; then
+    echo "FAIL [$id]: emitted config contains migration tooling metadata" >&2
+    exit 1
+  fi
   rm -f "$rendered"
 }
 
-# Defaults (no --set): ingress + gateway + haproxytech + haproxy-ingress on,
-# nginx-ingress off. Each preset narrows to the one library it demonstrates.
-render_config ingress         no  gateway.enabled=false haproxyIngress.enabled=false nginxIngress.enabled=false haproxytech.enabled=false
-render_config haproxytech      no  gateway.enabled=false haproxyIngress.enabled=false nginxIngress.enabled=false
-render_config haproxy-ingress  no  gateway.enabled=false haproxytech.enabled=false    nginxIngress.enabled=false
-render_config nginx-ingress    no  gateway.enabled=false haproxytech.enabled=false    haproxyIngress.enabled=false nginxIngress.enabled=true
+render_config ingress          no  ""                 gateway.enabled=false hapticAnnotations.enabled=false haproxyIngress.enabled=false nginxIngress.enabled=false haproxytech.enabled=false
+render_config haproxytech      no  haproxytech        gateway.enabled=false hapticAnnotations.enabled=false haproxytech.enabled=true haproxyIngress.enabled=false nginxIngress.enabled=false
+render_config haproxy-ingress  no  haproxy-ingress    gateway.enabled=false hapticAnnotations.enabled=false haproxytech.enabled=false haproxyIngress.enabled=true nginxIngress.enabled=false
+render_config nginx-ingress    no  ingress-nginx      gateway.enabled=false hapticAnnotations.enabled=false haproxytech.enabled=false haproxyIngress.enabled=false nginxIngress.enabled=true
 # HAPTIC-native's headline features are SPOE-powered (shared rate limiting, SPOE
 # auth, traffic mirroring), so the library imports macros that only exist when
 # the spoa-hub library is loaded. Enable spoa-hub (and the mirror plugin, which
 # otherwise only turns on with the Gateway library) so the preset renders the
 # native library as it is meant to run and its validationTests all pass.
-render_config haptic-annotations no gateway.enabled=false haproxytech.enabled=false    haproxyIngress.enabled=false nginxIngress.enabled=false raw:spoaHub.enabled=true raw:spoaHub.plugins.mirror.enabled=true
-render_config gateway          yes haproxyIngress.enabled=false nginxIngress.enabled=false haproxytech.enabled=false
-render_config all              yes nginxIngress.enabled=true haproxytech.enabled=true haproxyIngress.enabled=true
+render_config haptic-annotations no haptic-annotations gateway.enabled=false hapticAnnotations.enabled=true haproxytech.enabled=false haproxyIngress.enabled=false nginxIngress.enabled=false raw:spoaHub.enabled=true raw:spoaHub.plugins.mirror.enabled=true
+render_config gateway          yes ""                 hapticAnnotations.enabled=false haproxyIngress.enabled=false nginxIngress.enabled=false haproxytech.enabled=false
+render_config all              yes haptic-annotations,haproxytech,haproxy-ingress,ingress-nginx nginxIngress.enabled=true haproxytech.enabled=true haproxyIngress.enabled=true
 
 # Static example resources (committed) for ingress / gateway / all.
 for id in ingress gateway all; do
@@ -105,5 +168,8 @@ echo "==> extend config -> $OUT/presets/extend.config.yaml"
 yq ".spec.templateSnippets += load(\"$WEB/presets/extend.snippet.yaml\")" \
   "$OUT/presets/ingress.config.yaml" > "$OUT/presets/extend.config.yaml"
 gen_vendor_resources extend '{"example.com/request-id-header":"X-Request-ID"}'
+set_preset_sources extend ""
+
+(cd "$REPO" && go run ./cmd/playground/migrationassetcheck "$OUT/migration")
 
 echo "==> done. $(wc -c < "$OUT/schemas.json") bytes of schema, $(ls "$OUT/presets"/*.config.yaml | wc -l) preset configs"

@@ -87,9 +87,9 @@ type warmEngine struct {
 	svc        *renderer.RenderService // holds the compiled engine
 	runner     *testrunner.Runner      // owns CreateStoresFromFixtures (also holds the engine)
 	byKey      map[string]schema.GroupVersionKind
-	coverage   []v1alpha1.MigrationCoverageSource // spec.migrationCoverage, for the migration report
-	ver        *dataplane.Version                 // selected HAProxy version, for the schema check
-	configYAML []byte                             // raw config, for provenance line lookups
+	coverage   []migratecheck.CoverageSource
+	ver        *dataplane.Version // selected HAProxy version, for the schema check
+	configYAML []byte             // raw config, for provenance line lookups
 }
 
 var (
@@ -132,16 +132,19 @@ func main() {
 }
 
 // hapticLoadConfigJS compiles the engine + render service and holds them warm.
-// Signature: hapticLoadConfig(configYAML, schemasJSON, haproxyVersion). Call it
-// when the config, schema bundle, or HAProxy version changes; then call
-// hapticRender(resourcesYAML) as often as the resources change without paying
-// the compile cost again. All YAML is unmarshalled inside wasm (sigs.k8s.io/yaml
-// yields JSON-native numerics so unstructured deep-copy never sees a bare int).
+// Signature: hapticLoadConfig(configYAML, schemasJSON, haproxyVersion,
+// migrationCoverageJSON). Call it when any input changes, then call hapticRender
+// as resources change. Omitting the fourth argument reads coverage from an old
+// config snapshot. YAML is unmarshalled inside wasm so numerics stay JSON-native.
 func hapticLoadConfigJS(_ js.Value, args []js.Value) any {
 	if len(args) < 3 {
-		return jsError("hapticLoadConfig requires 3 arguments: configYAML, schemasJSON, haproxyVersion")
+		return jsError("hapticLoadConfig requires configYAML, schemasJSON, and haproxyVersion")
 	}
-	if err := loadConfig([]byte(args[0].String()), []byte(args[1].String()), args[2].String()); err != nil {
+	var coverageJSON []byte
+	if len(args) >= 4 {
+		coverageJSON = []byte(args[3].String())
+	}
+	if err := loadConfig([]byte(args[0].String()), []byte(args[1].String()), args[2].String(), coverageJSON); err != nil {
 		warm = nil // a failed load invalidates any previous warm engine
 		return jsError(err.Error())
 	}
@@ -356,10 +359,16 @@ func countsToJS(c map[migratecheck.Status]int) map[string]any {
 // build the production render service — and stores them in `warm`. Same
 // production call graph as the controller; just split out so a resource-only
 // render can reuse it.
-func loadConfig(configYAML, schemasJSON []byte, haproxyVersion string) error {
+func loadConfig(configYAML, schemasJSON []byte, haproxyVersion string, migrationCoverageJSON []byte) error {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
 	spec, err := parseConfigSpec(configYAML)
+	if err != nil {
+		return err
+	}
+	coverage, legacyCoverage := migratecheck.ParseLegacyConfigCoverage(configYAML)
+	if !legacyCoverage && migrationCoverageJSON != nil {
+		coverage, err = migratecheck.ParseCoverage(migrationCoverageJSON)
+	}
 	if err != nil {
 		return err
 	}
@@ -446,7 +455,7 @@ func loadConfig(configYAML, schemasJSON []byte, haproxyVersion string) error {
 		},
 	})
 
-	warm = &warmEngine{cfg: cfg, svc: svc, runner: runner, byKey: byKey, coverage: spec.MigrationCoverage, ver: ver, configYAML: configYAML}
+	warm = &warmEngine{cfg: cfg, svc: svc, runner: runner, byKey: byKey, coverage: coverage, ver: ver, configYAML: configYAML}
 	// NB: the reload-impact baseline (prev/pinned) intentionally survives a recompile,
 	// so a config edit is measured against the pinned/last render. Fresh loads (preset
 	// switch, shared link, session restore) drop it explicitly via hapticResetBaseline.
@@ -642,12 +651,10 @@ func cleanSchemaError(msg string) string {
 }
 
 // migrationReport classifies every pasted Ingress's annotations against the
-// config's spec.migrationCoverage, reusing the exact classification logic
-// (migratecheck.Classify) so the playground and the CLI never diverge. Returns
-// nil when the config declares no coverage or no Ingress was pasted — the UI
-// hides the tab then. RenderError is left empty: this is annotation coverage,
-// not a render verdict (the render tabs already carry that).
-func migrationReport(coverage []v1alpha1.MigrationCoverageSource, resourcesYAML []byte) any {
+// separately loaded coverage assets. It returns nil when no coverage is loaded
+// or no Ingress was pasted. RenderError stays empty because the render tabs
+// carry that verdict.
+func migrationReport(coverage []migratecheck.CoverageSource, resourcesYAML []byte) any {
 	if len(coverage) == 0 {
 		return nil
 	}

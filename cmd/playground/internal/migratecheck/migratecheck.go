@@ -13,15 +13,13 @@
 // limitations under the License.
 
 // Package migratecheck classifies Ingress annotations against the
-// migration-coverage data the template libraries declare in
-// spec.migrationCoverage, producing the report behind the
-// browser playground's migration report.
+// migration-coverage data the template libraries declare for the browser
+// playground's migration report.
 //
 // The package is a pure component: it never touches Kubernetes, Helm, or
 // the template engine. Callers hand it the coverage data, the audited
-// Ingresses (pre-extracted fields plus the per-Ingress real-render
-// verdict), and get back a Report with per-source, per-Ingress findings
-// and the process exit code.
+// Ingresses (pre-extracted fields plus the per-Ingress real-render verdict),
+// and get back a Report with per-source, per-Ingress findings.
 //
 // Source-controller detection remains data-driven from the coverage entries;
 // the package is private to the Ingress migration tool that consumes it.
@@ -30,12 +28,10 @@ package migratecheck
 import (
 	"sort"
 	"strings"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 )
 
 // Status classifies one annotation's migration coverage. The first four
-// values mirror the spec.migrationCoverage contract; StatusUnknown is
+// values mirror the library declaration contract; StatusUnknown is
 // synthesized for annotation keys that match a source's declared prefixes
 // but are absent from its coverage map.
 type Status string
@@ -153,7 +149,7 @@ type Report struct {
 // source's detect.ingressClasses OR any of its annotation keys carries one
 // of the source's detect.annotationPrefixes. One Ingress can be attributed
 // to several sources (each classifies only its own prefixes).
-func Classify(coverage []v1alpha1.MigrationCoverageSource, ingresses []Ingress) *Report {
+func Classify(coverage []CoverageSource, ingresses []Ingress) *Report {
 	report := &Report{
 		Sources: []SourceReport{},
 		Counts:  map[Status]int{},
@@ -216,7 +212,7 @@ func Classify(coverage []v1alpha1.MigrationCoverageSource, ingresses []Ingress) 
 
 // matchesSource reports whether the detect rules of a coverage entry
 // attribute the Ingress to that source.
-func matchesSource(src *v1alpha1.MigrationCoverageSource, ing *Ingress) bool {
+func matchesSource(src *CoverageSource, ing *Ingress) bool {
 	for _, class := range src.Detect.IngressClasses {
 		if ing.Class == class {
 			return true
@@ -244,7 +240,7 @@ func matchesPrefix(prefixes []string, key string) bool {
 // classifyIngress builds the per-Ingress report for one source: every
 // annotation key matching the source's prefixes becomes a Finding, sorted
 // by key for deterministic output.
-func classifyIngress(src *v1alpha1.MigrationCoverageSource, ing *Ingress) IngressReport {
+func classifyIngress(src *CoverageSource, ing *Ingress) IngressReport {
 	ir := IngressReport{
 		Namespace:   ing.Namespace,
 		Name:        ing.Name,
@@ -268,7 +264,7 @@ func classifyIngress(src *v1alpha1.MigrationCoverageSource, ing *Ingress) Ingres
 			Note:       "This annotation is not in HAPTIC's coverage data for this source; verify its behaviour manually after migrating.",
 		}
 		if ann, ok := src.Annotations[key]; ok {
-			finding.Status = Status(ann.Status)
+			finding.Status = ann.Status
 			finding.Note = ann.Note
 			finding.Doc = ann.Doc
 		}

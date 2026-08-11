@@ -25,14 +25,15 @@ matrix and per-version publishing.
 
 - `main.go` (`//go:build js && wasm`) — the wasm entrypoint. Exposes a
   warm-engine API on the JS global: `hapticLoadConfig(configYAML, schemasJSON,
-  haproxyVersion)` compiles the engine + render service once and holds them warm;
-  `hapticRender(resourcesYAML)` renders resources against that warm engine (so a
-  resource-only edit skips template recompilation — ~13× faster on the bundled
-  chart). Call `hapticLoadConfig` again when the config, schema bundle, or HAProxy
-  version changes.
+  haproxyVersion, migrationCoverageJSON?)` compiles the engine + render service
+  once and holds them warm; `hapticRender(resourcesYAML)` renders resources
+  against that warm engine (so a resource-only edit skips template recompilation
+  — ~13× faster on the bundled chart). Call `hapticLoadConfig` again when the
+  config, schema bundle, HAProxy version, or migration coverage changes.
 - `stub.go` — no-op `main` for non-wasm builds so `go build ./...` stays green.
 - `web/` — the static shell: `index.html`, `editor.js` (CodeMirror setup:
-  YAML palette, Scriggo-template overlay, autocomplete), `playground.worker.js`,
+  YAML palette, Scriggo-template overlay, autocomplete), `migration-assets.mjs`,
+  `playground.worker.js`,
   the from-scratch starter (`starter.config.yaml`, `starter.resources.yaml`),
   the committed `vendor/codemirror.js` bundle (no CDN — see `web/vendor/README.md`
   for how to rebuild it), `presets/` (the bundled-chart example resources), and
@@ -51,7 +52,8 @@ matrix and per-version publishing.
 
 ```bash
 # 1. Assemble a complete serve directory (wasm + wasm_exec.js + shell + vendor +
-#    schema bundle + presets). Requires go, helm, yq (brotli optional).
+#    schema bundle + presets + migration assets). Requires go, helm, yq
+#    (brotli optional).
 scripts/build-playground.sh /tmp/pg
 
 # 2. Serve on loopback (any static server works)
@@ -62,7 +64,8 @@ cd /tmp/pg && python3 -m http.server 8791 --bind 127.0.0.1
 
 `build-playground.sh` copies `wasm_exec.js` from the same Go toolchain that built
 the `.wasm` (they MUST match — re-run the script on every toolchain bump) and runs
-`scripts/gen-playground-assets.sh` for the schema bundle + bundled-chart preset.
+`scripts/gen-playground-assets.sh` for the schema bundle, bundled-chart presets,
+and per-source migration coverage assets.
 
 The render path performs no filesystem, `os/exec`, or network access at runtime
 (`dataplane.DetectLocalVersion` is bypassed with a supplied version;
