@@ -332,27 +332,28 @@ func TestComponent_RefreshURL_NilContext(t *testing.T) {
 
 func TestComponent_RegisterURL_AlreadyRegistered(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-
 	component := New(bus, logger, 0)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("content"))
+	}))
+	defer server.Close()
 
-	// Pre-register a URL in the refreshers map
+	_, err := component.store.Fetch(t.Context(), server.URL, httpstore.FetchOptions{Delay: time.Hour}, nil)
+	require.NoError(t, err)
+	component.RegisterURL(server.URL)
 	component.mu.Lock()
-	timer := time.NewTimer(1 * time.Hour)
-	component.refreshers["http://example.com"] = timer
+	timer := component.refreshers[server.URL]
 	component.mu.Unlock()
+	require.NotNil(t, timer)
+	component.RegisterURL(server.URL)
 
-	// Store should have a delay for this URL for RegisterURL to work
-	// But even without delay, we're testing the already-registered path
-	component.RegisterURL("http://example.com")
-
-	// Timer should still exist (wasn't replaced)
 	component.mu.Lock()
-	existingTimer, exists := component.refreshers["http://example.com"]
+	existingTimer, exists := component.refreshers[server.URL]
 	component.mu.Unlock()
 
 	assert.True(t, exists)
 	assert.Equal(t, timer, existingTimer)
-	timer.Stop() // cleanup
+	component.StopRefresher(server.URL)
 }
 
 func TestComponent_HandleValidationCompleted_WithPending(t *testing.T) {
@@ -778,4 +779,125 @@ func TestSupersededPendingVersionStartsNewValidationBatch(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "replacement-pending", accepted)
 	assert.Empty(t, component.store.GetPendingURLs())
+}
+
+func TestSourceReplacementRetiresBatchAndValidatesSurvivingPendingContent(t *testing.T) {
+	newChangingServer := func(initial, updated string) *httptest.Server {
+		var requests atomic.Int32
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if requests.Add(1) == 1 {
+				_, _ = w.Write([]byte(initial))
+				return
+			}
+			_, _ = w.Write([]byte(updated))
+		}))
+	}
+
+	serverA := newChangingServer("accepted-a", "pending-a")
+	defer serverA.Close()
+	serverB := newChangingServer("accepted-b", "pending-b")
+	defer serverB.Close()
+
+	bus, logger := testutil.NewTestBusAndLogger()
+	component := New(bus, logger, 0)
+	requests := bus.SubscribeTypes("test-source-replacement", 3, events.EventTypeProposalValidationRequested)
+	bus.Start()
+
+	oldAuth := &httpstore.AuthConfig{Type: httpstore.AuthTypeBearer, Token: "old"}
+	_, err := component.store.Fetch(t.Context(), serverA.URL, httpstore.FetchOptions{Critical: true}, oldAuth)
+	require.NoError(t, err)
+	_, err = component.store.Fetch(t.Context(), serverB.URL, httpstore.FetchOptions{Critical: true}, nil)
+	require.NoError(t, err)
+	changed, err := component.store.RefreshURL(t.Context(), serverA.URL)
+	require.NoError(t, err)
+	require.True(t, changed)
+	component.triggerProposalValidation(serverA.URL)
+	retiredRequest := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, requests, testutil.EventTimeout)
+
+	changed, err = component.store.RefreshURL(t.Context(), serverB.URL)
+	require.NoError(t, err)
+	require.True(t, changed)
+	component.triggerProposalValidation(serverB.URL)
+
+	_, err = component.ReconcileSource(serverA.URL, httpstore.FetchOptions{Critical: true}, &httpstore.AuthConfig{
+		Type:  httpstore.AuthTypeBearer,
+		Token: "replacement",
+	})
+	require.NoError(t, err)
+	replacementRequest := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, requests, testutil.EventTimeout)
+	require.NotEqual(t, retiredRequest.ID, replacementRequest.ID)
+	assert.False(t, replacementRequest.HTTPOverlay.HasPendingURL(serverA.URL))
+	assert.True(t, replacementRequest.HTTPOverlay.HasPendingURL(serverB.URL))
+
+	component.handleProposalValidationCompleted(events.NewProposalValidationCompletedEvent(retiredRequest.ID, 100))
+	acceptedB, ok := component.store.Get(serverB.URL)
+	require.True(t, ok)
+	assert.Equal(t, "accepted-b", acceptedB)
+	assert.Equal(t, []string{serverB.URL}, component.store.GetPendingURLs())
+
+	component.handleProposalValidationCompleted(events.NewProposalValidationCompletedEvent(replacementRequest.ID, 100))
+	acceptedB, ok = component.store.Get(serverB.URL)
+	require.True(t, ok)
+	assert.Equal(t, "pending-b", acceptedB)
+	assert.Empty(t, component.store.GetPendingURLs())
+}
+
+func TestSourceReplacementFailureDoesNotBlockNextPendingValidation(t *testing.T) {
+	responses := []string{"accepted", "pending"}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(responses[min(int(requests.Add(1)-1), len(responses)-1)]))
+	}))
+	defer server.Close()
+
+	bus, logger := testutil.NewTestBusAndLogger()
+	component := New(bus, logger, 0)
+	validationRequests := bus.SubscribeTypes("test-failed-replacement", 2, events.EventTypeProposalValidationRequested)
+	bus.Start()
+
+	_, err := component.store.Fetch(t.Context(), server.URL, httpstore.FetchOptions{Critical: true}, nil)
+	require.NoError(t, err)
+	changed, err := component.store.RefreshURL(t.Context(), server.URL)
+	require.NoError(t, err)
+	require.True(t, changed)
+	component.triggerProposalValidation(server.URL)
+	retiredRequest := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, validationRequests, testutil.EventTimeout)
+
+	_, err = component.ReconcileSource(server.URL, httpstore.FetchOptions{Critical: true}, &httpstore.AuthConfig{
+		Type:  httpstore.AuthTypeBearer,
+		Token: "replacement",
+	})
+	require.NoError(t, err)
+	component.mu.Lock()
+	assert.Nil(t, component.pendingValidation)
+	component.mu.Unlock()
+	component.handleProposalValidationCompleted(events.NewProposalValidationCompletedEvent(retiredRequest.ID, 100))
+	failedCtx, cancel := context.WithCancel(t.Context())
+	cancel()
+	failedWrapper := NewHTTPStoreWrapper(failedCtx, component, logger, nil, SourceModeAuthoritative)
+	_, err = failedWrapper.Fetch(server.URL, map[string]any{"critical": true}, map[string]any{
+		"type":  "bearer",
+		"token": "replacement",
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	failedWrapper.InputTransaction().Abort()
+
+	var otherRequests atomic.Int32
+	otherServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if otherRequests.Add(1) == 1 {
+			_, _ = w.Write([]byte("other-accepted"))
+			return
+		}
+		_, _ = w.Write([]byte("other-pending"))
+	}))
+	defer otherServer.Close()
+	_, err = component.store.Fetch(t.Context(), otherServer.URL, httpstore.FetchOptions{Critical: true}, nil)
+	require.NoError(t, err)
+	changed, err = component.store.RefreshURL(t.Context(), otherServer.URL)
+	require.NoError(t, err)
+	require.True(t, changed)
+	component.triggerProposalValidation(otherServer.URL)
+	nextRequest := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, validationRequests, testutil.EventTimeout)
+	assert.NotEqual(t, retiredRequest.ID, nextRequest.ID)
+	assert.True(t, nextRequest.HTTPOverlay.HasPendingURL(otherServer.URL))
 }

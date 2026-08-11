@@ -22,6 +22,8 @@ package httpstore
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -46,7 +48,7 @@ const (
 // Component wraps HTTPStore with event coordination.
 //
 // It manages:
-//   - Refresh timers for URLs with delay > 0
+//   - Refresh timers for URLs with interval > 0
 //   - Event publishing when content changes
 //   - Pending content promotion/rejection based on proposal validation results
 //   - Periodic eviction of unused cache entries
@@ -62,21 +64,22 @@ type Component struct {
 	eventBus         *busevents.EventBus
 	eventChan        <-chan busevents.Event
 	store            *httpstore.HTTPStore
-	refreshStoreURL  func(context.Context, string) (*httpstore.PendingVersion, error)
+	refreshStoreURL  func(context.Context, string, uint64) (*httpstore.PendingVersion, error)
 	evictStoreUnused func() []string
 	logger           *slog.Logger
 
 	// Refresh timer management
-	mu                sync.Mutex
-	refreshers        map[string]*time.Timer // URL -> refresh timer
-	refreshManaged    map[string]bool
-	refreshPending    map[string]bool
-	refreshImmediate  map[string]bool
-	refreshGeneration map[string]uint64
-	refreshCallbacks  sync.WaitGroup
-	ctx               context.Context
-	cancel            context.CancelFunc
-	stopped           bool
+	mu                      sync.Mutex
+	refreshers              map[string]*time.Timer // URL -> refresh timer
+	refreshManaged          map[string]bool
+	refreshPending          map[string]bool
+	refreshImmediate        map[string]bool
+	refreshGeneration       map[string]uint64
+	refreshSourceGeneration map[string]uint64
+	refreshCallbacks        sync.WaitGroup
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	stopped                 bool
 
 	// Eviction configuration
 	evictionInterval time.Duration // How often to run eviction (0 = disabled)
@@ -119,18 +122,19 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, evictionMaxAge time.
 	store := httpstore.New(logger, evictionMaxAge)
 
 	return &Component{
-		eventBus:          eventBus,
-		eventChan:         eventChan,
-		store:             store,
-		refreshStoreURL:   store.RefreshURLVersion,
-		evictStoreUnused:  store.EvictUnused,
-		logger:            logger.With("component", ComponentName),
-		refreshers:        make(map[string]*time.Timer),
-		refreshManaged:    make(map[string]bool),
-		refreshPending:    make(map[string]bool),
-		refreshImmediate:  make(map[string]bool),
-		refreshGeneration: make(map[string]uint64),
-		evictionInterval:  evictionMaxAge, // Run eviction at same cadence as maxAge
+		eventBus:                eventBus,
+		eventChan:               eventChan,
+		store:                   store,
+		refreshStoreURL:         store.RefreshURLVersionForGeneration,
+		evictStoreUnused:        store.EvictUnused,
+		logger:                  logger.With("component", ComponentName),
+		refreshers:              make(map[string]*time.Timer),
+		refreshManaged:          make(map[string]bool),
+		refreshPending:          make(map[string]bool),
+		refreshImmediate:        make(map[string]bool),
+		refreshGeneration:       make(map[string]uint64),
+		refreshSourceGeneration: make(map[string]uint64),
+		evictionInterval:        evictionMaxAge, // Run eviction at same cadence as maxAge
 	}
 }
 
@@ -230,6 +234,7 @@ func (c *Component) handleValidationSuccess(batch *validationBatch) bool {
 	for _, entry := range batch.entries {
 		if c.store.PromotePendingVersion(entry.url, entry.checksum, entry.revision) {
 			promoted = true
+			c.reconcileURLLocked(entry.url)
 			c.eventBus.Publish(events.NewHTTPResourceAcceptedEvent(
 				entry.url,
 				entry.checksum,
@@ -257,31 +262,101 @@ func (c *Component) GetStore() *httpstore.HTTPStore {
 	return c.store
 }
 
-// RegisterURL registers a URL for refresh if it has a delay configured.
-// This is called after successful initial fetch from template rendering.
-func (c *Component) RegisterURL(url string) {
-	delay := c.store.GetDelay(url)
-	if delay == 0 {
-		return
+// ReconcileSource serializes source, timer, and validation-batch authority.
+func (c *Component) ReconcileSource(
+	url string,
+	opts httpstore.FetchOptions,
+	auth *httpstore.AuthConfig,
+) (httpstore.SourceState, error) {
+	c.mu.Lock()
+	if c.stopped {
+		c.mu.Unlock()
+		return httpstore.SourceState{}, errors.New("HTTP store stopped before source reconciliation")
+	}
+	reconciled, err := c.store.ReconcileSource(url, opts, auth)
+	if err != nil {
+		c.mu.Unlock()
+		return httpstore.SourceState{}, err
+	}
+
+	var nextRequest *events.ProposalValidationRequestedEvent
+	if reconciled.Changed {
+		c.stopRefresherLocked(url)
+		if c.queuedValidationSource == url {
+			c.queuedValidationSource = ""
+		}
+		if c.retireSourceValidationLocked(url) {
+			nextRequest = c.beginValidationLocked("")
+		}
+	}
+	c.reconcileURLLocked(url)
+	c.mu.Unlock()
+
+	c.publishValidationRequest(nextRequest)
+	return reconciled.State, nil
+}
+
+// CommitInitialCandidates accepts one complete validated render input set.
+func (c *Component) CommitInitialCandidates(
+	ctx context.Context,
+	candidates []*httpstore.InitialCandidate,
+) error {
+	if len(candidates) == 0 {
+		return nil
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stopped {
+		return errors.New("HTTP store stopped before validated render inputs could be accepted")
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return fmt.Errorf("accepting validated render inputs: %w", cause)
+	}
+	if err := c.store.CommitInitialCandidates(ctx, candidates); err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
+		c.reconcileURLLocked(candidate.URL())
+	}
+	return nil
+}
+
+// RegisterURL reconciles a URL's timer with its current source policy.
+func (c *Component) RegisterURL(url string) {
+	c.ReconcileURL(url)
+}
+
+// ReconcileURL re-arms or stops a URL timer when its source policy changes.
+func (c *Component) ReconcileURL(url string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reconcileURLLocked(url)
+}
+
+func (c *Component) reconcileURLLocked(url string) {
+	state, exists := c.store.GetSourceState(url)
+	if c.stopped {
 		return
 	}
 
-	// Don't register if already registered
-	if _, exists := c.refreshers[url]; exists {
+	if !exists || !state.HasAccepted || state.Delay <= 0 {
+		c.stopRefresherLocked(url)
 		return
 	}
+	if _, registered := c.refreshers[url]; registered &&
+		c.refreshSourceGeneration[url] == state.Generation {
+		return
+	}
+	c.stopRefresherLocked(url)
 
 	c.logger.Debug("Registering URL for periodic refresh",
 		"url", url,
-		"delay", delay.String())
+		"delay", state.Delay.String())
 
 	c.refreshGeneration[url]++
-	c.armRefresherLocked(url, delay, c.refreshGeneration[url])
+	c.refreshSourceGeneration[url] = state.Generation
+	c.armRefresherLocked(url, state.Delay, c.refreshGeneration[url])
 }
 
 // refreshURL performs a refresh of the given URL.
@@ -315,8 +390,13 @@ func (c *Component) refreshURLForGeneration(url string, generation uint64) {
 	c.mu.Lock()
 	ctx := c.ctx
 	stopped := c.stopped
+	timerActive := c.refresherActiveLocked(url, generation)
+	sourceGeneration := uint64(0)
+	if generation != 0 {
+		sourceGeneration = c.refreshSourceGeneration[url]
+	}
 	c.mu.Unlock()
-	if stopped {
+	if stopped || !timerActive || (generation != 0 && sourceGeneration == 0) {
 		return
 	}
 	if ctx == nil {
@@ -330,15 +410,19 @@ func (c *Component) refreshURLForGeneration(url string, generation uint64) {
 	// Defensive check: verify entry still exists (may have been evicted)
 	// This handles the race condition where the eviction timer fires between
 	// EvictUnused() and StopRefresher() calls.
-	if c.store.GetEntry(url) == nil {
+	state, exists := c.store.GetSourceState(url)
+	if !exists {
 		c.logger.Log(context.Background(), logging.LevelTrace, "skipping refresh for evicted URL", "url", url)
+		return
+	}
+	if generation != 0 && state.Generation != sourceGeneration {
 		return
 	}
 
 	c.logger.Log(context.Background(), logging.LevelTrace, "refreshing HTTP URL", "url", url)
 
 	// Perform refresh
-	version, err := c.refreshStoreURL(ctx, url)
+	version, err := c.refreshStoreURL(ctx, url, sourceGeneration)
 	if err != nil {
 		c.logger.Warn("HTTP refresh failed",
 			"url", url,
@@ -348,8 +432,10 @@ func (c *Component) refreshURLForGeneration(url string, generation uint64) {
 	c.rearmRefresher(url, generation)
 
 	// If content changed, trigger proposal validation before accepting
+	state, sourceExists := c.store.GetSourceState(url)
 	c.mu.Lock()
-	active := c.refresherActiveLocked(url, generation)
+	active := c.refresherActiveLocked(url, generation) && (generation == 0 ||
+		sourceExists && c.refreshSourceGeneration[url] == state.Generation)
 	c.mu.Unlock()
 	if version != nil && (!active || ctx.Err() != nil) {
 		if c.store.DiscardPendingVersion(url, version.Checksum, version.Revision) {
@@ -363,15 +449,18 @@ func (c *Component) refreshURLForGeneration(url string, generation uint64) {
 }
 
 func (c *Component) rearmRefresher(url string, generation uint64) {
-	delay := c.store.GetDelay(url)
-	if delay <= 0 {
-		return
-	}
+	state, exists := c.store.GetSourceState(url)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.refresherActiveLocked(url, generation) {
 		return
 	}
+	if !exists || !state.HasAccepted || state.Delay <= 0 ||
+		(generation != 0 && c.refreshSourceGeneration[url] != state.Generation) {
+		c.stopRefresherLocked(url)
+		return
+	}
+	delay := state.Delay
 	if c.refreshImmediate[url] {
 		delay = 0
 		delete(c.refreshImmediate, url)
@@ -445,7 +534,7 @@ func (c *Component) beginValidationLocked(source string) *events.ProposalValidat
 	if overlay.IsEmpty() {
 		return nil
 	}
-	if source == "" {
+	if source == "" || !overlay.HasPendingURL(source) {
 		source = overlay.PendingURLs()[0]
 	}
 	req := events.NewProposalValidationRequestedEvent(nil, overlay, "httpstore", source)
@@ -486,6 +575,21 @@ func (c *Component) retireSupersededValidationLocked(url string, revision uint64
 	}
 }
 
+func (c *Component) retireSourceValidationLocked(url string) bool {
+	if c.pendingValidation == nil {
+		return false
+	}
+	for _, entry := range c.pendingValidation.entries {
+		if entry.url != url {
+			continue
+		}
+		c.pendingValidation = nil
+		c.queuedValidationSource = ""
+		return true
+	}
+	return false
+}
+
 func (c *Component) publishValidationRequest(req *events.ProposalValidationRequestedEvent) {
 	if req != nil {
 		c.eventBus.Publish(req)
@@ -511,6 +615,7 @@ func (c *Component) stopAllRefreshers() {
 	c.refreshManaged = make(map[string]bool)
 	c.refreshPending = make(map[string]bool)
 	c.refreshImmediate = make(map[string]bool)
+	c.refreshSourceGeneration = make(map[string]uint64)
 	c.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -547,6 +652,7 @@ func (c *Component) stopRefresherLocked(url string) {
 		delete(c.refreshManaged, url)
 		delete(c.refreshPending, url)
 		delete(c.refreshImmediate, url)
+		delete(c.refreshSourceGeneration, url)
 		c.logger.Log(context.Background(), logging.LevelTrace, "stopped refresh timer", "url", url)
 	}
 }

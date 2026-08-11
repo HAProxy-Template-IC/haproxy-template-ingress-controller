@@ -25,7 +25,7 @@ This is a **pure component** following the codebase's architecture pattern - it 
 
 ## Two-Version Cache Pattern
 
-The store maintains two content versions for each URL:
+The shared store maintains two content versions for each URL. An initial authoritative response stays in a separate render-local `InitialCandidate` until the complete pipeline validates it:
 
 ```
          ┌──────────────────────────────────────────────────┐
@@ -57,8 +57,8 @@ This pattern ensures that invalid HTTP content (e.g., malformed IP blocklist) ne
 ### Fetching
 
 ```go
-// Initial fetch (synchronous, caches result)
-content, err := store.Fetch(ctx, url, FetchOptions{
+// Establish source authority, then fetch a render-local initial candidate.
+source, err := store.ReconcileSource(url, FetchOptions{
     Timeout:  30 * time.Second,
     Retries:  3,
     Critical: true,  // Return error if fetch fails
@@ -67,6 +67,11 @@ content, err := store.Fetch(ctx, url, FetchOptions{
     Type:     "bearer",
     Token:    "secret",
 })
+content, candidate, err := store.PrepareInitial(ctx, url, source.State)
+
+// After the exact complete rendered output passes every validator, accept all
+// candidates atomically. Context cancellation or one stale token accepts none.
+err = store.CommitInitialCandidates(ctx, []*InitialCandidate{candidate})
 
 // Refresh (stores in pending, returns true if content changed)
 changed, err := store.RefreshURL(ctx, url)
@@ -74,6 +79,8 @@ changed, err := store.RefreshURL(ctx, url)
 // Refresh with exact-version ownership for asynchronous validation
 version, err := store.RefreshURLVersion(ctx, url)
 ```
+
+`Fetch` immediately accepts a first response and is reserved for isolated stores, such as the read-only store owned by one validation render. Controller-owned authoritative state uses the candidate methods above.
 
 ### Cache Access
 
@@ -228,14 +235,12 @@ import (
 // Pure component (this package). maxAge=0 disables eviction.
 store := purehttpstore.New(logger, 2*time.Minute)
 
-// Event adapter — different package, same N-ame, different signature.
-// Constructs its own internal *purehttpstore.HTTPStore.
+// Event adapter — different package, same name, different signature.
 component := httpstore.New(eventBus, logger, 2*time.Minute)
 
-// Template-callable wrapper. The fourth argument is a stores.HTTPContentOverlay
-// (nil for production renders, an overlay built from validation fixtures
-// when called from the dryrun / testrunner path) — *not* a bool flag.
-wrapper := httpstore.NewHTTPStoreWrapper(ctx, component, logger, overlay)
+// Only live reconciliation uses SourceModeAuthoritative. It returns a generic
+// render-input transaction that the pipeline commits after full validation.
+wrapper := httpstore.NewHTTPStoreWrapper(ctx, component, logger, overlay, httpstore.SourceModeReadOnly)
 ```
 
 ## Testing

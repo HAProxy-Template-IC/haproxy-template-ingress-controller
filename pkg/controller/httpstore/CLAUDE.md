@@ -27,6 +27,7 @@ Responsibilities:
 - Listens for validation events to promote/reject pending content
 - Publishes HTTP resource events when content changes
 - Provides template-callable wrapper for `http.Fetch()`
+- Owns render-local candidate transactions for cold and replaced sources
 - Periodic eviction of unused cache entries to prevent memory growth
 
 ## Architecture
@@ -39,13 +40,14 @@ Template calls http.Fetch()
 │               HTTPStoreWrapper (wrapper.go)                  │
 │   - Callable from templates                                  │
 │   - Delegates to pure HTTPStore                              │
-│   - Registers URLs for periodic refresh                      │
+│   - Owns one render-local InputTransaction                   │
 └─────────────────────────────────────────────────────────────┘
         │
         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                 Component (component.go)                     │
 │   - Manages refresh timers                                   │
+│   - Atomically commits validated initial candidate sets      │
 │   - Publishes ProposalValidationRequestedEvent on refresh    │
 │   - Subscribes to ProposalValidationCompletedEvent           │
 │     (branches on event.Valid → promote or reject)            │
@@ -56,6 +58,7 @@ Template calls http.Fetch()
 ┌─────────────────────────────────────────────────────────────┐
 │             pkg/httpstore.HTTPStore (pure)                   │
 │   - HTTP fetching with retries                               │
+│   - Render-local initial candidates                          │
 │   - Two-version cache (pending/accepted)                     │
 │   - Conditional requests (ETag)                              │
 └─────────────────────────────────────────────────────────────┘
@@ -137,22 +140,23 @@ The `HTTPStoreWrapper` provides a `Fetch()` method callable from templates:
 ) %}
 ```
 
-### Validation vs Production Render
+### Source authority and overlays
 
-The wrapper's behaviour depends on the `overlay stores.HTTPContentOverlay`
-argument passed at construction (`NewHTTPStoreWrapper(ctx, component, logger, overlay)`),
-not a `bool isValidation` flag:
+`NewHTTPStoreWrapper` takes an explicit `SourceMode`. `SourceModeAuthoritative`
+is reserved for live reconciliation: it reconciles the shared declaration and
+returns matching accepted content or a render-local initial candidate. The
+renderer passes the wrapper's transaction to the pipeline. Only a successful
+complete validation commits all candidates atomically and arms their timers;
+every error or cancellation aborts them. `SourceModeReadOnly` is used for
+admission validation and source-map introspection. It reads a matching pending
+overlay first, then matching accepted content, and fetches a miss into a store
+owned by that render. Read-only wrappers never replace shared source or timer
+state and have no input transaction.
 
-- **Validation render** (`overlay != nil`): The wrapper consults the overlay
-  first, then falls back to the store's pending content for URLs the overlay
-  knows about. This lets the dryrun pipeline see content that hasn't been
-  promoted yet, plus any test-fixture overrides.
-- **Production render** (`overlay == nil`): The wrapper returns accepted content
-  only — pending refreshes don't leak into the live HAProxy config until
-  validation has signed off.
-
-Both call paths register the URL for periodic refresh when `delay > 0`, so the
-production renderer doesn't need to do anything special to start the timer.
+The HTTP overlay is independent of source authority. It selects the exact
+pending bytes a periodic HTTP refresh asks the proposal pipeline to validate. A pending
+overlay from another source identity fails the render instead of mixing source
+declarations. Initial candidates never enter this asynchronous pending flow.
 
 ## Component Lifecycle
 

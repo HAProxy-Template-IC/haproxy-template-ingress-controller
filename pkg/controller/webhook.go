@@ -250,17 +250,7 @@ func createDryRunValidator(
 		return nil, fmt.Errorf("creating template engine for dry-run validation: %w", err)
 	}
 
-	// Create RenderService (pure service for rendering).
-	//
-	// HTTPStoreComponent is wired in so chart templates that use
-	// `{{ http.Fetch(...) }}` (e.g. an HTTP-store-driven blocklist) render
-	// successfully during webhook dry-run. Without it, calling http.Fetch
-	// from a template panics on a nil receiver and the webhook rejects
-	// every Ingress with a render error — even Ingresses that have nothing
-	// to do with HTTP fetching, since the rendering pass happens against
-	// the whole merged config. Reusing the cluster's accepted content for
-	// dry-run is safe: validation overlays are only applied for the actual
-	// proposal-validation pipeline, not for sync webhook calls.
+	// Admission wrappers reuse matching HTTP content and stage other sources per render.
 	//
 	// HAProxyPodStore and CurrentConfigStore intentionally remain nil:
 	// the webhook validates hypothetical future state, not what's

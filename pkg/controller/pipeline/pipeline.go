@@ -257,6 +257,9 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 
 	// Phase 1: Render configuration
 	renderResult, err := p.renderer.Render(ctx, provider, mode, extraOpts...)
+	if renderResult != nil && renderResult.InputTransaction != nil {
+		defer renderResult.InputTransaction.Abort()
+	}
 	if contextErr := pipelineCancellationError(ctx, PhaseRender, "", err); contextErr != nil {
 		return nil, nil, contextErr
 	}
@@ -266,7 +269,6 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 			Cause: err,
 		}
 	}
-
 	// Compute content checksum once — propagated to all downstream consumers
 	contentChecksum := dataplane.ComputeContentChecksum(renderResult.HAProxyConfig, renderResult.AuxiliaryFiles)
 
@@ -318,6 +320,15 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 
 	if err := pipelineCancellationError(ctx, PhaseValidation, result.ValidationPhase, validationResult.Error); err != nil {
 		return nil, nil, err
+	}
+	if validationResult.Valid && renderResult.InputTransaction != nil {
+		if err := renderResult.InputTransaction.Commit(ctx); err != nil {
+			return nil, nil, &PipelineError{
+				Phase: PhaseRender,
+				Cause: fmt.Errorf("committing validated render inputs: %w", err),
+			}
+		}
+		result.TotalDurationMs = time.Since(startTime).Milliseconds()
 	}
 	return result, validationResult, nil
 }

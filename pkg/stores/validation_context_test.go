@@ -38,6 +38,9 @@ func (f *fakeHTTPOverlay) GetContent(url string) (string, bool) {
 	c, ok := f.content[url]
 	return c, ok
 }
+func (f *fakeHTTPOverlay) GetContentForSource(url, _ string) (string, bool) {
+	return f.GetContent(url)
+}
 
 // fakeStore is a minimal Store used by tests that only need GetStore to
 // return something non-nil; the actual methods don't get exercised.

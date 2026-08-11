@@ -247,7 +247,9 @@ Applies uniformly to every watched-resource store. Fields that are referenced by
 
 ## HTTP Resources
 
-Templates can fetch arbitrary HTTP content via the `http.Fetch(url, opts, auth)` template function — a separate mechanism from Kubernetes watching. The controller auto-registers any URL that appears in an `http.Fetch()` call during template rendering, periodically re-checks it at a per-URL `interval`, and surfaces the cached body back to the template on the next render. The first fetch is synchronous — `interval` only sets how often the content is re-checked afterwards, and the re-check is conditional (`If-None-Match` / `If-Modified-Since`), so unchanged content costs one 304 and triggers no re-render. `Fetch` returns the response body as a string.
+Templates can fetch arbitrary HTTP content via the `http.Fetch(url, opts, auth)` template function — a separate mechanism from Kubernetes watching. The first fetch is synchronous, but its response stays local to that render until the complete HAProxy output passes every configured validator. HAPTIC then accepts every new HTTP input from that render atomically and starts each `interval` timer. A failed or canceled render accepts none of them, so the next live reconciliation fetches them again. Later checks are conditional (`If-None-Match` / `If-Modified-Since`), so unchanged content costs one 304 and triggers no re-render. `Fetch` returns the response body as a string.
+
+Admission validation never replaces a live URL's credentials, accepted body, or refresh timer. It reuses matching cached content and fetches a changed or new declaration only for that validation render. The next live reconciliation makes an admitted declaration authoritative.
 
 ### Fetch parameters
 
@@ -263,6 +265,8 @@ The second argument is an options map. All keys are optional:
 Set `critical: true` only when an empty body would produce a dangerously wrong config (for example, a security blocklist that must not silently become empty); leave it `false` when a stale-or-empty body is safer than blocking every render on one unreachable URL.
 
 A third optional argument supplies authentication: `{"type": "bearer", "token": "..."}`, `{"type": "basic", "username": "...", "password": "..."}`, or `{"type": "header", "headers": {"X-API-Key": "..."}}`.
+
+Use one set of options and authentication settings for each URL in a render. Two calls for the same URL with different declarations fail the render instead of sharing ambiguous cached content. Calls that repeat the same declaration in one render reuse its exact response. On a later render, changing either declaration invalidates the old accepted body and timer, then fetches a new render-local response. A successful complete validation accepts that response and applies its interval; a failure leaves no accepted body or timer, so the next live reconciliation fetches it again.
 
 Response bodies are capped at 10 MiB. A larger response fails the fetch with `response body exceeds maximum size of N bytes` — it isn't truncated — and the limit is fixed with no per-call override. A failed fetch is then handled per the `critical` setting above.
 

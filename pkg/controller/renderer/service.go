@@ -40,6 +40,12 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
+// RenderInputTransaction finalizes external inputs used by one render.
+type RenderInputTransaction interface {
+	Commit(context.Context) error
+	Abort()
+}
+
 // RenderResult contains the output of a render operation.
 type RenderResult struct {
 	// HAProxyConfig is the rendered HAProxy configuration.
@@ -74,6 +80,9 @@ type RenderResult struct {
 
 	// AuxFileCount is the total number of auxiliary files.
 	AuxFileCount int
+
+	// InputTransaction owns render-local inputs until the full pipeline decides their fate.
+	InputTransaction RenderInputTransaction
 }
 
 // RenderService is a pure service that transforms stores into HAProxy configuration.
@@ -210,10 +219,6 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 
 // Render transforms the stores into HAProxy configuration.
 //
-// The render mode (production vs validation) is determined automatically:
-//   - If provider is *OverlayStoreProvider with HTTP overlay: validation mode
-//   - Otherwise: production mode
-//
 // Parameters:
 //   - ctx: Context for cancellation
 //   - provider: StoreProvider for accessing resource stores
@@ -233,6 +238,13 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 
 	// Build rendering context from stores
 	bctx := s.buildRenderingContext(ctx, provider, mode, extraOpts...)
+	inputTransaction := bctx.inputTransaction
+	transactionHandedOff := false
+	defer func() {
+		if inputTransaction != nil && !transactionHandedOff {
+			inputTransaction.Abort()
+		}
+	}()
 	renderContext, fileRegistry := bctx.Context, bctx.FileRegistry
 	statusPatchCollector, renderedResourceCollector := bctx.StatusPatchCollector, bctx.RenderedResourceCollector
 	eventCollector := bctx.EventCollector
@@ -309,7 +321,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, collectorErr)
 	}
 
-	return &RenderResult{
+	result := &RenderResult{
 		HAProxyConfig:     haproxyConfig,
 		AuxiliaryFiles:    auxiliaryFiles,
 		StatusPatches:     statusPatchCollector.Patches(),
@@ -318,7 +330,15 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		DurationMs:        time.Since(startTime).Milliseconds(),
 		AuxFileCount:      auxFileCount,
 		IncludeStats:      includeStats,
-	}, nil
+		InputTransaction:  inputTransaction,
+	}
+	transactionHandedOff = true
+	return result, nil
+}
+
+type builtRenderingContext struct {
+	*rendercontext.BuildResult
+	inputTransaction RenderInputTransaction
 }
 
 // buildRenderingContext constructs the template rendering context from stores.
@@ -330,7 +350,24 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 // StoreProvider, resolving the current deployed config, and wiring the HTTP
 // fetcher (whose overlay depends on the provider type); everything else is the
 // Builder's responsibility.
-func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) *rendercontext.BuildResult {
+func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) *builtRenderingContext {
+	return s.buildRenderingContextWithHTTPSourceMode(ctx, provider, mode, httpSourceModeForRender(mode), extraOpts...)
+}
+
+func httpSourceModeForRender(mode rendercontext.RenderMode) httpstore.SourceMode {
+	if mode == rendercontext.RenderModeReconcile {
+		return httpstore.SourceModeAuthoritative
+	}
+	return httpstore.SourceModeReadOnly
+}
+
+func (s *RenderService) buildRenderingContextWithHTTPSourceMode(
+	ctx context.Context,
+	provider stores.StoreProvider,
+	mode rendercontext.RenderMode,
+	httpSourceMode httpstore.SourceMode,
+	extraOpts ...rendercontext.Option,
+) *builtRenderingContext {
 	// Snapshot the live stores off the provider. The haproxy-pods store is
 	// separated out by the Builder (WithHAProxyPodStore) into
 	// controller.haproxy_pods; the rest land in `resources`.
@@ -367,15 +404,22 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		opts = append(opts, rendercontext.WithCurrentAuxFiles(s.currentAuxFilesProvider()))
 	}
 
-	// Wire the HTTP fetcher. Validation mode is detected automatically from the
-	// provider type: an OverlayStoreProvider carries the HTTP overlay (pending
-	// content), production providers don't (accepted content only).
+	var inputTransaction RenderInputTransaction
 	if s.httpStoreComponent != nil {
 		var httpOverlay stores.HTTPContentOverlay
 		if overlayProvider, ok := provider.(*stores.OverlayStoreProvider); ok {
 			httpOverlay = overlayProvider.GetHTTPOverlay()
 		}
-		httpFetcher := httpstore.NewHTTPStoreWrapper(ctx, s.httpStoreComponent, s.logger, httpOverlay)
+		httpFetcher := httpstore.NewHTTPStoreWrapper(
+			ctx,
+			s.httpStoreComponent,
+			s.logger,
+			httpOverlay,
+			httpSourceMode,
+		)
+		if transaction := httpFetcher.InputTransaction(); transaction != nil {
+			inputTransaction = transaction
+		}
 		opts = append(opts, rendercontext.WithHTTPFetcher(httpFetcher))
 	}
 
@@ -383,7 +427,10 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 	// to pin currentFiles to its leader-term snapshot for the whole render.
 	opts = append(opts, extraOpts...)
 
-	return rendercontext.NewBuilder(ctx, s.config, s.pathResolver, s.logger, opts...).Build()
+	return &builtRenderingContext{
+		BuildResult:      rendercontext.NewBuilder(ctx, s.config, s.pathResolver, s.logger, opts...).Build(),
+		inputTransaction: inputTransaction,
+	}
 }
 
 // renderAuxiliaryFiles renders all auxiliary files in parallel.
@@ -475,7 +522,12 @@ func (s *RenderService) RenderSourceMaps(ctx context.Context, provider stores.St
 	}
 	// Source-map introspection is read-only provenance, not enforcement — use
 	// the lenient reconcile mode so it never fails on a conflict.
-	bctx := s.buildRenderingContext(ctx, provider, rendercontext.RenderModeReconcile)
+	bctx := s.buildRenderingContextWithHTTPSourceMode(
+		ctx,
+		provider,
+		rendercontext.RenderModeReconcile,
+		httpstore.SourceModeReadOnly,
+	)
 	renderCtx := bctx.Context
 	out := make(map[string]TemplateSourceMap)
 	add := func(name string) {

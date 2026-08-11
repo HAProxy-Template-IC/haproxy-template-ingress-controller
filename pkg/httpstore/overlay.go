@@ -41,9 +41,10 @@ type HTTPOverlay struct {
 }
 
 type overlayPendingContent struct {
-	content  string
-	checksum string
-	revision uint64
+	content        string
+	checksum       string
+	revision       uint64
+	sourceIdentity string
 }
 
 // NewHTTPOverlay creates an overlay from the store's current pending state.
@@ -66,9 +67,10 @@ func NewHTTPOverlay(store *HTTPStore) *HTTPOverlay {
 		}
 		pendingURLs = append(pendingURLs, url)
 		pending[url] = overlayPendingContent{
-			content:  entry.PendingContent,
-			checksum: entry.PendingChecksum,
-			revision: entry.PendingRevision,
+			content:        entry.PendingContent,
+			checksum:       entry.PendingChecksum,
+			revision:       entry.PendingRevision,
+			sourceIdentity: entry.sourceIdentity,
 		}
 	}
 	store.mu.RUnlock()
@@ -103,6 +105,17 @@ func (o *HTTPOverlay) GetContent(url string) (string, bool) {
 		return pending.content, true
 	}
 	return o.store.Get(url)
+}
+
+// GetContentForSource returns overlay content only for its fetch authority.
+func (o *HTTPOverlay) GetContentForSource(url, sourceIdentity string) (string, bool) {
+	if pending, ok := o.pending[url]; ok {
+		if pending.sourceIdentity != sourceIdentity {
+			return "", false
+		}
+		return pending.content, true
+	}
+	return o.store.GetSource(url, sourceIdentity)
 }
 
 // PendingURLs returns the list of URLs with pending content.
