@@ -17,6 +17,7 @@ package proposalvalidator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -97,6 +98,31 @@ func createTestPipelineWithOutputValidator(t *testing.T, template string, output
 		Validator:       validationSvc,
 		OutputValidator: outputValidator,
 		Logger:          slog.Default(),
+	})
+}
+
+func createCurrentFilesTestPipeline(t *testing.T, template string) *pipeline.Pipeline {
+	t.Helper()
+
+	cfg := &config.Config{HAProxyConfig: config.HAProxyConfig{Template: template}}
+	engine, err := templating.New(
+		map[string]string{"haproxy.cfg": template},
+		&templating.Options{Declarations: map[string]any{"currentFiles": (*map[string]string)(nil)}},
+	)
+	require.NoError(t, err)
+
+	return pipeline.New(&pipeline.PipelineConfig{
+		Renderer: renderer.NewRenderService(&renderer.RenderServiceConfig{
+			Engine:       engine,
+			Config:       cfg,
+			Logger:       slog.Default(),
+			Capabilities: defaultCapabilities(),
+		}),
+		Validator: validation.NewValidationService(&validation.ValidationServiceConfig{
+			Logger:            slog.Default(),
+			SkipDNSValidation: true,
+		}),
+		Logger: slog.Default(),
 	})
 }
 
@@ -249,6 +275,52 @@ func TestComponent_ValidateSync_UnchangedInvalidContent_Admits(t *testing.T) {
 	assert.Nil(t, result.Error)
 	require.NotNil(t, pipelineResult)
 	assert.NotEmpty(t, pipelineResult.ContentChecksum)
+}
+
+func TestComponent_ValidateSync_PinsCurrentFilesAcrossBaseline(t *testing.T) {
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithRejectAll("invalid configuration")))
+	template := `global
+    daemon
+# current-files: {{ currentFiles["gate"] }}
+`
+	calls := 0
+	component := New(&ComponentConfig{
+		Pipeline:          createCurrentFilesTestPipeline(t, template),
+		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{}),
+		CurrentFilesProvider: func() (map[string]string, error) {
+			calls++
+			return map[string]string{"gate": fmt.Sprintf("snapshot-%d", calls)}, nil
+		},
+		Logger:   slog.Default(),
+		SyncOnly: true,
+	})
+
+	pipelineResult, result := component.ValidateSync(context.Background(), nil)
+
+	require.NotNil(t, result)
+	assert.True(t, result.Valid)
+	require.NotNil(t, pipelineResult)
+	assert.Equal(t, 1, calls)
+}
+
+func TestComponent_ValidateSyncRejectsUnavailableCurrentFiles(t *testing.T) {
+	authorityErr := errors.New("published currentFiles unavailable")
+	component := New(&ComponentConfig{
+		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{}),
+		CurrentFilesProvider: func() (map[string]string, error) {
+			return nil, authorityErr
+		},
+		Logger:   slog.Default(),
+		SyncOnly: true,
+	})
+
+	pipelineResult, result := component.ValidateSync(t.Context(), nil)
+
+	assert.Nil(t, pipelineResult)
+	require.NotNil(t, result)
+	assert.False(t, result.Valid)
+	assert.Equal(t, "render", result.Phase)
+	assert.ErrorIs(t, result.Error, authorityErr)
 }
 
 func TestComponent_ValidateSync_CanceledUnchangedInvalidContent_Denies(t *testing.T) {

@@ -208,6 +208,37 @@ func TestRenderService_Render_SimpleConfig(t *testing.T) {
 	assert.GreaterOrEqual(t, result.DurationMs, int64(0))
 }
 
+func TestRenderService_Render_CallCurrentFilesOverridesDefault(t *testing.T) {
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: `{{ currentFiles["ticket.keys"] }}`},
+		Dataplane:     testDataplaneConfig(),
+	}
+	engine, err := templating.New(
+		map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template},
+		&templating.Options{Declarations: map[string]any{"currentFiles": (*map[string]string)(nil)}},
+	)
+	require.NoError(t, err)
+	service := NewRenderService(&RenderServiceConfig{
+		Engine:       engine,
+		Config:       cfg,
+		Logger:       slog.Default(),
+		Capabilities: defaultCapabilities(),
+		CurrentAuxFilesProvider: func() map[string]string {
+			return map[string]string{"ticket.keys": "provider"}
+		},
+	})
+
+	result, err := service.Render(
+		context.Background(),
+		&mockStoreProvider{storeMap: map[string]stores.Store{}},
+		rendercontext.RenderModeReconcile,
+		rendercontext.WithCurrentAuxFiles(map[string]string{"ticket.keys": "term"}),
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "term\n", result.HAProxyConfig)
+}
+
 func TestRenderService_Render_WithStores(t *testing.T) {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{

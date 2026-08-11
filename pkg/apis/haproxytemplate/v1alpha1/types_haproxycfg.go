@@ -154,6 +154,10 @@ type PodDeploymentStatus struct {
 
 // AuxiliaryFileReferences references the associated map files, certificates, general files, and crt-lists.
 type AuxiliaryFileReferences struct {
+	// SetID identifies the auxiliary publication committed with these references.
+	// +optional
+	SetID string `json:"setID,omitempty"`
+
 	// MapFiles lists the HAProxyMapFile resources associated with this config.
 	// +optional
 	MapFiles []ResourceReference `json:"mapFiles,omitempty"`

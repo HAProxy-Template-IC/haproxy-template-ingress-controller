@@ -79,7 +79,7 @@ func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haprox
 			Name:      name,
 			Namespace: req.TemplateConfigNamespace,
 			Annotations: map[string]string{
-				auxiliarySetIDAnnotationKey: req.auxiliarySetID,
+				AuxiliarySetIDAnnotationKey: req.auxiliarySetID,
 			},
 			Labels: map[string]string{
 				"haproxy-haptic.org/template-config": req.TemplateConfigName,
@@ -185,7 +185,11 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 		return fmt.Errorf("getting runtime config: %w", err)
 	}
 
-	newAux := buildAuxiliaryFileReferences(runtimeConfig.Namespace, result)
+	newAux := buildAuxiliaryFileReferences(
+		runtimeConfig.Namespace,
+		result,
+		runtimeConfig.Annotations[AuxiliarySetIDAnnotationKey],
+	)
 
 	// Skip UpdateStatus if nothing changed
 	if auxiliaryRefsEqual(current.Status.AuxiliaryFiles, newAux) {
@@ -209,7 +213,7 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 }
 
 // buildAuxiliaryFileReferences constructs an AuxiliaryFileReferences from a PublishResult.
-func buildAuxiliaryFileReferences(namespace string, result *PublishResult) *haproxyv1alpha1.AuxiliaryFileReferences {
+func buildAuxiliaryFileReferences(namespace string, result *PublishResult, setID string) *haproxyv1alpha1.AuxiliaryFileReferences {
 	// Returns nil (not []) for empty inputs so the AuxiliaryFileReferences
 	// field stays absent in JSON via its omitempty tag — matching the prior
 	// behavior of unexecuted appends leaving the field nil.
@@ -226,6 +230,7 @@ func buildAuxiliaryFileReferences(namespace string, result *PublishResult) *hapr
 		return out
 	}
 	return &haproxyv1alpha1.AuxiliaryFileReferences{
+		SetID:           setID,
 		MapFiles:        refs(result.MapFileNames, "HAProxyMapFile"),
 		SSLCertificates: refs(result.SecretNames, "Secret"),
 		GeneralFiles:    refs(result.GeneralFileNames, "HAProxyGeneralFile"),
@@ -243,6 +248,7 @@ func auxiliaryRefsEqual(a, b *haproxyv1alpha1.AuxiliaryFileReferences) bool {
 		return false
 	}
 	return slices.Equal(a.MapFiles, b.MapFiles) &&
+		a.SetID == b.SetID &&
 		slices.Equal(a.SSLCertificates, b.SSLCertificates) &&
 		slices.Equal(a.GeneralFiles, b.GeneralFiles) &&
 		slices.Equal(a.CRTListFiles, b.CRTListFiles)

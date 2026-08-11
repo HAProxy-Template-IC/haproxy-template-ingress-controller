@@ -31,8 +31,11 @@ import (
 )
 
 const (
-	runtimeConfigLabelKey       = "haproxy-haptic.org/runtime-config"
-	auxiliarySetIDAnnotationKey = "haproxy-haptic.org/auxiliary-set-id"
+	runtimeConfigLabelKey = "haproxy-haptic.org/runtime-config"
+	// AuxiliarySetIDAnnotationKey identifies one immutable auxiliary publication.
+	AuxiliarySetIDAnnotationKey = "haproxy-haptic.org/auxiliary-set-id"
+	// AuxiliaryChecksumAnnotationKey identifies the content stored in an auxiliary Secret.
+	AuxiliaryChecksumAnnotationKey = "haproxy-haptic.org/checksum"
 )
 
 // runtimeConfigOwnerRefs builds the OwnerReferences slice that ties an
@@ -59,9 +62,16 @@ func runtimeConfigLabels(owner *haproxyv1alpha1.HAProxyCfg) map[string]string {
 	}
 }
 
+// RuntimeConfigLabelSelector selects children owned by one HAProxyCfg.
+func RuntimeConfigLabelSelector(runtimeConfigName string) *metav1.LabelSelector {
+	return &metav1.LabelSelector{MatchLabels: map[string]string{
+		runtimeConfigLabelKey: runtimeConfigLabelValue(runtimeConfigName),
+	}}
+}
+
 func runtimeConfigAnnotations(owner *haproxyv1alpha1.HAProxyCfg) map[string]string {
 	return map[string]string{
-		auxiliarySetIDAnnotationKey: owner.Annotations[auxiliarySetIDAnnotationKey],
+		AuxiliarySetIDAnnotationKey: owner.Annotations[AuxiliarySetIDAnnotationKey],
 	}
 }
 
@@ -234,7 +244,7 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 	ownerReferences := runtimeConfigOwnerRefs(owner)
 	annotations := runtimeConfigAnnotations(owner)
 	annotations["haproxy-haptic.org/compressed"] = strconv.FormatBool(result.compressed)
-	annotations["haproxy-haptic.org/checksum"] = checksum
+	annotations[AuxiliaryChecksumAnnotationKey] = checksum
 	data := map[string][]byte{
 		"certificate": []byte(result.content),
 		"path":        []byte(cert.Path),

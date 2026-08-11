@@ -220,7 +220,7 @@ func TestPublishConfig_StaleCleanupCannotDeleteNewNameForSameAuxiliarySet(t *tes
 	foreign.TemplateConfigName = "foreign-config"
 	foreign.TemplateConfigUID = types.UID("foreign-uid")
 	foreign.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
-		Path: "/maps/host.map", Content: "foreign",
+		Path: "/maps/host.map", Content: "ours",
 	}}}
 	foreignResult, err := publisher.PublishConfig(ctx, &foreign)
 	require.NoError(t, err)
@@ -270,7 +270,7 @@ func TestPublishConfig_ReportsIncompleteAuxiliaryPublication(t *testing.T) {
 	require.ErrorAs(t, err, &publicationErr)
 	assert.Equal(t, PublicationStageAuxiliary, publicationErr.Stage)
 	assert.Equal(t, "HAProxyMapFile", publicationErr.ResourceKind)
-	assert.Equal(t, "haproxy-map-host", publicationErr.ResourceName)
+	assert.True(t, strings.HasPrefix(publicationErr.ResourceName, "haproxy-map-host-"))
 	assert.Empty(t, result.MapFileNames)
 
 	runtimeConfig, getErr := crdClient.HaproxyTemplateICV1alpha1().
@@ -365,14 +365,24 @@ func TestPublishConfig_IsolatesInvalidAuxiliaryResources(t *testing.T) {
 	invalidResult, err := publisher.PublishConfig(ctx, &invalid)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"haproxy-map-host"}, validResult.MapFileNames)
-	assert.Equal(t, []string{"haproxy-cert-site"}, validResult.SecretNames)
-	assert.Equal(t, []string{"haproxy-file-error"}, validResult.GeneralFileNames)
-	assert.Equal(t, []string{"haproxy-crtlist-site"}, validResult.CRTListFileNames)
-	assert.Equal(t, []string{"haproxy-map-host-invalid"}, invalidResult.MapFileNames)
-	assert.Equal(t, []string{"haproxy-cert-site-invalid"}, invalidResult.SecretNames)
-	assert.Equal(t, []string{"haproxy-file-error-invalid"}, invalidResult.GeneralFileNames)
-	assert.Equal(t, []string{"haproxy-crtlist-site-invalid"}, invalidResult.CRTListFileNames)
+	for _, names := range [][]string{
+		validResult.MapFileNames,
+		validResult.SecretNames,
+		validResult.GeneralFileNames,
+		validResult.CRTListFileNames,
+	} {
+		require.Len(t, names, 1)
+		assert.False(t, strings.HasSuffix(names[0], "-invalid"))
+	}
+	for _, names := range [][]string{
+		invalidResult.MapFileNames,
+		invalidResult.SecretNames,
+		invalidResult.GeneralFileNames,
+		invalidResult.CRTListFileNames,
+	} {
+		require.Len(t, names, 1)
+		assert.True(t, strings.HasSuffix(names[0], "-invalid"))
+	}
 
 	validMap, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
 		Get(ctx, validResult.MapFileNames[0], metav1.GetOptions{})
@@ -497,7 +507,7 @@ func TestPublishConfig_PrunesObsoleteAuxiliaryResources(t *testing.T) {
 	}}
 	result, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"haproxy-file-error"}, result.GeneralFileNames)
+	require.Len(t, result.GeneralFileNames, 1)
 
 	mapFiles, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").List(ctx, metav1.ListOptions{})
 	require.NoError(t, err)
@@ -512,7 +522,7 @@ func TestPublishConfig_PrunesObsoleteAuxiliaryResources(t *testing.T) {
 	generalFiles, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles("default").List(ctx, metav1.ListOptions{})
 	require.NoError(t, err)
 	require.Len(t, generalFiles.Items, 1)
-	assert.Equal(t, "haproxy-file-error", generalFiles.Items[0].Name)
+	assert.Equal(t, result.GeneralFileNames[0], generalFiles.Items[0].Name)
 
 	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
 		Get(ctx, result.RuntimeConfigName, metav1.GetOptions{})
@@ -522,7 +532,7 @@ func TestPublishConfig_PrunesObsoleteAuxiliaryResources(t *testing.T) {
 	assert.Empty(t, runtimeConfig.Status.AuxiliaryFiles.SSLCertificates)
 	assert.Empty(t, runtimeConfig.Status.AuxiliaryFiles.CRTListFiles)
 	require.Len(t, runtimeConfig.Status.AuxiliaryFiles.GeneralFiles, 1)
-	assert.Equal(t, "haproxy-file-error", runtimeConfig.Status.AuxiliaryFiles.GeneralFiles[0].Name)
+	assert.Equal(t, result.GeneralFileNames[0], runtimeConfig.Status.AuxiliaryFiles.GeneralFiles[0].Name)
 }
 
 func TestPublishConfig_RetriesIncompleteAuxiliaryCleanup(t *testing.T) {
@@ -531,8 +541,9 @@ func TestPublishConfig_RetriesIncompleteAuxiliaryCleanup(t *testing.T) {
 	req.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
 		Path: "/maps/host.map", Content: "map",
 	}}}
-	_, err := publisher.PublishConfig(ctx, &req)
+	initial, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
+	require.Len(t, initial.MapFileNames, 1)
 
 	deleteFailures := 1
 	crdClient.PrependReactor("delete", "haproxymapfiles", func(k8stesting.Action) (bool, runtime.Object, error) {
@@ -550,13 +561,13 @@ func TestPublishConfig_RetriesIncompleteAuxiliaryCleanup(t *testing.T) {
 	require.ErrorAs(t, err, &publicationErr)
 	assert.Equal(t, PublicationStageCleanup, publicationErr.Stage)
 	assert.Equal(t, "HAProxyMapFile", publicationErr.ResourceKind)
-	assert.Equal(t, "haproxy-map-host", publicationErr.ResourceName)
+	assert.Equal(t, initial.MapFileNames[0], publicationErr.ResourceName)
 	assert.True(t, IsRetryablePublicationError(err))
 
 	_, err = publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
 	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
-		Get(ctx, "haproxy-map-host", metav1.GetOptions{})
+		Get(ctx, initial.MapFileNames[0], metav1.GetOptions{})
 	assert.True(t, apierrors.IsNotFound(err))
 }
 
@@ -1499,8 +1510,8 @@ func TestAuxiliaryFileSpec_NoUpdateWhenChecksumUnchanged(t *testing.T) {
 		"crt-list file resource version should not change when checksum is unchanged")
 }
 
-// TestAuxiliaryFileSpec_UpdateWhenChecksumChanges verifies that auxiliary file
-// specs ARE updated when the content checksum changes.
+// TestAuxiliaryFileSpec_UpdateWhenChecksumChanges verifies changed content is
+// published under a new immutable auxiliary-set name.
 func TestAuxiliaryFileSpec_UpdateWhenChecksumChanges(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -1522,9 +1533,10 @@ func TestAuxiliaryFileSpec_UpdateWhenChecksumChanges(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, result.MapFileNames, 1)
+	initialName := result.MapFileNames[0]
 
 	// Get initial checksum
-	mapFile1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, result.MapFileNames[0], metav1.GetOptions{})
+	mapFile1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, initialName, metav1.GetOptions{})
 	require.NoError(t, err)
 	initialChecksum := mapFile1.Spec.Checksum
 
@@ -1541,8 +1553,10 @@ func TestAuxiliaryFileSpec_UpdateWhenChecksumChanges(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	require.Len(t, result2.MapFileNames, 1)
+	assert.NotEqual(t, initialName, result2.MapFileNames[0])
 
-	// Verify checksum was updated
+	// Verify the committed resource carries the changed content.
 	mapFile2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, result2.MapFileNames[0], metav1.GetOptions{})
 	require.NoError(t, err)
 	assert.NotEqual(t, initialChecksum, mapFile2.Spec.Checksum,

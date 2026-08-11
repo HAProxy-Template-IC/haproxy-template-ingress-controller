@@ -86,46 +86,6 @@ func (sc *StateCache) GetAuxiliaryFiles() (*dataplane.AuxiliaryFiles, time.Time,
 	return sc.lastAuxFiles, sc.lastAuxFilesTime, nil
 }
 
-// currentAuxFilesProvider returns a callback that resolves the currently-deployed
-// auxiliary files (base filename → content) the renderer exposes to templates as
-// `currentFiles`, letting a template read its own prior output — the mechanism
-// behind self-rotating TLS session-ticket keys. The same variable is available in
-// every render (main config, map files, general files), so a self-referential
-// snippet can be included from any template type. Keyed by base filename, the
-// same name a template uses to register a map/file.
-//
-// Scope: the three CRD-backed aux kinds — map files, general files, and crt-list
-// files. SSL certificates and CA files are excluded on purpose: their deployed
-// content includes private keys and is published as Secrets, so surfacing it in
-// every template's context would expand the private-key exposure surface without
-// a real self-reference use case.
-//
-// It draws from two sources with a deliberate precedence:
-//
-//   - Once a render has recorded aux files this iteration, that in-process output
-//     wins. It is always the latest render's result, so a self-rotating template
-//     never re-rotates against a lagging published snapshot (no key churn).
-//   - Before the first render (controller restart, config reload, or a follower
-//     just promoted to leader) the StateCache is empty; the provider falls back
-//     to the watched snapshot of published aux-file CRDs. This is the aux-file
-//     analogue of currentConfig's read-back from HAProxyCfg — it lets a
-//     self-referential template rotate from its prior keys instead of
-//     bootstrapping fresh (which would reset all TLS ticket keys at once and
-//     break session resumption). GetAuxiliaryFiles reports a zero timestamp until
-//     a render records aux files, so that is the "cold" signal.
-func currentAuxFilesProvider(sc *StateCache, published *publishedAuxFiles) func() map[string]string {
-	return func() map[string]string {
-		af, ts, _ := sc.GetAuxiliaryFiles()
-		if ts.IsZero() {
-			if published != nil {
-				return published.get()
-			}
-			return nil
-		}
-		return af.CurrentFiles()
-	}
-}
-
 // GetResourceCounts implements debug.StateProvider.
 func (sc *StateCache) GetResourceCounts() (map[string]int, error) {
 	if sc.resourceWatcher == nil {

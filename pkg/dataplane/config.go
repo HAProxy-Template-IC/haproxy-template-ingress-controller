@@ -68,18 +68,8 @@ type AuxiliaryFiles struct {
 	CRTListFiles []auxiliaryfiles.CRTListFile
 }
 
-// CurrentFiles projects the auxiliary files into the base-filename → content map
-// exposed to templates as `currentFiles` — the previously-deployed content a
-// template can read its own prior output from (the mechanism behind self-rotating
-// TLS session-ticket keys). It covers the CRD-backed kinds (map files, general
-// files, crt-lists), keyed by base filename to match how a template registers a
-// map/file. SSL certificates and CA files are excluded on purpose: their content
-// includes private keys and is published as Secrets, so they must not enter the
-// render context this way.
-//
-// This is the single definition of the `currentFiles` projection, shared by the
-// controller's in-render provider and the WASM playground's baseline wiring so
-// both behave identically.
+// CurrentFiles projects CRD-backed auxiliary output into the currentFiles map.
+// Secret-backed certificate and CA content is deliberately excluded.
 func (af *AuxiliaryFiles) CurrentFiles() map[string]string {
 	if af == nil {
 		return nil

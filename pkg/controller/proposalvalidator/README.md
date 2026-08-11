@@ -13,6 +13,8 @@ Two production paths need this:
 
 Both flows go through the same `Pipeline.Execute`, so anything that passes here will also pass leader-side reconciliation. Reconciliation itself does **not** use this component — the leader-only Coordinator calls `Pipeline.Execute` directly without going through proposalvalidator.
 
+Production supplies `CurrentFilesProvider` from the published auxiliary CRDs. The component reads it once per decision, so the proposed render and unchanged-invalid baseline use the same `currentFiles` snapshot. An unavailable publication rejects the proposal before either render, so the unchanged-invalid exception cannot bypass the authority failure.
+
 ## Quick Start
 
 ```go

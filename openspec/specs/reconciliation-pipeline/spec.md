@@ -104,6 +104,50 @@ term context is canceled.
 - **WHEN** the Coordinator's pipeline returns after the leader term context is canceled
 - **THEN** the Coordinator SHALL discard both successful and failed results without publishing result events.
 
+### Requirement: Leader-Term Current Files Authority
+
+The Coordinator SHALL render with an immutable `currentFiles` snapshot owned by its current leader term. Before the term accepts a render, the snapshot SHALL come from one completely resolved auxiliary reference set committed in the watched `HAProxyCfg` status. Resolution SHALL verify every referenced child's name, namespace, and set ID, including certificate Secret metadata, without reading Secret data into `currentFiles`. Secret metadata SHALL retain a checksum and resource-version mutation identity so an in-place legacy Secret update is detectable without retaining its data. Individually written children and incomplete modern publications SHALL remain invisible, and the last complete snapshot SHALL remain authoritative until every child named by a newer set ID is available. An initial complete publication without a set ID MAY be accepted for rolling-upgrade compatibility, but any later change to its referenced children or references SHALL make published `currentFiles` unavailable until a complete set-ID publication is committed. After any complete set-ID publication has been accepted, a missing parent or a parent without a set ID SHALL fail closed and SHALL NOT restore legacy mode. Reconciliation, admission, and other proposal validation SHALL fail closed while published `currentFiles` is unavailable, even when the leader has locally accepted newer auxiliary bytes. After a render passes validation, the Coordinator SHALL synchronously promote that render's map, general-file, and crt-list output before publishing result events. A failed render SHALL NOT advance the snapshot, and output completing for a retired leader term SHALL NOT replace the active term's snapshot. Admission and other all-replica proposal validation SHALL pin one published auxiliary-file snapshot across the complete decision and SHALL NOT depend on leader-only accepted state. User extra context SHALL NOT replace the authoritative `currentFiles` value. StateCache is observability-only and SHALL NOT provide reconciliation input.
+
+#### Scenario: Back-to-back renders use the accepted output
+
+- **WHEN** a second trigger is handled before observers consume the first render's events
+- **THEN** the second render SHALL receive the first successfully validated auxiliary output in `currentFiles`.
+
+#### Scenario: Retired term cannot advance currentFiles
+
+- **WHEN** an old leader's pipeline returns after a newer leader term begins
+- **THEN** its auxiliary output SHALL be discarded from the active term's `currentFiles` authority.
+
+#### Scenario: Admission ignores leader-local accepted output
+
+- **WHEN** a leader has accepted auxiliary output that differs from the latest published output CRDs
+- **THEN** watched-resource admission on every replica SHALL evaluate `currentFiles` from the published snapshot.
+
+#### Scenario: Partial publication retains the committed snapshot
+
+- **WHEN** any child from a newer auxiliary set is written or a newer committed reference set cannot be completely resolved
+- **THEN** `currentFiles` SHALL retain the preceding complete committed snapshot.
+
+#### Scenario: Complete publication advances atomically
+
+- **WHEN** the watched `HAProxyCfg` commits a new set ID and every referenced child, including certificate Secret metadata, carries that set ID in the same namespace
+- **THEN** `currentFiles` SHALL advance to all referenced map, general-file, and crt-list content as one snapshot.
+
+#### Scenario: A legacy publication changes after bootstrap
+
+- **WHEN** a referenced child or reference changes after a publication without a set ID supplied the initial snapshot
+- **THEN** reconciliation and proposal validation SHALL reject rendering until a complete publication with a set ID is committed.
+
+#### Scenario: Published authority fails after a leader-local acceptance
+
+- **WHEN** the leader has accepted auxiliary output and the published legacy snapshot then becomes unavailable
+- **THEN** reconciliation SHALL reject rendering rather than use the leader-local bytes.
+
+#### Scenario: A modern publication loses its set ID
+
+- **WHEN** a complete set-ID publication was accepted and the watched parent is later absent or has no set ID
+- **THEN** published `currentFiles` SHALL remain unavailable until another complete set-ID publication is committed.
+
 ### Requirement: Phase-Tagged Failure Fan-Out
 
 When `Pipeline.Execute` fails, the Coordinator SHALL extract the failing phase from the structured pipeline error and publish a phase-specific failure event first: ValidationFailedEvent when the validation phase failed, TemplateRenderFailedEvent otherwise. It SHALL then publish ReconciliationFailedEvent carrying the phase and the most recent successful render's status patches, so the status applier can apply the failure-variant conditions; when no successful render has happened yet, the patches are absent and the applier skips.

@@ -15,7 +15,7 @@
 package controller
 
 import (
-	"log/slog"
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,12 +23,21 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
+
+type delayedPublishedSyncer struct {
+	store types.Store
+}
+
+func (s *delayedPublishedSyncer) WaitForSync(context.Context) (int, error) {
+	return 1, nil
+}
+
+func (s *delayedPublishedSyncer) Store() types.Store {
+	return s.store
+}
 
 func auxUnstructured(name, filePath, contentField, content string, compressed bool) *unstructured.Unstructured {
 	spec := map[string]any{"path": filePath, contentField: content}
@@ -41,6 +50,66 @@ func auxUnstructured(name, filePath, contentField, content string, compressed bo
 		"metadata":   map[string]any{"name": name, "namespace": "haptic"},
 		"spec":       spec,
 	}}
+}
+
+func publishedKind(t *testing.T, gvr string) *publishedAuxCRD {
+	t.Helper()
+	for _, kind := range publishedAuxCRDList() {
+		if kind.gvr.String() == gvr {
+			return &kind
+		}
+	}
+	t.Fatalf("published kind %s not found", gvr)
+	return nil
+}
+
+func publishedSnapshot(t *testing.T, published *publishedAuxFiles) map[string]string {
+	t.Helper()
+	files, err := published.get()
+	require.NoError(t, err)
+	return files
+}
+
+func TestSyncAndRefreshPublishedStoreDoesNotDependOnDelayedCallbacks(t *testing.T) {
+	const (
+		runtimeConfigName = "example-haproxycfg"
+		setID             = "sha256:set-a"
+	)
+	mapGVR := haproxyMapFileGVR.String()
+	published := newPublishedAuxFiles("haptic")
+
+	childStore := store.NewMemoryStore(1)
+	child := auxUnstructured("routes", "maps/routes.map", "entries", "example.test backend", false)
+	child.SetAnnotations(map[string]string{"haproxy-haptic.org/auxiliary-set-id": setID})
+	require.NoError(t, childStore.Add(child, []string{"routes"}))
+	require.NoError(t, syncAndRefreshPublishedStore(t.Context(), &delayedPublishedSyncer{store: childStore},
+		func(s types.Store, _ types.ChangeStats) {
+			files, err := publishedAuxFilesFromStore(s, publishedKind(t, mapGVR))
+			require.NoError(t, err)
+			published.setForGVR(mapGVR, files)
+		}))
+
+	parentStore := store.NewMemoryStore(1)
+	parent := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": runtimeConfigName},
+		"status": map[string]any{"auxiliaryFiles": map[string]any{
+			"setID": setID,
+			"mapFiles": []any{map[string]any{
+				"kind": "HAProxyMapFile", "name": "routes", "namespace": "haptic",
+			}},
+		}},
+	}}
+	require.NoError(t, parentStore.Add(parent, []string{runtimeConfigName}))
+	require.NoError(t, syncAndRefreshPublishedStore(t.Context(), &delayedPublishedSyncer{store: parentStore},
+		func(s types.Store, _ types.ChangeStats) {
+			commit, found, err := publishedAuxCommitFromStore(s, runtimeConfigName)
+			require.NoError(t, err)
+			require.True(t, found)
+			published.setCommit(commit)
+		}))
+
+	require.NoError(t, published.readinessError())
+	assert.Equal(t, map[string]string{"routes.map": "example.test backend"}, publishedSnapshot(t, published))
 }
 
 // auxFilesFromStore must flatten aux CRD objects into base-filename → content,
@@ -56,9 +125,10 @@ func TestAuxFilesFromStore(t *testing.T) {
 	// No path → skipped.
 	require.NoError(t, s.Add(auxUnstructured("gf-bad", "", "content", "orphan", false), []string{"gf-bad"}))
 
-	got := auxFilesFromStore(s, "content", slog.Default())
-	assert.Equal(t, plain, got["tls-ticket-keys"], "keyed by base filename")
-	assert.Equal(t, body, got["503.http"], "compressed content decompressed")
+	got, err := publishedAuxFilesFromStore(s, publishedKind(t, haproxyGeneralFileGVR.String()))
+	require.NoError(t, err)
+	assert.Equal(t, plain, got["gf-ticket"].content)
+	assert.Equal(t, body, got["gf-503"].content)
 	assert.Len(t, got, 2)
 }
 
@@ -68,37 +138,250 @@ func TestAuxFilesFromStore_EntriesField(t *testing.T) {
 	s := store.NewMemoryStore(1)
 	require.NoError(t, s.Add(auxUnstructured("mf-host", "maps/host.map", "entries", "example.com be_x\n", false), []string{"mf-host"}))
 
-	got := auxFilesFromStore(s, "entries", slog.Default())
-	assert.Equal(t, "example.com be_x\n", got["host.map"])
+	got, err := publishedAuxFilesFromStore(s, publishedKind(t, haproxyMapFileGVR.String()))
+	require.NoError(t, err)
+	assert.Equal(t, "example.com be_x\n", got["mf-host"].content)
 }
 
-// The provider returns the merged published snapshot before any render (cold
-// start / follower), then the live render output afterward.
-func TestCurrentAuxFilesProvider_PublishedFallbackThenRenderWins(t *testing.T) {
-	published := newPublishedAuxFiles()
-	published.setForGVR(haproxyGeneralFileGVR.String(), map[string]string{"tls-ticket-keys": "published-keys"})
-	published.setForGVR(haproxyMapFileGVR.String(), map[string]string{"host.map": "published-map"})
-
-	sc := NewStateCache(busevents.NewEventBus(10), nil, slog.Default())
-	provider := currentAuxFilesProvider(sc, published)
-
-	cold := provider()
-	assert.Equal(t, "published-keys", cold["tls-ticket-keys"])
-	assert.Equal(t, "published-map", cold["host.map"], "snapshot merges across aux kinds")
-
-	sc.handleTemplateRendered(events.NewTemplateRenderedEvent(
-		"global\n",
-		&dataplane.AuxiliaryFiles{
-			GeneralFiles: []auxiliaryfiles.GeneralFile{{Filename: "tls-ticket-keys", Path: "general/tls-ticket-keys", Content: "render-keys"}},
+func TestPublishedSecretStoreReadsMetadataOnly(t *testing.T) {
+	s := store.NewMemoryStore(1)
+	secret := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":            "certificate",
+			"resourceVersion": "42",
+			"annotations": map[string]any{
+				"haproxy-haptic.org/auxiliary-set-id": "sha256:set-a",
+				"haproxy-haptic.org/checksum":         "checksum-a",
+			},
 		},
-		nil, nil, 1, 100, "", "", true,
-	))
-	assert.Equal(t, "render-keys", provider()["tls-ticket-keys"], "live render wins over published snapshot")
+		"data": map[string]any{"tls.key": []any{"must", "not", "be", "read"}},
+	}}
+	require.NoError(t, s.Add(secret, []string{"certificate"}))
+
+	got, err := publishedAuxFilesFromStore(s, publishedKind(t, secretGVR.String()))
+	require.NoError(t, err)
+	assert.Equal(t, publishedAuxFile{
+		setID:           "sha256:set-a",
+		checksum:        "checksum-a",
+		resourceVersion: "42",
+	}, got["certificate"])
 }
 
-// A nil published store degrades to the pre-existing empty behavior without
-// panicking (e.g. the webhook dry-run path never wires a store).
-func TestCurrentAuxFilesProvider_NilPublishedStore(t *testing.T) {
-	sc := NewStateCache(busevents.NewEventBus(10), nil, slog.Default())
-	assert.Nil(t, currentAuxFilesProvider(sc, nil)())
+func TestPublishedAuxFilesAdvancesOnlyAtCommittedReferenceBoundary(t *testing.T) {
+	const (
+		setA = "sha256:set-a"
+		setB = "sha256:set-b"
+	)
+	mapGVR := haproxyMapFileGVR.String()
+	generalGVR := haproxyGeneralFileGVR.String()
+	secretResourceGVR := secretGVR.String()
+	published := newPublishedAuxFiles("haptic")
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map-a": {path: "maps/routes.map", content: "map-a", setID: setA},
+	})
+	published.setForGVR(generalGVR, map[string]publishedAuxFile{
+		"general-a": {path: "general/error.http", content: "general-a", setID: setA},
+	})
+	published.setForGVR(secretResourceGVR, map[string]publishedAuxFile{
+		"secret-a": {setID: setA},
+	})
+	published.setCommit(&publishedAuxCommit{setID: setA, refs: map[string][]publishedAuxRef{
+		mapGVR:            {{name: "map-a", namespace: "haptic"}},
+		generalGVR:        {{name: "general-a", namespace: "haptic"}},
+		secretResourceGVR: {{name: "secret-a", namespace: "haptic"}},
+	}})
+	require.NoError(t, published.readinessError())
+	assert.Equal(t, map[string]string{"routes.map": "map-a", "error.http": "general-a"}, publishedSnapshot(t, published))
+
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map-a": {path: "maps/routes.map", content: "map-a", setID: setA},
+		"map-b": {path: "maps/routes.map", content: "map-b", setID: setB},
+	})
+	assert.Equal(t, "map-a", publishedSnapshot(t, published)["routes.map"], "uncommitted child must stay invisible")
+
+	published.setCommit(&publishedAuxCommit{setID: setB, refs: map[string][]publishedAuxRef{
+		mapGVR:            {{name: "map-b", namespace: "haptic"}},
+		generalGVR:        {{name: "general-b", namespace: "haptic"}},
+		secretResourceGVR: {{name: "secret-b", namespace: "haptic"}},
+	}})
+	assert.Equal(t, map[string]string{"routes.map": "map-a", "error.http": "general-a"}, publishedSnapshot(t, published),
+		"a parent event arriving before every child watcher must retain the prior complete snapshot")
+
+	published.setForGVR(generalGVR, map[string]publishedAuxFile{
+		"general-a": {path: "general/error.http", content: "general-a", setID: setA},
+		"general-b": {path: "general/error.http", content: "general-b", setID: setB},
+	})
+	assert.Equal(t, map[string]string{"routes.map": "map-a", "error.http": "general-a"}, publishedSnapshot(t, published),
+		"missing committed Secret metadata must retain the prior snapshot")
+	published.setForGVR(secretResourceGVR, map[string]publishedAuxFile{
+		"secret-a": {setID: setA},
+		"secret-b": {setID: "sha256:wrong"},
+	})
+	assert.Equal(t, map[string]string{"routes.map": "map-a", "error.http": "general-a"}, publishedSnapshot(t, published),
+		"a Secret from another set must retain the prior snapshot")
+	published.setForGVR(secretResourceGVR, map[string]publishedAuxFile{
+		"secret-a": {setID: setA},
+		"secret-b": {setID: setB},
+	})
+	assert.Equal(t, map[string]string{"routes.map": "map-b", "error.http": "general-b"}, publishedSnapshot(t, published))
+}
+
+func TestPublishedAuxFilesRejectsFailedPartialSet(t *testing.T) {
+	mapGVR := haproxyMapFileGVR.String()
+	published := newPublishedAuxFiles("haptic")
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map-a": {path: "maps/routes.map", content: "committed", setID: "sha256:set-a"},
+	})
+	published.setCommit(&publishedAuxCommit{setID: "sha256:set-a", refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "map-a", namespace: "haptic"}},
+	}})
+
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map-a": {path: "maps/routes.map", content: "committed", setID: "sha256:set-a"},
+		"map-b": {path: "maps/routes.map", content: "failed-partial", setID: "sha256:set-b"},
+	})
+	assert.Equal(t, map[string]string{"routes.map": "committed"}, publishedSnapshot(t, published))
+
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map-a": {path: "maps/routes.map", content: "committed", setID: "sha256:set-a"},
+	})
+	published.setCommit(&publishedAuxCommit{setID: "sha256:set-b", refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "map-b", namespace: "haptic"}},
+	}})
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map-a": {path: "maps/routes.map", content: "committed", setID: "sha256:set-a"},
+		"map-b": {path: "maps/routes.map", content: "wrong-set", setID: "sha256:set-c"},
+	})
+	assert.Equal(t, map[string]string{"routes.map": "committed"}, publishedSnapshot(t, published))
+}
+
+func TestPublishedAuxFilesFailsColdStartOnIncompleteCommit(t *testing.T) {
+	mapGVR := haproxyMapFileGVR.String()
+	published := newPublishedAuxFiles("haptic")
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{})
+	published.setCommit(&publishedAuxCommit{setID: "sha256:set-a", refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "missing", namespace: "haptic"}},
+	}})
+
+	require.EqualError(t, published.readinessError(), "committed HAProxyMapFile haptic/missing is unavailable")
+	assert.Empty(t, publishedSnapshot(t, published))
+}
+
+func TestPublishedAuxFilesRejectsCrossNamespaceSecretReference(t *testing.T) {
+	secretResourceGVR := secretGVR.String()
+	published := newPublishedAuxFiles("haptic")
+	published.setForGVR(secretResourceGVR, map[string]publishedAuxFile{
+		"certificate": {setID: "sha256:set-a"},
+	})
+	published.setCommit(&publishedAuxCommit{setID: "sha256:set-a", refs: map[string][]publishedAuxRef{
+		secretResourceGVR: {{name: "certificate", namespace: "other"}},
+	}})
+
+	require.EqualError(t, published.readinessError(), "committed Secret other/certificate is outside namespace haptic")
+}
+
+func TestPublishedAuxFilesRejectsLegacyMutationUntilSetIDAppears(t *testing.T) {
+	mapGVR := haproxyMapFileGVR.String()
+	published := newPublishedAuxFiles("haptic")
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map": {path: "maps/routes.map", content: "legacy"},
+	})
+	published.setCommit(&publishedAuxCommit{refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "map", namespace: "haptic"}},
+	}})
+	assert.Equal(t, "legacy", publishedSnapshot(t, published)["routes.map"])
+
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map":        {path: "maps/routes.map", content: "legacy"},
+		"modern-map": {path: "maps/routes.map", content: "modern", setID: "sha256:set-b"},
+	})
+	assert.Equal(t, "legacy", publishedSnapshot(t, published)["routes.map"],
+		"an immutable modern child is not authoritative before its parent commit")
+
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map":        {path: "maps/routes.map", content: "legacy-updated"},
+		"modern-map": {path: "maps/routes.map", content: "modern", setID: "sha256:set-b"},
+	})
+	_, err := published.get()
+	require.ErrorContains(t, err, "legacy auxiliary publication changed without a set ID")
+
+	published.setCommit(&publishedAuxCommit{setID: "sha256:set-b", refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "modern-map", namespace: "haptic"}},
+	}})
+	assert.Equal(t, "modern", publishedSnapshot(t, published)["routes.map"])
+}
+
+func TestPublishedAuxFilesRejectsLegacySecretMutationByResourceVersion(t *testing.T) {
+	secretResourceGVR := secretGVR.String()
+	secretKind := publishedKind(t, secretResourceGVR)
+	parse := func(resourceVersion, certificate string) publishedAuxFile {
+		t.Helper()
+		_, file, found, err := publishedAuxFileFromObject(map[string]any{
+			"metadata": map[string]any{
+				"name":            "certificate",
+				"resourceVersion": resourceVersion,
+				"annotations": map[string]any{
+					"haproxy-haptic.org/checksum": "unchanged",
+				},
+			},
+			"data": map[string]any{"certificate": certificate},
+		}, secretKind)
+		require.NoError(t, err)
+		require.True(t, found)
+		return file
+	}
+	published := newPublishedAuxFiles("haptic")
+	published.setForGVR(secretResourceGVR, map[string]publishedAuxFile{
+		"certificate": parse("1", "legacy-a"),
+	})
+	published.setCommit(&publishedAuxCommit{refs: map[string][]publishedAuxRef{
+		secretResourceGVR: {{name: "certificate", namespace: "haptic"}},
+	}})
+	require.NoError(t, published.readinessError())
+
+	published.setForGVR(secretResourceGVR, map[string]publishedAuxFile{
+		"certificate": parse("2", "legacy-b"),
+	})
+	_, err := published.get()
+	require.ErrorContains(t, err, "legacy auxiliary publication changed without a set ID")
+}
+
+func TestPublishedAuxFilesNeverDowngradesAfterModernCommit(t *testing.T) {
+	mapGVR := haproxyMapFileGVR.String()
+	published := newPublishedAuxFiles("haptic")
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map-a": {path: "maps/routes.map", content: "modern-a", setID: "sha256:set-a"},
+	})
+	published.setCommit(&publishedAuxCommit{setID: "sha256:set-a", refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "map-a", namespace: "haptic"}},
+	}})
+	assert.Equal(t, "modern-a", publishedSnapshot(t, published)["routes.map"])
+
+	published.setCommit(nil)
+	_, err := published.get()
+	require.ErrorContains(t, err, "auxiliary publication lost its set ID")
+	published.setCommit(&publishedAuxCommit{refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "map-a", namespace: "haptic"}},
+	}})
+	_, err = published.get()
+	require.ErrorContains(t, err, "auxiliary publication lost its set ID")
+
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map-a": {path: "maps/routes.map", content: "modern-a", setID: "sha256:set-a"},
+		"map-b": {path: "maps/routes.map", content: "modern-b", setID: "sha256:set-b"},
+	})
+	published.setCommit(&publishedAuxCommit{setID: "sha256:set-b", refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "map-b", namespace: "haptic"}},
+	}})
+	assert.Equal(t, "modern-b", publishedSnapshot(t, published)["routes.map"])
+}
+
+func TestPublishedAuxFilesAllowsInitialMissingParent(t *testing.T) {
+	published := newPublishedAuxFiles("haptic")
+	published.setCommit(nil)
+
+	require.NoError(t, published.readinessError())
+	assert.Empty(t, publishedSnapshot(t, published))
 }

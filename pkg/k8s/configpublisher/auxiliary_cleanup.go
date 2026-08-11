@@ -115,8 +115,8 @@ func (p *Publisher) ensurePublicationCurrent(
 	if err != nil {
 		return fmt.Errorf("checking publication authority: %w", err)
 	}
-	want := runtimeConfig.Annotations[auxiliarySetIDAnnotationKey]
-	if current.Annotations[auxiliarySetIDAnnotationKey] != want {
+	want := runtimeConfig.Annotations[AuxiliarySetIDAnnotationKey]
+	if current.Annotations[AuxiliarySetIDAnnotationKey] != want {
 		return fmt.Errorf("publication %q was superseded; skip stale cleanup", want)
 	}
 	if !auxiliaryRefsEqual(current.Status.AuxiliaryFiles, expectedReferences) {
@@ -128,7 +128,11 @@ func (p *Publisher) ensurePublicationCurrent(
 func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *haproxyv1alpha1.HAProxyCfg, result *PublishResult) error {
 	namespace := runtimeConfig.Namespace
 	ownerName := runtimeConfig.Name
-	expectedReferences := buildAuxiliaryFileReferences(namespace, result)
+	expectedReferences := buildAuxiliaryFileReferences(
+		namespace,
+		result,
+		runtimeConfig.Annotations[AuxiliarySetIDAnnotationKey],
+	)
 	publicationCurrent := func(ctx context.Context) error {
 		return p.ensurePublicationCurrent(ctx, runtimeConfig, expectedReferences)
 	}

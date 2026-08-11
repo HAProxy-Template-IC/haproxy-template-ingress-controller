@@ -136,16 +136,11 @@ func WithCurrentConfig(cfg *parserconfig.StructuredConfig) Option {
 	}
 }
 
-// WithCurrentAuxFiles sets the currently-deployed general auxiliary files
-// (filename → content) for templates, exposed under the "currentFiles" key.
-// This lets a template read its own previously-rendered output as an input —
-// the mechanism behind self-rotating TLS session-ticket keys, where the
-// template inspects the current key file's embedded date marker to decide
-// whether a rotation is due. Empty/nil on first deployment (templates guard
-// with `len(currentFiles) == 0` or a nil-safe lookup).
+// WithCurrentAuxFiles sets the authoritative auxiliary baseline exposed as currentFiles.
 func WithCurrentAuxFiles(files map[string]string) Option {
+	snapshot := maps.Clone(files)
 	return func(b *Builder) {
-		b.currentAuxFiles = files
+		b.currentAuxFiles = maps.Clone(snapshot)
 	}
 }
 
@@ -398,10 +393,8 @@ func (b *Builder) Build() *BuildResult {
 	// Merge extraContext variables into top-level context
 	MergeExtraContextInto(templateContext, b.config)
 
-	// renderMode and admissionSubject are controller-set, never user-set:
-	// re-assert them AFTER the extraContext merge so a user's extraContext
-	// can't overwrite the top-level globals and silently flip a webhook
-	// render from fail to warn (or spoof the resource under admission).
+	// These values carry controller state and cannot be replaced by extraContext.
+	templateContext["currentFiles"] = &auxFiles
 	templateContext["renderMode"] = string(cmp.Or(b.renderMode, RenderModeReconcile))
 	templateContext["admissionSubject"] = b.admissionSubjectOrEmpty()
 

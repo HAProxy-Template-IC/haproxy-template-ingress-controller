@@ -261,6 +261,42 @@ func TestBuilder_Build_WithCurrentAuxFiles(t *testing.T) {
 	assert.Empty(t, *gotEmpty)
 }
 
+func TestWithCurrentAuxFilesIsolatesEachRenderingContext(t *testing.T) {
+	files := map[string]string{"gate": "published"}
+	option := WithCurrentAuxFiles(files)
+	files["gate"] = "caller-mutated"
+
+	first := NewBuilder(t.Context(), &config.Config{}, &templating.PathResolver{}, testutil.NewTestLogger(), option).Build().Context
+	firstFiles := first["currentFiles"].(*map[string]string)
+	assert.Equal(t, "published", (*firstFiles)["gate"])
+	(*firstFiles)["gate"] = "template-mutated"
+
+	second := NewBuilder(t.Context(), &config.Config{}, &templating.PathResolver{}, testutil.NewTestLogger(), option).Build().Context
+	secondFiles := second["currentFiles"].(*map[string]string)
+	assert.Equal(t, "published", (*secondFiles)["gate"])
+}
+
+func TestBuilder_Build_CurrentFilesCannotBeOverriddenByExtraContext(t *testing.T) {
+	cfg := &config.Config{TemplatingSettings: config.TemplatingSettings{
+		ExtraContext: map[string]any{
+			"currentFiles": map[string]string{"gate": "override"},
+		},
+	}}
+	files := map[string]string{"gate": "authoritative"}
+
+	ctx := NewBuilder(
+		t.Context(),
+		cfg,
+		&templating.PathResolver{},
+		testutil.NewTestLogger(),
+		WithCurrentAuxFiles(files),
+	).Build().Context
+
+	got, ok := ctx["currentFiles"].(*map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, files, *got)
+}
+
 func TestSortSnippetNames(t *testing.T) {
 	tests := []struct {
 		name     string

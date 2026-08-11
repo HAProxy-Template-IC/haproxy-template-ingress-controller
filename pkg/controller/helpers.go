@@ -47,28 +47,23 @@ func buildStoreProvider(resourceWatcher *resourcewatcher.ResourceWatcherComponen
 	return stores.NewRealStoreProvider(converted)
 }
 
-// initRenderStateCache creates the StateCache and its background loop, starts a
-// watched read-back of the published aux-file CRDs (map, general, crt-list), and
-// returns the `currentFiles` provider wired to both. The published-file watchers
-// are what let self-referential templates (self-rotating TLS session-ticket keys)
-// survive a controller restart, config reload, or leader promotion instead of
-// bootstrapping fresh output — the aux-file analogue of setupCurrentConfigStore,
-// which reads HAProxyCfg back for slot preservation.
-func initRenderStateCache(
+// initRenderState creates debug state and the leader-term currentFiles authority.
+func initRenderState(
 	setup *componentSetup,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	k8sClient *client.Client,
+	crdName string,
 	logger *slog.Logger,
-) (*StateCache, func() map[string]string, error) {
+) (*StateCache, *currentFilesAuthority, error) {
 	stateCache := NewStateCache(setup.Bus, resourceWatcher, logger)
 	startBackgroundComponents(setup, stateCache, setup.MetricsComponent, logger)
 
-	publishedAux, err := setupPublishedAuxFilesStore(setup, k8sClient, logger)
+	publishedAux, err := setupPublishedAuxFilesStore(setup, k8sClient, crdName, logger)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return stateCache, currentAuxFilesProvider(stateCache, publishedAux), nil
+	return stateCache, newCurrentFilesAuthority(publishedAux), nil
 }
 
 // startBackgroundComponents starts the StateCache and metrics component in background goroutines.

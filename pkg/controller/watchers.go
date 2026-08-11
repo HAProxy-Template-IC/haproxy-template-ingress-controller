@@ -34,6 +34,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
 )
 
+const metadataNameIndex = "metadata.name"
+
 // setupResourceWatchers creates and starts resource watchers and index tracker, then waits for sync.
 //
 // Returns the ResourceWatcherComponent and an error if watcher creation or synchronization fails.
@@ -299,7 +301,7 @@ func libraryWatcherConfig(
 		Namespace: namespace,
 		// Name alone identifies a library within the namespace, and it is what
 		// spec.libraryRefs names.
-		IndexBy: []string{"metadata.name"},
+		IndexBy: []string{metadataNameIndex},
 		OnChange: func(store types.Store, _ types.ChangeStats) {
 			publish(store)
 		},
