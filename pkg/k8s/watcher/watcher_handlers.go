@@ -51,7 +51,7 @@ func (w *Watcher) handleUpdate(oldObj, newObj any) {
 	switch {
 	case oldMatches && newMatches:
 		// Both match: normal update
-		w.processUpdate(resource)
+		w.processUpdate(oldResource, resource)
 
 	case oldMatches && !newMatches:
 		// Old matched, new doesn't: treat as delete (resource no longer passes filter)
@@ -146,9 +146,9 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 
 // processUpdate updates a resource in the store and records the change.
 //
-// As with processAdd, the informer's transform has already normalised the
-// resource, so this only reads index keys off it.
-func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
+// Old/new indexability decides whether the store sees an update, delete, or add.
+func (w *Watcher) processUpdate(oldResource, resource *unstructured.Unstructured) {
+	_, oldKeysErr := w.indexer.ExtractKeys(oldResource)
 	keys, err := w.indexer.ExtractKeys(resource)
 	if err != nil {
 		w.logger.Error("Failed to extract keys from resource for indexing",
@@ -156,6 +156,13 @@ func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
 			"error", err)
+		if oldKeysErr == nil {
+			w.processDelete(oldResource)
+		}
+		return
+	}
+	if oldKeysErr != nil {
+		w.processAdd(resource)
 		return
 	}
 

@@ -80,7 +80,7 @@ these are all valid:
 {% for _, ing := range resources.ingresses.List() %}                     {# everything #}
 ```
 
-Supply fewer keys than `indexBy` defines to get a prefix scan — useful for one-to-many relationships. Always returns an empty slice (never `nil`) so templates iterate safely.
+Supply fewer keys than `indexBy` defines to get a prefix scan — useful for one-to-many relationships. Always returns an empty slice (never `nil`) so templates iterate safely. When a watched object changes an indexed value, HAPTIC moves it to the new lookup key; if the updated object no longer has every indexed field, HAPTIC removes it until a later update can be indexed again.
 
 Run the prefix scan below: three Ingresses across two namespaces, but `Fetch("shop")` returns only the two in `shop`.
 

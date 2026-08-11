@@ -134,9 +134,8 @@ type Store interface {
 	// Update modifies an existing resource in the store.
 	Update(resource any, keys []string) error
 
-	// Delete removes the single resource identified by namespace/name from the
-	// bucket addressed by keys. Index keys need not be unique, so identity is
-	// passed separately to avoid evicting siblings sharing the bucket.
+	// Delete removes the single resource identified by namespace/name. Index
+	// keys need not be unique, so identity is authoritative and siblings remain.
 	Delete(namespace, name string, keys []string) error
 
 	// Clear removes all resources from the store.

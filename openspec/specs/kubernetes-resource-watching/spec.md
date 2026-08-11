@@ -25,6 +25,21 @@ THEN resources that do not match the field selector SHALL NOT be added to the st
 WHEN a resource is updated such that it now matches a previously non-matching field selector
 THEN the Watcher SHALL treat the update as an addition and add the resource to the store.
 
+#### Scenario: Updated index value moves the stored resource
+
+WHEN an informer update changes a value selected by IndexBy
+THEN the Watcher SHALL expose the resource only through its new composite key and preserve other resources sharing the old key.
+
+#### Scenario: Updated resource no longer has a complete index
+
+WHEN an informer update cannot extract every configured IndexBy value from the new object
+THEN the Watcher SHALL remove the previously indexed object using the old object's namespace/name and index values.
+
+#### Scenario: Updated resource regains a complete index
+
+WHEN the old informer object could not be indexed and the updated object yields every configured IndexBy value
+THEN the Watcher SHALL add the updated object and record a Created change rather than a Modified change.
+
 #### Scenario: Resync events are filtered
 
 WHEN the informer delivers an update event where the old and new resourceVersion are identical (resync)

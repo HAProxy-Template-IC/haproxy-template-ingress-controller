@@ -36,6 +36,7 @@ all, _       := mem.List()
 Implementation highlights (see `pkg/k8s/store/memory.go`):
 
 - Backing data is `map[string][]any` keyed by the composite-string form of the index. Multiple resources can share a key; `Get` returns them all.
+- A reverse map from `(namespace, name)` to composite key makes `Add`, `Update`, and `Delete` identity-owned. When an update changes an `indexBy` value, the store removes that identity from its old bucket and inserts it into the new bucket while holding one write lock.
 - `Get` with the full key count is an O(1) map lookup that returns the per-bucket slice as-is (zero-copy — see "Immutability Contract"). Per-bucket slices are kept sorted at insert time so reads are deterministic without runtime sorting; partial-prefix scans aggregate matching buckets and sort the result.
 - `List` rebuilds and sorts the full slice on every call — there's no memoised result. The optimisation is "buckets are pre-sorted, so per-bucket reads are zero-copy", not "the whole list is cached". A consumer that needs a memoised `List` should cache at its own layer, not inside the store.
 - An `RWMutex` protects the data map; concurrent readers don't contend.
@@ -53,7 +54,7 @@ cached, _ := store.NewCachedStore(&store.CachedStoreConfig{
 })
 ```
 
-- Stores only `resourceRef` tuples (index keys + namespace/name) in memory.
+- Stores only `resourceRef` tuples (index keys + namespace/name) in memory, plus the same identity-to-bucket reverse map as `MemoryStore`.
 - `Get` cache hits return immediately; cache misses call the dynamic client, cache the result with `CacheTTL`, and return it.
 - The cache is keyed by `namespace/name`, separate from the index composite key — multiple references can share the same index key while each has its own cache entry.
 - **`List` forces a fetch for every reference.** Use it only for small collections or debugging; prefer `MemoryStore` for templates that iterate everything.
@@ -94,7 +95,7 @@ This is enforced by convention, not by type — the `Store` interface returns `a
 
 ## Non-Unique Keys
 
-Indexing by labels (e.g. `metadata.labels.kubernetes\\.io/service-name` for EndpointSlices) is expected to collide — many slices share a service. `Add` appends to the slot instead of overwriting, and `Get` with that key returns every match. Resource-identity equality for `Update` and `Delete` is **namespace + name** only, via `extractNamespaceName`. `Delete` therefore removes exactly the named resource and drops the composite key's entry only once its last member goes — deleting one slice never evicts its siblings — UID is not consulted, so a deleted-and-recreated resource looks identical to its predecessor (which is correct: the watcher fires `Update`, not `Delete`+`Add`, on a re-create). `Add` itself does not dedupe — duplicates are possible if the watcher's delta logic is wrong. That's by design: cheap append, dedupe lives in `Update`.
+Indexing by labels (e.g. `metadata.labels.kubernetes\\.io/service-name` for EndpointSlices) is expected to collide — many slices share a service. `Get` returns every distinct resource in the bucket. Resource identity is **namespace + name** only, via `extractNamespaceName`; UID is not consulted. `Add` and `Update` replace an existing identity and atomically move it when its index changes. `Delete` removes only that identity and drops the bucket once its last member leaves, so siblings remain intact and a delete/recreate can't retain an old index entry.
 
 ## Testing
 

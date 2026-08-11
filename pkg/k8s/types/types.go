@@ -104,18 +104,17 @@ type Store interface {
 	// Returns an error if the operation fails.
 	Update(resource any, keys []string) error
 
-	// Delete removes the single resource identified by namespace/name from the
-	// bucket addressed by keys. Index keys are configurable and need not be
-	// unique — the shipped chart indexes EndpointSlices by
-	// (namespace, service-name label) — so identity must be passed separately
-	// or siblings sharing the bucket would be evicted too.
+	// Delete removes the single resource identified by namespace/name. Index
+	// keys are configurable and need not be unique, so identity is authoritative
+	// and siblings sharing the bucket remain stored. Keys retain the configured
+	// index shape for validation and compatibility.
 	//
 	// Deleting a resource that is not present is a no-op returning nil.
 	//
 	// Parameters:
 	//   - namespace: Namespace of the resource to delete ("" for cluster-scoped)
 	//   - name: Name of the resource to delete
-	//   - keys: Index keys addressing the bucket the resource lives in
+	//   - keys: Full index-key shape for this store
 	//
 	// Returns an error if the operation fails.
 	Delete(namespace, name string, keys []string) error

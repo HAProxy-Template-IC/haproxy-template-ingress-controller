@@ -27,7 +27,7 @@ THEN concurrent Get, List, Add, Update, Delete, and Clear calls SHALL block unti
 
 ### Requirement: MemoryStore
 
-MemoryStore SHALL store complete pre-converted resources in memory using a flat map from composite key string to a slice of resources. It SHALL provide O(1) exact-match lookups via the composite key. It SHALL support non-unique index keys by storing multiple resources per composite key. Stored slices SHALL be maintained in sorted order (by namespace, then name) at insert time to enable zero-copy reads.
+MemoryStore SHALL store complete pre-converted resources in memory using a flat map from composite key string to a slice of resources and a reverse map from resource namespace/name to composite key. It SHALL provide O(1) exact-match lookups via the composite key. It SHALL support non-unique index keys by storing multiple resources per composite key. Stored slices SHALL be maintained in sorted order (by namespace, then name) at insert time to enable zero-copy reads.
 
 #### Scenario: Exact match Get returns direct reference
 
@@ -41,23 +41,28 @@ THEN it SHALL return a new slice containing all resources whose composite key st
 
 #### Scenario: Add with non-unique keys appends to existing slice
 
-WHEN Add is called with keys that already have resources stored
+WHEN Add is called with keys that already contain other resource identities
 THEN the new resource SHALL be appended to the existing slice and the slice SHALL be re-sorted.
 
 #### Scenario: Update replaces resource with matching namespace and name
 
-WHEN Update is called with keys matching an existing entry and the resource has the same namespace and name as an existing resource in that key's slice
-THEN the existing resource SHALL be replaced in-place.
+WHEN Update is called and the resource's namespace/name already belongs to the supplied key
+THEN the existing resource SHALL be replaced without creating a duplicate identity.
+
+#### Scenario: Update moves resource to a changed index key
+
+WHEN Update is called with a new composite key for an existing namespace/name identity
+THEN the resource SHALL be removed from its previous bucket and inserted into the new bucket while one write lock is held.
 
 #### Scenario: Update adds resource when not found
 
 WHEN Update is called with keys matching an existing entry but no resource in the slice has the same namespace and name
 THEN the resource SHALL be appended and the slice re-sorted.
 
-#### Scenario: Delete removes all resources for the composite key
+#### Scenario: Delete preserves non-unique siblings
 
-WHEN Delete is called with a full set of index keys
-THEN all resources stored under that composite key SHALL be removed.
+WHEN Delete is called for one namespace/name in a bucket shared by multiple resources
+THEN only that identity SHALL be removed and the other resources SHALL remain.
 
 #### Scenario: List returns a fresh copy sorted by namespace and name
 
@@ -71,7 +76,12 @@ THEN a StoreError SHALL be returned indicating the key count mismatch.
 
 ### Requirement: CachedStore
 
-CachedStore SHALL store only resource references (namespace, name, index keys) in memory and fetch full resources from the Kubernetes API on access. Fetched resources SHALL be cached using an LRU cache with a configurable TTL (default 2m10s). The maximum cache size SHALL default to 256 entries. Cache entries that are accessed SHALL have their TTL reset. API fetches SHALL use a 10-second timeout derived from the caller context. Fetched resources SHALL be processed through the indexer (field filtering, float-to-int conversion) before caching. The legacy Get and List methods SHALL remain available, while GetContext and ListContext SHALL cancel in-flight fetches and stop before fetching another matching reference.
+CachedStore SHALL store only resource references (namespace, name, index keys) and a reverse namespace/name-to-composite-key map in memory, and fetch full resources from the Kubernetes API on access. Fetched resources SHALL be cached using an LRU cache with a configurable TTL (default 2m10s). The maximum cache size SHALL default to 256 entries. Cache entries that are accessed SHALL have their TTL reset. API fetches SHALL use a 10-second timeout derived from the caller context. Fetched resources SHALL be processed through the indexer (field filtering, float-to-int conversion) before caching. The legacy Get and List methods SHALL remain available, while GetContext and ListContext SHALL cancel in-flight fetches and stop before fetching another matching reference.
+
+#### Scenario: Reference moves to a changed index key
+
+WHEN Update is called with a new composite key for an existing namespace/name reference
+THEN the old reference SHALL be removed and the new reference SHALL be inserted while one write lock is held.
 
 #### Scenario: Cache hit returns resource without API call
 

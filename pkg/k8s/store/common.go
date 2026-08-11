@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+type resourceIdentity struct {
+	namespace string
+	name      string
+}
+
 // makeKeyString creates a composite key from multiple key parts.
 //
 // Example:
@@ -75,4 +80,9 @@ func extractNamespaceName(resource any) (namespace, name string) {
 	}
 
 	return "", ""
+}
+
+func identifyResource(resource any) (resourceIdentity, bool) {
+	namespace, name := extractNamespaceName(resource)
+	return resourceIdentity{namespace: namespace, name: name}, name != ""
 }
