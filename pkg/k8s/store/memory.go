@@ -204,17 +204,15 @@ func (s *MemoryStore) Delete(namespace, name string, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := validateKeyCount("delete", keys, s.numKeys); err != nil {
+	if err := validateKeyCount(opDelete, keys, s.numKeys); err != nil {
+		return err
+	}
+	if err := validateDeleteName(name, keys); err != nil {
 		return err
 	}
 
 	identity := resourceIdentity{namespace: namespace, name: name}
-	if name != "" {
-		s.removeIdentityLocked(identity)
-		return nil
-	}
-
-	s.removeIdentityFromBucketLocked(makeKeyString(keys), identity)
+	s.removeIdentityLocked(identity)
 
 	return nil
 }

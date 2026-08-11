@@ -21,16 +21,18 @@ import (
 
 // cacheEntry holds a cached resource with its expiration time.
 type cacheEntry struct {
-	resource  any
-	expiresAt time.Time
+	resource   any
+	expiresAt  time.Time
+	generation uint64
 }
 
 // resourceRef holds a reference to a Kubernetes resource for API fetching.
 // Stores both the unique identifier (namespace+name) and the index keys.
 type resourceRef struct {
-	namespace string   // Resource namespace (empty for cluster-scoped)
-	name      string   // Resource name
-	indexKeys []string // Index key values for this resource
+	namespace  string   // Resource namespace (empty for cluster-scoped)
+	name       string   // Resource name
+	indexKeys  []string // Index key values for this resource
+	generation uint64
 }
 
 // CachedStore stores only resource references in memory and fetches resources from
@@ -43,18 +45,20 @@ type resourceRef struct {
 //
 // Thread-safe for concurrent access.
 type CachedStore struct {
-	mu        sync.RWMutex
-	refs      map[string][]resourceRef        // Composite key -> slice of resource references
-	locations map[resourceIdentity]string     // Resource identity -> composite key
-	cache     *lru.Cache[string, *cacheEntry] // LRU cache: namespace/name -> cached resource
-	numKeys   int                             // Number of index keys
-	cacheTTL  time.Duration                   // Cache entry TTL
-	client    dynamic.Interface               // Kubernetes dynamic client
-	gvr       schema.GroupVersionResource     // Resource type to fetch
-	namespace string                          // Namespace for fetching (empty = all)
-	indexer   *indexer.Indexer                // Indexer for processing fetched resources
-	logger    *slog.Logger                    // Logger for debug and warning messages
-	projected bool                            // Informer delivers body-stripped objects (see Projected)
+	mu             sync.RWMutex
+	refs           map[string][]resourceRef        // Composite key -> slice of resource references
+	locations      map[resourceIdentity]string     // Resource identity -> composite key
+	cache          *lru.Cache[string, *cacheEntry] // LRU cache: namespace/name -> cached resource
+	refGenerations map[string]uint64
+	nextGeneration uint64
+	numKeys        int                         // Number of index keys
+	cacheTTL       time.Duration               // Cache entry TTL
+	client         dynamic.Interface           // Kubernetes dynamic client
+	gvr            schema.GroupVersionResource // Resource type to fetch
+	namespace      string                      // Namespace for fetching (empty = all)
+	indexer        *indexer.Indexer            // Indexer for processing fetched resources
+	logger         *slog.Logger                // Logger for debug and warning messages
+	projected      bool                        // Informer delivers body-stripped objects (see Projected)
 }
 
 // DefaultMaxCacheSize is the default maximum number of entries in the LRU cache.
@@ -130,17 +134,18 @@ func NewCachedStore(cfg *CachedStoreConfig) (*CachedStore, error) {
 	}
 
 	return &CachedStore{
-		refs:      make(map[string][]resourceRef),
-		locations: make(map[resourceIdentity]string),
-		cache:     cache,
-		numKeys:   cfg.NumKeys,
-		cacheTTL:  cfg.CacheTTL,
-		client:    cfg.Client,
-		gvr:       cfg.GVR,
-		namespace: cfg.Namespace,
-		indexer:   cfg.Indexer,
-		logger:    logger,
-		projected: cfg.Projected,
+		refs:           make(map[string][]resourceRef),
+		locations:      make(map[resourceIdentity]string),
+		cache:          cache,
+		refGenerations: make(map[string]uint64),
+		numKeys:        cfg.NumKeys,
+		cacheTTL:       cfg.CacheTTL,
+		client:         cfg.Client,
+		gvr:            cfg.GVR,
+		namespace:      cfg.Namespace,
+		indexer:        cfg.Indexer,
+		logger:         logger,
+		projected:      cfg.Projected,
 	}, nil
 }
 
@@ -180,7 +185,7 @@ func (s *CachedStore) matchingRefs(keys []string) []resourceRef {
 	if len(keys) == s.numKeys {
 		keyStr := makeKeyString(keys)
 		if refs, ok := s.refs[keyStr]; ok {
-			matchingRefs = append(matchingRefs, refs...)
+			matchingRefs = s.appendLiveRefsLocked(matchingRefs, refs)
 		}
 		return matchingRefs
 	}
@@ -188,10 +193,21 @@ func (s *CachedStore) matchingRefs(keys []string) []resourceRef {
 	prefix := makeKeyString(keys) + "/"
 	for keyStr, refs := range s.refs {
 		if len(keyStr) >= len(prefix) && keyStr[:len(prefix)] == prefix {
-			matchingRefs = append(matchingRefs, refs...)
+			matchingRefs = s.appendLiveRefsLocked(matchingRefs, refs)
 		}
 	}
 	return matchingRefs
+}
+
+func (s *CachedStore) appendLiveRefsLocked(dst, refs []resourceRef) []resourceRef {
+	for _, ref := range refs {
+		generation, ok := s.refGenerations[resourceCacheKey(ref.namespace, ref.name)]
+		if !ok || generation != ref.generation {
+			continue
+		}
+		dst = append(dst, ref)
+	}
+	return dst
 }
 
 func (s *CachedStore) fetchRefs(ctx context.Context, refs []resourceRef) ([]any, error) {
@@ -241,7 +257,8 @@ func (s *CachedStore) ListCached() ([]any, error) {
 	now := time.Now()
 	for _, cacheKey := range s.cache.Keys() {
 		entry, ok := s.cache.Peek(cacheKey)
-		if !ok || now.After(entry.expiresAt) {
+		generation, live := s.refGenerations[cacheKey]
+		if !ok || !live || generation != entry.generation || now.After(entry.expiresAt) {
 			continue
 		}
 		results = append(results, entry.resource)
@@ -262,7 +279,7 @@ func (s *CachedStore) ListContext(ctx context.Context) ([]any, error) {
 	s.mu.RLock()
 	var allRefs []resourceRef
 	for _, refs := range s.refs {
-		allRefs = append(allRefs, refs...)
+		allRefs = s.appendLiveRefsLocked(allRefs, refs)
 	}
 	s.mu.RUnlock()
 
@@ -290,14 +307,20 @@ func (s *CachedStore) Add(resource any, keys []string) error {
 		s.removeReferenceLocked(identity)
 		s.locations[identity] = keyStr
 	}
-	s.refs[keyStr] = append(s.refs[keyStr], resourceRef{namespace: ns, name: name, indexKeys: keys})
+	generation := s.advanceGenerationLocked(ns, name)
+	s.refs[keyStr] = append(s.refs[keyStr], resourceRef{
+		namespace:  ns,
+		name:       name,
+		indexKeys:  keys,
+		generation: generation,
+	})
 	if !s.projected {
 		// Non-projected: the informer delivered a full body, so cache it for
 		// free. Projected: the body is a husk — leave the value cache to be
 		// populated by the live API GET in fetchResourceByRef.
-		s.cacheResource(ns, name, resource)
+		s.cacheResource(ns, name, resource, generation)
 	} else {
-		s.cache.Remove(ns + "/" + name)
+		s.cache.Remove(resourceCacheKey(ns, name))
 	}
 
 	return nil
@@ -320,14 +343,20 @@ func (s *CachedStore) Update(resource any, keys []string) error {
 	} else {
 		s.removeReferenceFromBucketLocked(keyStr, resourceIdentity{namespace: ns, name: name})
 	}
-	s.refs[keyStr] = append(s.refs[keyStr], resourceRef{namespace: ns, name: name, indexKeys: keys})
+	generation := s.advanceGenerationLocked(ns, name)
+	s.refs[keyStr] = append(s.refs[keyStr], resourceRef{
+		namespace:  ns,
+		name:       name,
+		indexKeys:  keys,
+		generation: generation,
+	})
 
 	if s.projected {
 		// Projected: the new body is a husk. Invalidate any stale full body
 		// so the next render read re-fetches the current object live.
-		s.cache.Remove(ns + "/" + name)
+		s.cache.Remove(resourceCacheKey(ns, name))
 	} else {
-		s.cacheResource(ns, name, resource)
+		s.cacheResource(ns, name, resource, generation)
 	}
 
 	return nil
@@ -344,19 +373,18 @@ func (s *CachedStore) Delete(namespace, name string, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := validateKeyCount("delete", keys, s.numKeys); err != nil {
+	if err := validateKeyCount(opDelete, keys, s.numKeys); err != nil {
+		return err
+	}
+	if err := validateDeleteName(name, keys); err != nil {
 		return err
 	}
 
 	identity := resourceIdentity{namespace: namespace, name: name}
-	if name == "" {
-		s.removeReferenceFromBucketLocked(makeKeyString(keys), identity)
-		s.cache.Remove(namespace + "/" + name)
-		return nil
-	}
-
+	cacheKey := resourceCacheKey(namespace, name)
+	delete(s.refGenerations, cacheKey)
+	s.cache.Remove(cacheKey)
 	s.removeReferenceLocked(identity)
-	s.cache.Remove(namespace + "/" + name)
 
 	return nil
 }
@@ -398,6 +426,7 @@ func (s *CachedStore) Clear() error {
 
 	s.refs = make(map[string][]resourceRef)
 	s.locations = make(map[resourceIdentity]string)
+	s.refGenerations = make(map[string]uint64)
 	s.cache.Purge()
 
 	return nil
@@ -405,22 +434,9 @@ func (s *CachedStore) Clear() error {
 
 // fetchResourceByRef fetches a resource from cache or API using a resource reference.
 func (s *CachedStore) fetchResourceByRef(ctx context.Context, ref resourceRef) (any, error) {
-	cacheKey := ref.namespace + "/" + ref.name
-
-	// Check cache first using Peek to avoid promoting before TTL check
-	s.mu.RLock()
-	entry, ok := s.cache.Peek(cacheKey)
-	now := time.Now()
-	if ok && now.Before(entry.expiresAt) {
-		resource := entry.resource
-		s.mu.RUnlock()
-		// Reset TTL by re-adding with new expiration (Get promotes, but we also need new TTL)
-		s.mu.Lock()
-		s.cacheResource(ref.namespace, ref.name, resource)
-		s.mu.Unlock()
+	if resource, ok := s.loadCachedResource(ref); ok {
 		return resource, nil
 	}
-	s.mu.RUnlock()
 
 	// Cache miss - fetch from API using namespace+name
 	var resource *unstructured.Unstructured
@@ -477,21 +493,66 @@ func (s *CachedStore) fetchResourceByRef(ctx context.Context, ref resourceRef) (
 		return nil, err
 	}
 
-	// Update cache with converted resource
-	s.mu.Lock()
-	s.cacheResource(ref.namespace, ref.name, result.ConvertedResource)
-	s.mu.Unlock()
+	s.cacheFetchedResource(ref, result.ConvertedResource)
 
 	return result.ConvertedResource, nil
 }
 
-// cacheResource stores a resource in the LRU cache keyed by namespace/name with a fresh TTL.
-// The caller must hold s.mu (for write).
-func (s *CachedStore) cacheResource(namespace, name string, resource any) {
-	s.cache.Add(namespace+"/"+name, &cacheEntry{
-		resource:  resource,
-		expiresAt: time.Now().Add(s.cacheTTL),
+func (s *CachedStore) loadCachedResource(ref resourceRef) (any, bool) {
+	cacheKey := resourceCacheKey(ref.namespace, ref.name)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	generation, live := s.refGenerations[cacheKey]
+	if !live || generation != ref.generation {
+		return nil, false
+	}
+	entry, ok := s.cache.Peek(cacheKey)
+	if !ok {
+		return nil, false
+	}
+	if entry.generation != ref.generation {
+		s.cache.Remove(cacheKey)
+		return nil, false
+	}
+	if !time.Now().Before(entry.expiresAt) {
+		return nil, false
+	}
+
+	entry.expiresAt = time.Now().Add(s.cacheTTL)
+	s.cache.Get(cacheKey)
+	return entry.resource, true
+}
+
+func (s *CachedStore) cacheFetchedResource(ref resourceRef, resource any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cacheKey := resourceCacheKey(ref.namespace, ref.name)
+	if generation, live := s.refGenerations[cacheKey]; !live || generation != ref.generation {
+		return
+	}
+	s.cacheResource(ref.namespace, ref.name, resource, ref.generation)
+}
+
+// cacheResource stores a resource in the LRU cache. The caller must hold s.mu.
+func (s *CachedStore) cacheResource(namespace, name string, resource any, generation uint64) {
+	s.cache.Add(resourceCacheKey(namespace, name), &cacheEntry{
+		resource:   resource,
+		expiresAt:  time.Now().Add(s.cacheTTL),
+		generation: generation,
 	})
+}
+
+func (s *CachedStore) advanceGenerationLocked(namespace, name string) uint64 {
+	s.nextGeneration++
+	generation := s.nextGeneration
+	s.refGenerations[resourceCacheKey(namespace, name)] = generation
+	return generation
+}
+
+func resourceCacheKey(namespace, name string) string {
+	return namespace + "/" + name
 }
 
 // Size returns the number of tracked resources in the store.

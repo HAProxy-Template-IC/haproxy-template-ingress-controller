@@ -6,9 +6,14 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+var errResourceNameRequired = errors.New("resource name is required")
+
+const opDelete = "delete"
 
 type resourceIdentity struct {
 	namespace string
@@ -54,6 +59,17 @@ func validateKeyCount(operation string, keys []string, want int) error {
 		Operation: operation,
 		Keys:      keys,
 		Cause:     fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), want),
+	}
+}
+
+func validateDeleteName(name string, keys []string) error {
+	if name != "" {
+		return nil
+	}
+	return &StoreError{
+		Operation: opDelete,
+		Keys:      keys,
+		Cause:     errResourceNameRequired,
 	}
 }
 

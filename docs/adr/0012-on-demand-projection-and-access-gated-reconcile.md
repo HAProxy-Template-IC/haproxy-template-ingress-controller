@@ -116,6 +116,11 @@ read of a key after a change pays one live GET instead of reusing a free
 informer body — negligible for an infrequently-accessed kind (the definition of
 on-demand).
 
+The reference and its cached body share a local informer-mutation generation.
+TTL renewal and live-GET cache commits succeed only while that generation is
+current, so an in-flight read can't restore a body invalidated by `Update` or
+`Delete`.
+
 **Accepted caveats** (documented, not blocking):
 
 - `logUpdateContent` (`watcher_handlers.go:305`) DEBUG forensic dump shows
