@@ -45,20 +45,22 @@ func (e *HAProxyPodsDiscoveredEvent) EventType() string { return EventTypeHAProx
 // safely skipped during high-frequency pod churn (scaling, rolling updates).
 func (e *HAProxyPodsDiscoveredEvent) Coalescible() bool { return true }
 
-// HAProxyPodTerminatedEvent is published when a HAProxy pod terminates.
+// HAProxyPodTerminatedEvent is published when a HAProxy pod authority retires.
 //
 // This triggers cleanup of the pod from all runtime config status fields.
 type HAProxyPodTerminatedEvent struct {
 	PodName      string
 	PodNamespace string
+	PodUID       string
 	timestamped
 }
 
 // NewHAProxyPodTerminatedEvent creates a new HAProxyPodTerminatedEvent.
-func NewHAProxyPodTerminatedEvent(podName, podNamespace string) *HAProxyPodTerminatedEvent {
+func NewHAProxyPodTerminatedEvent(podName, podNamespace, podUID string) *HAProxyPodTerminatedEvent {
 	return &HAProxyPodTerminatedEvent{
 		PodName:      podName,
 		PodNamespace: podNamespace,
+		PodUID:       podUID,
 		timestamped:  newTimestamped(),
 	}
 }
@@ -66,10 +68,9 @@ func NewHAProxyPodTerminatedEvent(podName, podNamespace string) *HAProxyPodTermi
 func (e *HAProxyPodTerminatedEvent) EventType() string { return EventTypeHAProxyPodTerminated }
 
 // HAProxyPodRejectedEvent is published by the discovery component when a
-// candidate HAProxy pod is refused admission. The most common cause is a
-// remote HAProxy version mismatch with the controller's bundled version,
-// which is a deliberate safety property — the controller cannot safely
-// push config to a major.minor-different HAProxy. Surfaced via Prometheus
+// candidate HAProxy pod is refused admission. The most common cause is an
+// unsupported DataPlane API or an HAProxy series mismatch with the controller's
+// bundled binary. Surfaced via Prometheus
 // (haptic_haproxy_pods_rejected_total{reason}) so operators can alert on
 // "controller refuses to talk to N HAProxy pods" without log-grepping.
 type HAProxyPodRejectedEvent struct {
@@ -78,8 +79,8 @@ type HAProxyPodRejectedEvent struct {
 	PodName string
 	// Reason categorises the rejection. Stable identifiers used as a
 	// Prometheus label, so prefer a fixed enum:
-	//   - "version_mismatch_older" — remote HAProxy is older than local
-	//   - "version_mismatch_newer" — remote HAProxy is newer than local
+	//   - "version_mismatch_older" — the probed version is older than supported
+	//   - "version_mismatch_newer" — the probed version is newer than supported
 	//   - "version_check_failed"   — could not probe remote version (transient)
 	Reason string
 	timestamped

@@ -16,6 +16,7 @@ package deployer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -155,6 +156,7 @@ func newLaneScheduler(t *testing.T, minInterval time.Duration) (
 	bus.Start()
 
 	s = NewDeploymentScheduler(bus, testutil.NewTestLogger(), minInterval, 30*time.Second)
+	s.lastDispatchedPodSetHash = computePodSetHash(oneEndpoint())
 	applied = make(chan struct{}, 16)
 	s.runtimeBypass.newSyncer = func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
 		return &recordingRuntimeSyncer{applied: applied}, nil
@@ -168,6 +170,29 @@ func newLaneScheduler(t *testing.T, minInterval time.Duration) (
 
 func oneEndpoint() []dataplane.Endpoint {
 	return []dataplane.Endpoint{{URL: "http://localhost:5555"}}
+}
+
+func TestSchedulerLanes_SameURLReplacementForcesStructural(t *testing.T) {
+	bus := testutil.NewTestBus()
+	bus.Start()
+	s := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	baseline, _, _ := laneRenders(t)
+	oldEndpoint := dataplane.Endpoint{URL: "http://localhost:5555", PodName: "haproxy-0", PodUID: "uid-old"}
+	replacement := oldEndpoint
+	replacement.PodUID = "uid-new"
+
+	s.schedulerMutex.Lock()
+	s.lastDispatchedParsed = baseline
+	s.lastDispatchedConfig = "config"
+	s.lastDispatchedPodSetHash = computePodSetHash([]dataplane.Endpoint{oldEndpoint})
+	s.schedulerMutex.Unlock()
+	s.scheduleOrQueue(t.Context(), "config", nil, baseline, []dataplane.Endpoint{replacement},
+		"pod_discovery", "replacement", nil, true, "checksum")
+
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+	require.NotNil(t, s.state.pending)
+	assert.Equal(t, laneStructural, s.state.pending.lane)
 }
 
 // Case 1: runtime-eligible, idle, interval elapsed → runtime-raw now (no
@@ -201,6 +226,40 @@ func TestSchedulerLanes_Case1_RuntimeEligibleIdle_AppliesRuntimeRawNow(t *testin
 	defer s.schedulerMutex.Unlock()
 	assert.False(t, s.state.deployInFlight, "runtime-raw must not set deployInFlight")
 	assert.Equal(t, runtime, s.lastDispatchedParsed, "dispatch baseline advances on runtime-raw")
+}
+
+func TestSchedulerLanes_IncompleteRuntimeApplyFallsBackToStructural(t *testing.T) {
+	bus := testutil.NewTestBus()
+	bus.Start()
+	s := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	baseline, runtime, _ := laneRenders(t)
+	endpoints := oneEndpoint()
+
+	s.runtimeBypass.replaceEndpointAuthorities(endpoints)
+	s.runtimeBypass.newSyncer = func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
+		return nil, errors.New("dial refused")
+	}
+	s.schedulerMutex.Lock()
+	s.lastDispatchedParsed = baseline
+	s.lastDispatchedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
+	s.lastDispatchedPodSetHash = computePodSetHash(endpoints)
+	s.lastActivatedConfig = s.lastDispatchedConfig
+	s.schedulerMutex.Unlock()
+
+	dep := &scheduledDeployment{
+		config:       fmt.Sprintf(laneConfigBase, "10.0.0.2:8080"),
+		parsedConfig: runtime,
+		endpoints:    endpoints,
+		lane:         laneRuntimeRaw,
+	}
+	require.True(t, s.dispatchPending(t.Context(), dep))
+
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+	assert.Nil(t, s.lastDispatchedParsed)
+	assert.Empty(t, s.lastActivatedConfig)
+	require.Same(t, dep, s.state.pending)
+	assert.Equal(t, laneStructural, dep.lane)
 }
 
 // Case 2 (headline — the #55 fix): a runtime-eligible render that arrives WHILE a

@@ -52,6 +52,8 @@ type ConfigAppliedToPodEvent struct {
 	RuntimeConfigNamespace string
 	PodName                string
 	PodNamespace           string
+	PodUID                 string
+	PodRuntimeID           string
 	Checksum               string
 
 	// IsDriftCheck indicates whether this was a drift prevention check (GET-only)
@@ -116,12 +118,14 @@ type OperationCounts struct {
 }
 
 // NewConfigAppliedToPodEvent creates a new ConfigAppliedToPodEvent.
-func NewConfigAppliedToPodEvent(runtimeConfigName, runtimeConfigNamespace, podName, podNamespace, checksum string, isDriftCheck bool, syncMetadata *SyncMetadata) *ConfigAppliedToPodEvent {
+func NewConfigAppliedToPodEvent(runtimeConfigName, runtimeConfigNamespace, podName, podNamespace, podUID, podRuntimeID, checksum string, isDriftCheck bool, syncMetadata *SyncMetadata) *ConfigAppliedToPodEvent {
 	return &ConfigAppliedToPodEvent{
 		RuntimeConfigName:      runtimeConfigName,
 		RuntimeConfigNamespace: runtimeConfigNamespace,
 		PodName:                podName,
 		PodNamespace:           podNamespace,
+		PodUID:                 podUID,
+		PodRuntimeID:           podRuntimeID,
 		Checksum:               checksum,
 		IsDriftCheck:           isDriftCheck,
 		SyncMetadata:           syncMetadata,

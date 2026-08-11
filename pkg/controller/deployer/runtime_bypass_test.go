@@ -32,8 +32,9 @@ import (
 
 // fakeRuntimeSyncer is a test double for *dataplane.Client used by the bypass.
 type fakeRuntimeSyncer struct {
-	sync   func() (*dataplane.SyncResult, error)
-	closes *atomic.Int32 // optional shared close counter
+	sync    func() (*dataplane.SyncResult, error)
+	closes  *atomic.Int32 // optional shared close counter
+	onClose func()
 }
 
 func (f *fakeRuntimeSyncer) SyncRuntimeFast(_ context.Context, _ *dataplane.RuntimeServerUpdates, _ string, _ *dataplane.SyncOptions) (*dataplane.SyncResult, error) {
@@ -44,6 +45,9 @@ func (f *fakeRuntimeSyncer) Close() error {
 	if f.closes != nil {
 		f.closes.Add(1)
 	}
+	if f.onClose != nil {
+		f.onClose()
+	}
 	return nil
 }
 
@@ -51,8 +55,23 @@ func newTestBypass(newSyncer func(ctx context.Context, ep *dataplane.Endpoint) (
 	return &runtimeBypass{
 		logger:    slog.Default(),
 		newSyncer: newSyncer,
-		clients:   make(map[string]runtimeSyncer),
+		clients:   make(map[endpointAuthority]runtimeSyncer),
 	}
+}
+
+func openClientForTest(ctx context.Context, b *runtimeBypass, endpoint *dataplane.Endpoint) error {
+	lease, ok := b.acquireAuthorityLease([]dataplane.Endpoint{*endpoint})
+	if !ok {
+		b.mu.Lock()
+		closed := b.closed
+		b.mu.Unlock()
+		if closed {
+			return errRuntimeBypassClosed
+		}
+		return errRuntimeBypassAuthorityChanged
+	}
+	_, err := b.clientForLease(ctx, endpoint, lease)
+	return err
 }
 
 func threeEndpoints() []dataplane.Endpoint {
@@ -63,6 +82,42 @@ func threeEndpoints() []dataplane.Endpoint {
 // applyRuntimeRaw call. config/runtimeUpdates content is irrelevant to the fake.
 func depFor(endpoints []dataplane.Endpoint) *scheduledDeployment {
 	return &scheduledDeployment{config: "config", endpoints: endpoints}
+}
+
+func TestEndpointAuthorityIncludesClientAndPodIdentity(t *testing.T) {
+	base := dataplane.Endpoint{
+		URL:                  "http://a",
+		Username:             "admin",
+		Password:             "password",
+		PodName:              "haproxy-0",
+		PodUID:               "uid-1",
+		DetectedMajorVersion: 3,
+		DetectedMinorVersion: 2,
+		DetectedFullVersion:  "v3.2.6",
+	}
+	tests := []struct {
+		name   string
+		mutate func(*dataplane.Endpoint)
+	}{
+		{name: "URL", mutate: func(endpoint *dataplane.Endpoint) { endpoint.URL = "http://b" }},
+		{name: "username", mutate: func(endpoint *dataplane.Endpoint) { endpoint.Username = "operator" }},
+		{name: "password", mutate: func(endpoint *dataplane.Endpoint) { endpoint.Password = "rotated" }},
+		{name: "pod name", mutate: func(endpoint *dataplane.Endpoint) { endpoint.PodName = "haproxy-1" }},
+		{name: "pod namespace", mutate: func(endpoint *dataplane.Endpoint) { endpoint.PodNamespace = "other" }},
+		{name: "pod UID", mutate: func(endpoint *dataplane.Endpoint) { endpoint.PodUID = "uid-2" }},
+		{name: "pod runtime", mutate: func(endpoint *dataplane.Endpoint) { endpoint.PodRuntimeID = "runtime-2" }},
+		{name: "major version", mutate: func(endpoint *dataplane.Endpoint) { endpoint.DetectedMajorVersion = 4 }},
+		{name: "minor version", mutate: func(endpoint *dataplane.Endpoint) { endpoint.DetectedMinorVersion = 3 }},
+		{name: "full version", mutate: func(endpoint *dataplane.Endpoint) { endpoint.DetectedFullVersion = "v3.2.6-ee1" }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			changed := base
+			test.mutate(&changed)
+			assert.NotEqual(t, endpointAuthorityOf(&base), endpointAuthorityOf(&changed))
+		})
+	}
 }
 
 // TestRuntimeBypass_AppliesPerEndpoint verifies one SyncRuntimeFast per endpoint,
@@ -196,20 +251,204 @@ func TestRuntimeBypass_EvictsStaleClients(t *testing.T) {
 	b.mu.Unlock()
 
 	// Next apply only mentions endpoint a — b and c are stale and must be closed.
-	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}), bypassPush{body: "config"})
+	remaining := []dataplane.Endpoint{{URL: "http://a"}}
+	b.replaceEndpointAuthorities(remaining)
+	b.applyRuntimeRaw(context.Background(), depFor(remaining), bypassPush{body: "config"})
 	assert.Equal(t, int32(2), closes.Load(), "the two absent endpoints' clients are closed")
 	b.mu.Lock()
-	_, hasA := b.clients["http://a"]
+	endpointA := dataplane.Endpoint{URL: "http://a"}
+	_, hasA := b.clients[endpointAuthorityOf(&endpointA)]
 	n := len(b.clients)
 	b.mu.Unlock()
 	assert.True(t, hasA, "the surviving endpoint keeps its client")
 	assert.Equal(t, 1, n)
 }
 
+func TestRuntimeBypass_ReplacesClientAfterCredentialRotation(t *testing.T) {
+	var history []string
+
+	b := newTestBypass(func(_ context.Context, ep *dataplane.Endpoint) (runtimeSyncer, error) {
+		password := ep.Password
+		history = append(history, "open:"+password)
+		return &fakeRuntimeSyncer{
+			sync: func() (*dataplane.SyncResult, error) {
+				history = append(history, "sync:"+password)
+				return &dataplane.SyncResult{Success: true}, nil
+			},
+			onClose: func() {
+				history = append(history, "close:"+password)
+			},
+		}, nil
+	})
+
+	endpoint := dataplane.Endpoint{
+		URL:                  "http://a",
+		Username:             "admin",
+		Password:             "old-password",
+		PodName:              "haproxy-0",
+		PodNamespace:         "haptic",
+		PodUID:               "uid-1",
+		DetectedMajorVersion: 3,
+		DetectedMinorVersion: 2,
+		DetectedFullVersion:  "3.2.1",
+	}
+	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{endpoint}), bypassPush{body: "config"})
+
+	endpoint.Password = "new-password"
+	b.replaceEndpointAuthorities([]dataplane.Endpoint{endpoint})
+	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{endpoint}), bypassPush{body: "config"})
+	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{endpoint}), bypassPush{body: "config"})
+
+	assert.Equal(t, []string{
+		"open:old-password",
+		"sync:old-password",
+		"close:old-password",
+		"open:new-password",
+		"sync:new-password",
+		"sync:new-password",
+	}, history)
+	b.mu.Lock()
+	_, hasRotatedClient := b.clients[endpointAuthorityOf(&endpoint)]
+	n := len(b.clients)
+	b.mu.Unlock()
+	assert.True(t, hasRotatedClient)
+	assert.Equal(t, 1, n)
+}
+
+func TestRuntimeBypass_ReplacesClientAfterPodReplacement(t *testing.T) {
+	var opens atomic.Int32
+	var closes atomic.Int32
+	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
+		opens.Add(1)
+		return &fakeRuntimeSyncer{
+			closes: &closes,
+			sync:   func() (*dataplane.SyncResult, error) { return &dataplane.SyncResult{Success: true}, nil },
+		}, nil
+	})
+
+	endpoint := dataplane.Endpoint{URL: "http://a", Username: "admin", Password: "password", PodUID: "uid-1"}
+	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{endpoint}), bypassPush{body: "config"})
+	endpoint.PodUID = "uid-2"
+	b.replaceEndpointAuthorities([]dataplane.Endpoint{endpoint})
+	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{endpoint}), bypassPush{body: "config"})
+
+	assert.Equal(t, int32(2), opens.Load())
+	assert.Equal(t, int32(1), closes.Load())
+}
+
+func TestRuntimeBypass_CloseDiscardsClientOpeningInFlight(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var closes atomic.Int32
+	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
+		close(started)
+		<-release
+		return &fakeRuntimeSyncer{
+			closes: &closes,
+			sync:   func() (*dataplane.SyncResult, error) { return &dataplane.SyncResult{Success: true}, nil },
+		}, nil
+	})
+
+	result := make(chan error, 1)
+	go func() {
+		result <- openClientForTest(t.Context(), b, &dataplane.Endpoint{URL: "http://a"})
+	}()
+	select {
+	case <-started:
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("client construction did not start")
+	}
+	b.Close()
+	close(release)
+
+	select {
+	case err := <-result:
+		assert.ErrorIs(t, err, errRuntimeBypassClosed)
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("client construction did not finish")
+	}
+	assert.Equal(t, int32(1), closes.Load())
+	b.mu.Lock()
+	assert.Empty(t, b.clients)
+	b.mu.Unlock()
+}
+
+func TestRuntimeBypass_CloseFencesBlockedSyncResult(t *testing.T) {
+	bus := testutil.NewTestBus()
+	appliedCh := bus.SubscribeTypes("blocked-applied", 10, events.EventTypeConfigAppliedToPod)
+	publishCh := bus.SubscribeTypes("blocked-publish", 10, events.EventTypeDeployedConfigPublishRequest)
+	bus.Start()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	var activations atomic.Int32
+	var metrics atomic.Int32
+	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
+		return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
+			close(started)
+			<-release
+			return &dataplane.SyncResult{Success: true, ActivatedConfigChecksum: "retired-proof"}, nil
+		}}, nil
+	})
+	b.eventBus = bus
+	b.recordActivation = func(_ *dataplane.Endpoint, _ string) { activations.Add(1) }
+	b.recordFastPath = func(_ int, _ bool) { metrics.Add(1) }
+	dep := &scheduledDeployment{
+		config:                 "config",
+		contentChecksum:        "checksum",
+		lane:                   laneRuntimeRaw,
+		runtimeConfigName:      "cfg",
+		runtimeConfigNamespace: "haptic",
+		endpoints: []dataplane.Endpoint{{
+			URL: "http://a", PodName: "haproxy-0", PodNamespace: "haptic", PodUID: "uid-1",
+		}},
+	}
+
+	go func() {
+		defer close(done)
+		b.applyRuntimeRaw(context.Background(), dep, bypassPush{body: dep.config})
+	}()
+	select {
+	case <-started:
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("runtime sync did not block")
+	}
+	b.Close()
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("runtime apply did not return")
+	}
+
+	assert.Zero(t, activations.Load())
+	assert.Zero(t, metrics.Load())
+	testutil.AssertNoEvent[*events.ConfigAppliedToPodEvent](t, appliedCh, testutil.NoEventTimeout)
+	testutil.AssertNoEvent[*events.DeployedConfigPublishRequest](t, publishCh, testutil.NoEventTimeout)
+}
+
+func TestRuntimeBypass_BeginLeadershipTermReopensCache(t *testing.T) {
+	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
+		return &fakeRuntimeSyncer{
+			sync: func() (*dataplane.SyncResult, error) { return &dataplane.SyncResult{Success: true}, nil },
+		}, nil
+	})
+	b.Close()
+
+	err := openClientForTest(t.Context(), b, &dataplane.Endpoint{URL: "http://a"})
+	assert.ErrorIs(t, err, errRuntimeBypassClosed)
+
+	b.beginLeadershipTerm()
+	err = openClientForTest(t.Context(), b, &dataplane.Endpoint{URL: "http://a"})
+	require.NoError(t, err)
+}
+
 // TestRuntimeBypass_SwallowsSyncError verifies an apply error on one endpoint
 // is swallowed (best-effort) and does not stop the others.
 func TestRuntimeBypass_SwallowsSyncError(t *testing.T) {
 	var calls atomic.Int32
+	var failures atomic.Int32
 
 	b := newTestBypass(func(_ context.Context, ep *dataplane.Endpoint) (runtimeSyncer, error) {
 		url := ep.URL
@@ -221,17 +460,42 @@ func TestRuntimeBypass_SwallowsSyncError(t *testing.T) {
 			return &dataplane.SyncResult{Success: true}, nil
 		}}, nil
 	})
+	b.recordFastPath = func(_ int, failed bool) {
+		if failed {
+			failures.Add(1)
+		}
+	}
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
+	applied := b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
 
+	assert.False(t, applied)
 	assert.Equal(t, int32(3), calls.Load(),
 		"the failing endpoint must not prevent the others from applying")
+	assert.Equal(t, int32(1), failures.Load())
+}
+
+func TestRuntimeBypass_RejectsUnsuccessfulResult(t *testing.T) {
+	var failures atomic.Int32
+	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
+		return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
+			return &dataplane.SyncResult{}, nil
+		}}, nil
+	})
+	b.recordFastPath = func(_ int, failed bool) {
+		if failed {
+			failures.Add(1)
+		}
+	}
+
+	assert.False(t, b.applyRuntimeRaw(context.Background(), depFor(oneEndpoint()), bypassPush{body: "config"}))
+	assert.Equal(t, int32(1), failures.Load())
 }
 
 // TestRuntimeBypass_SwallowsClientOpenError verifies a client-open failure is
 // swallowed and the remaining endpoints still apply.
 func TestRuntimeBypass_SwallowsClientOpenError(t *testing.T) {
 	var calls atomic.Int32
+	var failures atomic.Int32
 
 	b := newTestBypass(func(_ context.Context, ep *dataplane.Endpoint) (runtimeSyncer, error) {
 		if ep.URL == "http://a" {
@@ -242,17 +506,25 @@ func TestRuntimeBypass_SwallowsClientOpenError(t *testing.T) {
 			return &dataplane.SyncResult{Success: true}, nil
 		}}, nil
 	})
+	b.recordFastPath = func(_ int, failed bool) {
+		if failed {
+			failures.Add(1)
+		}
+	}
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
+	applied := b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
 
+	assert.False(t, applied)
 	assert.Equal(t, int32(2), calls.Load(),
 		"two endpoints apply; the one whose client failed to open is skipped")
+	assert.Equal(t, int32(1), failures.Load())
 }
 
 // TestRuntimeBypass_RecoversPanic verifies a panic inside one apply is recovered
 // (does not crash the process) and the other endpoints still apply.
 func TestRuntimeBypass_RecoversPanic(t *testing.T) {
 	var calls atomic.Int32
+	var failures atomic.Int32
 
 	b := newTestBypass(func(_ context.Context, ep *dataplane.Endpoint) (runtimeSyncer, error) {
 		url := ep.URL
@@ -264,13 +536,21 @@ func TestRuntimeBypass_RecoversPanic(t *testing.T) {
 			return &dataplane.SyncResult{Success: true}, nil
 		}}, nil
 	})
+	b.recordFastPath = func(_ int, failed bool) {
+		if failed {
+			failures.Add(1)
+		}
+	}
 
 	// Must not panic out of applyRuntimeRaw (the per-endpoint recover catches it).
+	var applied bool
 	require.NotPanics(t, func() {
-		b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
+		applied = b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
 	})
+	assert.False(t, applied)
 	assert.Equal(t, int32(2), calls.Load(),
 		"the panicking endpoint is recovered; the others apply")
+	assert.Equal(t, int32(1), failures.Load())
 }
 
 // TestRuntimeBypass_CancelledParentStopsSpawning verifies a cancelled parent
@@ -315,13 +595,14 @@ func TestRuntimeBypass_PublishesConfigAppliedForRuntimeLane(t *testing.T) {
 		runtimeConfigName:      "haptic-config-haproxycfg",
 		runtimeConfigNamespace: "haptic",
 		endpoints: []dataplane.Endpoint{
-			{URL: "http://a", PodName: "pod-a", PodNamespace: "haptic"},
-			{URL: "http://b", PodName: "pod-b", PodNamespace: "haptic"},
+			{URL: "http://a", PodName: "pod-a", PodNamespace: "haptic", PodUID: "uid-a"},
+			{URL: "http://b", PodName: "pod-b", PodNamespace: "haptic", PodUID: "uid-b"},
 		},
 	}
 	b.applyRuntimeRaw(context.Background(), dep, bypassPush{body: dep.config})
 
 	got := map[string]string{} // podName -> reported checksum
+	expectedUID := map[string]string{"pod-a": "uid-a", "pod-b": "uid-b"}
 	timeout := time.After(2 * time.Second)
 	for len(got) < 2 {
 		select {
@@ -330,6 +611,7 @@ func TestRuntimeBypass_PublishesConfigAppliedForRuntimeLane(t *testing.T) {
 			require.True(t, ok, "expected *ConfigAppliedToPodEvent, got %T", ev)
 			assert.Equal(t, "haptic-config-haproxycfg", cae.RuntimeConfigName)
 			assert.Equal(t, "haptic", cae.RuntimeConfigNamespace)
+			assert.Equal(t, expectedUID[cae.PodName], cae.PodUID)
 			assert.False(t, cae.IsDriftCheck, "a real runtime apply is not a drift check")
 			got[cae.PodName] = cae.Checksum
 		case <-timeout:

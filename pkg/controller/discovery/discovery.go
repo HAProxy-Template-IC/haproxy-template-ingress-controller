@@ -24,9 +24,14 @@ package discovery
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"sort"
+	"strconv"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -366,6 +371,10 @@ func (d *Discovery) evaluatePod(
 			"phase", phase)
 		return zero, false, nil
 	}
+	podRuntimeID, err := extractPodRuntimeID(pod)
+	if err != nil {
+		return zero, false, fmt.Errorf("identifying pod runtime for %s: %w", pod.GetName(), err)
+	}
 
 	traceIf(logger, "Including pod - dataplane container is ready",
 		"pod", pod.GetName(),
@@ -373,12 +382,48 @@ func (d *Discovery) evaluatePod(
 		"phase", phase)
 
 	return dataplane.Endpoint{
-		URL:          fmt.Sprintf("http://%s:%d/v3", podIP, d.dataplanePort),
+		URL:          "http://" + net.JoinHostPort(podIP, strconv.Itoa(d.dataplanePort)) + "/v3",
 		Username:     credentials.DataplaneUsername,
 		Password:     credentials.DataplanePassword,
 		PodName:      pod.GetName(),
 		PodNamespace: pod.GetNamespace(),
+		PodUID:       string(pod.GetUID()),
+		PodRuntimeID: podRuntimeID,
 	}, true, nil
+}
+
+func extractPodRuntimeID(pod *unstructured.Unstructured) (string, error) {
+	statuses, found, err := unstructured.NestedSlice(pod.Object, "status", "containerStatuses")
+	if err != nil {
+		return "", fmt.Errorf("reading container statuses: %w", err)
+	}
+	if !found {
+		return "", nil
+	}
+
+	runtimes := make([]string, 0, len(statuses))
+	for _, value := range statuses {
+		status, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, nameFound, nameErr := unstructured.NestedString(status, "name")
+		imageID, _, imageErr := unstructured.NestedString(status, "imageID")
+		containerID, _, containerErr := unstructured.NestedString(status, "containerID")
+		if nameErr != nil || imageErr != nil || containerErr != nil {
+			return "", errors.New("container status name, imageID, or containerID is not a string")
+		}
+		if nameFound && (imageID != "" || containerID != "") {
+			runtimes = append(runtimes, name+"\x00"+imageID+"\x00"+containerID)
+		}
+	}
+	if len(runtimes) == 0 {
+		return "", nil
+	}
+
+	sort.Strings(runtimes)
+	sum := sha256.Sum256([]byte(strings.Join(runtimes, "\x00")))
+	return fmt.Sprintf("%x", sum), nil
 }
 
 // extractPodIP extracts the pod IP from status.podIP.

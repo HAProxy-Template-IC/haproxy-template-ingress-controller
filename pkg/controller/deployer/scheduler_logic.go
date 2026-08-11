@@ -78,9 +78,11 @@ func (s *DeploymentScheduler) installPending(ctx context.Context, dep *scheduled
 		return
 	}
 	prevParsed := s.lastDispatchedParsed
+	prevPodSetHash := s.lastDispatchedPodSetHash
 	s.schedulerMutex.Unlock()
 
 	updates, err := dataplane.ComputeRuntimeServerUpdates(prevParsed, dep.parsedConfig)
+	depPodSetHash := computePodSetHash(dep.endpoints)
 
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
@@ -91,8 +93,9 @@ func (s *DeploymentScheduler) installPending(ctx context.Context, dep *scheduled
 	// If the baseline advanced while we computed the diff (another dispatch landed
 	// concurrently), recompute against the now-current baseline so the lane
 	// reflects what THIS render actually changes relative to what's in flight.
-	if s.lastDispatchedParsed != prevParsed {
+	if s.lastDispatchedParsed != prevParsed || s.lastDispatchedPodSetHash != prevPodSetHash {
 		prevParsed = s.lastDispatchedParsed
+		prevPodSetHash = s.lastDispatchedPodSetHash
 		updates, err = dataplane.ComputeRuntimeServerUpdates(prevParsed, dep.parsedConfig)
 		if !s.pendingRevisionCurrentLocked(ctx, dep) {
 			return
@@ -107,6 +110,9 @@ func (s *DeploymentScheduler) installPending(ctx context.Context, dep *scheduled
 	// still contains the structural op). There is no idle/in-flight branching and
 	// no goroutine spawn here — the ONE runDeployLoop goroutine owns all timing.
 	dep.lane = classifyLane(prevParsed, updates, err)
+	if prevPodSetHash == "" || prevPodSetHash != depPodSetHash {
+		dep.lane = laneStructural
+	}
 	dep.runtimeUpdates = updates
 	s.state.pending = dep
 
@@ -394,6 +400,7 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 		}
 		s.lastDispatchedParsed = dep.parsedConfig
 		s.lastDispatchedConfig = dep.config
+		s.lastDispatchedPodSetHash = computePodSetHash(dep.endpoints)
 		// This lane reloads nothing: the push body plus its runtime actions ARE
 		// the activation, so dispatched and activated coincide here. The
 		// structural lane advances activated only on completion.
@@ -413,7 +420,7 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 		// baseline ONLY in runtime-eligible server fields, so it already IS
 		// "baseline + runtime patches" (the issue #84 bypass-body invariant), and
 		// pushing the full fresh render lets the restamp prove disk == running.
-		s.runtimeBypass.applyRuntimeRaw(ctx, dep, bypassPush{
+		applied := s.runtimeBypass.applyRuntimeRaw(ctx, dep, bypassPush{
 			body: dep.config,
 			// Abandon retry storms once a newer render is pending: it will be
 			// dispatched right after this apply returns.
@@ -423,6 +430,9 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 				return s.state.pending != nil
 			},
 		})
+		if !applied {
+			s.requeueFailedRuntimeApply(ctx, dep)
+		}
 		return true
 	}
 
@@ -442,6 +452,7 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 	s.state.activeCorrelationID = dep.correlationID
 	s.lastDispatchedParsed = dep.parsedConfig
 	s.lastDispatchedConfig = dep.config
+	s.lastDispatchedPodSetHash = computePodSetHash(dep.endpoints)
 	s.schedulerMutex.Unlock()
 
 	if contextCancelled(ctx) {
@@ -454,6 +465,23 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 	// this slot until the deployer acknowledges termination.
 	s.publishScheduled(scheduledEvent)
 	return s.awaitCompletion(ctx)
+}
+
+func (s *DeploymentScheduler) requeueFailedRuntimeApply(ctx context.Context, dep *scheduledDeployment) {
+	s.schedulerMutex.Lock()
+	s.invalidateDispatchBaselineLocked()
+	if !contextCancelled(ctx) && dep.workRevision == s.workRevision && s.state.pending == nil {
+		dep.lane = laneStructural
+		dep.runtimeUpdates = nil
+		s.state.pending = dep
+	}
+	hasPending := s.state.pending != nil
+	s.schedulerMutex.Unlock()
+
+	if hasPending {
+		s.logger.Warn("Runtime deployment incomplete; retrying with a structural deployment")
+		s.signalLoop()
+	}
 }
 
 func (s *DeploymentScheduler) clearDispatchedPending(deploymentID string) {
@@ -596,6 +624,7 @@ func (s *DeploymentScheduler) publishScheduled(event *events.DeploymentScheduled
 func (s *DeploymentScheduler) invalidateDispatchBaselineLocked() {
 	s.lastDispatchedParsed = nil
 	s.lastDispatchedConfig = ""
+	s.lastDispatchedPodSetHash = ""
 	// The activated baseline goes with it: a deploy that did not land
 	// everywhere leaves at least one pod running something else, so there is no
 	// single config that is proven to be running (#112).

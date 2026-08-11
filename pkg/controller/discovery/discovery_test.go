@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -395,6 +396,72 @@ func TestDiscovery_DiscoverEndpoints_MapResources(t *testing.T) {
 	assert.Equal(t, "secret", endpoints[0].Password)
 	assert.Equal(t, "haproxy-0", endpoints[0].PodName)
 	assert.Equal(t, "default", endpoints[0].PodNamespace)
+}
+
+func TestDiscovery_DiscoverEndpoints_IncludesPodUID(t *testing.T) {
+	pod := createPod("haproxy-0", "10.0.0.1")
+	pod.SetUID(k8stypes.UID("pod-uid-1"))
+	podStore := store.NewMemoryStore(2)
+	require.NoError(t, podStore.Add(pod, []string{"default", "haproxy-0"}))
+
+	endpoints, err := createTestDiscovery(5555).DiscoverEndpoints(podStore, coreconfig.Credentials{
+		DataplaneUsername: "admin",
+		DataplanePassword: "secret",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, endpoints, 1)
+	assert.Equal(t, "pod-uid-1", endpoints[0].PodUID)
+}
+
+func TestDiscovery_DiscoverEndpoints_IdentifiesContainerRuntimeEpoch(t *testing.T) {
+	pod := createPod("haproxy-0", "10.0.0.1")
+	setStatuses := func(haproxyImage, haproxyContainer string) {
+		require.NoError(t, unstructured.SetNestedSlice(pod.Object, []any{
+			map[string]any{
+				"name": "dataplane", "ready": true,
+				"imageID": "sha256:dataplane", "containerID": "containerd://dataplane-1",
+			},
+			map[string]any{
+				"name": "haproxy", "ready": true,
+				"imageID": haproxyImage, "containerID": "containerd://" + haproxyContainer,
+			},
+		}, "status", "containerStatuses"))
+	}
+	setStatuses("sha256:haproxy-old", "haproxy-1")
+	discovery := createTestDiscovery(5555)
+	credentials := coreconfig.Credentials{}
+
+	oldEndpoint, admitted, err := discovery.evaluatePod(pod, credentials, nil)
+	require.NoError(t, err)
+	require.True(t, admitted)
+	require.NotEmpty(t, oldEndpoint.PodRuntimeID)
+
+	setStatuses("sha256:haproxy-old", "haproxy-2")
+	restartedEndpoint, admitted, err := discovery.evaluatePod(pod, credentials, nil)
+	require.NoError(t, err)
+	require.True(t, admitted)
+	assert.NotEqual(t, oldEndpoint.PodRuntimeID, restartedEndpoint.PodRuntimeID)
+
+	setStatuses("sha256:haproxy-new", "haproxy-3")
+	updatedEndpoint, admitted, err := discovery.evaluatePod(pod, credentials, nil)
+	require.NoError(t, err)
+	require.True(t, admitted)
+	assert.NotEqual(t, restartedEndpoint.PodRuntimeID, updatedEndpoint.PodRuntimeID)
+}
+
+func TestDiscovery_DiscoverEndpoints_FormatsIPv6URL(t *testing.T) {
+	podStore := store.NewMemoryStore(2)
+	require.NoError(t, podStore.Add(createPod("haproxy-0", "fd00::1"), []string{"default", "haproxy-0"}))
+
+	endpoints, err := createTestDiscovery(5555).DiscoverEndpoints(podStore, coreconfig.Credentials{
+		DataplaneUsername: "admin",
+		DataplanePassword: "secret",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, endpoints, 1)
+	assert.Equal(t, "http://[fd00::1]:5555/v3", endpoints[0].URL)
 }
 
 // createPod creates a test pod with the specified name and IP in the default namespace.

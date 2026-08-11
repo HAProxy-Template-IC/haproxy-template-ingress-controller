@@ -115,6 +115,12 @@ func extractDeployedToPodsFromPatch(patch map[string]any) []haproxyv1alpha1.PodD
 		if v, ok := entry["podName"].(string); ok {
 			p.PodName = v
 		}
+		if v, ok := entry["podUID"].(string); ok {
+			p.PodUID = v
+		}
+		if v, ok := entry["podRuntimeID"].(string); ok {
+			p.PodRuntimeID = v
+		}
 		if v, ok := entry["checksum"].(string); ok {
 			p.Checksum = v
 		}

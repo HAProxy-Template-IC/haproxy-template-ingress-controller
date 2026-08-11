@@ -48,6 +48,13 @@ func TestParseVersion(t *testing.T) {
 			wantErr:   false,
 		},
 		{
+			name:      "enterprise revision",
+			version:   "3.2r1",
+			wantMajor: 3,
+			wantMinor: 2,
+			wantErr:   false,
+		},
+		{
 			name:      "patch version only",
 			version:   "v3.0",
 			wantMajor: 3,
@@ -309,6 +316,59 @@ func TestDetectVersion(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantVersion, versionInfo.API.Version)
+		})
+	}
+}
+
+func TestDetectHAProxyVersion(t *testing.T) {
+	tests := []struct {
+		name           string
+		responseBody   string
+		responseStatus int
+		wantErr        bool
+		wantVersion    string
+	}{
+		{
+			name:           "successful detection",
+			responseBody:   `{"info":{"version":"3.4.2-1a2b3c4d"}}`,
+			responseStatus: http.StatusOK,
+			wantVersion:    "3.4.2-1a2b3c4d",
+		},
+		{
+			name:           "non-200 status",
+			responseStatus: http.StatusServiceUnavailable,
+			wantErr:        true,
+		},
+		{
+			name:           "empty version string",
+			responseBody:   `{"info":{}}`,
+			responseStatus: http.StatusOK,
+			wantErr:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				assert.Equal(t, "/v3/services/haproxy/runtime/info", request.URL.Path)
+				username, password, ok := request.BasicAuth()
+				assert.True(t, ok)
+				assert.Equal(t, "testuser", username)
+				assert.Equal(t, "testpass", password)
+				w.WriteHeader(tt.responseStatus)
+				_, _ = w.Write([]byte(tt.responseBody))
+			}))
+			defer server.Close()
+
+			versionInfo, err := DetectHAProxyVersion(t.Context(), &Endpoint{
+				URL: server.URL + "/v3", Username: "testuser", Password: "testpass",
+			}, nil)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantVersion, versionInfo.Info.Version)
 		})
 	}
 }

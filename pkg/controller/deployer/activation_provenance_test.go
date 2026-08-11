@@ -27,7 +27,7 @@ import (
 // sync force a reload against a config it just verified, on every sync.
 func TestConfigVersionCache_ActivationProofOutlivesAVersionUpdate(t *testing.T) {
 	c := newConfigVersionCache()
-	const ep = "http://10.0.0.1:5555/v3"
+	ep := cacheEndpoint("http://10.0.0.1:5555/v3")
 
 	c.setActivated(ep, "proof-1")
 	require.Equal(t, "proof-1", c.activated(ep))
@@ -49,15 +49,16 @@ func TestConfigVersionCache_ActivationProofOutlivesAVersionUpdate(t *testing.T) 
 // parked content — the #112 stall.
 func TestConfigVersionCache_EmptyProofClearsActivation(t *testing.T) {
 	c := newConfigVersionCache()
-	const ep = "http://10.0.0.1:5555/v3"
+	ep := cacheEndpoint("http://10.0.0.1:5555/v3")
 
 	c.setActivated(ep, "proof-1")
 	c.setActivated(ep, "")
 	assert.Empty(t, c.activated(ep), "an empty proof must clear, not be ignored")
 
 	// Clearing an endpoint that was never recorded must not fabricate an entry.
-	c.setActivated("http://10.0.0.2:5555/v3", "")
-	assert.Empty(t, c.activated("http://10.0.0.2:5555/v3"))
+	unknown := cacheEndpoint("http://10.0.0.2:5555/v3")
+	c.setActivated(unknown, "")
+	assert.Empty(t, c.activated(unknown))
 }
 
 // invalidate() drops the proof with the rest of the entry. After a failed sync
@@ -65,7 +66,7 @@ func TestConfigVersionCache_EmptyProofClearsActivation(t *testing.T) {
 // disk regardless of the error.
 func TestConfigVersionCache_InvalidateDropsActivation(t *testing.T) {
 	c := newConfigVersionCache()
-	const ep = "http://10.0.0.1:5555/v3"
+	ep := cacheEndpoint("http://10.0.0.1:5555/v3")
 
 	c.set(ep, 7, &parserconfig.StructuredConfig{}, "content-abc")
 	c.setActivated(ep, "proof-1")
@@ -78,7 +79,7 @@ func TestConfigVersionCache_InvalidateDropsActivation(t *testing.T) {
 // reload before trusting an empty diff" — the safe default.
 func TestConfigVersionCache_UnknownEndpointHasNoProof(t *testing.T) {
 	c := newConfigVersionCache()
-	assert.Empty(t, c.activated("http://nobody:5555/v3"))
+	assert.Empty(t, c.activated(cacheEndpoint("http://nobody:5555/v3")))
 }
 
 // A failed bypass apply must CLEAR the endpoint's activation proof.
@@ -97,7 +98,7 @@ func TestRuntimeBypass_FailedApplyClearsActivationProof(t *testing.T) {
 			return nil, errors.New("cannot execute SetServerState: connection refused")
 		}}, nil
 	})
-	b.recordActivation = func(endpointURL, proof string) { recorded[endpointURL] = proof }
+	b.recordActivation = func(endpoint *dataplane.Endpoint, proof string) { recorded[endpoint.URL] = proof }
 
 	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}),
 		bypassPush{body: "config"})
@@ -118,7 +119,7 @@ func TestRuntimeBypass_SuccessfulApplyRecordsActivationProof(t *testing.T) {
 			return &dataplane.SyncResult{Success: true, ActivatedConfigChecksum: "proof-after-apply"}, nil
 		}}, nil
 	})
-	b.recordActivation = func(endpointURL, proof string) { recorded[endpointURL] = proof }
+	b.recordActivation = func(endpoint *dataplane.Endpoint, proof string) { recorded[endpoint.URL] = proof }
 
 	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}),
 		bypassPush{body: "config"})

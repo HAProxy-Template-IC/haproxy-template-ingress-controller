@@ -23,6 +23,9 @@ import (
 )
 
 const (
+	// SupportedDataPlaneAPIMajor is the API family understood by this clientset.
+	SupportedDataPlaneAPIMajor = 3
+
 	// pooledMaxIdleConnsPerHost sizes the idle connection pool per dataplane API
 	// endpoint above Go's default (http.DefaultMaxIdleConnsPerHost = 2), so a
 	// sync's parallel in-transaction operations to one endpoint reuse keep-alive
@@ -119,7 +122,7 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 		major = endpoint.CachedMajorVersion
 		minor = endpoint.CachedMinorVersion
 		detectedVersion = endpoint.CachedFullVersion
-		isEnterprise = endpoint.CachedIsEnterprise
+		isEnterprise = endpoint.CachedIsEnterprise || IsEnterpriseVersion(detectedVersion)
 		logger.Debug("Using cached version from discovery",
 			"version", detectedVersion,
 			"major", major,
@@ -157,8 +160,8 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 	}
 
 	// Validate we support this major version
-	if major != 3 {
-		return nil, fmt.Errorf("unsupported DataPlane API major version: %d (only v3.x is supported)", major)
+	if major != SupportedDataPlaneAPIMajor {
+		return nil, fmt.Errorf("unsupported DataPlane API major version: %d (only v%d.x is supported)", major, SupportedDataPlaneAPIMajor)
 	}
 
 	// Build capabilities map based on detected version and edition.

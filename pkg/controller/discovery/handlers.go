@@ -55,14 +55,12 @@ func (c *Component) tryInitialDiscovery(source string) {
 		return
 	}
 
-	// All conditions met - mark as done and capture state
+	// All conditions met - mark as done
 	c.initialDiscoveryDone = true
-	podStore := c.podStore
-	credentials := c.credentials
 	c.mu.Unlock()
 
 	c.Logger().Debug("Performing initial discovery", "source", source)
-	c.triggerDiscovery(podStore, *credentials, source)
+	c.triggerDiscovery(source)
 }
 
 // handleConfigValidated processes ConfigValidatedEvent.
@@ -79,9 +77,11 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 		return
 	}
 
+	c.discoveryMu.Lock()
 	c.mu.Lock()
 	oldPort := c.dataplanePort
-	c.dataplanePort = config.Dataplane.Port
+	newPort := config.Dataplane.Port
+	c.dataplanePort = newPort
 	c.hasDataplanePort = true
 	initialDiscoveryDone := c.initialDiscoveryDone
 
@@ -91,15 +91,12 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 		localVersion:  c.localVersion,
 	}
 
-	// Capture state for re-discovery (after initial)
-	podStore := c.podStore
-	credentials := c.credentials
-	hasCredentials := c.hasCredentials
 	c.mu.Unlock()
+	c.discoveryMu.Unlock()
 
 	c.Logger().Debug("Config validated, updated dataplane port",
 		"old_port", oldPort,
-		"new_port", c.dataplanePort)
+		"new_port", newPort)
 
 	// Try initial discovery (might be blocked by missing requirements)
 	if !initialDiscoveryDone {
@@ -108,9 +105,7 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 	}
 
 	// After initial discovery, trigger re-discovery for config changes
-	if hasCredentials && podStore != nil {
-		c.triggerDiscovery(podStore, *credentials, "config_validated")
-	}
+	c.triggerDiscovery("config_validated")
 }
 
 // handleCredentialsUpdated processes CredentialsUpdatedEvent.
@@ -127,15 +122,18 @@ func (c *Component) handleCredentialsUpdated(event *events.CredentialsUpdatedEve
 		return
 	}
 
+	credentialsCopy := *credentials
+	c.discoveryMu.Lock()
 	c.mu.Lock()
-	c.credentials = credentials
+	credentialsChanged := c.credentials == nil || *c.credentials != credentialsCopy
+	c.credentials = &credentialsCopy
 	c.hasCredentials = true
 	initialDiscoveryDone := c.initialDiscoveryDone
-
-	// Capture state for re-discovery (after initial)
-	podStore := c.podStore
-	hasDataplanePort := c.hasDataplanePort
+	if credentialsChanged {
+		clear(c.pendingRetries)
+	}
 	c.mu.Unlock()
+	c.discoveryMu.Unlock()
 
 	c.Logger().Debug("Credentials updated", "secret_version", event.SecretVersion)
 
@@ -146,9 +144,7 @@ func (c *Component) handleCredentialsUpdated(event *events.CredentialsUpdatedEve
 	}
 
 	// After initial discovery, trigger re-discovery for credential changes
-	if hasDataplanePort && podStore != nil {
-		c.triggerDiscovery(podStore, *credentials, "credentials_updated")
-	}
+	c.triggerDiscovery("credentials_updated")
 }
 
 // handleResourceIndexUpdated processes ResourceIndexUpdatedEvent.
@@ -170,7 +166,6 @@ func (c *Component) handleResourceIndexUpdated(event *events.ResourceIndexUpdate
 	// Get current state
 	c.mu.RLock()
 	podStore := c.podStore
-	credentials := c.credentials
 	hasCredentials := c.hasCredentials
 	hasDataplanePort := c.hasDataplanePort
 	initialDiscoveryDone := c.initialDiscoveryDone
@@ -192,7 +187,7 @@ func (c *Component) handleResourceIndexUpdated(event *events.ResourceIndexUpdate
 
 	// Trigger discovery if we have everything (for subsequent changes after initial)
 	if hasCredentials && hasDataplanePort && podStore != nil {
-		c.triggerDiscovery(podStore, *credentials, "resource_index_updated")
+		c.triggerDiscovery("resource_index_updated")
 	} else {
 		c.Logger().Debug("Skipping discovery, missing requirements",
 			"has_credentials", hasCredentials,
@@ -238,6 +233,9 @@ func (c *Component) handleResourceSyncComplete(event *events.ResourceSyncComplet
 // Unlike other event handlers, this does NOT re-run discovery - it re-publishes
 // the cached event to avoid duplicate work and duplicate log messages.
 func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
+	c.discoveryMu.Lock()
+	defer c.discoveryMu.Unlock()
+
 	event, ok := c.discoveredReplayer.Get()
 	if !ok {
 		c.Logger().Debug("Became leader but no discovery result available yet, skipping state replay")
@@ -261,7 +259,6 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 func (c *Component) handleDriftPrevention(_ *events.DriftPreventionTriggeredEvent) {
 	c.mu.RLock()
 	podStore := c.podStore
-	credentials := c.credentials
 	ready := c.hasCredentials && c.hasDataplanePort && c.initialDiscoveryDone
 	c.mu.RUnlock()
 
@@ -269,7 +266,7 @@ func (c *Component) handleDriftPrevention(_ *events.DriftPreventionTriggeredEven
 		return
 	}
 
-	c.triggerDiscovery(podStore, *credentials, "drift_prevention")
+	c.triggerDiscovery("drift_prevention")
 }
 
 // SetPodStore sets the pod store reference.
@@ -279,6 +276,8 @@ func (c *Component) handleDriftPrevention(_ *events.DriftPreventionTriggeredEven
 //
 // Thread-safe.
 func (c *Component) SetPodStore(store types.Store) {
+	c.discoveryMu.Lock()
+	defer c.discoveryMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

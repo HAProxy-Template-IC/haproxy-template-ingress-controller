@@ -33,44 +33,57 @@ func TestPublisher_FilterStalePods(t *testing.T) {
 	tests := []struct {
 		name            string
 		deployed        []haproxyv1alpha1.PodDeploymentStatus
-		runningSet      map[string]struct{}
+		runningSet      map[string]PodIdentity
 		wantStale       []string
 		wantRunningPods []haproxyv1alpha1.PodDeploymentStatus
 	}{
 		{
 			name:            "all deployed pods running yields empty stale set",
 			deployed:        []haproxyv1alpha1.PodDeploymentStatus{podStatus("a"), podStatus("b")},
-			runningSet:      map[string]struct{}{"a": {}, "b": {}},
+			runningSet:      map[string]PodIdentity{"a": {PodName: "a"}, "b": {PodName: "b"}},
 			wantStale:       nil,
 			wantRunningPods: []haproxyv1alpha1.PodDeploymentStatus{podStatus("a"), podStatus("b")},
 		},
 		{
 			name:            "missing pods are flagged stale and dropped from running list",
 			deployed:        []haproxyv1alpha1.PodDeploymentStatus{podStatus("a"), podStatus("gone"), podStatus("c")},
-			runningSet:      map[string]struct{}{"a": {}, "c": {}},
+			runningSet:      map[string]PodIdentity{"a": {PodName: "a"}, "c": {PodName: "c"}},
 			wantStale:       []string{"gone"},
 			wantRunningPods: []haproxyv1alpha1.PodDeploymentStatus{podStatus("a"), podStatus("c")},
 		},
 		{
 			name:            "every deployed pod missing from running set",
 			deployed:        []haproxyv1alpha1.PodDeploymentStatus{podStatus("a"), podStatus("b")},
-			runningSet:      map[string]struct{}{},
+			runningSet:      map[string]PodIdentity{},
 			wantStale:       []string{"a", "b"},
 			wantRunningPods: []haproxyv1alpha1.PodDeploymentStatus{},
 		},
 		{
 			name:            "empty deployed list yields empty results",
 			deployed:        nil,
-			runningSet:      map[string]struct{}{"a": {}},
+			runningSet:      map[string]PodIdentity{"a": {PodName: "a"}},
 			wantStale:       nil,
 			wantRunningPods: []haproxyv1alpha1.PodDeploymentStatus{},
 		},
 		{
-			name:            "preserves order from the deployed slice",
-			deployed:        []haproxyv1alpha1.PodDeploymentStatus{podStatus("c"), podStatus("a"), podStatus("b")},
-			runningSet:      map[string]struct{}{"a": {}, "b": {}, "c": {}},
+			name:     "preserves order from the deployed slice",
+			deployed: []haproxyv1alpha1.PodDeploymentStatus{podStatus("c"), podStatus("a"), podStatus("b")},
+			runningSet: map[string]PodIdentity{
+				"a": {PodName: "a"}, "b": {PodName: "b"}, "c": {PodName: "c"},
+			},
 			wantStale:       nil,
 			wantRunningPods: []haproxyv1alpha1.PodDeploymentStatus{podStatus("c"), podStatus("a"), podStatus("b")},
+		},
+		{
+			name: "same UID with a different runtime is stale",
+			deployed: []haproxyv1alpha1.PodDeploymentStatus{{
+				PodName: "a", PodUID: "uid-same", PodRuntimeID: "runtime-old",
+			}},
+			runningSet: map[string]PodIdentity{
+				"a": {PodName: "a", PodUID: "uid-same", PodRuntimeID: "runtime-new"},
+			},
+			wantStale:       []string{"a"},
+			wantRunningPods: []haproxyv1alpha1.PodDeploymentStatus{},
 		},
 	}
 

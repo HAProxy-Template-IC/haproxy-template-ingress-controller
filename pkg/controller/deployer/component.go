@@ -30,6 +30,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
@@ -84,7 +85,7 @@ type Component struct {
 	// participant). Nil in tests.
 	metrics *metrics.Metrics
 
-	// versionCache caches the last-synced config version per endpoint URL.
+	// versionCache caches the last-synced config version per endpoint authority.
 	// Allows skipping expensive GetRawConfiguration() + parse on subsequent syncs
 	// when the pod's config version hasn't changed.
 	versionCache *configVersionCache
@@ -95,6 +96,7 @@ type Component struct {
 	activeCorrelationID string                 // Trace correlation of the active deployment
 	activeCancelFunc    context.CancelFunc     // Cancel function for active deployment
 	deploymentDone      chan struct{}          // Signals when deployment goroutine completes
+	pendingCancellation string                 // Exact deployment cancelled before its handler starts
 	cancelEventChan     <-chan busevents.Event // Out-of-band control subscription
 }
 
@@ -162,6 +164,9 @@ func (c *Component) Start(ctx context.Context) error {
 	// the readiness signal.
 	c.FlushPending()
 	c.flushPendingCancellationRequests()
+	c.cancelMu.Lock()
+	c.pendingCancellation = ""
+	c.cancelMu.Unlock()
 
 	// Signal that subscription is complete for the SubscriptionReadySignaler
 	// interface. Subscription itself happened at construction (component.Base),
@@ -217,8 +222,14 @@ func (c *Component) CoalescesOn() []string {
 // different component — updates the same per-endpoint state the structural sync
 // reads. Two independent writers to one pod with two independent notions of
 // "what is running" is precisely how a config goes parked unnoticed (#112).
-func (c *Component) RecordActivation(endpointURL, proof string) {
-	c.versionCache.setActivated(endpointURL, proof)
+func (c *Component) RecordActivation(endpoint *dataplane.Endpoint, proof string) {
+	c.versionCache.setActivated(endpoint, proof)
+}
+
+// RetainEndpointAuthorities evicts observations that belong to endpoints no
+// longer present in the scheduler's authoritative fleet view.
+func (c *Component) RetainEndpointAuthorities(endpoints []dataplane.Endpoint) {
+	c.versionCache.retain(endpoints)
 }
 
 func (c *Component) HealthCheck() error {

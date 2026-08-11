@@ -127,7 +127,7 @@ func TestPodInsight_TerminatedEvent_FormatStability(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	ec := NewEventCommentator(bus, slog.Default(), 100)
 
-	event := events.NewHAProxyPodTerminatedEvent("haproxy-abc", "haptic-system")
+	event := events.NewHAProxyPodTerminatedEvent("haproxy-abc", "haptic-system", "")
 
 	insight, attrs := ec.generateInsight(event)
 

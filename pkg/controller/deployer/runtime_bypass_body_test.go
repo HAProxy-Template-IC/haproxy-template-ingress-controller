@@ -343,7 +343,7 @@ func TestScheduler_ApplyRuntimeSubset_InFlightPatchesDispatchedNotActivated(t *t
 
 	var mu sync.Mutex
 	proofs := []string{}
-	s.runtimeBypass.recordActivation = func(_, proof string) {
+	s.runtimeBypass.recordActivation = func(_ *dataplane.Endpoint, proof string) {
 		mu.Lock()
 		defer mu.Unlock()
 		proofs = append(proofs, proof)
@@ -401,7 +401,7 @@ func TestScheduler_ApplyRuntimeSubset_NoDeployInFlightPatchesActivated(t *testin
 
 	var mu sync.Mutex
 	proofs := []string{}
-	s.runtimeBypass.recordActivation = func(_, proof string) {
+	s.runtimeBypass.recordActivation = func(_ *dataplane.Endpoint, proof string) {
 		mu.Lock()
 		defer mu.Unlock()
 		proofs = append(proofs, proof)

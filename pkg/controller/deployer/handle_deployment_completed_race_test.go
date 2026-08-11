@@ -22,6 +22,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
 // TestHandleDeploymentCompleted_UsesEventChecksumNotLatestRender pins
@@ -79,6 +80,7 @@ func TestHandleDeploymentCompleted_UsesEventChecksumNotLatestRender(t *testing.T
 		Total:           1,
 		Succeeded:       1,
 		ContentChecksum: deployedChecksum,
+		PodSetHash:      "pod-set-X",
 	})
 
 	scheduler.handleDeploymentCompleted(event)
@@ -94,6 +96,47 @@ func TestHandleDeploymentCompleted_UsesEventChecksumNotLatestRender(t *testing.T
 			"that produces the cached value will incorrectly hit the skip branch "+
 			"and the real intervening render never reaches HAProxy.",
 		deployedChecksum, laterRender)
+}
+
+func TestHandleDeploymentCompleted_UsesEventPodSetHashNotCurrentEndpoints(t *testing.T) {
+	bus := testutil.NewTestBus()
+	bus.Start()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+
+	oldEndpoints := []dataplane.Endpoint{{
+		URL:          "https://haproxy.default.svc:5555",
+		PodName:      "haproxy-0",
+		PodNamespace: "default",
+		PodUID:       "uid-old",
+	}}
+	replacementEndpoints := []dataplane.Endpoint{{
+		URL:          oldEndpoints[0].URL,
+		PodName:      oldEndpoints[0].PodName,
+		PodNamespace: oldEndpoints[0].PodNamespace,
+		PodUID:       "uid-new",
+	}}
+	oldPodSetHash := computePodSetHash(oldEndpoints)
+	replacementPodSetHash := computePodSetHash(replacementEndpoints)
+	require.NotEqual(t, oldPodSetHash, replacementPodSetHash)
+
+	scheduler.mu.Lock()
+	scheduler.currentEndpoints = replacementEndpoints
+	scheduler.mu.Unlock()
+
+	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler, &events.DeploymentResult{
+		Total:           1,
+		Succeeded:       1,
+		ContentChecksum: "deployed-checksum",
+		PodSetHash:      oldPodSetHash,
+	}))
+
+	scheduler.mu.RLock()
+	recorded := scheduler.lastDeployedPodSetHash
+	scheduler.mu.RUnlock()
+
+	require.Equal(t, oldPodSetHash, recorded)
+	require.NotEqual(t, replacementPodSetHash, recorded,
+		"an old deployment completion must not certify the replacement endpoint set")
 }
 
 // TestHandleDeploymentCompleted_EmptyChecksumLeavesCacheUntouched pins

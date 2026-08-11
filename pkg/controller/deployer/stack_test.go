@@ -27,7 +27,7 @@ import (
 // so a caller cannot forget them; this is what stops the constructor itself
 // from dropping one.
 
-func TestNewDeployStack_WiresBothRecorders(t *testing.T) {
+func TestNewDeployStack_WiresRuntimeBypassState(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	domainMetrics := metrics.NewMetrics(prometheus.NewRegistry())
 
@@ -45,6 +45,8 @@ func TestNewDeployStack_WiresBothRecorders(t *testing.T) {
 		"the bypass must reach the metrics registry — without it every "+
 			"haptic_runtime_fast_path_* counter stays flat, which reads as an idle "+
 			"fast path rather than a broken one")
+	assert.NotNil(t, stack.Scheduler.runtimeBypass.retainAuthorities,
+		"discovery must evict deployer observations for retired endpoint authorities")
 }
 
 func TestNewDeployStack_AppliesConfiguredIntervals(t *testing.T) {

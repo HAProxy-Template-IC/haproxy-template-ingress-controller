@@ -16,6 +16,7 @@ package deployer
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,9 @@ const (
 	// reconcile that spawned it.
 	runtimeBypassTimeout = 5 * time.Second
 )
+
+var errRuntimeBypassClosed = errors.New("runtime bypass is closed")
+var errRuntimeBypassAuthorityChanged = errors.New("runtime bypass endpoint authority changed")
 
 // runtimeSyncer is the narrow slice of *dataplane.Client the bypass needs.
 // Declared at the use site so tests can substitute a fake.
@@ -66,10 +70,8 @@ type runtimeSyncer interface {
 // activated one rolls its disk write back (issue #84 mode A). Every failure here is
 // swallowed to a debug log — the scheduled deploy converges the pod regardless.
 //
-// Clients are persistent per endpoint (see clientFor): the dataplane client —
-// and the keep-alive HTTP connection underneath it — is opened once and reused
-// across applies, rather than reallocated per apply. This keeps the fast path's
-// latency dominated by the actual runtime call, not connection setup.
+// Clients are persistent per endpoint authority (see clientFor). Their HTTP
+// requests use the dataplane package's process-wide keep-alive transport.
 type runtimeBypass struct {
 	logger    *slog.Logger
 	newSyncer func(ctx context.Context, ep *dataplane.Endpoint) (runtimeSyncer, error)
@@ -87,10 +89,18 @@ type runtimeBypass struct {
 	// that no worker ever loaded. Leaving a stale proof behind would let the
 	// next sync short-circuit an empty diff over that parked content, which is
 	// the #112 stall. Nil in tests.
-	recordActivation func(endpointURL, proof string)
+	recordActivation func(endpoint *dataplane.Endpoint, proof string)
 
-	mu      sync.Mutex
-	clients map[string]runtimeSyncer // keyed by endpoint URL; persistent across applies
+	// retainAuthorities evicts structural-sync observations for retired
+	// endpoint authorities. Nil in isolated tests.
+	retainAuthorities func([]dataplane.Endpoint)
+
+	mu             sync.Mutex
+	clients        map[endpointAuthority]runtimeSyncer
+	authorities    map[endpointAuthority]struct{}
+	authoritiesSet bool
+	closed         bool
+	epoch          uint64
 }
 
 // newRuntimeBypass builds a runtimeBypass that opens real dataplane clients.
@@ -101,8 +111,13 @@ func newRuntimeBypass(logger *slog.Logger, eventBus *busevents.EventBus) *runtim
 		newSyncer: func(ctx context.Context, ep *dataplane.Endpoint) (runtimeSyncer, error) {
 			return dataplane.NewClient(ctx, ep)
 		},
-		clients: make(map[string]runtimeSyncer),
+		clients:     make(map[endpointAuthority]runtimeSyncer),
+		authorities: make(map[endpointAuthority]struct{}),
 	}
+}
+
+type runtimeAuthorityLease struct {
+	epoch uint64
 }
 
 // bypassPush bundles the per-apply parameters shared by every endpoint of one
@@ -148,13 +163,18 @@ type bypassPush struct {
 // The sole non-partial caller is the runtime-raw lane dispatch
 // (dispatchPending), where this apply IS the complete deploy and publishes per
 // the lane gate.
-func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *scheduledDeployment, push bypassPush) {
-	b.evictStaleClients(dep.endpoints)
+func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *scheduledDeployment, push bypassPush) bool {
+	lease, ok := b.acquireAuthorityLease(dep.endpoints)
+	if !ok {
+		return false
+	}
 
 	var wg sync.WaitGroup
 	var successes atomic.Int32
+	var incomplete atomic.Bool
 	for i := range dep.endpoints {
 		if parentCtx.Err() != nil {
+			incomplete.Store(true)
 			break
 		}
 		ep := dep.endpoints[i]
@@ -163,11 +183,15 @@ func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *schedule
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					b.logger.Error("Bypass apply panicked; scheduled deploy will converge",
+					incomplete.Store(true)
+					b.recordEndpointFailure(parentCtx, lease, &ep)
+					b.logger.Debug("Bypass apply panicked; structural deploy will converge",
 						"endpoint", ep.URL, "panic", r)
 				}
 			}()
-			b.applyToEndpoint(parentCtx, dep, &ep, &successes, push)
+			if !b.applyToEndpoint(parentCtx, dep, &ep, &successes, push, lease) {
+				incomplete.Store(true)
+			}
 		}()
 	}
 	wg.Wait()
@@ -179,23 +203,27 @@ func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *schedule
 	// spec.Checksum. Excluded: the pre-interval partial apply of a STRUCTURAL render
 	// (laneStructural, gated by lane), and the in-flight partial apply (partial=true)
 	// whose owning structural deploy publishes after its reload.
-	if !push.partial && dep.lane == laneRuntimeRaw && successes.Load() > 0 {
-		b.publishDeployedConfig(dep)
-	}
+	current := b.commitLease(parentCtx, lease, func() {
+		if !push.partial && dep.lane == laneRuntimeRaw && successes.Load() > 0 {
+			b.publishDeployedConfig(dep)
+		}
+	})
+	return current && !incomplete.Load()
 }
 
 // applyToEndpoint runs one endpoint's runtime-raw apply under a bounded timeout.
 // dep.runtimeUpdates is the shared precomputed render diff; push.body is the
 // baseline-derived config body the raw push carries (no per-pod fetch).
-func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *scheduledDeployment, ep *dataplane.Endpoint, successes *atomic.Int32, push bypassPush) {
+func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *scheduledDeployment, ep *dataplane.Endpoint, successes *atomic.Int32, push bypassPush, lease runtimeAuthorityLease) bool {
 	ctx, cancel := context.WithTimeout(parentCtx, runtimeBypassTimeout)
 	defer cancel()
 
-	syncer, err := b.clientFor(ctx, ep)
+	syncer, err := b.clientForLease(ctx, ep, lease)
 	if err != nil {
+		b.recordEndpointFailure(parentCtx, lease, ep)
 		b.logger.Debug("Bypass client open failed; scheduled deploy will converge",
 			"endpoint", ep.URL, "error", err)
-		return
+		return false
 	}
 
 	opts := dataplane.DefaultSyncOptions()
@@ -217,41 +245,58 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 		// body even when the runtime actions 500), so this endpoint's running
 		// state is no longer provable. Drop the proof and let the next sync
 		// force a reload rather than trust an empty diff.
-		b.noteActivation(ep.URL, "")
-		b.publishResult(0, true)
+		if !b.commitEndpointLease(parentCtx, lease, ep, func() {
+			b.noteActivation(ep, "")
+			b.publishResult(0, true)
+		}) {
+			return false
+		}
 		b.logger.Debug("Bypass apply failed; activation proof cleared, scheduled deploy will converge",
 			"endpoint", ep.URL, "error", err)
-		return
+		return false
 	}
-	if result != nil {
+	if result == nil || !result.Success {
+		b.recordEndpointFailure(parentCtx, lease, ep)
+		b.logger.Debug("Bypass apply returned no success proof; structural deploy will converge",
+			"endpoint", ep.URL)
+		return false
+	}
+	ops := len(result.AppliedOperations)
+	if !b.commitEndpointLease(parentCtx, lease, ep, func() {
 		proof := result.ActivatedConfigChecksum
 		if push.unproven {
 			proof = ""
 		}
-		b.noteActivation(ep.URL, proof)
+		b.noteActivation(ep, proof)
+		b.publishResult(ops, false)
+		b.publishConfigApplied(dep, ep, result, push.partial)
+		successes.Add(1)
+	}) {
+		return false
 	}
-	ops := 0
-	if result != nil {
-		ops = len(result.AppliedOperations)
-	}
-	b.publishResult(ops, false)
-	b.publishConfigApplied(dep, ep, result, push.partial)
-	successes.Add(1)
 	if ops > 0 {
 		b.logger.Debug("Bypass applied runtime server changes ahead of scheduled deploy",
 			"endpoint", ep.URL,
 			"ops", ops,
 			"duration_ms", result.Duration.Milliseconds())
 	}
+	return true
+}
+
+func (b *runtimeBypass) recordEndpointFailure(ctx context.Context, lease runtimeAuthorityLease, endpoint *dataplane.Endpoint) {
+	b.commitEndpointLease(ctx, lease, endpoint, func() {
+		b.noteActivation(endpoint, "")
+		b.publishResult(0, true)
+	})
 }
 
 // noteActivation forwards an activation proof (or its removal) to the deployer's
 // cache, if one is wired.
-func (b *runtimeBypass) noteActivation(endpointURL, proof string) {
+func (b *runtimeBypass) noteActivation(endpoint *dataplane.Endpoint, proof string) {
 	if b.recordActivation == nil {
 		return
 	}
-	b.recordActivation(endpointURL, proof)
+	b.recordActivation(endpoint, proof)
 }
 
 // publishConfigApplied advances the pod's status.deployedToPods[].Checksum after
@@ -279,6 +324,8 @@ func (b *runtimeBypass) publishConfigApplied(dep *scheduledDeployment, ep *datap
 		dep.runtimeConfigNamespace,
 		ep.PodName,
 		ep.PodNamespace,
+		ep.PodUID,
+		ep.PodRuntimeID,
 		dep.contentChecksum,
 		false, // an actual runtime apply, not a drift check
 		syncResultToMetadata(result),
@@ -313,13 +360,14 @@ func (b *runtimeBypass) publishResult(serverUpdates int, failed bool) {
 	}
 }
 
-// clientFor returns the persistent client for ep, opening and caching it on
-// first use. The dataplane client (and its keep-alive HTTP connection) is reused
-// across applies. Uses a double-checked pattern so the dataplane open — which
-// may do a version-detect round-trip — runs without holding the lock.
-func (b *runtimeBypass) clientFor(ctx context.Context, ep *dataplane.Endpoint) (runtimeSyncer, error) {
+func (b *runtimeBypass) clientForLease(ctx context.Context, ep *dataplane.Endpoint, lease runtimeAuthorityLease) (runtimeSyncer, error) {
+	identity := endpointAuthorityOf(ep)
 	b.mu.Lock()
-	if c, ok := b.clients[ep.URL]; ok {
+	if !b.endpointLeaseCurrentLocked(lease, &identity) {
+		b.mu.Unlock()
+		return nil, errRuntimeBypassAuthorityChanged
+	}
+	if c, ok := b.clients[identity]; ok {
 		b.mu.Unlock()
 		return c, nil
 	}
@@ -332,32 +380,105 @@ func (b *runtimeBypass) clientFor(ctx context.Context, ep *dataplane.Endpoint) (
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if existing, ok := b.clients[ep.URL]; ok {
+	if !b.endpointLeaseCurrentLocked(lease, &identity) {
+		_ = c.Close()
+		if b.closed {
+			return nil, errRuntimeBypassClosed
+		}
+		return nil, errRuntimeBypassAuthorityChanged
+	}
+	if existing, ok := b.clients[identity]; ok {
 		// Another goroutine opened one first; discard ours, use theirs.
 		_ = c.Close()
 		return existing, nil
 	}
-	b.clients[ep.URL] = c
+	b.clients[identity] = c
 	return c, nil
 }
 
-// evictStaleClients closes and drops cached clients whose endpoint is no longer
-// present (the pod was deleted). Closing is safe even against an in-flight apply
-// because dataplane.Client.Close is a no-op on the keep-alive transport; and an
-// apply to a now-absent endpoint would fail regardless.
-func (b *runtimeBypass) evictStaleClients(endpoints []dataplane.Endpoint) {
-	live := make(map[string]struct{}, len(endpoints))
-	for i := range endpoints {
-		live[endpoints[i].URL] = struct{}{}
-	}
+func (b *runtimeBypass) beginLeadershipTerm() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for url, c := range b.clients {
-		if _, ok := live[url]; !ok {
+	for identity, c := range b.clients {
+		_ = c.Close()
+		delete(b.clients, identity)
+	}
+	b.closed = false
+	b.authorities = make(map[endpointAuthority]struct{})
+	b.authoritiesSet = false
+	b.epoch++
+}
+
+// replaceEndpointAuthorities installs the scheduler's complete fleet view and
+// retires clients and observations whose authority is no longer current.
+func (b *runtimeBypass) replaceEndpointAuthorities(endpoints []dataplane.Endpoint) bool {
+	live := endpointAuthoritySet(endpoints)
+	b.mu.Lock()
+	for identity, c := range b.clients {
+		if _, ok := live[identity]; !ok {
 			_ = c.Close()
-			delete(b.clients, url)
+			delete(b.clients, identity)
 		}
 	}
+	changed := !b.authoritiesSet || !equalEndpointAuthoritySets(b.authorities, live)
+	if changed {
+		b.authorities = live
+		b.authoritiesSet = true
+		b.epoch++
+	}
+	b.mu.Unlock()
+
+	if b.retainAuthorities != nil {
+		b.retainAuthorities(endpoints)
+	}
+	return changed
+}
+
+func (b *runtimeBypass) acquireAuthorityLease(endpoints []dataplane.Endpoint) (runtimeAuthorityLease, bool) {
+	wanted := endpointAuthoritySet(endpoints)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return runtimeAuthorityLease{}, false
+	}
+	if !b.authoritiesSet {
+		b.authorities = wanted
+		b.authoritiesSet = true
+		b.epoch++
+	}
+	if !equalEndpointAuthoritySets(b.authorities, wanted) {
+		return runtimeAuthorityLease{}, false
+	}
+	return runtimeAuthorityLease{epoch: b.epoch}, true
+}
+
+func (b *runtimeBypass) endpointLeaseCurrentLocked(lease runtimeAuthorityLease, authority *endpointAuthority) bool {
+	if b.closed || b.epoch != lease.epoch {
+		return false
+	}
+	_, ok := b.authorities[*authority]
+	return ok
+}
+
+func (b *runtimeBypass) commitEndpointLease(ctx context.Context, lease runtimeAuthorityLease, endpoint *dataplane.Endpoint, commit func()) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	authority := endpointAuthorityOf(endpoint)
+	if ctx.Err() != nil || !b.endpointLeaseCurrentLocked(lease, &authority) {
+		return false
+	}
+	commit()
+	return true
+}
+
+func (b *runtimeBypass) commitLease(ctx context.Context, lease runtimeAuthorityLease, commit func()) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if ctx.Err() != nil || b.closed || b.epoch != lease.epoch {
+		return false
+	}
+	commit()
+	return true
 }
 
 // Close shuts down all persistent clients. Called when the scheduler stops or
@@ -365,8 +486,12 @@ func (b *runtimeBypass) evictStaleClients(endpoints []dataplane.Endpoint) {
 func (b *runtimeBypass) Close() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for url, c := range b.clients {
+	b.closed = true
+	b.epoch++
+	b.authorities = make(map[endpointAuthority]struct{})
+	b.authoritiesSet = false
+	for identity, c := range b.clients {
 		_ = c.Close()
-		delete(b.clients, url)
+		delete(b.clients, identity)
 	}
 }

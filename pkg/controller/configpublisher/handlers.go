@@ -268,11 +268,19 @@ func statusWorkKey(event *events.ConfigAppliedToPodEvent) string {
 // processes them, only the latest update is applied. This prevents channel overflow
 // during high-frequency reconciliation cycles.
 func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEvent) {
+	if !c.isCurrentPodAuthority(event.PodNamespace, event.PodName, event.PodUID, event.PodRuntimeID) {
+		c.logger.Debug("Ignoring deployment status from retired pod authority",
+			"pod_name", event.PodName,
+			"pod_namespace", event.PodNamespace,
+			"pod_uid", event.PodUID)
+		return
+	}
 	c.logger.Debug("Queuing deployment status update for pod",
 		"runtime_config_name", event.RuntimeConfigName,
 		"runtime_config_namespace", event.RuntimeConfigNamespace,
 		"pod_name", event.PodName,
 		"pod_namespace", event.PodNamespace,
+		"pod_uid", event.PodUID,
 		"checksum", event.Checksum,
 		"is_drift_check", event.IsDriftCheck,
 	)
@@ -300,6 +308,13 @@ func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEve
 
 // handlePodTerminated cleans up pod references when a pod is terminated.
 func (c *Component) handlePodTerminated(ctx context.Context, event *events.HAProxyPodTerminatedEvent) {
+	c.endpointAuthorityMu.Lock()
+	key := podAuthorityKey{namespace: event.PodNamespace, name: event.PodName}
+	if current, ok := c.endpointAuthorities[key]; ok && (event.PodUID == "" || current.uid == event.PodUID) {
+		delete(c.endpointAuthorities, key)
+	}
+	c.endpointAuthorityMu.Unlock()
+
 	// Get the namespace from cached templateConfig (namespace-scoped operations).
 	c.mu.RLock()
 	hasConfig := c.hasTemplateConfig
@@ -325,6 +340,7 @@ func (c *Component) handlePodTerminated(ctx context.Context, event *events.HAPro
 	// Convert event to cleanup request with namespace
 	cleanupReq := configpublisher.PodCleanupRequest{
 		PodName:   event.PodName,
+		PodUID:    event.PodUID,
 		Namespace: namespace,
 	}
 
@@ -354,6 +370,22 @@ func (c *Component) handlePodTerminated(ctx context.Context, event *events.HAPro
 // restarting (or before the controller started). It is called whenever HAProxy pods
 // are discovered, including on startup and when pods change.
 func (c *Component) handlePodsDiscovered(ctx context.Context, event *events.HAProxyPodsDiscoveredEvent) {
+	currentAuthorities := make(map[podAuthorityKey]podAuthority, len(event.Endpoints))
+	runningPods := make([]configpublisher.PodIdentity, 0, len(event.Endpoints))
+	for i := range event.Endpoints {
+		endpoint := &event.Endpoints[i]
+		currentAuthorities[podAuthorityKey{namespace: endpoint.PodNamespace, name: endpoint.PodName}] = podAuthority{
+			uid: endpoint.PodUID, runtimeID: endpoint.PodRuntimeID,
+		}
+		runningPods = append(runningPods, configpublisher.PodIdentity{
+			PodName: endpoint.PodName, PodUID: endpoint.PodUID, PodRuntimeID: endpoint.PodRuntimeID,
+		})
+	}
+	c.endpointAuthorityMu.Lock()
+	c.endpointAuthorities = currentAuthorities
+	c.endpointAuthoritiesSet = true
+	c.endpointAuthorityMu.Unlock()
+
 	// Get the namespace from cached templateConfig (namespace-scoped operations).
 	c.mu.RLock()
 	hasConfig := c.hasTemplateConfig
@@ -370,24 +402,28 @@ func (c *Component) handlePodsDiscovered(ctx context.Context, event *events.HAPr
 		return
 	}
 
-	// Extract pod names from discovered endpoints
-	podNames := make([]string, 0, len(event.Endpoints))
-	for _, ep := range event.Endpoints {
-		podNames = append(podNames, ep.PodName)
-	}
-
 	// Create timeout context derived from the lifecycle ctx (same pattern as handlePodTerminated)
 	ctx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPILongTimeout)
 	defer cancel()
 
 	// Reconcile status against running pods (namespace-scoped)
-	if err := c.publisher.ReconcileDeployedToPods(ctx, namespace, podNames); err != nil {
+	if err := c.publisher.ReconcileDeployedToPods(ctx, namespace, runningPods); err != nil {
 		c.logger.Warn("Failed to reconcile deployed pods status", "error", err)
 	} else {
 		c.logger.Debug("Reconciled deployed pods status",
 			"namespace", namespace,
-			"running_pods", len(podNames))
+			"running_pods", len(runningPods))
 	}
+}
+
+func (c *Component) isCurrentPodAuthority(namespace, name, uid, runtimeID string) bool {
+	c.endpointAuthorityMu.RLock()
+	defer c.endpointAuthorityMu.RUnlock()
+	if !c.endpointAuthoritiesSet {
+		return true
+	}
+	current, ok := c.endpointAuthorities[podAuthorityKey{namespace: namespace, name: name}]
+	return ok && current == (podAuthority{uid: uid, runtimeID: runtimeID})
 }
 
 // convertAuxiliaryFiles converts dataplane auxiliary files to publisher auxiliary files.
@@ -426,6 +462,11 @@ func (c *Component) getCompressionThreshold(templateConfig *v1alpha1.HAProxyTemp
 //   - Old renderedConfig is incorrectly published
 //   - Cached auxiliary files reference non-existent resources
 func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
+	c.endpointAuthorityMu.Lock()
+	c.endpointAuthorities = make(map[podAuthorityKey]podAuthority)
+	c.endpointAuthoritiesSet = false
+	c.endpointAuthorityMu.Unlock()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

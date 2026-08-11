@@ -16,7 +16,7 @@
 //
 // It tracks the set of HAProxy pods reported by the resource watcher (via the
 // auto-injected haproxy-pods watcher), enriches each pod with credentials and
-// a HAProxy version probe through pkg/dataplane, and publishes
+// endpoint version proofs through pkg/dataplane, and publishes
 // HAProxyPodsDiscoveredEvent / HAProxyPodTerminatedEvent so the deployer and
 // other consumers know which endpoints to talk to.
 package discovery
@@ -57,6 +57,61 @@ type retryState struct {
 	retryCount  int
 }
 
+type endpointIdentity struct {
+	podNamespace string
+	podName      string
+	podUID       string
+	podRuntimeID string
+	url          string
+}
+
+type podIdentity struct {
+	podNamespace string
+	podName      string
+}
+
+type endpointAuthority struct {
+	identity             endpointIdentity
+	username             string
+	password             string
+	detectedMajorVersion int
+	detectedMinorVersion int
+	detectedFullVersion  string
+}
+
+func endpointAuthorityOf(endpoint *dataplane.Endpoint) endpointAuthority {
+	return endpointAuthority{
+		identity:             endpointIdentityOf(endpoint),
+		username:             endpoint.Username,
+		password:             endpoint.Password,
+		detectedMajorVersion: endpoint.DetectedMajorVersion,
+		detectedMinorVersion: endpoint.DetectedMinorVersion,
+		detectedFullVersion:  endpoint.DetectedFullVersion,
+	}
+}
+
+func endpointIdentityOf(endpoint *dataplane.Endpoint) endpointIdentity {
+	return endpointIdentity{
+		podNamespace: endpoint.PodNamespace,
+		podName:      endpoint.PodName,
+		podUID:       endpoint.PodUID,
+		podRuntimeID: endpoint.PodRuntimeID,
+		url:          endpoint.URL,
+	}
+}
+
+type versionAdmissionProof struct {
+	dataPlaneAPI dataplane.Version
+	haproxy      dataplane.Version
+}
+
+func applyVersionProof(candidate *dataplane.Endpoint, proof *versionAdmissionProof) *dataplane.Endpoint {
+	candidate.DetectedMajorVersion = proof.dataPlaneAPI.Major
+	candidate.DetectedMinorVersion = proof.dataPlaneAPI.Minor
+	candidate.DetectedFullVersion = proof.dataPlaneAPI.Full
+	return candidate
+}
+
 // Component is the Discovery event adapter.
 //
 // This component:
@@ -76,6 +131,9 @@ type Component struct {
 	*component.Base
 
 	discovery *Discovery
+	// discoveryMu orders endpoint-authority updates with complete discovery
+	// publications. A retry callback runs outside Base's serial event loop.
+	discoveryMu sync.Mutex
 
 	// State replay for leadership transitions
 	discoveredReplayer *leadership.StateReplayer[*events.HAProxyPodsDiscoveredEvent]
@@ -85,7 +143,7 @@ type Component struct {
 	dataplanePort        int
 	credentials          *coreconfig.Credentials
 	podStore             types.Store
-	lastEndpoints        map[string]string // Map of PodName → PodNamespace for tracking removals
+	lastEndpoints        map[podIdentity]endpointAuthority
 	hasCredentials       bool
 	hasDataplanePort     bool
 	initialSyncComplete  bool // Set when ResourceSyncCompleteEvent for haproxy-pods is received
@@ -93,12 +151,14 @@ type Component struct {
 	lifecycleCtx         context.Context
 
 	// Version filtering state
-	localVersion   *dataplane.Version             // Local HAProxy version detected at startup
-	admittedPods   map[string]*dataplane.Endpoint // Map of PodName → admitted Endpoint with cached version
-	pendingRetries map[string]*retryState         // Map of PodName → retry state for pending pods
+	localVersion      *dataplane.Version
+	admissionProofs   map[endpointIdentity]versionAdmissionProof
+	versionRejections map[endpointIdentity]string
+	pendingRetries    map[endpointIdentity]*retryState
 
 	// Retry timer for pending pods
 	retryTimer        *time.Timer
+	retryTimerAt      time.Time
 	retryTimerDone    func()
 	retryTimerMu      sync.Mutex
 	retryCallbacks    sync.WaitGroup
@@ -130,10 +190,11 @@ func New(ctx context.Context, eventBus *busevents.EventBus, logger *slog.Logger)
 
 	c := &Component{
 		discoveredReplayer: leadership.NewStateReplayer[*events.HAProxyPodsDiscoveredEvent](eventBus),
-		lastEndpoints:      make(map[string]string),
+		lastEndpoints:      make(map[podIdentity]endpointAuthority),
 		localVersion:       localVersion,
-		admittedPods:       make(map[string]*dataplane.Endpoint),
-		pendingRetries:     make(map[string]*retryState),
+		admissionProofs:    make(map[endpointIdentity]versionAdmissionProof),
+		versionRejections:  make(map[endpointIdentity]string),
+		pendingRetries:     make(map[endpointIdentity]*retryState),
 	}
 	// The Base subscribes to the EventBus during construction (before
 	// EventBus.Start()). This ensures proper startup synchronization without
@@ -178,12 +239,6 @@ func (c *Component) Start(ctx context.Context) error {
 	return c.Base.Start(ctx)
 }
 
-func (c *Component) lifecycleContext() context.Context {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.lifecycleCtx
-}
-
 // stopRetryTimer prevents new retries and joins callbacks already in progress.
 func (c *Component) stopRetryTimer() {
 	c.retryTimerMu.Lock()
@@ -196,6 +251,7 @@ func (c *Component) stopRetryTimer() {
 		c.retryTimer = nil
 		c.retryTimerDone = nil
 	}
+	c.retryTimerAt = time.Time{}
 	c.retryTimerMu.Unlock()
 
 	c.retryCallbacks.Wait()

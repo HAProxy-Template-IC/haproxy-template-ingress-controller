@@ -201,6 +201,14 @@ spec:
                       description: PodName is the name of the HAProxy pod.
                       minLength: 1
                       type: string
+                    podRuntimeID:
+                      description: PodRuntimeID binds the deployment proof to the
+                        pod's container execution epoch.
+                      type: string
+                    podUID:
+                      description: PodUID binds the deployment proof to the Kubernetes
+                        pod incarnation.
+                      type: string
                   required:
                   - podName
                   type: object

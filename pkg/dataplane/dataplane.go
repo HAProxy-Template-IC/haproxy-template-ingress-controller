@@ -44,8 +44,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
-// Client holds a persistent connection to one HAProxy Dataplane API endpoint
-// and is meant to be reused across sync operations.
+// Client holds endpoint-specific API, authentication, and parser state. Its
+// HTTP requests use the client package's process-wide transport pool.
 type Client struct {
 	// Endpoint contains connection information
 	Endpoint Endpoint
@@ -88,10 +88,8 @@ func NewClient(ctx context.Context, endpoint *Endpoint) (*Client, error) {
 	}, nil
 }
 
-// Close releases client resources. The current implementation has no
-// background work to clean up, but the method is part of the documented
-// API so existing `defer client.Close()` call sites stay valid as the
-// client gains owned resources.
+// Close releases resources owned by this client. The shared HTTP transport is
+// process-owned, so the current implementation has nothing to release.
 func (c *Client) Close() error {
 	return nil
 }

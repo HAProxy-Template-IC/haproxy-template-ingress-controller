@@ -255,6 +255,28 @@ func (s *DeploymentScheduler) handlePodsDiscovered(ctx context.Context, event *e
 
 // performPodsDiscovered executes the actual pod discovery handling logic.
 func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *events.HAProxyPodsDiscoveredEvent) {
+	// Endpoint authority changes retire persistent runtime clients and cached
+	// deployment observations even when no deployment is schedulable.
+	var cancelledDeploymentID, cancelledCorrelationID string
+	if s.runtimeBypass.replaceEndpointAuthorities(event.Endpoints) {
+		s.schedulerMutex.Lock()
+		if s.state.deployInFlight {
+			cancelledDeploymentID = s.state.activeDeploymentID
+			cancelledCorrelationID = s.state.activeCorrelationID
+		}
+		s.workRevision++
+		s.state.pending = nil
+		s.invalidateDispatchBaselineLocked()
+		s.schedulerMutex.Unlock()
+	}
+	if cancelledDeploymentID != "" {
+		s.eventBus.Publish(events.NewDeploymentCancelRequestEvent(
+			cancelledDeploymentID,
+			"endpoint_authority_changed",
+			events.WithCorrelation(cancelledCorrelationID, cancelledDeploymentID),
+		))
+	}
+
 	s.mu.Lock()
 	s.currentEndpoints = event.Endpoints
 	endpointCount := len(event.Endpoints)
@@ -344,9 +366,9 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 // it only clears deployInFlight and signals the loop, which picks up any pending
 // deployment on its next cycle.
 //
-// The "deployed config hash" must come from event.ContentChecksum — the
-// hash threaded through the DeploymentScheduledEvent that triggered this
-// deployment — NOT from s.lastContentChecksum (the latest render's hash).
+// The deployed config and pod-set hashes must come from the completion event —
+// the proofs captured from the DeploymentScheduledEvent that triggered this
+// deployment — NOT from mutable scheduler state.
 // A reconcile that lands between deployment-start and deployment-complete
 // overwrites s.lastContentChecksum with the newer render, and using that
 // value here mis-records THIS deployment's checksum as the newer one. The
@@ -407,9 +429,9 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	// config changes or the drift timer fires, delaying self-heal. A failure leaves
 	// the cache at the last good hash so the next reconcile re-attempts immediately.
 	s.mu.Lock()
-	if event.ContentChecksum != "" && event.Failed == 0 {
+	if event.ContentChecksum != "" && event.PodSetHash != "" && event.Failed == 0 {
 		s.lastDeployedConfigHash = event.ContentChecksum
-		s.lastDeployedPodSetHash = computePodSetHash(s.currentEndpoints)
+		s.lastDeployedPodSetHash = event.PodSetHash
 		s.lastDeployedTime = time.Now()
 	}
 	s.mu.Unlock()
@@ -642,6 +664,7 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 
 	// Clear all transient deploy state. The deploy loop itself exits via ctx
 	// cancellation on leadership loss; its channels are recreated on next Start.
+	s.workRevision++
 	s.state.deployInFlight = false
 	s.state.deploymentTimedOut = false
 	s.state.deploymentStartTime = time.Time{}
@@ -659,6 +682,7 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	// whole config) and close the bypass's persistent clients.
 	s.lastDispatchedParsed = nil
 	s.lastDispatchedConfig = ""
+	s.lastDispatchedPodSetHash = ""
 	s.lastActivatedConfig = ""
 	s.runtimeBypass.Close()
 
