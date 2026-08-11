@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sync"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
@@ -84,7 +85,7 @@ func (s *MemoryStore) Get(keys ...string) ([]any, error) {
 
 	// Exact match: return direct reference to pre-sorted internal slice
 	if len(keys) == s.numKeys {
-		keyStr := makeKeyString(keys)
+		keyStr := indexer.EncodeKey(keys)
 		if items, ok := s.data[keyStr]; ok {
 			// Return direct reference - slice is pre-sorted at insert time
 			// Callers must not modify (see Immutability Contract)
@@ -95,12 +96,11 @@ func (s *MemoryStore) Get(keys ...string) ([]any, error) {
 
 	// Partial match: return all resources matching prefix
 	// Must construct new slice as it aggregates from multiple internal slices
-	prefix := makeKeyString(keys) + "/"
 	var results []any
+	encodedPrefix := indexer.EncodeKey(keys)
 
 	for key, items := range s.data {
-		// Check if key starts with prefix
-		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+		if indexer.HasEncodedKeyPrefix(key, encodedPrefix) {
 			results = append(results, items...)
 		}
 	}
@@ -140,7 +140,7 @@ func (s *MemoryStore) Add(resource any, keys []string) error {
 		return err
 	}
 
-	keyStr := makeKeyString(keys)
+	keyStr := indexer.EncodeKey(keys)
 	if identity, ok := identifyResource(resource); ok {
 		s.removeIdentityLocked(identity)
 		s.locations[identity] = keyStr
@@ -180,7 +180,7 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 		return err
 	}
 
-	keyStr := makeKeyString(keys)
+	keyStr := indexer.EncodeKey(keys)
 	if identity, ok := identifyResource(resource); ok {
 		s.removeIdentityLocked(identity)
 		s.locations[identity] = keyStr

@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
@@ -90,12 +89,10 @@ func toString(v any) string {
 //     CachedList() (only the LRU's warm entries — no API fetches).
 //     If the store doesn't expose CachedList(), the snapshot starts
 //     empty.
-//  2. Fetch/GetSingle look up the snapshot index first. On miss they
-//     call Store.Get(stringKeys...) for that single key, add the
-//     result back into the snapshot + index, and return it. The
-//     snapshot grows as the render touches keys; a key looked up
-//     twice in the same render costs at most one API fetch (LRU
-//     warm thereafter).
+//  2. The first exact Fetch/GetSingle for a key calls
+//     Store.Get(stringKeys...) and folds the complete bucket into the
+//     snapshot. Warm entries alone can't prove that a non-unique bucket
+//     is complete. Later lookups use the snapshot.
 //  3. List() returns the snapshot as-is — the partial set the
 //     render has assembled. No surprise full-cluster fetch, no
 //     warning. Operators who set `store: on-demand` are opting out
@@ -137,7 +134,8 @@ type StoreWrapper struct {
 	loaded        bool
 	indexer       *indexer.Indexer // lazy mode: used to extract keys from items added incrementally
 	snapshot      []any
-	snapshotByKey map[string][]any // composite key (parts joined by "/") → matching items
+	snapshotByKey map[string][]any // encoded index components → matching items
+	resolvedKeys  map[string]struct{}
 }
 
 // cachedLister is an optional interface implemented by stores that can
@@ -214,6 +212,7 @@ func (w *StoreWrapper) prepareSnapshotIndex() {
 	}
 	w.indexer = idx
 	w.snapshotByKey = map[string][]any{}
+	w.resolvedKeys = map[string]struct{}{}
 }
 
 func (w *StoreWrapper) loadInitialSnapshot() []any {
@@ -286,8 +285,9 @@ func (w *StoreWrapper) getWithoutSnapshotIndex(stringKeys []string, op string) [
 }
 
 func (w *StoreWrapper) getExact(stringKeys []string, op string) []any {
-	composite := strings.Join(stringKeys, "/")
-	if items, ok := w.snapshotByKey[composite]; ok {
+	composite := indexer.EncodeKey(stringKeys)
+	if !w.LazySnapshot {
+		items := w.snapshotByKey[composite]
 		w.Logger.Log(context.Background(), logging.LevelTrace, "store get called (snapshot, exact)",
 			"resource_type", w.ResourceType,
 			"op", op,
@@ -295,13 +295,14 @@ func (w *StoreWrapper) getExact(stringKeys []string, op string) []any {
 			"found_count", len(items))
 		return items
 	}
-	if !w.LazySnapshot {
-		w.Logger.Log(context.Background(), logging.LevelTrace, "store get called (snapshot, exact miss)",
+	if _, resolved := w.resolvedKeys[composite]; resolved {
+		items := w.snapshotByKey[composite]
+		w.Logger.Log(context.Background(), logging.LevelTrace, "store get called (snapshot, exact)",
 			"resource_type", w.ResourceType,
 			"op", op,
 			"keys", stringKeys,
-			"found_count", 0)
-		return nil
+			"found_count", len(items))
+		return items
 	}
 
 	items, err := w.getStore(stringKeys...)
@@ -314,7 +315,8 @@ func (w *StoreWrapper) getExact(stringKeys []string, op string) []any {
 			"error", err)
 		return []any{}
 	}
-	w.addToSnapshotLocked(items)
+	w.replaceSnapshotBucketLocked(composite, items)
+	w.resolvedKeys[composite] = struct{}{}
 	if _, indexed := w.snapshotByKey[composite]; !indexed {
 		w.snapshotByKey[composite] = []any{}
 	}
@@ -326,11 +328,24 @@ func (w *StoreWrapper) getExact(stringKeys []string, op string) []any {
 	return items
 }
 
+func (w *StoreWrapper) replaceSnapshotBucketLocked(composite string, items []any) {
+	remaining := make([]any, 0, len(w.snapshot)+len(items))
+	for _, item := range w.snapshot {
+		keys, err := w.indexer.ExtractKeys(item)
+		if err != nil || indexer.EncodeKey(keys) != composite {
+			remaining = append(remaining, item)
+		}
+	}
+	w.snapshot = remaining
+	delete(w.snapshotByKey, composite)
+	w.addToSnapshotLocked(items)
+}
+
 func (w *StoreWrapper) getPrefix(stringKeys []string, op string) []any {
-	prefix := strings.Join(stringKeys, "/") + "/"
 	var results []any
+	encodedPrefix := indexer.EncodeKey(stringKeys)
 	for key, items := range w.snapshotByKey {
-		if strings.HasPrefix(key, prefix) {
+		if indexer.HasEncodedKeyPrefix(key, encodedPrefix) {
 			results = append(results, items...)
 		}
 	}
@@ -359,7 +374,7 @@ func (w *StoreWrapper) indexItemLocked(item any) {
 			"resource_type", w.ResourceType, "error", err)
 		return
 	}
-	composite := strings.Join(keys, "/")
+	composite := indexer.EncodeKey(keys)
 	w.snapshotByKey[composite] = append(w.snapshotByKey[composite], item)
 }
 
@@ -379,10 +394,8 @@ func (w *StoreWrapper) addToSnapshotLocked(items []any) {
 // covers everything in the underlying store. In lazy mode it covers
 // (initial: LRU-warm entries) + (incrementally: any keys touched via
 // Fetch/GetSingle during this render). Subsequent calls return the
-// same slice — every read in one render observes the same view, and
-// keys looked up after List() will GROW the snapshot but won't change
-// what earlier List() snippets already saw (sliced references are
-// stable; new entries land past the original length).
+// current snapshot. An exact lookup may replace an incomplete warm
+// bucket, but a slice returned by an earlier List call remains stable.
 func (w *StoreWrapper) List() []any {
 	w.cacheMu.Lock()
 	defer w.cacheMu.Unlock()
@@ -402,10 +415,9 @@ func (w *StoreWrapper) List() []any {
 // partial-match (prefix) does a small scan — same shape as
 // MemoryStore.Get.
 //
-// In LazySnapshot mode, an exact-match miss falls through to a single
-// Store.Get(stringKeys...) call (LRU-cached for CachedStore); the
-// fetched items are added to the snapshot + index so subsequent
-// lookups (and any later List()) see them. Partial-match misses
+// In LazySnapshot mode, the first exact lookup for each key calls
+// Store.Get(stringKeys...) (LRU-cached for CachedStore); the complete
+// bucket replaces any warm subset in the snapshot. Partial lookups
 // don't trigger a fetch — there's no general way to enumerate "all
 // keys with this prefix" without doing the very full-list we're
 // avoiding, so prefix scans see only items already in the snapshot.
@@ -415,6 +427,18 @@ func (w *StoreWrapper) List() []any {
 // returned by List(), but the wrapper logged a warning when the
 // snapshot was loaded so operators can see why.
 func (w *StoreWrapper) get(stringKeys []string, op string) []any {
+	if len(w.IndexBy) > 0 && (len(stringKeys) == 0 || len(stringKeys) > len(w.IndexBy)) {
+		w.recordReadFailure(fmt.Errorf(
+			"resource %q %s lookup has %d keys; pass between 1 and %d",
+			w.ResourceType, op, len(stringKeys), len(w.IndexBy)))
+		w.Logger.Error("Store lookup has an invalid key count and returns no resources; pass one to the configured number of index keys",
+			"resource_type", w.ResourceType,
+			"op", op,
+			"key_count", len(stringKeys),
+			"index_key_count", len(w.IndexBy))
+		return []any{}
+	}
+
 	w.cacheMu.Lock()
 	defer w.cacheMu.Unlock()
 	w.loadSnapshot()

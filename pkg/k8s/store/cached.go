@@ -48,7 +48,7 @@ type CachedStore struct {
 	mu             sync.RWMutex
 	refs           map[string][]resourceRef        // Composite key -> slice of resource references
 	locations      map[resourceIdentity]string     // Resource identity -> composite key
-	cache          *lru.Cache[string, *cacheEntry] // LRU cache: namespace/name -> cached resource
+	cache          *lru.Cache[string, *cacheEntry] // LRU cache: encoded resource identity -> cached resource
 	refGenerations map[string]uint64
 	nextGeneration uint64
 	numKeys        int                         // Number of index keys
@@ -183,16 +183,16 @@ func (s *CachedStore) matchingRefs(keys []string) []resourceRef {
 	defer s.mu.RUnlock()
 	var matchingRefs []resourceRef
 	if len(keys) == s.numKeys {
-		keyStr := makeKeyString(keys)
+		keyStr := indexer.EncodeKey(keys)
 		if refs, ok := s.refs[keyStr]; ok {
 			matchingRefs = s.appendLiveRefsLocked(matchingRefs, refs)
 		}
 		return matchingRefs
 	}
 
-	prefix := makeKeyString(keys) + "/"
+	encodedPrefix := indexer.EncodeKey(keys)
 	for keyStr, refs := range s.refs {
-		if len(keyStr) >= len(prefix) && keyStr[:len(prefix)] == prefix {
+		if indexer.HasEncodedKeyPrefix(keyStr, encodedPrefix) {
 			matchingRefs = s.appendLiveRefsLocked(matchingRefs, refs)
 		}
 	}
@@ -302,7 +302,7 @@ func (s *CachedStore) Add(resource any, keys []string) error {
 	}
 
 	ns, name := extractNamespaceName(resource)
-	keyStr := makeKeyString(keys)
+	keyStr := indexer.EncodeKey(keys)
 	if identity, ok := identifyResource(resource); ok {
 		s.removeReferenceLocked(identity)
 		s.locations[identity] = keyStr
@@ -336,7 +336,7 @@ func (s *CachedStore) Update(resource any, keys []string) error {
 	}
 
 	ns, name := extractNamespaceName(resource)
-	keyStr := makeKeyString(keys)
+	keyStr := indexer.EncodeKey(keys)
 	if identity, ok := identifyResource(resource); ok {
 		s.removeReferenceLocked(identity)
 		s.locations[identity] = keyStr
@@ -535,7 +535,8 @@ func (s *CachedStore) cacheFetchedResource(ref resourceRef, resource any) {
 	s.cacheResource(ref.namespace, ref.name, resource, ref.generation)
 }
 
-// cacheResource stores a resource in the LRU cache. The caller must hold s.mu.
+// cacheResource stores a resource in the LRU cache under its encoded identity.
+// The caller must hold s.mu.
 func (s *CachedStore) cacheResource(namespace, name string, resource any, generation uint64) {
 	s.cache.Add(resourceCacheKey(namespace, name), &cacheEntry{
 		resource:   resource,
@@ -549,10 +550,6 @@ func (s *CachedStore) advanceGenerationLocked(namespace, name string) uint64 {
 	generation := s.nextGeneration
 	s.refGenerations[resourceCacheKey(namespace, name)] = generation
 	return generation
-}
-
-func resourceCacheKey(namespace, name string) string {
-	return namespace + "/" + name
 }
 
 // Size returns the number of tracked resources in the store.

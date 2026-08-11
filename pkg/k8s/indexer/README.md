@@ -28,12 +28,13 @@ keys, err := idx.ExtractKeys(ingress)         // ["default", "my-ingress"]
 err = idx.FilterFields(ingress)               // mutates in place
 ```
 
-`ExtractKeys` returns the keys in the same order as the `IndexBy` slice, so a store can build a `default/my-ingress` composite key (or accept partial-prefix lookups against just `default`). `FilterFields` mutates the resource in place — feed it the same object you'll hand to the store afterwards.
+`ExtractKeys` returns keys in the same order as `IndexBy`. `EncodeKey` turns those components into an opaque, length-prefixed map key, and `HasEncodedKeyPrefix` matches only complete leading components. Values containing `/`, empty strings, and Unicode remain distinct. `FilterFields` mutates the resource in place — feed it the same object you'll hand to the store afterwards.
 
 ## Helpers
 
 - `NewJSONPathEvaluator(expr)` — parses a single expression up-front, lets callers cache it.
 - `NewFieldSelectorMatcher(expr)` — used by watchers that take a `fieldSelector` and need to match resources locally.
+- `EncodeKey(components)` / `HasEncodedKeyPrefix(encoded, EncodeKey(prefix))` — shared collision-free index key encoding and component-prefix matching.
 - Errors are typed (`*IndexError` from `ExtractKeys`, `*FilterError` from `FilterFields`, `*JSONPathError` from `NewJSONPathEvaluator`) so callers can extract the expression / pattern that failed without string-matching the message. All three implement `Unwrap()` so `errors.Is` / `errors.As` walks through to the underlying cause.
 
 ## See Also

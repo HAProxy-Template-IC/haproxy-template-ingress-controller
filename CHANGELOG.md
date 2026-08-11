@@ -56,6 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On-demand exact lookups now return every resource sharing an index key even when only part of that bucket is warm in the cache.
+- Template resource lookups with no keys or more keys than `indexBy` now fail the render instead of silently omitting resources.
+- Watched-resource index components now preserve their boundaries, so values containing `/` no longer collide with another key or leak into partial `Fetch` results; empty and Unicode values use the same semantics in both store modes.
 - Pluggable-validator responses with a missing, unknown, or contradictory aggregate `result` now fail the render as protocol errors instead of potentially admitting invalid output; malformed responses are never cached.
 - Cancelling validation now terminates queued or running `haproxy -c` checks and prevents their result from entering the success cache.
 - Kubernetes read errors, typed watched-resource conversion failures, and ambiguous `GetSingle` lookups now fail rendering instead of producing a partial configuration from an empty result.

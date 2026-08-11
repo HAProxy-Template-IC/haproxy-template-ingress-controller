@@ -19,7 +19,7 @@ type Store interface {
 }
 ```
 
-The number of keys is fixed at construction time — it comes from the `indexBy` JSONPath list. Passing fewer keys to `Get` does a prefix scan that returns every resource whose composite key starts with those values (useful for one-to-many relationships like "all EndpointSlices for service X").
+The number of keys is fixed at construction time — it comes from the `indexBy` JSONPath list. Passing fewer keys to `Get` does a prefix scan that returns every resource whose ordered index components start with those values (useful for one-to-many relationships like "all EndpointSlices for service X"). Components use the shared length-prefixed encoding from `pkg/k8s/indexer`, so separators in values can't collide or create false prefixes.
 
 ## MemoryStore
 
@@ -35,8 +35,8 @@ all, _       := mem.List()
 
 Implementation highlights (see `pkg/k8s/store/memory.go`):
 
-- Backing data is `map[string][]any` keyed by the composite-string form of the index. Multiple resources can share a key; `Get` returns them all.
-- A reverse map from `(namespace, name)` to composite key makes `Add`, `Update`, and `Delete` identity-owned. When an update changes an `indexBy` value, the store removes that identity from its old bucket and inserts it into the new bucket while holding one write lock.
+- Backing data is `map[string][]any` keyed by the opaque encoded index components. Multiple resources can share a key; `Get` returns them all.
+- A reverse map from `(namespace, name)` to the encoded key makes `Add`, `Update`, and `Delete` identity-owned. An update moves that identity between buckets under one write lock.
 - `Get` with the full key count is an O(1) map lookup that returns the per-bucket slice as-is (zero-copy — see "Immutability Contract"). Per-bucket slices are kept sorted at insert time so reads are deterministic without runtime sorting; partial-prefix scans aggregate matching buckets and sort the result.
 - `List` rebuilds and sorts the full slice on every call — there's no memoised result. The optimisation is "buckets are pre-sorted, so per-bucket reads are zero-copy", not "the whole list is cached". A consumer that needs a memoised `List` should cache at its own layer, not inside the store.
 - An `RWMutex` protects the data map; concurrent readers don't contend.
@@ -56,8 +56,8 @@ cached, _ := store.NewCachedStore(&store.CachedStoreConfig{
 
 - Stores only `resourceRef` tuples (index keys + namespace/name) in memory, plus the same identity-to-bucket reverse map as `MemoryStore`.
 - `Get` cache hits return immediately; cache misses call the dynamic client, cache the result with `CacheTTL`, and return it.
-- The cache is keyed by `namespace/name`, separate from the index composite key — multiple references can share the same index key while each has its own cache entry.
-- Each informer mutation advances a local generation for that namespace/name. Cache-hit TTL renewal and cache-miss commit both require the captured generation to remain current, so a concurrent `Update` or `Delete` can't restore stale data after invalidating it.
+- The cache is keyed by the encoded `(namespace, name)` pair, separate from the index key — multiple references can share the same index key while each has its own cache entry.
+- Each informer mutation advances a local generation for that identity. Cache-hit TTL renewal and cache-miss commit require the captured generation, so a concurrent `Update` or `Delete` can't restore invalidated data.
 - **`List` forces a fetch for every reference.** Use it only for small collections or debugging; prefer `MemoryStore` for templates that iterate everything.
 - The implementation releases the store lock *before* dispatching API calls so one slow fetch doesn't block other lookups.
 - A stale reference whose API object returns `NotFound` is skipped. Every other API error aborts the read; callers never receive a partial result set.

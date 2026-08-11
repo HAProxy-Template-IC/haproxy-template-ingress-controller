@@ -64,6 +64,35 @@ func TestStoreWrapper_RecordsAmbiguousGetSingle(t *testing.T) {
 	assert.Contains(t, errorCollector.Err().Error(), "matched 2 objects; use Fetch or configure unique indexBy values")
 }
 
+func TestStoreWrapper_RecordsInvalidKeyCount(t *testing.T) {
+	tests := []struct {
+		name string
+		keys []any
+		want string
+	}{
+		{name: "no keys", want: `resource "widgets" Fetch lookup has 0 keys; pass between 1 and 2`},
+		{name: "too many keys", keys: []any{"one", "two", "three"}, want: `resource "widgets" Fetch lookup has 3 keys; pass between 1 and 2`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errorCollector := NewResourceErrorCollector()
+			wrapper := &StoreWrapper{
+				Store:          &storetest.MockStore{},
+				ResourceType:   "widgets",
+				Logger:         testutil.NewTestLogger(),
+				IndexBy:        []string{"metadata.namespace", "metadata.name"},
+				resourceErrors: errorCollector,
+			}
+
+			assert.Empty(t, wrapper.Fetch(tt.keys...))
+			err := errorCollector.Err()
+			require.Error(t, err)
+			assert.EqualError(t, err, tt.want)
+		})
+	}
+}
+
 func TestBuilder_RecordsTypedMaterializationFailure(t *testing.T) {
 	elemType := reflect.StructOf([]reflect.StructField{
 		{Name: "Count", Type: reflect.TypeOf(0), Tag: `json:"count"`},

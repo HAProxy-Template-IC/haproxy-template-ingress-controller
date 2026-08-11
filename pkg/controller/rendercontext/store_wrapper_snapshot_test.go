@@ -201,3 +201,62 @@ func TestStoreWrapper_FetchPartialMatchUsesSnapshot(t *testing.T) {
 	results := wrapper.Fetch("ns-a")
 	require.Len(t, results, 2, "Fetch with namespace prefix should return both ns-a ingresses")
 }
+
+func TestStoreWrapper_IndexComponentsAreUnambiguous(t *testing.T) {
+	fixtures := []snapshotIndexFixture{
+		{name: "slash-first", first: "a/b", second: "c"},
+		{name: "slash-second", first: "a", second: "b/c"},
+		{name: "empty", first: "", second: "tail"},
+		{name: "unicode-slash-first", first: "領域/一", second: "雪"},
+		{name: "unicode-slash-second", first: "領域", second: "一/雪"},
+	}
+	items := make([]any, len(fixtures))
+	for i, fixture := range fixtures {
+		items[i] = snapshotIndexedResource(fixture.name, fixture.first, fixture.second)
+	}
+
+	wrapper := &StoreWrapper{
+		Store:        &mutatingStore{snapshots: [][]any{items}},
+		ResourceType: "custom-resources",
+		Logger:       testutil.NewTestLogger(),
+		IndexBy:      []string{"spec.first", "spec.second"},
+	}
+
+	for _, fixture := range fixtures {
+		assertWrapperResourceNames(t, wrapper.Fetch(fixture.first, fixture.second), fixture.name)
+	}
+	assertWrapperResourceNames(t, wrapper.Fetch("a"), "slash-second")
+	assertWrapperResourceNames(t, wrapper.Fetch("a/b"), "slash-first")
+	assertWrapperResourceNames(t, wrapper.Fetch(""), "empty")
+	assertWrapperResourceNames(t, wrapper.Fetch("領域"), "unicode-slash-second")
+	assertWrapperResourceNames(t, wrapper.Fetch("領域/一"), "unicode-slash-first")
+	assert.Empty(t, wrapper.Fetch())
+	assert.Empty(t, wrapper.Fetch("a", "b", "c"))
+}
+
+type snapshotIndexFixture struct {
+	name   string
+	first  string
+	second string
+}
+
+func snapshotIndexedResource(name, first, second string) map[string]any {
+	return map[string]any{
+		"metadata": map[string]any{"name": name},
+		"spec": map[string]any{
+			"first":  first,
+			"second": second,
+		},
+	}
+}
+
+func assertWrapperResourceNames(t *testing.T, resources []any, want ...string) {
+	t.Helper()
+
+	names := make([]string, len(resources))
+	for i, resource := range resources {
+		metadata := resource.(map[string]any)["metadata"].(map[string]any)
+		names[i] = metadata["name"].(string)
+	}
+	assert.Equal(t, want, names)
+}
