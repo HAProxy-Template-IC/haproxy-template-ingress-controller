@@ -341,60 +341,134 @@ func TestMergePluggableValidatorHealth(t *testing.T) {
 	})
 }
 
-// TestApplyReinitGrace pins the reinit-grace contract: unhealthy entries are
-// tolerated (rewritten healthy-with-annotation) only while a VOLUNTARY
-// reinitialization of a previously-initialized controller is within
-// ReinitGraceWindow. Startup (never initialized) and expired grace keep the
-// fail-closed 503 behavior.
 func TestApplyReinitGrace(t *testing.T) {
+	start := time.Date(2026, time.August, 11, 10, 0, 0, 0, time.UTC)
 	unhealthy := func() map[string]introspection.ComponentHealth {
 		return map[string]introspection.ComponentHealth{
 			"initialized": {Healthy: false, Error: "controller still initializing"},
 			"config":      {Healthy: true},
 		}
 	}
-
-	t.Run("startup: never initialized → no grace", func(t *testing.T) {
-		infra := &persistentInfra{}
-		infra.NoteIterationStart()
-		got := applyReinitGrace(infra, unhealthy())
-		if got["initialized"].Healthy {
-			t.Fatal("grace must not apply before the first successful initialization (fail-closed startup)")
+	healthy := func() map[string]introspection.ComponentHealth {
+		return map[string]introspection.ComponentHealth{
+			"initialized": {Healthy: true},
+			"config":      {Healthy: true},
 		}
+	}
+	completeIteration := func(infra *persistentInfra) iterationID {
+		id := infra.NoteIterationStart()
+		infra.NoteInitialized(id)
+		return id
+	}
+
+	t.Run("cold startup stays fail closed", func(t *testing.T) {
+		now := start
+		infra := &persistentInfra{graceNow: func() time.Time { return now }}
+		id := infra.NoteIterationStart()
+		got := applyReinitGrace(infra, id, unhealthy())
+		assert.False(t, got["initialized"].Healthy,
+			"grace applied before the first successful initialization")
 	})
 
-	t.Run("reinit within grace → unhealthy entries tolerated with annotation", func(t *testing.T) {
-		infra := &persistentInfra{}
-		infra.NoteIterationStart()
-		infra.NoteInitialized()
-		infra.NoteIterationStart() // the reinit
-		got := applyReinitGrace(infra, unhealthy())
-		if !got["initialized"].Healthy {
-			t.Fatal("grace must tolerate unhealthy entries during a voluntary reinit")
-		}
-		if got["initialized"].Error == "" {
-			t.Fatal("tolerated entries must keep their detail annotated for operators")
-		}
+	t.Run("completed startup qualifies before the first health probe", func(t *testing.T) {
+		now := start
+		infra := &persistentInfra{graceNow: func() time.Time { return now }}
+		completeIteration(infra)
+
+		id := infra.NoteIterationStart()
+		got := applyReinitGrace(infra, id, unhealthy())
+		assert.True(t, got["initialized"].Healthy,
+			"reinitialization lost grace because no probe observed the completed iteration")
 	})
 
-	t.Run("grace expired → unhealthy again", func(t *testing.T) {
-		infra := &persistentInfra{}
-		infra.everInitialized = true
-		infra.iterationStartedAt = time.Now().Add(-ReinitGraceWindow - time.Second)
-		got := applyReinitGrace(infra, unhealthy())
-		if got["initialized"].Healthy {
-			t.Fatal("a reinit stuck past the grace window must go unhealthy (liveness restart → fail-closed startup path)")
-		}
+	t.Run("failed retries share one deadline", func(t *testing.T) {
+		now := start
+		infra := &persistentInfra{graceNow: func() time.Time { return now }}
+		completeIteration(infra)
+
+		infra.NoteIterationStart()
+		now = now.Add(ReinitGraceWindow / 2)
+		id := infra.NoteIterationStart()
+		got := applyReinitGrace(infra, id, unhealthy())
+		assert.True(t, got["initialized"].Healthy,
+			"retry within the original grace window was not tolerated")
+
+		now = start.Add(ReinitGraceWindow - time.Nanosecond)
+		id = infra.NoteIterationStart()
+		got = applyReinitGrace(infra, id, unhealthy())
+		assert.True(t, got["initialized"].Healthy,
+			"grace expired before its original deadline")
+
+		now = start.Add(ReinitGraceWindow)
+		id = infra.NoteIterationStart()
+		got = applyReinitGrace(infra, id, unhealthy())
+		assert.False(t, got["initialized"].Healthy,
+			"failed retries extended the reinitialization grace deadline")
 	})
 
-	t.Run("all healthy → untouched", func(t *testing.T) {
-		infra := &persistentInfra{}
-		infra.NoteInitialized()
+	t.Run("completed retry without a probe does not renew the episode", func(t *testing.T) {
+		now := start
+		infra := &persistentInfra{graceNow: func() time.Time { return now }}
+		completeIteration(infra)
+
+		id := infra.NoteIterationStart()
+		now = start.Add(ReinitGraceWindow / 2)
+		infra.NoteInitialized(id)
+		id = infra.NoteIterationStart()
+
+		now = start.Add(ReinitGraceWindow)
+		got := applyReinitGrace(infra, id, unhealthy())
+		assert.False(t, got["initialized"].Healthy,
+			"an unobserved intermediate startup renewed the grace episode")
+	})
+
+	t.Run("settling ends grace and a later reinit gets a fresh window", func(t *testing.T) {
+		now := start
+		infra := &persistentInfra{graceNow: func() time.Time { return now }}
+		completeIteration(infra)
+
+		id := infra.NoteIterationStart()
+		got := applyReinitGrace(infra, id, unhealthy())
+		assert.True(t, got["initialized"].Healthy,
+			"reinitialization was not tolerated within its grace window")
+		assert.Equal(t, "reinitializing (grace period): controller still initializing",
+			got["initialized"].Error)
+
+		infra.NoteInitialized(id)
+		applyReinitGrace(infra, id, healthy())
+		got = applyReinitGrace(infra, id, unhealthy())
+		assert.False(t, got["initialized"].Healthy,
+			"grace remained active after the iteration settled")
+
+		now = start.Add(2 * ReinitGraceWindow)
+		id = infra.NoteIterationStart()
+		got = applyReinitGrace(infra, id, unhealthy())
+		assert.True(t, got["initialized"].Healthy,
+			"later reinitialization did not receive a fresh grace window")
+	})
+
+	t.Run("stale health checker cannot settle the current episode", func(t *testing.T) {
+		now := start
+		infra := &persistentInfra{graceNow: func() time.Time { return now }}
+		staleID := completeIteration(infra)
+		currentID := infra.NoteIterationStart()
+
+		applyReinitGrace(infra, staleID, healthy())
+		got := applyReinitGrace(infra, currentID, unhealthy())
+		assert.True(t, got["initialized"].Healthy,
+			"a stale health checker cleared the current grace episode")
+	})
+
+	t.Run("stale initialization cannot qualify a failed iteration", func(t *testing.T) {
+		now := start
+		infra := &persistentInfra{graceNow: func() time.Time { return now }}
+		staleID := infra.NoteIterationStart()
 		infra.NoteIterationStart()
-		entries := map[string]introspection.ComponentHealth{"initialized": {Healthy: true}}
-		got := applyReinitGrace(infra, entries)
-		if !got["initialized"].Healthy || got["initialized"].Error != "" {
-			t.Fatal("healthy entries must pass through unmodified")
-		}
+		infra.NoteInitialized(staleID)
+
+		currentID := infra.NoteIterationStart()
+		got := applyReinitGrace(infra, currentID, unhealthy())
+		assert.False(t, got["initialized"].Healthy,
+			"a stale initialization opened grace for a failed cold startup")
 	})
 }

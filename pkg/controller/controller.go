@@ -144,11 +144,14 @@ var (
 // signal without polling internal pipeline state that's wiped on
 // every reconciliation trigger.
 type configState struct {
+	iterationID  iterationID
 	mu           sync.RWMutex
 	configLoaded bool
 	initialized  bool
 	message      string
 }
+
+type iterationID uint64
 
 // SetLoaded marks the config as successfully loaded.
 func (s *configState) SetLoaded() {
@@ -223,22 +226,12 @@ type persistentInfra struct {
 	// silently ignored.
 	webhookServerConfig *pkgwebhook.ServerConfig
 
-	// Reinitialization grace tracking. A VOLUNTARY iteration restart (config
-	// change, CRD change) tears down and rebuilds every component; during
-	// that window the per-iteration health state reports unhealthy even
-	// though the process is doing exactly what it should. Without a grace
-	// window, any reinit longer than the liveness budget (~30s — and the
-	// config's embedded validationTests alone can take a large share of
-	// that) gets the container killed mid-reinit. The grace applies ONLY
-	// after the controller has been fully initialized at least once, so the
-	// fail-closed startup contract is untouched: a fresh pod with a bad
-	// config still crash-loops, and a reinit that can't complete within the
-	// grace window goes unhealthy and gets restarted into that same
-	// fail-closed startup path.
-	graceMu            sync.Mutex
-	everInitialized    bool
-	iterationStartedAt time.Time
-	settledThisIter    bool
+	// Reinitialization grace state; see the metrics-and-observability OpenSpec.
+	graceMu              sync.Mutex
+	graceNow             func() time.Time
+	currentIterationID   iterationID
+	iterationInitialized bool
+	reinitStartedAt      time.Time
 }
 
 type persistentServerRun struct {
@@ -477,41 +470,48 @@ func describeServerConfigDiff(bound, incoming *pkgwebhook.ServerConfig) string {
 	return strings.Join(diffs, ", ")
 }
 
-// NoteIterationStart records the beginning of an iteration for reinit-grace
-// accounting.
-func (p *persistentInfra) NoteIterationStart() {
+// NoteIterationStart preserves an active episode or starts one after a completed iteration.
+func (p *persistentInfra) NoteIterationStart() iterationID {
 	p.graceMu.Lock()
 	defer p.graceMu.Unlock()
-	p.iterationStartedAt = time.Now()
-	p.settledThisIter = false
+	if p.reinitStartedAt.IsZero() && p.iterationInitialized {
+		p.reinitStartedAt = p.graceTime()
+	}
+	p.currentIterationID++
+	p.iterationInitialized = false
+	return p.currentIterationID
 }
 
 // NoteInitialized records that an iteration completed its staged startup.
-func (p *persistentInfra) NoteInitialized() {
+func (p *persistentInfra) NoteInitialized(id iterationID) {
 	p.graceMu.Lock()
 	defer p.graceMu.Unlock()
-	p.everInitialized = true
+	if id != 0 && id == p.currentIterationID {
+		p.iterationInitialized = true
+	}
 }
 
-// NoteSettled records that the current iteration has been observed fully
-// healthy at least once. From that point on the grace no longer applies —
-// an unhealthy entry AFTER settling is a genuine failure, not rebuild
-// churn, and must surface immediately instead of being masked for the
-// remainder of the window.
-func (p *persistentInfra) NoteSettled() {
+// NoteSettled ends the current grace episode.
+func (p *persistentInfra) NoteSettled(id iterationID) {
 	p.graceMu.Lock()
 	defer p.graceMu.Unlock()
-	p.settledThisIter = true
+	if id != 0 && id == p.currentIterationID {
+		p.reinitStartedAt = time.Time{}
+	}
 }
 
-// InReinitGrace reports whether unhealthy health entries should be tolerated
-// because a voluntary reinitialization is (recently) in progress. The grace
-// ends at the EARLIER of: the window expiring, or the iteration settling
-// (fully healthy once — see NoteSettled).
+// InReinitGrace reports whether the active reinitialization episode is within its budget.
 func (p *persistentInfra) InReinitGrace() bool {
 	p.graceMu.Lock()
 	defer p.graceMu.Unlock()
-	return p.everInitialized && !p.settledThisIter && time.Since(p.iterationStartedAt) < ReinitGraceWindow
+	return !p.reinitStartedAt.IsZero() && p.graceTime().Sub(p.reinitStartedAt) < ReinitGraceWindow
+}
+
+func (p *persistentInfra) graceTime() time.Time {
+	if p.graceNow != nil {
+		return p.graceNow()
+	}
+	return time.Now()
 }
 
 // Run is the main entry point for the controller.

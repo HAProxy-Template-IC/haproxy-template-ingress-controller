@@ -408,7 +408,7 @@ func waitForIterationExit(
 func markIterationInitialized(setup *componentSetup, state *configState, infra *persistentInfra, logger *slog.Logger) {
 	setup.ConfigChangeHandler.EnableReinitialization()
 	state.SetInitialized()
-	infra.NoteInitialized()
+	infra.NoteInitialized(state.iterationID)
 	logger.Info("Controller iteration initialized successfully - entering event loop")
 }
 

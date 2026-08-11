@@ -16,6 +16,11 @@ source for the process, container, Service, probes, and NetworkPolicy, so changi
 it moves every consumer together. The listener is required by the probes, so
 don't disable it.
 
+After a controller completes staged initialization, its next reinitialization gets
+one 90-second `/healthz` grace episode. Failed retries don't renew the deadline;
+an unresolved failure returns HTTP 503 after it expires. A fully healthy probe
+ends the episode and makes a later reinitialization eligible for a fresh one.
+
 The `/debug/*` routes answer **only to loopback callers** — `/debug/vars`,
 `/debug/vars/`, `/debug/vars/all`, `/debug/pprof/` and any custom `/debug/`
 handler return `403` with `diagnostics are available on loopback only; use

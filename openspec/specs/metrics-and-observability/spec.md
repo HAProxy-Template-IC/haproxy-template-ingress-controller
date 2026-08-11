@@ -123,17 +123,27 @@ The response body SHALL be a JSON object with a `status` field (`ok` or `degrade
 
 ### Requirement: Reinitialization Grace Window
 
-After the controller has been fully initialized at least once in its process lifetime, a voluntary iteration restart (config, CRD, or credentials change) SHALL enter a 90-second grace window during which the health checker rewrites unhealthy component entries as healthy with the annotation `reinitializing (grace period): <original error>` — softening only the aggregate HTTP status so the kubelet does not kill the pod mid-rebuild, while preserving the underlying detail for operators. The grace SHALL end at the earlier of window expiry or the iteration being observed fully healthy once; after settling, any later unhealthiness SHALL surface immediately for the rest of the iteration. The grace SHALL apply only after a first successful initialization, so a fresh pod with a bad configuration still crash-loops under the fail-closed startup contract.
+When no grace episode is active and the current iteration has completed staged initialization, its next restart (config, CRD, credentials, or iteration failure) SHALL enter one 90-second grace episode. During that window the health checker SHALL rewrite unhealthy component entries as healthy with the annotation `reinitializing (grace period): <original error>` — softening only the aggregate HTTP status so the kubelet does not kill the pod mid-rebuild, while preserving the underlying detail for operators. Further restarts SHALL retain the episode's original deadline until an iteration is observed fully healthy; reaching the deadline stops masking failures but does not make another retry eligible for a fresh episode. Observing a fully healthy iteration SHALL reset that eligibility and end any active episode, after which later unhealthiness SHALL surface immediately until another restart. A fresh pod SHALL receive no grace before its first completed staged initialization, so a bad startup configuration remains fail-closed.
 
 #### Scenario: Reinit does not flip liveness
 
 - **WHEN** a config change restarts the iteration on a previously initialized controller and components are still rebuilding 30 seconds in
 - **THEN** `/healthz` SHALL return HTTP 200 with the affected entries annotated as reinitializing.
 
+#### Scenario: A probe is not required before the first reinit
+
+- **WHEN** an iteration completes staged initialization and restarts before any health probe observes it
+- **THEN** the restart SHALL receive its 90-second grace episode.
+
 #### Scenario: Settling ends the grace early
 
 - **WHEN** the rebuilt iteration is observed fully healthy once and a component then fails within the original 90-second window
 - **THEN** the failure SHALL surface as HTTP 503 immediately rather than being masked for the remainder of the window.
+
+#### Scenario: Failed retries do not renew grace
+
+- **WHEN** a reinitialization keeps failing and the controller retries the iteration every 5 seconds
+- **THEN** the grace SHALL expire 90 seconds after the first restart, and later retries SHALL remain unhealthy.
 
 #### Scenario: Fresh pod stays fail-closed
 

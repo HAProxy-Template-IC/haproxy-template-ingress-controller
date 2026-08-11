@@ -136,9 +136,9 @@ const (
 // the persistent introspection registry of the previous iteration's
 // entries, and a fresh per-iteration health state.
 func beginIteration(infra *persistentInfra) *configState {
-	infra.NoteIterationStart()
+	id := infra.NoteIterationStart()
 	infra.IntrospectionRegistry.Clear()
-	return &configState{}
+	return &configState{iterationID: id}
 }
 
 // applyReinitGrace rewrites unhealthy entries as healthy-with-annotation
@@ -146,7 +146,11 @@ func beginIteration(infra *persistentInfra) *configState {
 // window (see ReinitGraceWindow). The entry detail is preserved so
 // operators can still see what is re-initializing; only the aggregate
 // HTTP status (and thus the liveness/readiness verdict) is softened.
-func applyReinitGrace(infra *persistentInfra, entries map[string]introspection.ComponentHealth) map[string]introspection.ComponentHealth {
+func applyReinitGrace(
+	infra *persistentInfra,
+	id iterationID,
+	entries map[string]introspection.ComponentHealth,
+) map[string]introspection.ComponentHealth {
 	allHealthy := true
 	for _, e := range entries {
 		if !e.Healthy {
@@ -157,7 +161,7 @@ func applyReinitGrace(infra *persistentInfra, entries map[string]introspection.C
 	if allHealthy {
 		// Fully healthy = the iteration has settled; end the grace so any
 		// LATER unhealthiness in this iteration surfaces immediately.
-		infra.NoteSettled()
+		infra.NoteSettled(id)
 		return entries
 	}
 	if !infra.InReinitGrace() {
@@ -187,7 +191,7 @@ func createEarlyHealthChecker(state *configState, infra *persistentInfra) func()
 		} else {
 			result["config"] = introspection.ComponentHealth{Healthy: true}
 		}
-		return applyReinitGrace(infra, result)
+		return applyReinitGrace(infra, state.iterationID, result)
 	}
 }
 
@@ -361,7 +365,7 @@ func buildFullHealthChecker(
 		firstPending := collectComponentHealth(status, result)
 		mergePluggableValidatorHealth(result, pluggableMgr)
 		result[healthKeyInitialized] = computeInitializedHealth(state.IsInitialized(), firstPending)
-		return applyReinitGrace(infra, result)
+		return applyReinitGrace(infra, state.iterationID, result)
 	}
 }
 
