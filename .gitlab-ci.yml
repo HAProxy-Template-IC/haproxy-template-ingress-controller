@@ -861,6 +861,7 @@ build-playground-wasm:
         - scripts/build-playground.sh
         - scripts/gen-playground-assets.sh
         - scripts/gen_playground_schema_bundle.go
+        - charts/haptic/**/*
         - tests/schemas/**/*
   script:
     - |
@@ -876,9 +877,9 @@ build-playground-wasm:
       # Sanity: the bundle must carry the entrypoint, the compressed wasm, the
       # shell, the vendored editor, and every preset config.
       base="public/playground/${VERSION}"
-      for f in index.html editor.js playground.worker.js wasm_exec.js \
+      for f in index.html editor.js migration-assets.mjs playground.worker.js wasm_exec.js \
                playground.wasm playground.wasm.br playground.wasm.gz \
-               schemas.json vendor/codemirror.js; do
+               schemas.json migration/presets.json vendor/codemirror.js; do
         if [ ! -s "$base/$f" ]; then echo "MISSING or empty: $base/$f"; exit 1; fi
       done
       preset_count=$(ls "$base"/presets/*.config.yaml | wc -l)

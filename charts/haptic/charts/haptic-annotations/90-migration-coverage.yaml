@@ -7,7 +7,7 @@
 # block is pinned against the annotation keys the fragments actually read
 # by scripts/check-migration-coverage.sh, and documented on the library's
 # page by scripts/check-annotation-{docs,status}.sh.
-migrationCoverage:
+_migrationCoverage:
   - source: haptic-annotations
     detect:
       ingressClasses: ["haptic"]

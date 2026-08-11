@@ -1,6 +1,6 @@
 // Render worker — keeps the wasm engine off the UI thread with a warm-engine
 // protocol:
-//   { type: 'load',   seq, config, schemas, haproxyVersion, resources }
+//   { type: 'load',   seq, config, schemas, haproxyVersion, migrationCoverage, resources }
 //        -> hapticLoadConfig(...) (recompile) then hapticRender(resources)
 //   { type: 'render', seq, resources }
 //        -> hapticRender(resources) against the already-compiled warm engine
@@ -79,7 +79,9 @@ onmessage = (e) => {
       // Fresh loads (preset/share/restore) drop the reload-impact baseline; a plain
       // config edit keeps it so the edit is measured against the pinned/last render.
       if (m.resetBaseline && typeof globalThis.hapticResetBaseline === 'function') globalThis.hapticResetBaseline();
-      const loaded = globalThis.hapticLoadConfig(m.config, m.schemas || '', m.haproxyVersion || '3.2');
+      const loadArgs = [m.config, m.schemas || '', m.haproxyVersion || '3.2'];
+      if (typeof m.migrationCoverage === 'string') loadArgs.push(m.migrationCoverage);
+      const loaded = globalThis.hapticLoadConfig(...loadArgs);
       if (loaded && loaded.error) { postMessage({ type: 'result', seq: m.seq, error: loaded.error }); return; }
     }
     // Reload-impact baseline toggle (pin the last render / unpin), applied before

@@ -756,6 +756,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
 
   <script type="module">
     import { makeEditors, setSchemaBundle, haproxyTokens } from './editor.js';
+    import { createMigrationAssetLoader } from './migration-assets.mjs';
     import { buildTryoutScript } from './tryout.js';
 
     const $ = (id) => document.getElementById(id);
@@ -928,6 +929,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     /* ---------- state ---------- */
     const worker = new Worker('./playground.worker.js');
     let ready = false, seq = 0, shown = -1, schemas = '', schemasUrl = null;
+    let migrationSources = [], migrationCoverageJSON = '[]', migrationAssetWarning = '';
     const CUSTOM_OPT = '__custom__';       // preset dropdown value for an edited/restored config
     let loadingPreset = false;             // true while a preset/state load drives the editors (suppresses the custom switch)
     const noGlowSeqs = new Set();          // render seqs whose output must NOT glow (preset loads, version flips)
@@ -980,7 +982,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
         migration: mig ? mig.totalIngresses : 0,
         tests: res.testCount || 0,
       };
-      const migWarn = mig ? migAttentionCount(mig.counts || {}) : 0;
+      const migWarn = (mig ? migAttentionCount(mig.counts || {}) : 0) + (migrationAssetWarning ? 1 : 0);
       return { tabs, counts, report, drops, migWarn };
     }
 
@@ -988,7 +990,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (key === 'haproxy.cfg') return true;
       if (key === 'resources') return counts.resources > 0;
       if (key === 'trace') return counts.trace > 0;
-      if (key === 'migration') return !!lastMigration;
+      if (key === 'migration') return !!lastMigration || !!migrationAssetWarning;
       if (key === 'tests') return counts.tests > 0;
       return !!(tabs[key] && tabs[key].trim());
     }
@@ -1118,8 +1120,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     }
 
     // Migration report: how each pasted Ingress's annotations classify against
-    // the config's spec.migrationCoverage — the same verdict `haptic
-    // migrate-check` prints, so you can gauge a controller migration in-browser.
+    // the selected preset's tooling data.
     /* ---------- Tests tab: spec.validationTests results ---------- */
     // Runs the config's validationTests via the worker, caches the result, repaints.
     async function doRunTests() {
@@ -1185,7 +1186,10 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     function paintMigration() {
       const out = $('output');
       const m = lastMigration;
-      if (!m) { out.innerHTML = '<div class="empty">This config declares no migration coverage.</div>'; return; }
+      if (!m) {
+        out.innerHTML = `<div class="empty">${esc(migrationAssetWarning || 'No migration coverage is loaded for this preset.')}</div>`;
+        return;
+      }
       const c = m.counts || {};
       const pills = ['supported', ...MIG_ATTENTION].filter((k) => c[k]).map((k) =>
         `<span class="mig-pill ${MIG_CLS[k]}">${c[k]} ${k}</span>`).join('');
@@ -1214,6 +1218,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       };
       const ingCount = `${m.totalIngresses} Ingress${m.totalIngresses === 1 ? '' : 'es'}`;
       let html = '<div class="mig">';
+      if (migrationAssetWarning) html += `<div class="mig-note">${esc(migrationAssetWarning)}</div>`;
       html += `<div class="mig-sum">${ingCount} · ${ingredient(m.checkedAnnotations, 'annotation')} checked ${pills}</div>`;
       for (const src of (m.sources || [])) {
         html += `<div class="mig-src"><div class="mig-src-h">source: <b>${esc(src.source)}</b></div>`;
@@ -1871,7 +1876,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
         configDirty = false;
         lastTestRes = null; lastTestErr = '';   // config changed → prior test results are stale
         setChip('compiling…', 'busy');
-        worker.postMessage({ type: 'load', seq: cur, config: isScriggo ? scriggoWrap(editors.config.get()) : editors.config.get(), schemas, haproxyVersion: $('hpver').value, resources: editors.res.get(), resetBaseline: resetBaselineNext });
+        worker.postMessage({ type: 'load', seq: cur, config: isScriggo ? scriggoWrap(editors.config.get()) : editors.config.get(), schemas, haproxyVersion: $('hpver').value, migrationCoverage: migrationCoverageJSON, resources: editors.res.get(), resetBaseline: resetBaselineNext });
         resetBaselineNext = false;
       } else {
         setChip('rendering…', 'busy');
@@ -1936,6 +1941,7 @@ backend {{ e }}
     /* ---------- presets ---------- */
     // Each bundled preset is one `helm template` render enabling a specific set
     // of template libraries, so the config demonstrates that library's snippets.
+    const migrationAssets = createMigrationAssetLoader(fetchText);
     const bundled = (id) => ({ config: `./presets/${id}.config.yaml`, resources: `./presets/${id}.resources.yaml`, schemas: './schemas.json' });
     const PRESETS = [
       { id: 'starter', label: 'Minimal starter', config: './starter.config.yaml', resources: './starter.resources.yaml', schemas: null },
@@ -1960,8 +1966,12 @@ backend {{ e }}
     async function loadPreset(p) {
       setChip('loading ' + p.id + '…', 'busy');
       try {
-        const [config, resources, sch] = await Promise.all([
-          fetchText(p.config), fetchText(p.resources), p.schemas ? fetchText(p.schemas) : Promise.resolve('')]);
+        const [config, resources, sch, coverage] = await Promise.all([
+          fetchText(p.config), fetchText(p.resources), p.schemas ? fetchText(p.schemas) : Promise.resolve(''), migrationAssets.coverageForPreset(p.id)]);
+        migrationSources = coverage.sources; migrationCoverageJSON = coverage.json;
+        migrationAssetWarning = coverage.error
+          ? `Migration coverage is unavailable: ${coverage.error.message} The preset still renders; reload to retry.`
+          : '';
         suppressNextGlow = true; schemas = sch; schemasUrl = p.schemas; configDirty = true; resetBaselineNext = true;   // a preset always recompiles from a clean baseline
         setSchemaBundle(schemas);   // refresh typed-field autocomplete
         loadingPreset = true;
@@ -1990,7 +2000,7 @@ backend {{ e }}
       const buf = Uint8Array.from(bin, (c) => c.charCodeAt(0));
       return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
     }
-    function currentState() { return { c: editors.config.get(), r: editors.res.get(), v: $('hpver').value, s: schemasUrl, p: presetEl.value }; }
+    function currentState() { return { c: editors.config.get(), r: editors.res.get(), v: $('hpver').value, s: schemasUrl, p: presetEl.value, m: migrationSources }; }
     async function doShare() {
       if (!editors) return;
       const btn = $('share');
@@ -2123,13 +2133,19 @@ backend {{ e }}
       if (st.v) $('hpver').value = st.v;
       schemasUrl = st.s || null;
       schemas = schemasUrl ? await fetchText(schemasUrl).catch(() => '') : '';
+      const preset = st.p ? PRESETS.find((p) => p.id === st.p) : null;
+      const coverage = await migrationAssets.restoreCoverage(st, preset?.id || null);
+      migrationSources = coverage.sources; migrationCoverageJSON = coverage.json;
+      migrationAssetWarning = coverage.error
+        ? `Saved migration coverage is unavailable: ${coverage.error.message} The config still renders; select a preset from this version.`
+        : '';
       setSchemaBundle(schemas);   // refresh typed-field autocomplete
       loadingPreset = true;
       editors.config.set(st.c || ''); editors.res.set(st.r || '');
       loadingPreset = false;
       // Restore the saved preset selection; fall back to "Modified" when the state
       // was a custom edit or names a preset this build doesn't have.
-      presetEl.value = (st.p && PRESETS.some((x) => x.id === st.p)) ? st.p : CUSTOM_OPT;
+      presetEl.value = preset ? preset.id : CUSTOM_OPT;
       updateResHint(); schedule();
       markStateReady();
     }

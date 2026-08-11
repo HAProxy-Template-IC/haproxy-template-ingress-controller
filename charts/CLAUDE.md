@@ -76,6 +76,8 @@ single `library.yaml` or an `_index.yaml` plus numbered fragments.
 
 Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false — a skipped library renders no object at all. The `spoa-hub` library is also auto-loaded whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 5-9 are plugin/scaffold libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up, plus parameterized macros that the annotation libraries call. `ingress-annotations-compat.yaml` (level 2.5) provides Ingress-scoped macros currently used for SSL passthrough and CIDR access-control patterns; see ADR-0003.
 
+Annotation libraries keep playground-only classification data under `_migrationCoverage`. The playground build extracts one asset per source directly from those declarations; the generic underscore-key strip ensures they never enter a config or library CR.
+
 Library objects are named `<controller.configName>-<library slug>`, with the operator's own config keeping the plain `controller.configName`. The names carry **no** ordering authority — order comes from the `spec.libraryRefs` list on the `HAProxyTemplateConfig` — so inserting a library never renames an existing object.
 
 The frontend path-matching order is selected at base-load time by `controller.config.templatingSettings.extraContext.routing.regexMatchOrder` (`default` or `last`). When `last`, the base library's `_helm_load` swaps `templateSnippets.frontend-routing-logic` for the alternate `frontend-routing-logic-regex-last` variant defined in `base.yaml`. The alternate is unset before rendering so it never appears in the output.
@@ -111,11 +113,9 @@ emits the `HAProxyTemplateLibrary` objects *and* the `spec.libraryRefs` list on 
 **Where merge semantics live now.** `pkg/controller/conversion.MergeSpecs` merges
 with `mergo.MergeWithOverwrite`, the exact call sprig's `mustMergeOverwrite` makes
 against the same vendored mergo — so chart-time and controller-time semantics
-match by construction. Maps deep-merge key-wise, lists replace, and
-`migrationCoverage` concatenates (it is a list of per-source declarations; an
-overwrite would keep only the last library's). A duplicate `templateSnippets` name
-across libraries still resolves to the later one, but the controller now logs each
-override instead of resolving it silently.
+match by construction. Maps deep-merge key-wise and lists replace. A duplicate
+`templateSnippets` name across libraries still resolves to the later one, but the
+controller now logs each override instead of resolving it silently.
 
 **`haptic.watchedResourcesUnion`** gives the templates that must reason about the
 whole watch set (the ClusterRole, the ValidatingWebhookConfiguration) the union

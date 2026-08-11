@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # check-annotation-status.sh — pin each vendor annotation-library reference
-# page's per-annotation **Status** label against the library's migrationCoverage
+# page's per-annotation **Status** label against the library's _migrationCoverage
 # status, so the two can't drift apart.
 #
 # check-annotation-docs.sh already guarantees every shipped annotation is
 # *documented*. This script guards the *label*: an annotation documented with a
 # `**Status**: ✅ Supported` line must actually be acted on by the chart
-# (migrationCoverage `supported` or `different`), and one marked
+# (_migrationCoverage `supported` or `different`), and one marked
 # `**Status**: ❌ Not Implemented` must actually be inert (`dropped`).
 #
-# The migrationCoverage status is four-way (supported / different / dropped /
-# fails — see pkg/controller/migratecheck); the docs label is coarser (Supported
+# The _migrationCoverage status is four-way (supported / different / dropped /
+# fails — see cmd/playground/internal/migratecheck); the docs label is coarser (Supported
 # / Not Implemented). We collapse to "does the chart usefully act on it?" and
 # flag only the unambiguous contradictions:
 #   - doc "Supported"       but coverage "dropped"/"fails"        → lies about support
@@ -51,10 +51,10 @@ VENDORS = [
 
 
 def coverage(path):
-    """key -> status from the library's migrationCoverage block."""
+    """key -> status from the library's _migrationCoverage block."""
     out, incov, key = {}, False, None
     for line in (ROOT / path).read_text().splitlines():
-        if re.match(r'^migrationCoverage:', line):
+        if re.match(r'^_migrationCoverage:', line):
             incov = True
             continue
         if incov and re.match(r'^[A-Za-z_]', line):
@@ -120,11 +120,11 @@ for name, prefix, cov_path, doc_path in VENDORS:
         for c in contradictions:
             print(f"    {c}")
     else:
-        print(f"OK [{name}]: {len(docs)} labelled annotations agree with migrationCoverage")
+        print(f"OK [{name}]: {len(docs)} labelled annotations agree with _migrationCoverage")
 
 if failed:
     print()
-    print("Annotation **Status** labels drifted from migrationCoverage. A doc that")
+    print("Annotation **Status** labels drifted from _migrationCoverage. A doc that")
     print("says 'Supported' must map to a supported/different annotation; 'Not")
     print("Implemented' must map to a dropped one. Fix the label or the coverage.")
     sys.exit(1)

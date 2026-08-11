@@ -19,23 +19,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 )
 
 // coverage builds a single-source coverage fixture: source "acme", detected
 // by class "acme" or the "acme.io/" annotation prefix, with one annotation
 // per status. No source or annotation name here appears anywhere in Go
 // production code — the point of the whole design.
-func coverage() []v1alpha1.MigrationCoverageSource {
-	return []v1alpha1.MigrationCoverageSource{
+func coverage() []CoverageSource {
+	return []CoverageSource{
 		{
 			Source: "acme",
-			Detect: v1alpha1.MigrationDetect{
+			Detect: Detect{
 				IngressClasses:     []string{"acme"},
 				AnnotationPrefixes: []string{"acme.io/"},
 			},
-			Annotations: map[string]v1alpha1.AnnotationCoverage{
+			Annotations: map[string]AnnotationCoverage{
 				"acme.io/ssl-redirect": {Status: "supported", Note: "same", Doc: "d#s"},
 				"acme.io/rate-limit":   {Status: "different", Note: "differs", Doc: "d#r"},
 				"acme.io/canary":       {Status: "dropped", Note: "ignored"},
@@ -128,18 +126,18 @@ func TestClassify_UnattributedIngressIsReportedButNotClassified(t *testing.T) {
 }
 
 func TestClassify_OneIngressAttributedToMultipleSources(t *testing.T) {
-	cov := []v1alpha1.MigrationCoverageSource{
+	cov := []CoverageSource{
 		{
 			Source: "acme",
-			Detect: v1alpha1.MigrationDetect{AnnotationPrefixes: []string{"acme.io/"}},
-			Annotations: map[string]v1alpha1.AnnotationCoverage{
+			Detect: Detect{AnnotationPrefixes: []string{"acme.io/"}},
+			Annotations: map[string]AnnotationCoverage{
 				"acme.io/a": {Status: "supported"},
 			},
 		},
 		{
 			Source: "beta",
-			Detect: v1alpha1.MigrationDetect{AnnotationPrefixes: []string{"beta.io/"}},
-			Annotations: map[string]v1alpha1.AnnotationCoverage{
+			Detect: Detect{AnnotationPrefixes: []string{"beta.io/"}},
+			Annotations: map[string]AnnotationCoverage{
 				"beta.io/b": {Status: "dropped"},
 			},
 		},
@@ -195,4 +193,136 @@ func TestClassify_DeterministicIngressOrder(t *testing.T) {
 		got[1].Namespace + "/" + got[1].Name,
 		got[2].Namespace + "/" + got[2].Name,
 	})
+}
+
+func TestParseCoverage(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantLen int
+		wantErr string
+	}{
+		{name: "empty", input: "", wantLen: 0},
+		{
+			name:    "valid",
+			input:   `[{"source":"acme","detect":{"ingressClasses":["acme"],"annotationPrefixes":["acme.io/"]},"annotations":{"acme.io/a":{"status":"supported","note":"same"}}}]`,
+			wantLen: 1,
+		},
+		{name: "malformed", input: `{`, wantErr: "parsing migration coverage"},
+		{name: "missing source", input: `[{"annotations":{}}]`, wantErr: "has no name"},
+		{name: "unknown field", input: `[{"source":"acme","annotationPrefix":"acme.io/"}]`, wantErr: "unknown field"},
+		{name: "trailing JSON", input: `[] []`, wantErr: "trailing JSON"},
+		{name: "incomplete detection", input: `[{"source":"acme","annotations":{"acme.io/a":{"status":"supported","note":"same"}}}]`, wantErr: "incomplete detection rules"},
+		{name: "no annotations", input: `[{"source":"acme","detect":{"ingressClasses":["acme"],"annotationPrefixes":["acme.io/"]}}]`, wantErr: "has no annotations"},
+		{name: "duplicate source", input: `[{"source":"acme","detect":{"ingressClasses":["acme"],"annotationPrefixes":["acme.io/"]},"annotations":{"acme.io/a":{"status":"supported","note":"same"}}},{"source":"acme","detect":{"ingressClasses":["acme"],"annotationPrefixes":["acme.io/"]},"annotations":{"acme.io/a":{"status":"supported","note":"same"}}}]`, wantErr: "is duplicated"},
+		{name: "invalid status", input: `[{"source":"acme","detect":{"ingressClasses":["acme"],"annotationPrefixes":["acme.io/"]},"annotations":{"acme.io/a":{"status":"maybe","note":"same"}}}]`, wantErr: "invalid status"},
+		{name: "missing note", input: `[{"source":"acme","detect":{"ingressClasses":["acme"],"annotationPrefixes":["acme.io/"]},"annotations":{"acme.io/a":{"status":"supported"}}}]`, wantErr: "has no note"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseCoverage([]byte(tt.input))
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, got, tt.wantLen)
+		})
+	}
+}
+
+func TestParseLegacyConfigCoverage(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name: "full resource",
+			input: `apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+spec:
+  migrationCoverage:
+    - source: acme
+      detect:
+        ingressClasses: [acme]
+        annotationPrefixes: [acme.io/]
+      annotations:
+        acme.io/a:
+          status: supported
+          note: same
+`,
+		},
+		{
+			name: "list",
+			input: `items:
+  - spec:
+      migrationCoverage:
+        - source: acme
+          detect:
+            ingressClasses: [acme]
+            annotationPrefixes: [acme.io/]
+          annotations:
+            acme.io/a:
+              status: supported
+              note: same
+`,
+		},
+		{
+			name: "bare spec",
+			input: `migrationCoverage:
+  - source: acme
+    detect:
+      ingressClasses: [acme]
+      annotationPrefixes: [acme.io/]
+    annotations:
+      acme.io/a:
+        status: supported
+        note: same
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found := ParseLegacyConfigCoverage([]byte(tt.input))
+			assert.True(t, found)
+			require.Len(t, got, 1)
+			assert.Equal(t, "acme", got[0].Source)
+		})
+	}
+}
+
+func TestParseLegacyConfigCoveragePresence(t *testing.T) {
+	coverage, found := ParseLegacyConfigCoverage([]byte("haproxyConfig: {}"))
+	assert.False(t, found)
+	assert.Empty(t, coverage)
+
+	coverage, found = ParseLegacyConfigCoverage([]byte("migrationCoverage: []"))
+	assert.True(t, found)
+	assert.Empty(t, coverage)
+}
+
+func TestParseLegacyConfigCoverageIsBestEffort(t *testing.T) {
+	coverage, found := ParseLegacyConfigCoverage([]byte(`migrationCoverage:
+  - source: acme
+`))
+	assert.True(t, found)
+	assert.Empty(t, coverage)
+
+	coverage, found = ParseLegacyConfigCoverage([]byte(`migrationCoverage:
+  - source: acme
+    detect:
+      annotationPrefixes: [acme.io/]
+    annotations:
+      acme.io/a:
+        status: supported
+`))
+	assert.True(t, found)
+	require.Len(t, coverage, 1)
+	assert.Empty(t, coverage[0].Annotations["acme.io/a"].Note)
+
+	coverage, found = ParseLegacyConfigCoverage([]byte("migrationCoverage: invalid"))
+	assert.True(t, found)
+	assert.Empty(t, coverage)
 }

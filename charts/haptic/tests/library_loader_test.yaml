@@ -327,107 +327,36 @@ tests:
           path: spec.templatingSettings.extraContext.nginxHttpRedirectCode
           value: "301"
 
-  # migrationCoverage: each enabled vendor annotation library carries its own
-  # declaration on its own object; the controller concatenates across sources.
-  # Drift between declared coverage and the annotations the templates read is
-  # pinned by scripts/check-migration-coverage.sh.
-  - it: should omit migrationCoverage from every rendered object by default
-    set:
-      controller.templateLibraries.nginxIngress.enabled: true
-    asserts:
-      - notExists:
-          path: spec.migrationCoverage
-        documentIndex: 0
-      - notExists:
-          path: spec.migrationCoverage
-        documentIndex: 8
-
-  - it: should declare the ingress-nginx source shape on the nginx-ingress object
-    documentSelector:
-      path: metadata.name
-      value: haptic-config-nginx-ingress
-    set:
-      controller.config.includeMigrationCoverage: true
-      controller.templateLibraries.nginxIngress.enabled: true
-    asserts:
-      - lengthEqual:
-          path: spec.migrationCoverage
-          count: 1
-      - equal:
-          path: spec.migrationCoverage[0].source
-          value: ingress-nginx
-      - equal:
-          path: spec.migrationCoverage[0].detect.ingressClasses
-          value:
-            - nginx
-      - equal:
-          path: spec.migrationCoverage[0].detect.annotationPrefixes
-          value:
-            - nginx.ingress.kubernetes.io/
-      - equal:
-          path: spec.migrationCoverage[0].annotations["nginx.ingress.kubernetes.io/server-snippet"].status
-          value: dropped
-      - equal:
-          path: spec.migrationCoverage[0].annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"].status
-          value: different
-
-  - it: should declare the haproxy-ingress source shape on its own object
-    documentSelector:
-      path: metadata.name
-      value: haptic-config-haproxy-ingress
-    set:
-      controller.config.includeMigrationCoverage: true
-      controller.templateLibraries.haproxyIngress.enabled: true
-    asserts:
-      - lengthEqual:
-          path: spec.migrationCoverage
-          count: 1
-      - equal:
-          path: spec.migrationCoverage[0].source
-          value: haproxy-ingress
-      - equal:
-          path: spec.migrationCoverage[0].annotations["haproxy-ingress.github.io/auth-tls-strict"].status
-          value: dropped
-
-  - it: should declare the haproxytech source shape on its own object
-    documentSelector:
-      path: metadata.name
-      value: haptic-config-haproxytech
-    set:
-      controller.config.includeMigrationCoverage: true
-      controller.templateLibraries.haproxytech.enabled: true
-    asserts:
-      - lengthEqual:
-          path: spec.migrationCoverage
-          count: 1
-      - equal:
-          path: spec.migrationCoverage[0].source
-          value: haproxytech
-      - equal:
-          path: spec.migrationCoverage[0].detect.annotationPrefixes
-          value:
-            - haproxy.org/
-      # Reconciled discrepancy: the hand-written docs called `whitelist` a
-      # deprecated no-op, but the template reads it as an allow-list alias.
-      - equal:
-          path: spec.migrationCoverage[0].annotations["haproxy.org/whitelist"].status
-          value: different
-
-  - it: should declare the haptic-annotations source shape on its own object
+  - it: strips migration tooling data from annotation library objects
     documentSelector:
       path: metadata.name
       value: haptic-config-haptic-annotations
+    asserts:
+      - notExists:
+          path: spec._migrationCoverage
+      - notExists:
+          path: spec.migrationCoverage
+
+  - it: keeps migration tooling data out of the operator config object
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    asserts:
+      - notExists:
+          path: spec._migrationCoverage
+      - notExists:
+          path: spec.migrationCoverage
+
+  - it: rejects the removed migration coverage switch
     set:
       controller.config.includeMigrationCoverage: true
-      controller.templateLibraries.hapticAnnotations.enabled: true
     asserts:
-      - lengthEqual:
-          path: spec.migrationCoverage
-          count: 1
-      - equal:
-          path: spec.migrationCoverage[0].source
-          value: haptic-annotations
-      - equal:
-          path: spec.migrationCoverage[0].detect.annotationPrefixes
-          value:
-            - haproxy-haptic.org/
+      - failedTemplate:
+          errorMessage: controller.config.includeMigrationCoverage was removed because migration coverage is no longer a CRD field. Remove the value.
+
+  - it: rejects migration coverage under controller config
+    set:
+      controller.config.migrationCoverage: []
+    asserts:
+      - failedTemplate:
+          errorMessage: controller.config.migrationCoverage was removed because migration coverage is no longer a CRD field. Remove the value.

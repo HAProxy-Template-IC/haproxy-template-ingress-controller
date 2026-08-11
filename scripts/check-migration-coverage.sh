@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-migration-coverage.sh — pin the vendor annotation libraries' declared
-# migrationCoverage against the annotation keys their templates actually read.
+# _migrationCoverage against the annotation keys their templates actually read.
 #
 # For each vendor library the script:
 #   1. Extracts the READ set: every `"<prefix>/<key>"` QUOTED string literal in
@@ -12,11 +12,11 @@
 #      brittle comment-stripping. If the library imports
 #      `util-emit-annotation-cors`, the CORS suffixes that the shared macro
 #      reads dynamically (`prefix + "/cors-..."`) are added.
-#   2. Extracts the DECLARED set from the library's `migrationCoverage:` block
+#   2. Extracts the DECLARED set from the library's `_migrationCoverage:` block
 #      (key + status).
 #   3. Fails on drift in either direction:
 #        - undeclared-read: the template reads a key the coverage map doesn't
-#          declare → add the key to the library's migrationCoverage.
+#          declare → add the key to the library's _migrationCoverage.
 #        - declared-unread: the coverage map declares a key with status
 #          supported/different/fails that no template reads → the declaration
 #          is stale (or the status should be `dropped`, the one status that
@@ -43,14 +43,14 @@ cors_suffixes() {
 }
 
 # strip_non_template <files...> — emit file contents with top-level
-# `validationTests:` and `migrationCoverage:` blocks removed, so annotation
+# `validationTests:` and `_migrationCoverage:` blocks removed, so annotation
 # keys that appear ONLY as test fixtures or in the coverage declaration are
 # not miscounted as template "reads" (that would let a fixture silently
 # satisfy the stale-declaration guard). Both are column-0 keys; strip until
 # the next column-0 key or EOF.
 strip_non_template() {
   awk '
-    /^(validationTests|migrationCoverage):/ { skip = 1; next }
+    /^(validationTests|_migrationCoverage):/ { skip = 1; next }
     skip && /^[A-Za-z]/ { skip = 0 }
     !skip { print }
   ' "$@"
@@ -79,11 +79,11 @@ extract_read() {
 }
 
 # extract_declared <coverage-file> — `<key> <status>` pairs from the
-# migrationCoverage block (any indentation; keys are `<something>/<name>:`
+# _migrationCoverage block (any indentation; keys are `<something>/<name>:`
 # lines, the status is the next `status:` line).
 extract_declared() {
   awk '
-    /^migrationCoverage:/ { in_cov = 1; next }
+    /^_migrationCoverage:/ { in_cov = 1; next }
     in_cov && /^[A-Za-z_]/ { in_cov = 0 }
     !in_cov { next }
     /^[ ]+[a-z0-9.-]+\/[a-z0-9.-]+:[ ]*$/ {
@@ -109,8 +109,8 @@ check_library() {
     FAILED=1
     return
   fi
-  if ! grep -q '^migrationCoverage:' "$coverage_file"; then
-    echo "FAIL [$name]: $coverage_file has no top-level migrationCoverage: block"
+  if ! grep -q '^_migrationCoverage:' "$coverage_file"; then
+    echo "FAIL [$name]: $coverage_file has no top-level _migrationCoverage: block"
     FAILED=1
     return
   fi
@@ -120,7 +120,7 @@ check_library() {
   declared="$(extract_declared "$coverage_file")"
 
   if [ -z "$declared" ]; then
-    echo "FAIL [$name]: migrationCoverage block in $coverage_file declares no annotations"
+    echo "FAIL [$name]: _migrationCoverage block in $coverage_file declares no annotations"
     FAILED=1
     return
   fi
@@ -151,7 +151,7 @@ check_library() {
   undeclared="$(awk 'NR==FNR { d[$0]=1; next } !($0 in d)' \
     <(printf '%s\n' "$declared_keys") <(printf '%s\n' "$read_keys"))"
   if [ -n "$undeclared" ]; then
-    echo "FAIL [$name]: templates read annotations that migrationCoverage does not declare."
+    echo "FAIL [$name]: templates read annotations that _migrationCoverage does not declare."
     echo "  Add these keys to $coverage_file:"
     printf '    %s\n' $undeclared
     FAILED=1
@@ -164,7 +164,7 @@ check_library() {
   unread="$(awk 'NR==FNR { r[$0]=1; next } $2 != "dropped" && !($1 in r) { print $1 }' \
     <(printf '%s\n' "$read_keys") <(printf '%s\n' "$declared"))"
   if [ -n "$unread" ]; then
-    echo "FAIL [$name]: migrationCoverage declares non-dropped annotations that no template reads."
+    echo "FAIL [$name]: _migrationCoverage declares non-dropped annotations that no template reads."
     echo "  Remove them from $coverage_file, or reclassify as 'dropped' if intentionally inert:"
     printf '    %s\n' $unread
     FAILED=1
@@ -194,6 +194,6 @@ check_library haproxytech haproxy.org \
 if [ "$FAILED" -ne 0 ]; then
   echo
   echo "Migration coverage drift detected. Every annotation a vendor library reads"
-  echo "must be classified in its migrationCoverage declaration (and vice versa)."
+  echo "must be classified in its _migrationCoverage declaration (and vice versa)."
   exit 1
 fi

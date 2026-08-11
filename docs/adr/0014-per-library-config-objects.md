@@ -72,16 +72,18 @@ Leaving a merge on both sides would mean two implementations that drift, with
 makes, against the same vendored mergo, starting from the same empty accumulator.
 The semantics match by construction rather than by careful reimplementation.
 
-Two details are explicit rather than emergent:
+At adoption, two details were explicit rather than emergent:
 
-- **`migrationCoverage` concatenates.** It is a list of per-source declarations,
-  one per contributing library; an overwrite would keep only the last and make
-  `migrate-check` silently under-report. The chart's loader had the same special
-  case.
+- **`migrationCoverage` concatenated.** It was a list of per-source
+  declarations, so an overwrite would have retained only the last source.
 - **Underscore-prefixed top-level keys are stripped.** `_helm_load` and
-  `ssl.yaml`'s `_test_tls_*` YAML-anchor scratch values are chart-time-only. They
-  used to be dropped implicitly, because the emitter forwarded an explicit
-  allow-list of keys out of the merged accumulator.
+  `_test_tls_*` YAML-anchor scratch values are chart-time-only. They used to be
+  dropped implicitly because the emitter forwarded an explicit allow-list.
+
+An August 2026 amendment removed migration coverage from the runtime API. Its
+chart declaration is now `_migrationCoverage`; the playground build reads those
+declarations directly, while the generic underscore-key strip keeps them out of
+rendered objects.
 
 Equivalence was verified before the Helm merge was deleted: the merged spec is
 byte-identical to the pre-split output for the default, `+nginx-ingress` and

@@ -10,7 +10,7 @@ HAProxyTemplateConfig CRD schema, credentials management, environment variables,
 
 The controller SHALL be configured via HAProxyTemplateConfig Custom Resources with typed fields, serving as the primary configuration mechanism defining templates, watched resources, and auxiliary configuration.
 
-The controller SHALL accept an ORDERED LIST of such resources and merge them, later wins, before any validation or rendering. The MERGED result — not any single object — SHALL be the unit of completeness: fields the controller requires are optional per object and enforced after the merge. `migrationCoverage` SHALL accumulate across the set rather than being overwritten. Merge order SHALL come from the configured name list, never from object names, resourceVersions, or creation timestamps. A list of one SHALL behave identically to a single resource. See ADR-0014.
+The controller SHALL accept an ORDERED LIST of such resources and merge them, later wins, before any validation or rendering. The MERGED result — not any single object — SHALL be the unit of completeness: fields the controller requires are optional per object and enforced after the merge. Merge order SHALL come from the configured name list, never from object names, resourceVersions, or creation timestamps. A list of one SHALL behave identically to a single resource. See ADR-0014.
 
 #### Scenario: Controller reads configuration from CRD
 

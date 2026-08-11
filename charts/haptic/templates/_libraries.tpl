@@ -310,12 +310,6 @@ the cost of its source being stored in the release Secret.
         {{- $_ := unset $library $key }}
       {{- end }}
     {{- end }}
-    {{- /* migrationCoverage is 89 KB of pure metadata nothing in a cluster
-           reads; emitted only on request (!1492). The controller concatenates
-           it across sources, so each library keeps its own entry. */ -}}
-    {{- if not $context.Values.controller.config.includeMigrationCoverage }}
-      {{- $_ := unset $library "migrationCoverage" }}
-    {{- end }}
     {{- /* A name two LIBRARIES both declare is an error here — one render
            instead of one failed load. The controller enforces the same rule
            across objects (the operator's config, last in CRD_NAME, is the one
