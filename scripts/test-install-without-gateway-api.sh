@@ -43,10 +43,8 @@ k() { kubectl --context "$CTX" -n "$NS" "$@"; }
 docker image inspect haptic:test >/dev/null 2>&1 \
   || fail "haptic:test not found — run 'make docker-build-test' first"
 
-# `|| true`: under `set -o pipefail` a grep that legitimately matches nothing
-# would kill the script with no diagnostic.
 HAPROXY_VERSION="$(sh -c '. '"$REPO"'/versions.env && echo $DEFAULT_HAPROXY' 2>/dev/null || true)"
-HAPROXY_VERSION="${HAPROXY_VERSION:-$(sed -n 's/^haproxyVersion: *"\?\([0-9.]*\)"\?.*/\1/p' "$CHART/values.yaml" | head -1 || true)}"
+HAPROXY_VERSION="${HAPROXY_VERSION:-$(sed -n 's/^haproxyVersion: *"\?\([0-9.]*\)"\?.*/\1/p;T;q' "$CHART/values.yaml" || true)}"
 [ -n "$HAPROXY_VERSION" ] || fail "cannot determine haproxyVersion"
 
 info "cluster $CLUSTER (deliberately WITHOUT Gateway API)"
@@ -87,14 +85,16 @@ done
 if [ "$ready" != true ]; then
   echo "--- pods ---"; k get pods
   echo "--- controller log (errors) ---"
-  pod=$(k get pods -l app.kubernetes.io/component=controller --no-headers -o custom-columns=N:.metadata.name | head -1)
-  [ -n "$pod" ] && k logs "$pod" -c controller --tail=60 2>/dev/null | grep -iE '"level":"(ERROR|WARN)"|error' | tail -15
+  pod=$(k get pods -l app.kubernetes.io/component=controller -o name | sed -n '1p')
+  if [ -n "$pod" ]; then
+    k logs "$pod" -c controller --tail=60 2>/dev/null | grep -iE '"level":"(ERROR|WARN)"|error' | tail -15 || true
+  fi
   fail "HAProxy never became Ready — HAPTIC did not converge on a cluster without Gateway API"
 fi
 
 # Ready alone is not the contract: assert HAProxy is serving a config HAPTIC
 # rendered, not the bootstrap stub it starts with.
-hp=$(k get pods -l app.kubernetes.io/component=loadbalancer --no-headers -o custom-columns=N:.metadata.name | head -1)
+hp=$(k get pods -l app.kubernetes.io/component=loadbalancer -o name | sed -n '1p')
 [ -n "$hp" ] || fail "no HAProxy pod found"
 cfg="$(k exec "$hp" -c haproxy -- cat /etc/haproxy/haproxy.cfg 2>/dev/null || true)"
 [ -n "$cfg" ] || fail "could not read haproxy.cfg"
@@ -103,9 +103,9 @@ cfg="$(k exec "$hp" -c haproxy -- cat /etc/haproxy/haproxy.cfg 2>/dev/null || tr
 # section (charts/haptic/charts/base/library.yaml), so its presence distinguishes a
 # HAPTIC render from the image's bootstrap config.
 grep -q "default-path origin" <<<"$cfg" \
-  || { printf '%s\n' "$cfg" | head -40; fail "haproxy.cfg is not a HAPTIC render (no 'default-path origin') — the stub is being served"; }
+  || { sed -n '1,40p' <<<"$cfg"; fail "haproxy.cfg is not a HAPTIC render (no 'default-path origin') — the stub is being served"; }
 grep -qE '^frontend ' <<<"$cfg" \
-  || { printf '%s\n' "$cfg" | head -40; fail "haproxy.cfg has no frontend — nothing would be routed"; }
+  || { sed -n '1,40p' <<<"$cfg"; fail "haproxy.cfg has no frontend — nothing would be routed"; }
 
 lines=$(printf '%s\n' "$cfg" | wc -l)
 info "haproxy.cfg is a real render ($lines lines)"
