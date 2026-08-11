@@ -6,10 +6,11 @@ Webhook-side validator: implements the `DryRunValidator` interface that `pkg/con
 
 The validating admission webhook needs a synchronous answer to "would this proposed change render and validate cleanly?" — not via events, just a direct function call returning `allowed bool, reason string`. This component bridges that synchronous call into the controller's render-validate pipeline by:
 
-1. Receiving the proposed object from the webhook adapter (`ValidateDirect`).
-2. Building a `*stores.StoreOverlay` per admission verb (`NewStoreOverlayForCreate` / `…Update` / `…Delete`) and wrapping it in a `map[string]*stores.StoreOverlay` keyed by the resource type.
-3. Delegating render+validate to `pkg/controller/proposalvalidator.Component`'s `ValidateSync(ctx, overlays)`, which merges the overlay on top of the live stores for the duration of the call.
-4. Returning a flat allow/deny + simplified reason string (plus soft warnings) for the webhook response. Pluggable validators run inside the shared pipeline before this component receives the result.
+1. Receiving the proposed and old objects from the webhook adapter (`ValidateDirect`).
+2. Resolving the request GVK to its GVR, then finding every configured store alias for that GVR.
+3. Building one selector-aware `*stores.StoreOverlay` per alias.
+4. Delegating render+validate to `pkg/controller/proposalvalidator.Component`, which merges the overlays on top of the live stores for the duration of the call.
+5. Returning a flat allow/deny + simplified reason string (plus soft warnings) for the webhook response. Pluggable validators run inside the shared pipeline before this component receives the result.
 
 The component does not subscribe to any events. It does **not** run the chart's embedded `validationTests` — those are chart-author scenarios with their own fixtures, run in CI via `haptic-controller validate` / `make test-templates`, not per admission request.
 
@@ -20,9 +21,10 @@ import (
     "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
 )
 
-component := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
+component, err := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
     ProposalValidator: proposalValidator, // sync-mode *proposalvalidator.Component
     RESTMapper:        restMapper,
+    WatchedResources:  cfg.WatchedResources,
     Logger:            logger,
 })
 
@@ -42,7 +44,7 @@ webhookComp := webhook.New(logger, &webhook.Config{
 }, restMapper, metricsRecorder)
 ```
 
-The webhook adapter then registers a `webhook.ValidationFunc` per GVK that pulls `(namespace, name, operation)` from the AdmissionRequest and calls `dryRunComp.ValidateDirect(ctx, gvk, namespace, name, object, operation)`.
+The webhook adapter then registers a `webhook.ValidationFunc` per GVK and calls `dryRunComp.ValidateDirect` with the request identity, operation, new object, and old object.
 
 ## Failure Modes
 
@@ -55,7 +57,7 @@ The webhook adapter then registers a `webhook.ValidationFunc` per GVK that pulls
 
 - [`pkg/controller/webhook`](../webhook/) — HTTPS adapter that calls `ValidateDirect`
 - [`pkg/controller/proposalvalidator`](../proposalvalidator/) — render-validate pipeline driven in sync mode
-- [`pkg/stores`](../../stores/) — `NewStoreOverlayForCreate` / `NewStoreOverlayForUpdate` / `NewStoreOverlayForDelete` are what `createOverlay` actually calls per admission verb
+- [`pkg/stores`](../../stores/) — overlay primitives used for each configured alias
 - `pkg/controller/dryrunvalidator/CLAUDE.md` — design notes (overlay-store pattern, why direct calls are acceptable here)
 
 ## License

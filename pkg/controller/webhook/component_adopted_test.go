@@ -258,7 +258,7 @@ func newAdoptingComponent(t *testing.T, server *pkgwebhook.Server, marker string
 // response identifies which iteration's table served it.
 type staticDenyValidator struct{ reason string }
 
-func (v staticDenyValidator) ValidateDirect(context.Context, string, string, string, any, string) (allowed bool, reason string, warnings []string) {
+func (v staticDenyValidator) ValidateDirect(context.Context, string, string, string, any, any, string) (allowed bool, reason string, warnings []string) {
 	return false, v.reason, nil
 }
 
@@ -266,7 +266,7 @@ type contextStateValidator struct{}
 
 type iterationContextKey struct{}
 
-func (contextStateValidator) ValidateDirect(ctx context.Context, _, _, _ string, _ any, _ string) (allowed bool, reason string, warnings []string) {
+func (contextStateValidator) ValidateDirect(ctx context.Context, _, _, _ string, _, _ any, _ string) (allowed bool, reason string, warnings []string) {
 	if active, _ := ctx.Value(iterationContextKey{}).(bool); !active {
 		return false, "iteration context missing", nil
 	}

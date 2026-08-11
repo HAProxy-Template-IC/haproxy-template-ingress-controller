@@ -480,6 +480,27 @@ func TestServer_HandleValidation_UpdateWithOldObject(t *testing.T) {
 	assert.True(t, responseReview.Response.Allowed)
 }
 
+func TestServer_ValidateDeleteWithOnlyOldObject(t *testing.T) {
+	server := newTestServer(t, &ServerConfig{})
+	server.RegisterValidator("v1.ConfigMap", func(ctx *ValidationContext) (bool, string, []string, error) {
+		assert.Nil(t, ctx.Object)
+		require.NotNil(t, ctx.OldObject)
+		assert.Equal(t, "default", ctx.Namespace)
+		assert.Equal(t, "test", ctx.Name)
+		return true, "", nil, nil
+	})
+
+	response := server.validate(&admissionv1.AdmissionRequest{
+		Kind:      metav1.GroupVersionKind{Version: "v1", Kind: "ConfigMap"},
+		Operation: admissionv1.Delete,
+		OldObject: runtime.RawExtension{
+			Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test","namespace":"default"}}`),
+		},
+	})
+
+	assert.True(t, response.Allowed)
+}
+
 func TestServer_HandleValidation_InvalidOldObject(t *testing.T) {
 	server := newTestServer(t, &ServerConfig{})
 

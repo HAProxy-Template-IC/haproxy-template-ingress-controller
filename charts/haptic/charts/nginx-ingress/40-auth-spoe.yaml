@@ -474,7 +474,8 @@ templateSnippets:
             // frontend-filters-114 emission) so one already-present bad
             // Ingress can never wedge an unrelated admission or a config
             // update. First reason wins.
-            var underAdmission = renderMode == "admission" && tostring(admissionSubject | dig("store") | fallback("")) == "ingresses" && tostring(admissionSubject | dig("namespace") | fallback("")) == ns && tostring(admissionSubject | dig("name") | fallback("")) == name
+            var subjectMatchesStore = tostring(admissionSubject | dig("store") | fallback("")) == "ingresses" || tostring(admissionSubject | dig("stores", "ingresses") | fallback(false)) == "true"
+            var underAdmission = renderMode == "admission" && subjectMatchesStore && tostring(admissionSubject | dig("namespace") | fallback("")) == ns && tostring(admissionSubject | dig("name") | fallback("")) == name
             var rejectIngress = func(reason string, message string) {
               if underAdmission { fail(message) }
               if rejectedKeys[key] { return }

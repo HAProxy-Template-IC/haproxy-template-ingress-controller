@@ -36,7 +36,7 @@ unregistered outcomes.
 
 `Start` resolves all rules and installs their validators as one generation. A
 request then passes structural checks and runs `DryRunValidator.ValidateDirect`
-against an overlay containing the proposed resource. The returned warnings are
+against selector-aware overlays for every configured alias of the request GVR. The returned warnings are
 included in the AdmissionResponse.
 
 Missing validators and canceled iteration validators deny with status 503. The

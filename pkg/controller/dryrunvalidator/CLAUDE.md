@@ -88,26 +88,29 @@ Create temporary store overlays that:
 
 Overlays are built directly by the component via `pkg/stores` constructors —
 there's no `StoreManager` involvement. Each admission request gets a fresh
-`*stores.StoreOverlay` keyed by the resource type derived from the admission
-GVK; the proposal validator merges the overlay with the live stores for the
-duration of the render+validate call only.
+`*stores.StoreOverlay` for every configured alias of the admission GVR. Each
+alias applies its own selectors to the old and new objects; the proposal
+validator merges those overlays with the live stores for the duration of the
+render+validate call only.
 
 ```go
 // pkg/controller/dryrunvalidator/component.go (validateWithOverlay)
 func (c *Component) validateWithOverlay(
     ctx context.Context,
-    gvk, namespace, name string, object any,
+    gvk, namespace, name string, object, oldObject any,
     operation, requestID string, // operation is the admission verb string
 ) (allowed bool, reason string, warnings []string) {
-    resourceType, err := c.mapGVKToResourceType(gvk) // "Ingress" -> "ingresses"
+    aliases, err := c.mapGVKToResourceAliases(gvk)
     if err != nil {
         return false, fmt.Sprintf("unsupported resource type: %v", err), nil
     }
 
-    overlay := c.createOverlay(namespace, name, object, operation, requestID)
-    overlays := map[string]*stores.StoreOverlay{resourceType: overlay}
+    overlays, subjectAliases, err := c.createOverlays(aliases, namespace, name, object, oldObject, operation)
+    if err != nil {
+        return false, err.Error(), nil
+    }
 
-    _, result := c.proposalValidator.ValidateSync(ctx, overlays)
+    _, result := c.proposalValidator.ValidateSyncWithAdmissionSubject(ctx, overlays, subjectAliases, namespace, name)
     if !result.Valid {
         return false, c.simplifyError(result.Phase, result.Error), result.Warnings
     }
@@ -133,14 +136,13 @@ The component talks to `pkg/stores` directly:
 The component speaks Kubernetes admission verbs, not an enum — `operation` is
 the literal admission string from `AdmissionReview.Request.Operation`:
 
-| String     | Overlay constructor                | Effect on the merged store              |
-|------------|------------------------------------|------------------------------------------|
-| `"CREATE"` | `stores.NewStoreOverlayForCreate`  | Add the new object on top of live data   |
-| `"UPDATE"` | `stores.NewStoreOverlayForUpdate`  | Replace the existing object by ns/name   |
-| `"DELETE"` | `stores.NewStoreOverlayForDelete`  | Remove the object by ns/name (no body)   |
+| String | Per-alias effect |
+|--------|------------------|
+| `"CREATE"` | Add when the new object matches the selector |
+| `"UPDATE"` | Update, add, delete, or ignore from the old/new selector transition |
+| `"DELETE"` | Delete when the old object matched the selector |
 
-Anything else falls through to a no-op overlay with a warning log — useful for
-detecting future admission verbs we haven't wired up yet.
+Anything else is denied because an unknown admission verb cannot be simulated.
 
 ### Memory Management
 
@@ -219,11 +221,12 @@ The DryRunValidator delegates the render+validate work to a `*proposalvalidator.
 ```go
 type Component struct {
     proposalValidator *proposalvalidator.Component // Performs the full pipeline
-    restMapper        meta.RESTMapper              // GVK -> watched-resource plural (RULE #1)
+    restMapper        meta.RESTMapper              // GVK -> GVR
+    aliasesByGVR      map[schema.GroupVersionResource][]resourceAlias
     logger            *slog.Logger
 }
 
-func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string) {
+func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object, oldObject any, operation string) (allowed bool, reason string, warnings []string) {
     // Build the overlay store, delegate render+validate to proposalValidator.ValidateSync,
     // return a flat allow/deny + reason and warnings.
     // No event hop — the webhook holds the request open and gets the answer synchronously.

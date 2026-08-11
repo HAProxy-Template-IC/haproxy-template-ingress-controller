@@ -41,6 +41,11 @@ THEN the webhook SHALL parse `request.Object.Raw` as unstructured, pass it to th
 WHEN an AdmissionReview with operation UPDATE arrives
 THEN the webhook SHALL parse both `request.Object.Raw` and `request.OldObject.Raw` as unstructured, making both available in the ValidationContext.
 
+#### Scenario: DELETE request with only an old object
+
+WHEN an AdmissionReview with operation DELETE carries no `request.Object.Raw`
+THEN the webhook SHALL parse `request.OldObject.Raw`, derive the resource identity from it, and make the absent new object explicit to the validator.
+
 #### Scenario: No validator registered for resource type
 
 WHEN an AdmissionReview arrives for a GVK with no registered validator
@@ -62,7 +67,7 @@ THEN the webhook SHALL NOT register a validator for that resource type.
 
 ### Requirement: GVK Resolution
 
-The webhook component SHALL use a Kubernetes RESTMapper (backed by API server discovery) to resolve plural resource names (e.g., `ingresses`) to their singular Kind (e.g., `Ingress`). The GVK string SHALL use the format `"group/version.Kind"` for named groups or `"version.Kind"` for core API resources.
+The webhook component SHALL use a Kubernetes RESTMapper (backed by API server discovery) to resolve plural resource names (e.g., `ingresses`) to their singular Kind (e.g., `Ingress`). The dry-run validator SHALL resolve the request GVK back to its GVR and map that GVR to every configured `watchedResources` key; it SHALL NOT use the Kubernetes plural as a store key. The GVK string SHALL use the format `"group/version.Kind"` for named groups or `"version.Kind"` for core API resources.
 
 #### Scenario: Core resource GVK format
 
@@ -73,6 +78,11 @@ THEN the GVK SHALL be formatted as `"v1.Service"`.
 
 WHEN a webhook rule references `ingresses` in group `networking.k8s.io` version `v1`
 THEN the GVK SHALL be formatted as `"networking.k8s.io/v1.Ingress"`.
+
+#### Scenario: Store alias differs from resource plural
+
+WHEN `watchedResources.applicationRoutes` targets `networking.k8s.io/v1/ingresses`
+THEN an Ingress admission request SHALL apply its overlay to `applicationRoutes`, not to an unconfigured `ingresses` store.
 
 ### Requirement: Dry-Run Render and HAProxy Validation
 
@@ -95,7 +105,7 @@ THEN the admission response SHALL be `Allowed: true`.
 
 ### Requirement: Overlay Store Pattern
 
-The DryRunValidator SHALL create a temporary store overlay to simulate the proposed resource change without modifying actual resource stores. For CREATE operations, the overlay SHALL add the new resource. For UPDATE operations, the overlay SHALL replace the existing resource. For DELETE operations, the overlay SHALL mark the resource for removal. The overlay SHALL reference actual stores for all other resource types. Overlays SHALL be discarded after validation completes.
+The DryRunValidator SHALL create temporary store overlays to simulate the proposed resource change without modifying actual resource stores. It SHALL create one overlay for every configured alias of the request GVR. Each overlay SHALL apply that alias's label and field selectors to the old and new objects. For CREATE operations, a matching overlay SHALL add the new resource. For UPDATE operations, remaining inside the selector SHALL replace the resource, entering it SHALL add the resource, and leaving it SHALL remove the resource. For DELETE operations, a matching overlay SHALL mark the resource for removal. Overlays SHALL be discarded after validation completes.
 
 #### Scenario: CREATE overlay adds resource
 
@@ -111,6 +121,16 @@ THEN the overlay store for `ingresses` SHALL contain the updated version of the 
 
 WHEN a CREATE admission request arrives for an Ingress
 THEN the overlay stores for `services`, `endpoints`, and other resource types SHALL read directly from actual stores without modification.
+
+#### Scenario: Two aliases target one GVR
+
+WHEN two watched-resource aliases target the same GVR with different selectors and a CREATE request arrives
+THEN the request SHALL build overlays for both aliases and each alias SHALL add the object only when its selector matches it.
+
+#### Scenario: Update crosses a selector boundary
+
+WHEN an UPDATE changes an object from matching an alias selector to not matching it
+THEN that alias's overlay SHALL remove the old object while an alias whose selector starts matching SHALL add the new object.
 
 ### Requirement: Error Simplification for Webhook Responses
 

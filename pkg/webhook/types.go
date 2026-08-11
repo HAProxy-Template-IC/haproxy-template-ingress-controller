@@ -71,7 +71,7 @@ type ValidationContext struct {
 	// Object is the resource object being validated (new version).
 	// For CREATE: the object being created
 	// For UPDATE: the new version of the object
-	// For DELETE: the object being deleted
+	// For DELETE: nil when the API server supplies only OldObject
 	// Stored as unstructured.Unstructured (same type as resource stores use).
 	Object *unstructured.Unstructured
 
