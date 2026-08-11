@@ -22,9 +22,13 @@ import (
 // Store holds the parsed current HAProxy configuration.
 // This is a utility component that can be called directly without events.
 type Store struct {
-	mu             sync.RWMutex
-	currentConfig  *parserconfig.StructuredConfig
-	contentHash    string         // Hash of last parsed content to skip redundant parsing
+	mu            sync.RWMutex
+	currentConfig *parserconfig.StructuredConfig
+	// contentHash is SHA-256 of the config text alone — the identity that decides
+	// whether a re-parse is needed. spec.checksum covers the auxiliary files too, so
+	// it changes on map-file churn that leaves the config byte-identical.
+	contentHash    string
+	lastChecksum   string         // Last seen spec.checksum, to skip decompression on an exact repeat
 	lastGeneration int64          // Last seen metadata.generation for fast spec-change detection
 	parser         *parser.Parser // Reused parser instance (DRY)
 	logger         *slog.Logger
@@ -54,6 +58,7 @@ func (s *Store) clear(reason string) {
 	s.mu.Lock()
 	s.currentConfig = nil
 	s.contentHash = ""
+	s.lastChecksum = ""
 	s.mu.Unlock()
 	s.logger.Debug(reason)
 }
@@ -111,14 +116,13 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 		}
 	}
 
-	// Fast path: Use spec.checksum (set by the controller when publishing the CRD)
-	// to skip decompression + SHA256 + parsing when content hasn't changed.
-	// This is the dominant optimization: generation changes on every spec update, but
-	// spec.checksum only changes when the actual config content differs.
+	// Fast path: an unchanged spec.checksum proves the config AND its auxiliary files are
+	// unchanged, so nothing below can differ. The converse does not hold — see the content
+	// hash below — so a mismatch here must fall through rather than decide anything.
 	specChecksum, _, _ := unstructured.NestedString(u.Object, "spec", "checksum")
 	if specChecksum != "" {
 		s.mu.RLock()
-		checksumMatch := s.contentHash == specChecksum && s.currentConfig != nil
+		checksumMatch := s.lastChecksum == specChecksum && s.currentConfig != nil
 		s.mu.RUnlock()
 
 		if checksumMatch {
@@ -143,21 +147,24 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 		content = decompressed
 	}
 
-	// Determine content hash: use spec.checksum if available, otherwise compute SHA256.
-	// The spec.checksum is set by the controller when publishing the CRD and covers
-	// the same content, so recomputing SHA256 is redundant.
-	hashStr := specChecksum
-	if hashStr == "" {
-		hash := sha256.Sum256([]byte(content))
-		hashStr = hex.EncodeToString(hash[:])
-	}
+	// Hash the config text itself. spec.checksum cannot stand in for this: it covers the
+	// auxiliary files too (dataplane.ComputeContentChecksum), so endpoint churn rewriting a
+	// map file bumps it while the config stays byte-identical — and a re-parse of an
+	// unchanged config costs tens of MB of retained heap at a few hundred routes.
+	hash := sha256.Sum256([]byte(content))
+	hashStr := hex.EncodeToString(hash[:])
 
 	s.mu.RLock()
-	unchanged := s.contentHash == hashStr
+	unchanged := s.contentHash == hashStr && s.currentConfig != nil
 	s.mu.RUnlock()
 
 	if unchanged {
-		s.logger.Debug("Current config unchanged (hash match), skipping parse")
+		s.mu.Lock()
+		s.lastChecksum = specChecksum
+		s.lastGeneration = generation
+		s.mu.Unlock()
+		s.logger.Debug("Current config unchanged (content hash match), skipping parse",
+			"generation", generation)
 		return
 	}
 
@@ -170,6 +177,7 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 	s.mu.Lock()
 	s.currentConfig = parsed
 	s.contentHash = hashStr
+	s.lastChecksum = specChecksum
 	s.lastGeneration = generation
 	s.mu.Unlock()
 	s.logger.Debug("Current config updated", "backends", len(parsed.Backends), "generation", generation)
