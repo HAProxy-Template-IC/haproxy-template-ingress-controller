@@ -242,6 +242,17 @@ func TestStatusUpdater_HandleConfigValidated_SkipsInitialVersion(t *testing.T) {
 	assert.Empty(t, getStatus(t, crd).ValidationStatus)
 }
 
+func TestStatusUpdater_HandleConfigValidated_SkipsActiveSnapshotRestore(t *testing.T) {
+	htc := newHTC()
+	u, crd := newStatusUpdaterFixture(t, htc)
+	restore := events.NewConfigValidatedEvent(nil, htc, "active", "")
+	restore.ActiveSnapshotRestore = true
+
+	u.handleConfigValidated(context.Background(), restore)
+
+	assert.Empty(t, getStatus(t, crd).ValidationStatus)
+}
+
 func TestStatusUpdater_HandleConfigValidated_WrongTemplateType(t *testing.T) {
 	u, crd := newStatusUpdaterFixture(t, newHTC())
 

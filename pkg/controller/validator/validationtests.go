@@ -47,7 +47,7 @@ const validationTestsBootstrapTimeout = 5 * time.Second
 // suite and any running `haproxy -c` stop at the boundary.
 //
 // This default binds only the LIVE change gate. The load-path gate
-// (controller.validateInitialConfigValidationTests) passes its own, much
+// (controller.validateInitialConfig) passes its own, much
 // larger budget: at startup there is no scatter-gather deadline, the outer
 // bound is the startup probe, and a cold contended node legitimately needs
 // more than 25s for engine compile + the haproxy -c sweep.
@@ -114,12 +114,8 @@ func SuiteValidationEnvelope(testCount int) time.Duration {
 // aggregation publishes ConfigInvalidEvent and the last-good config keeps
 // serving.
 //
-// The load path is guarded separately by the same suite: controller.runIteration
-// calls RunValidationTestsSync on the initial config and crash-loops the pod if
-// it fails (see that function and the startup gate in iteration.go). Both gates
-// share RunValidationTestsSync so a config's tests behave identically whether
-// they run on a live change or at load — the controller never serves a config
-// whose own tests fail.
+// The load path invokes the complete synchronous validator contract, which
+// shares RunValidationTestsSync with this adapter.
 //
 // It builds a throwaway engine from the candidate config (using the same
 // live-schema TypeBootstrapper the TemplateValidator uses, so typed access in

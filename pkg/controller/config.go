@@ -69,6 +69,24 @@ type InitialConfigBundle struct {
 	Sources []events.ConfigSourceRef
 }
 
+func initialConfigBundleFromSnapshot(snapshot *configchange.ValidatedSnapshot) (*InitialConfigBundle, error) {
+	if snapshot == nil || snapshot.RawConfig == nil || snapshot.Config == nil || snapshot.Credentials == nil {
+		return nil, errors.New("reload request has an incomplete validated snapshot")
+	}
+	crd, ok := snapshot.TemplateConfig.(*v1alpha1.HAProxyTemplateConfig)
+	if !ok || crd == nil {
+		return nil, fmt.Errorf("reload request has template config type %T", snapshot.TemplateConfig)
+	}
+	return &InitialConfigBundle{
+		Config:             snapshot.RawConfig,
+		CRD:                crd,
+		Credentials:        snapshot.Credentials,
+		ConfigVersion:      snapshot.ConfigVersion,
+		CredentialsVersion: snapshot.CredentialsVersion,
+		Sources:            append([]events.ConfigSourceRef(nil), snapshot.Sources...),
+	}, nil
+}
+
 func fetchAndValidateInitialConfig(
 	ctx context.Context,
 	k8sClient *client.Client,
@@ -192,28 +210,9 @@ func fetchAndValidateInitialConfig(
 // room for one retry iteration inside the startup probe window.
 const initialValidationTestsRunTimeout = 120 * time.Second
 
-// validateInitialConfigValidationTests runs the initial config's embedded
-// validationTests synchronously and returns an error if the suite fails, runs
-// incomplete, or cannot be set up. runIteration calls this on load so a restart
-// or upgrade can't quietly serve a HAProxyTemplateConfig that fails its own
-// tests — the live scatter-gather gate only blocks a change on an
-// already-running controller, which a fresh pod bypasses.
-//
-// On error, runIteration returns it, leaving the controller un-initialized
-// (/healthz 503). The liveness probe then restarts the pod, so a bad config
-// surfaces as CrashLoopBackOff and a rolling upgrade stalls on the old, good
-// pods instead of rolling out the break. A config with no validationTests
-// passes at zero cost.
-// validateInitialConfigValidationTests runs the fatal startup load gate. On
-// failure it best-effort records WHY on the CRD status (so an operator sees the
-// rejection via kubectl instead of only in a crash-looping pod's logs) and then
-// returns the error — the caller stays fail-closed and crash-loops.
-// cfg is the EFFECTIVE config (post installEffectiveConfig) — NOT
-// bundle.Config, which still carries the snippets and tests that the
-// resolution stripped for unavailable optional resources; compiling those
-// against a cluster without their schemas fails the gate spuriously. The
-// bundle contributes only the source refs for the status write-back.
-func validateInitialConfigValidationTests(
+// validateInitialConfig runs the complete config-validator contract before an
+// iteration adopts a freshly loaded or re-resolved effective config.
+func validateInitialConfig(
 	ctx context.Context,
 	cfg *coreconfig.Config,
 	bundle *InitialConfigBundle,
@@ -221,23 +220,13 @@ func validateInitialConfigValidationTests(
 	bootstrap validator.TypeBootstrapper,
 	logger *slog.Logger,
 ) error {
-	result, err := validator.RunValidationTestsSync(ctx, cfg, bootstrap, initialValidationTestsRunTimeout, logger)
-	if err != nil {
-		return fmt.Errorf("running validationTests: %w", err)
-	}
-	var failures []string
-	switch {
-	case result.Incomplete:
-		failures = []string{"validationTests did not complete within the suite timeout"}
-		err = errors.New(failures[0])
-	case !result.Passed:
-		failures = result.Failures
-		err = fmt.Errorf("validationTests failed: %s", strings.Join(result.Failures, "; "))
-	default:
+	failures := validator.ValidateConfigSync(
+		ctx, cfg, bootstrap, initialValidationTestsRunTimeout, logger)
+	if len(failures) == 0 {
 		return nil
 	}
-	reportLoadGateFailure(ctx, k8sClient, bundle, failures, logger)
-	return err
+	reportLoadGateFailure(ctx, k8sClient, bundle, failures.Flat(), logger)
+	return errors.New(failures.Error())
 }
 
 // reportLoadGateFailure best-effort records the startup load-gate rejection on

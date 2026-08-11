@@ -90,6 +90,7 @@ func TestConfigEvents(t *testing.T) {
 		assert.Equal(t, templateConfig, event.TemplateConfig)
 		assert.Equal(t, "v1", event.Version)
 		assert.Equal(t, "secret-v1", event.SecretVersion)
+		assert.False(t, event.ActiveSnapshotRestore)
 		assert.Equal(t, EventTypeConfigValidated, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})

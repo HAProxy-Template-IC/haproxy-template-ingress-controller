@@ -25,12 +25,12 @@ The sub-package tree in this directory mirrors those three layers. For the canon
 
 The controller runs a **reinitialization loop** (`iteration.go`). Each iteration:
 
-1. Fetch and validate the `HAProxyTemplateConfig` CRD and its credentials Secret.
+1. Fetch and validate the `HAProxyTemplateConfig` and credentials on first start, or consume the previous iteration's accepted snapshot once. A failed replacement attempt fetches live state on retry. A schema re-resolution runs all four config validators before activation.
 2. Build a fresh `EventBus` and register every component via `pkg/lifecycle`.
 3. Start resource watchers and wait for initial sync.
 4. `EventBus.Start()` releases buffered events.
 5. Start reconciliation components (renderer, validator, deployer scheduler, drift monitor, metrics adapter, commentator).
-6. Wait for a config change or context cancellation. On config change the iteration context is cancelled and the loop restarts with the new config.
+6. Observe reload requests throughout startup and steady state. A request cancels startup waits immediately and hands its exact config, discovery resolution, sources, and credentials to the next iteration.
 
 This is why the docs consistently say "no pod restart on config change" — the CRD watcher triggers a fresh iteration inside the same process.
 

@@ -189,6 +189,10 @@ func (u *StatusUpdater) HandleEvent(event busevents.Event) {
 
 // handleConfigValidated updates CRD status to reflect successful validation.
 func (u *StatusUpdater) handleConfigValidated(ctx context.Context, event *events.ConfigValidatedEvent) {
+	if event.ActiveSnapshotRestore {
+		return
+	}
+
 	// Skip synthetic bootstrap events
 	if event.Version == syntheticBootstrapVersion {
 		return

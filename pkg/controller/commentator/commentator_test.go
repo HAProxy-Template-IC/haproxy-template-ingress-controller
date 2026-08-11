@@ -227,6 +227,16 @@ func TestEventCommentator_GenerateInsight_ConfigurationEvents(t *testing.T) {
 		assertContainsAttr(t, attrs, "version", "v3.0.0")
 	})
 
+	t.Run("active snapshot restore", func(t *testing.T) {
+		event := events.NewConfigValidatedEvent(nil, nil, "v2.0.0", "s2.0.0")
+		event.ActiveSnapshotRestore = true
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Equal(t, "Active configuration state restored", insight)
+		assertContainsAttr(t, attrs, "version", "v2.0.0")
+	})
+
 	t.Run("ConfigInvalidEvent with errors", func(t *testing.T) {
 		validationErrors := map[string][]string{
 			"basic":    {"field required", "invalid format"},

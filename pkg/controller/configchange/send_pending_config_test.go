@@ -18,13 +18,13 @@ import (
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 )
 
-// sendPendingConfig is the debounce-timer callback that signals the
+// sendPendingReload is the debounce-timer callback that signals the
 // controller to reinitialize. It has THREE branches; only the
 // happy path is tested via the existing
 // TestConfigChangeHandler_HandleConfigValidated_SignalController.
 // The two early-exit / failure-mode branches were uncovered:
 //
-//  1. nil pendingConfig → silent no-op. Pendingset is cleared
+//  1. nil pendingReload → silent no-op. Pending state is cleared
 //     when the timer wasn't actually armed (e.g. drift trigger
 //     stops it). Without this guard, the function would panic on
 //     the channel send below (h.configChangeCh <- nil would
@@ -33,21 +33,21 @@ import (
 //     state).
 //
 //  2. Channel full (non-blocking select default) → log a warning
-//     AND clear pendingConfig anyway. The non-blocking select is
+//     AND clear pendingReload anyway. The non-blocking select is
 //     load-bearing: the controller's reinit channel is a bounded
 //     ring; if it's full, a blocking send would deadlock the
 //     debounce-timer goroutine, locking out future config changes.
-//     The cleared pendingConfig MUST also be observable so a
+//     The cleared pendingReload MUST also be observable so a
 //     regression that leaked pending state across timer cycles
 //     surfaces immediately.
 
-// pendingConfigHandler builds a minimal handler with the channel
+// pendingReloadHandler builds a minimal handler with the channel
 // pre-wired. We bypass NewConfigChangeHandler / Start to keep the
-// test focused on sendPendingConfig's logic.
-func pendingConfigHandler(t *testing.T, channelBuffer int) (handler *ConfigChangeHandler, configCh chan *coreconfig.Config) {
+// test focused on sendPendingReload's logic.
+func pendingReloadHandler(t *testing.T, channelBuffer int) (handler *ConfigChangeHandler, configCh chan *ReloadRequest) {
 	t.Helper()
 	_, logger := testutil.NewTestBusAndLogger()
-	ch := make(chan *coreconfig.Config, channelBuffer)
+	ch := make(chan *ReloadRequest, channelBuffer)
 	h := &ConfigChangeHandler{
 		logger:         logger,
 		configChangeCh: ch,
@@ -55,17 +55,17 @@ func pendingConfigHandler(t *testing.T, channelBuffer int) (handler *ConfigChang
 	return h, ch
 }
 
-func TestSendPendingConfig_NilPendingIsNoOp(t *testing.T) {
-	// pendingConfig defaults to nil. The function MUST early-return
+func TestSendPendingReload_NilPendingIsNoOp(t *testing.T) {
+	// pendingReload defaults to nil. The function MUST early-return
 	// without sending anything (and crucially without sending nil
 	// to the channel — which would type-check as a valid channel
 	// op but propagate nil through the controller's reinit path).
-	h, ch := pendingConfigHandler(t, 1)
-	require.Nil(t, h.pendingConfig,
-		"baseline: pendingConfig must start nil for the assertion to be meaningful")
+	h, ch := pendingReloadHandler(t, 1)
+	require.Nil(t, h.pendingReload,
+		"baseline: pendingReload must start nil for the assertion to be meaningful")
 
-	require.NotPanics(t, func() { h.sendPendingConfig() },
-		"nil pendingConfig MUST be a silent no-op — the early return "+
+	require.NotPanics(t, func() { h.sendPendingReload() },
+		"nil pendingReload MUST be a silent no-op — the early return "+
 			"protects against the case where the timer fires AFTER another "+
 			"path cleared the pending config (e.g. drift trigger pre-empts "+
 			"the debounce). Without it, the function would propagate nil "+
@@ -77,28 +77,28 @@ func TestSendPendingConfig_NilPendingIsNoOp(t *testing.T) {
 		"nil-pending guard MUST NOT push anything onto the reinit channel")
 }
 
-func TestSendPendingConfig_ChannelFullLogsAndClearsPending(t *testing.T) {
+func TestSendPendingReload_ChannelFullLogsAndClearsPending(t *testing.T) {
 	// Unbuffered channel + no reader → next send blocks. The
 	// non-blocking select MUST take the default branch (warn-log
 	// path) instead of deadlocking the debounce-timer goroutine.
-	h, ch := pendingConfigHandler(t, 0) // unbuffered: any send blocks
+	h, ch := pendingReloadHandler(t, 0) // unbuffered: any send blocks
 
 	cfg := &coreconfig.Config{}
-	h.pendingConfig = cfg
+	h.pendingReload = &ReloadRequest{Snapshot: &ValidatedSnapshot{Config: cfg}}
 
-	require.NotPanics(t, func() { h.sendPendingConfig() },
+	require.NotPanics(t, func() { h.sendPendingReload() },
 		"channel-full path MUST take the non-blocking-select default "+
 			"branch — a blocking send here would deadlock the debounce-"+
 			"timer goroutine, locking out future config changes")
 
-	// pendingConfig MUST be cleared even on the channel-full path —
-	// see the unconditional assignment at the top of sendPendingConfig.
+	// pendingReload MUST be cleared even on the channel-full path —
+	// see the unconditional assignment at the top of sendPendingReload.
 	// A regression that left it set would either fire the same config
 	// repeatedly on every timer tick (eventually succeeding when a
 	// reader appeared) or accumulate stale state across cycles.
-	assert.Nil(t, h.pendingConfig,
-		"pendingConfig MUST be cleared regardless of send outcome — "+
-			"the unconditional clear at the top of sendPendingConfig is "+
+	assert.Nil(t, h.pendingReload,
+		"pendingReload MUST be cleared regardless of send outcome — "+
+			"the unconditional clear at the top of sendPendingReload is "+
 			"the contract that prevents the same pending value from being "+
 			"re-sent on every timer cycle")
 

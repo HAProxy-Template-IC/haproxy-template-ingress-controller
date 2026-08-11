@@ -98,6 +98,28 @@ func TestComponent_ConfigValidatedEvent(t *testing.T) {
 	assert.NotNil(t, discovered, "discovery event should be published")
 }
 
+func TestComponent_ActiveSnapshotRestoreRevertsCandidatePort(t *testing.T) {
+	bus, _ := testutil.NewTestBusAndLogger()
+	component := createTestComponent(t, bus)
+	activeA := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{Port: 5555}}
+	candidateB := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{Port: 6666}}
+
+	component.handleConfigValidated(events.NewConfigValidatedEvent(activeA, nil, "active-a", ""))
+	candidateEvent := events.NewConfigValidatedEvent(candidateB, nil, "candidate-b", "")
+	candidateEvent.CandidateGeneration = 1
+	component.handleConfigValidated(candidateEvent)
+
+	restore := events.NewConfigValidatedEvent(activeA, nil, "active-a", "")
+	restore.ActiveSnapshotRestore = true
+	component.handleConfigValidated(restore)
+
+	component.mu.Lock()
+	defer component.mu.Unlock()
+	assert.Equal(t, 5555, component.dataplanePort)
+	require.NotNil(t, component.discovery)
+	assert.Equal(t, 5555, component.discovery.dataplanePort)
+}
+
 func TestComponent_CredentialsUpdatedEvent(t *testing.T) {
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)

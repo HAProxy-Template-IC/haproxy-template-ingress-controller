@@ -10,6 +10,8 @@ sequenceDiagram
     participant Iteration as runIteration()
     participant EventBus
     participant Components
+    participant ConfigChangeHandler
+    participant ReloadAuthority
     participant ResourceWatcher as Resource<br/>Watcher
     participant CRDSingleWatcher as CRD/Secret<br/>SingleWatcher
     participant Reconciler
@@ -22,10 +24,10 @@ sequenceDiagram
         Note over Iteration,EventBus: 1. Setup Components (Stage 1)
         Iteration->>EventBus: Create EventBus(100)
         Iteration->>Components: Start validators, loaders, commentator
+        Iteration->>ReloadAuthority: Observe reload requests
 
-        Note over Iteration: 2. Fetch & Validate Initial Config (Stage 2)
-        Iteration->>Iteration: Fetch HAProxyTemplateConfig CRD & credentials Secret
-        Iteration->>Iteration: Parse & Validate
+        Note over Iteration: 2. Load Accepted Config (Stage 2)
+        Iteration->>Iteration: Fetch and validate on first start, or consume reload snapshot
 
         Note over Iteration,ResourceWatcher: 3. Setup Resource Watchers (Stage 3)
         Iteration->>ResourceWatcher: Create & Start
@@ -46,8 +48,10 @@ sequenceDiagram
         Iteration->>Iteration: Wait for config change or cancellation
 
         alt Config Change Detected
-            CRDSingleWatcher->>EventBus: ConfigValidatedEvent (new CRD spec)
-            Iteration->>Iteration: Cancel iteration context
+            CRDSingleWatcher->>EventBus: ConfigParsedEvent (new CRD spec)
+            EventBus->>ConfigChangeHandler: Validate latest candidate
+            ConfigChangeHandler->>ReloadAuthority: Accepted config snapshot
+            ReloadAuthority->>Iteration: Cancel iteration context
             Iteration-->>Main: Return nil (reinitialize)
         else Context Cancelled
             Iteration-->>Main: Return nil (shutdown)
@@ -60,14 +64,14 @@ sequenceDiagram
 The controller runs iterations that respond to configuration changes:
 
 1. **Component Setup (Stage 1)**: Create the EventBus and the config-management components (validators, loaders, commentator), plus the early infrastructure servers, so health and debug endpoints respond before the config is loaded.
-2. **Initial Config Fetch (Stage 2)**: Fetch and validate the `HAProxyTemplateConfig` CRD named by `--crd-name` (env `CRD_NAME`, default `haproxy-config`) and the credentials `Secret` referenced via `spec.credentialsSecretRef`, synchronously.
+2. **Config load (Stage 2)**: On first start, fetch and validate the `HAProxyTemplateConfig` and credentials `Secret`. The immediate iteration after a live change consumes the exact accepted raw/effective config, discovery resolution, sources, and credentials from the previous iteration; it doesn't fetch a newer candidate. The handoff is single-use, so a failed replacement attempt fetches live state on retry. Fresh loads and schema re-resolutions run Basic, Template, JSONPath, and `validationTests` before activation.
 3. **Resource Watchers (Stage 3)**: Create bulk watchers for every `spec.watchedResources` entry and wait for initial sync.
 4. **Config/Secret SingleWatchers (Stage 4)**: Create `pkg/k8s/watcher.SingleWatcher`s for the CRD and credentials Secret. These use immediate callbacks (no debouncing) so configuration updates reinitialize with no artificial delay.
-5. **Reconciliation & Observability (Stage 5)**: Create reconciliation components (Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, DriftPreventionMonitor) and observability components (Metrics, Debug HTTP server). Each subscribes in its constructor, and the initial trigger events are published — buffered — before the bus starts. Rendering and full HAProxy validation run synchronously inside `Pipeline.Execute` from the Coordinator's call stack ([Architecture Decision Record (ADR) 0001](../adr/0001-renderer-is-synchronous-not-event-adapter.md)) — neither has its own goroutine or event subscription. The config validators (Basic, Template, JSONPath) are Stage 1 scatter-gather participants over `ConfigValidationRequest`, not Stage 5 components.
+5. **Reconciliation & Observability (Stage 5)**: Create reconciliation components (Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, DriftPreventionMonitor) and observability components (Metrics, Debug HTTP server). Each subscribes in its constructor, and the initial trigger events are published — buffered — before the bus starts. Rendering and full HAProxy validation run synchronously inside `Pipeline.Execute` from the Coordinator's call stack ([Architecture Decision Record (ADR) 0001](../adr/0001-renderer-is-synchronous-not-event-adapter.md)) — neither has its own goroutine or event subscription. The config validators (Basic, Template, JSONPath, and `validationTests`) are Stage 1 scatter-gather participants over `ConfigValidationRequest`, not Stage 5 components.
 6. **EventBus Start**: Call `EventBus.Start()` to replay the buffered events and begin normal operation.
 7. **Leader Election, Webhook, Debug (Stages 6–8)**: Start leader election (Stage 6), the admission webhook when a TLS cert directory is mounted (Stage 7), and register debug variables and the full health checker (Stage 8).
-8. **Event Loop**: Wait for configuration changes or context cancellation.
-9. **Reinitialization**: When the CRD or Secret changes, cancel the iteration context to stop all components, then restart with the new settings.
+8. **Reload authority**: Observe the config-change channel from the beginning of the iteration. An accepted request cancels startup sync waits as well as the steady-state event loop.
+9. **Reinitialization**: The active snapshot and latest accepted candidate remain distinct. A newer parsed config retires the older candidate's reload reason and restores active state consumers; credential and schema reasons remain pending. A served-CRD change re-resolves the authoritative raw config before rebuilding, and the replacement CRD watch compares discovery once after sync to cover changes made during handoff.
 
 The stage numbers are the code's startup log labels (`Stage 1: Creating config management components` through `Stage 8: Registering debug variables and updating health checker` — see `pkg/controller/iteration.go` and its callees). `EventBus.Start()` carries no stage label of its own; it runs between Stages 5 and 6, after every component has subscribed.
 

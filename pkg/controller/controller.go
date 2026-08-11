@@ -45,7 +45,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/credentialsloader"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
@@ -583,8 +582,12 @@ func Run(
 		infra.MetricsServer = pkgmetrics.NewServer(fmt.Sprintf(":%d", metricsPort), prometheus.NewRegistry())
 	}
 
+	var startup *configchange.ReloadRequest
 	err = runIterations(procCtx, logger, RetryDelay, func() error {
-		return runIteration(procCtx, k8sClient, crdName, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, webhookPort, infra, logger)
+		result := &iterationResult{}
+		iterationErr := runIteration(procCtx, k8sClient, crdName, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, webhookPort, infra, startup, result, logger)
+		startup = nextIterationStartup(result)
+		return iterationErr
 	})
 	procCancel()
 	shutdownAt := <-shutdownStarted
@@ -677,7 +680,7 @@ type componentSetup struct {
 	IterCtx               context.Context
 	Cancel                context.CancelFunc
 	CancelCause           context.CancelCauseFunc
-	ConfigChangeCh        chan *coreconfig.Config
+	ConfigChangeCh        chan *configchange.ReloadRequest
 	ErrGroup              *errgroup.Group // Tracks all background goroutines for graceful shutdown
 	LeaderState           *leaderCallbackState
 
@@ -769,7 +772,7 @@ func setupComponents(
 	validationTestsValidator := validator.NewValidationTestsValidator(bus, logger, typeBootstrapper)
 
 	// Create config change channel for reinitialization signaling
-	configChangeCh := make(chan *coreconfig.Config, 1)
+	configChangeCh := make(chan *configchange.ReloadRequest, 1)
 
 	// Register validators for scatter-gather validation
 	validators := validator.AllValidatorNames()
