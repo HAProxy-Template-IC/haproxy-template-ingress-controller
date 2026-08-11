@@ -18,12 +18,12 @@ package deployer
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timers"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
@@ -59,12 +59,8 @@ type DriftPreventionMonitor struct {
 	logger                  *slog.Logger
 	driftPreventionInterval time.Duration
 
-	// Timer management protected by mutex
-	mu                 sync.Mutex
-	driftTimer         *time.Timer
-	driftTimerChan     <-chan time.Time
+	driftTimer         timers.SafeTimer
 	lastDeploymentTime time.Time
-	timerActive        bool
 
 	// Health check: stall detection for timer-based component
 	healthTracker *lifecycle.HealthTracker
@@ -152,12 +148,13 @@ func (m *DriftPreventionMonitor) Start(ctx context.Context) error {
 		case event := <-m.eventChan:
 			m.handleEvent(event)
 
-		case <-m.getDriftTimerChan():
+		case <-m.driftTimer.Chan():
+			m.driftTimer.Fired()
 			m.handleDriftTimerExpired()
 
 		case <-ctx.Done():
 			m.logger.Info("DriftPreventionMonitor shutting down", "reason", ctx.Err())
-			m.stopDriftTimer()
+			m.driftTimer.Stop()
 			return nil
 		}
 	}
@@ -189,8 +186,8 @@ func (m *DriftPreventionMonitor) handleDeploymentCompleted() {
 // This stops the drift timer since only the leader needs drift prevention.
 // The new leader will start their own drift timer when they acquire leadership.
 func (m *DriftPreventionMonitor) handleLostLeadership() {
+	m.driftTimer.Stop()
 	m.logger.Info("Lost leadership, stopping drift timer")
-	m.stopDriftTimer()
 }
 
 // handleDriftTimerExpired handles drift timer expiration.
@@ -200,9 +197,7 @@ func (m *DriftPreventionMonitor) handleDriftTimerExpired() {
 	// Record activity for health check stall detection
 	m.healthTracker.RecordActivity()
 
-	m.mu.Lock()
 	timeSinceLastDeployment := time.Since(m.lastDeploymentTime)
-	m.mu.Unlock()
 
 	m.logger.Debug("Drift prevention timer expired, triggering deployment",
 		"time_since_last_deployment", timeSinceLastDeployment)
@@ -221,53 +216,11 @@ func (m *DriftPreventionMonitor) handleDriftTimerExpired() {
 //
 // This should be called whenever a deployment completes or when the timer expires.
 func (m *DriftPreventionMonitor) resetDriftTimer() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	m.lastDeploymentTime = time.Now()
-
-	// Stop existing timer if any
-	if m.driftTimer != nil {
-		m.driftTimer.Stop()
-	}
-
-	// Create new timer
-	m.driftTimer = time.NewTimer(m.driftPreventionInterval)
-	m.driftTimerChan = m.driftTimer.C
-	m.timerActive = true
+	m.driftTimer.Reset(m.driftPreventionInterval)
 
 	m.logger.Debug("Drift prevention timer reset",
 		"next_trigger_in_ms", m.driftPreventionInterval.Milliseconds())
-}
-
-// stopDriftTimer stops the drift prevention timer.
-//
-// This should be called during shutdown.
-func (m *DriftPreventionMonitor) stopDriftTimer() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.driftTimer != nil {
-		m.driftTimer.Stop()
-		m.timerActive = false
-	}
-}
-
-// getDriftTimerChan returns the drift timer channel for select statements.
-//
-// Returns a closed channel if no timer is active to prevent blocking.
-func (m *DriftPreventionMonitor) getDriftTimerChan() <-chan time.Time {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.timerActive && m.driftTimerChan != nil {
-		return m.driftTimerChan
-	}
-
-	// Return closed channel to prevent blocking
-	closed := make(chan time.Time)
-	close(closed)
-	return closed
 }
 
 // HealthCheck implements the lifecycle.HealthChecker interface.

@@ -56,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Losing leadership now disables the drift-prevention timer without firing and re-arming it on the former leader.
 - On-demand exact lookups now return every resource sharing an index key even when only part of that bucket is warm in the cache.
 - Template resource lookups with no keys or more keys than `indexBy` now fail the render instead of silently omitting resources.
 - Watched-resource index components now preserve their boundaries, so values containing `/` no longer collide with another key or leak into partial `Fetch` results; empty and Unicode values use the same semantics in both store modes.

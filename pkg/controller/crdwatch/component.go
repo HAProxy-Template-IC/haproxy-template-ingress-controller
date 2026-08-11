@@ -40,6 +40,7 @@ import (
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/tools/cache"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timers"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
@@ -284,7 +285,8 @@ func (c *Component) runDebounceLoop(ctx context.Context) {
 func (c *Component) settle(ctx context.Context) bool {
 	equalStreak := 0
 	errorStreak := 0
-	timer := time.NewTimer(c.debounce)
+	var timer timers.SafeTimer
+	timer.Reset(c.debounce)
 	defer timer.Stop()
 	for {
 		select {
@@ -295,15 +297,10 @@ func (c *Component) settle(ctx context.Context) bool {
 			// invalidate any stability observed so far.
 			equalStreak = 0
 			errorStreak = 0
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
 			timer.Reset(c.debounce)
 			continue
-		case <-timer.C:
+		case <-timer.Chan():
+			timer.Fired()
 		}
 
 		reload, err := c.shouldReload()
