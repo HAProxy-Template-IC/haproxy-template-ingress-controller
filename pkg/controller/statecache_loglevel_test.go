@@ -114,3 +114,31 @@ func TestStateCache_HandleConfigValidated_NonEmptyLoggingLevelUpdatesLevel(t *te
 			"a regression here silently breaks live debugging without "+
 			"any visible error")
 }
+
+func TestStateCache_ActiveSnapshotRestoreRevertsCandidateState(t *testing.T) {
+	originalLevel := logging.GetLevel()
+	t.Cleanup(func() { logging.SetLevel(originalLevel) })
+	logging.SetLevel(logging.LevelNameWarn)
+
+	cache := NewStateCache(busevents.NewEventBus(100), nil, slog.Default())
+	activeA := &coreconfig.Config{}
+	cache.handleConfigValidated(events.NewConfigValidatedEvent(activeA, nil, "active-a", ""))
+
+	candidateB := &coreconfig.Config{
+		Logging: coreconfig.LoggingConfig{Level: logging.LevelNameDebug},
+	}
+	candidateEvent := events.NewConfigValidatedEvent(candidateB, nil, "candidate-b", "")
+	candidateEvent.CandidateGeneration = 1
+	cache.handleConfigValidated(candidateEvent)
+	require.Equal(t, logging.LevelNameDebug, logging.GetLevel())
+
+	restore := events.NewConfigValidatedEvent(activeA, nil, "active-a", "")
+	restore.ActiveSnapshotRestore = true
+	cache.handleConfigValidated(restore)
+
+	stored, version, err := cache.GetConfig()
+	require.NoError(t, err)
+	assert.Same(t, activeA, stored)
+	assert.Equal(t, "active-a", version)
+	assert.Equal(t, logging.LevelNameWarn, logging.GetLevel())
+}

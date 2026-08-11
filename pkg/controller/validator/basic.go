@@ -58,11 +58,7 @@ func (v *BasicValidator) HandleRequest(req *events.ConfigValidationRequest) {
 		return
 	}
 
-	// Validate basic structure using existing validation function
-	var errors []string
-	if err := coreconfig.ValidateStructure(cfg); err != nil {
-		errors = append(errors, err.Error())
-	}
+	errors := validateBasic(cfg)
 
 	// Publish validation response
 	valid := len(errors) == 0
@@ -86,4 +82,11 @@ func (v *BasicValidator) HandleRequest(req *events.ConfigValidationRequest) {
 			"duration_ms", duration.Milliseconds(),
 			"error_count", len(errors))
 	}
+}
+
+func validateBasic(cfg *coreconfig.Config) []string {
+	if err := coreconfig.ValidateStructure(cfg); err != nil {
+		return []string{err.Error()}
+	}
+	return nil
 }

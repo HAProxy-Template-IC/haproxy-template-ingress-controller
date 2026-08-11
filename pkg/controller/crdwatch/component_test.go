@@ -277,6 +277,50 @@ func TestComponent_InitialSyncBaselineIgnored(t *testing.T) {
 	assert.False(t, triggered.Load(), "pre-sync baseline adds must not trigger a reload")
 }
 
+func TestComponent_PostSyncResolutionCheckClosesIterationGap(t *testing.T) {
+	k8sClient, blockingWatch := newBlockingCRDWatchClient()
+	var calls atomic.Int64
+	triggered := make(chan struct{}, 1)
+	c := New(k8sClient, map[string]bool{"g.io": true}, func() (bool, error) {
+		if calls.Add(1) == 1 {
+			return false, errors.New("transient discovery blip")
+		}
+		return true, nil
+	}, func() {
+		select {
+		case triggered <- struct{}{}:
+		default:
+		}
+	}, slog.Default())
+	c.debounce = time.Millisecond
+	c.recheckInterval = time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- c.Start(ctx) }()
+
+	select {
+	case <-triggered:
+	case <-time.After(time.Second):
+		t.Fatal("post-sync resolution check did not detect the iteration-gap change")
+	}
+	assert.GreaterOrEqual(t, calls.Load(), int64(2), "transient errors must be retried")
+
+	cancel()
+	select {
+	case <-blockingWatch.stopStarted:
+	case <-time.After(time.Second):
+		t.Fatal("CRD watch was not stopped")
+	}
+	close(blockingWatch.release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("CRD watch did not stop")
+	}
+}
+
 func TestComponent_StartWaitsForInformerStop(t *testing.T) {
 	k8sClient, blockingWatch := newBlockingCRDWatchClient()
 	c := New(k8sClient, map[string]bool{"g.io": true}, func() (bool, error) {

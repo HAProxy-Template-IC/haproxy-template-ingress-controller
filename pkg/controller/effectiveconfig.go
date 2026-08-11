@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/crdwatch"
 
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
@@ -136,40 +137,28 @@ func (c *DiscoveryServedChecker) TransientErr() error {
 	return c.transientErr
 }
 
-// installEffectiveConfig is runIteration's step 2.4: derive the effective
-// config, expose the resolution on /debug/vars/effectiveConfigResolution, and
-// install the same transformation on the live config-change path (the
-// ConfigChangeHandler) so scatter-gather validators judge exactly what a
-// reinitialized iteration would load. A fresh discovery checker per call:
-// CRDs installed between config loads must be seen.
-func installEffectiveConfig(
+// configureEffectiveConfig exposes an accepted resolution, installs the same
+// resolver on the live config-change path, and watches for schema changes.
+func configureEffectiveConfig(
 	ctx context.Context,
-	cfg *coreconfig.Config,
+	snapshot *configchange.ValidatedSnapshot,
 	k8sClient *client.Client,
 	setup *componentSetup,
 	infra *persistentInfra,
 	logger *slog.Logger,
-) (*coreconfig.Config, error) {
-	effective, resolution, err := resolveEffectiveConfig(ctx, cfg, k8sClient, logger)
-	if err != nil {
-		return nil, fmt.Errorf("resolving effective config: %w", err)
-	}
-
+) {
 	infra.IntrospectionRegistry.Publish("effectiveConfigResolution",
-		introspection.Func(func() (any, error) { return resolution, nil }))
+		introspection.Func(func() (any, error) { return snapshot.Resolution, nil }))
 
-	setup.ConfigChangeHandler.SetEffectiveResolver(func(c *coreconfig.Config) (*coreconfig.Config, error) {
-		resolved, _, resolveErr := resolveEffectiveConfig(ctx, c, k8sClient, logger)
-		return resolved, resolveErr
+	setup.ConfigChangeHandler.SetEffectiveResolver(func(c *coreconfig.Config) (*configchange.ResolvedConfig, error) {
+		resolved, resolution, resolveErr := resolveEffectiveConfig(ctx, c, k8sClient, logger)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		return &configchange.ResolvedConfig{Config: resolved, Resolution: resolution}, nil
 	})
 
-	// The CRD watch re-resolves on relevant CRD changes and reloads the
-	// iteration when the outcome differs. Note: `cfg` here is the RAW config
-	// (candidate lists intact) — the watch groups and re-resolution must see
-	// the candidates of currently-unavailable optional resources too.
-	startCRDWatch(ctx, setup, cfg, effective, resolution, k8sClient, logger)
-
-	return effective, nil
+	startCRDWatch(ctx, setup, snapshot, k8sClient, logger)
 }
 
 // startCRDWatch launches the CRD watch (runIteration step 4.2). Groups come
@@ -182,12 +171,12 @@ func installEffectiveConfig(
 func startCRDWatch(
 	ctx context.Context,
 	setup *componentSetup,
-	rawCfg *coreconfig.Config,
-	effectiveCfg *coreconfig.Config,
-	resolution *coreconfig.Resolution,
+	snapshot *configchange.ValidatedSnapshot,
 	k8sClient *client.Client,
 	logger *slog.Logger,
 ) {
+	rawCfg := snapshot.RawConfig
+	resolution := snapshot.Resolution
 	crdWatch := crdwatch.New(k8sClient, crdwatch.RelevantGroups(rawCfg),
 		func() (bool, error) {
 			_, freshResolution, resolveErr := resolveEffectiveConfig(ctx, rawCfg, k8sClient, logger)
@@ -205,10 +194,7 @@ func startCRDWatch(
 			return !resolution.Equal(freshResolution), nil
 		},
 		func() {
-			select {
-			case setup.ConfigChangeCh <- effectiveCfg:
-			default: // a reload is already queued; it subsumes this one
-			}
+			setup.ConfigChangeHandler.RequestEffectiveReload()
 		},
 		logger)
 	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "crd watch", crdWatch.Start)

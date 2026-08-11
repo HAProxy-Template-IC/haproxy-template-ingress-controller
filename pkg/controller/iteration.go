@@ -22,9 +22,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
@@ -118,6 +120,8 @@ func runIteration(
 	debugPort int,
 	webhookPort int,
 	infra *persistentInfra,
+	startup *configchange.ReloadRequest,
+	result *iterationResult,
 	logger *slog.Logger,
 ) (iterationErr error) {
 	logger.Info("Starting controller iteration")
@@ -133,8 +137,10 @@ func runIteration(
 	// gate below, so it's hoisted to a local rather than constructed inline.
 	typeBootstrapper := newIterationTypeBootstrapper(k8sClient, logger)
 	setup := setupComponents(ctx, infra.IntrospectionRegistry, infra.eventDropMetrics, typeBootstrapper, crdName, logger)
+	reloadAuthority := &iterationReloadAuthority{}
+	startIterationReloadObserver(setup, reloadAuthority)
 	defer func() {
-		iterationErr = completeIteration(setup, iterationErr, logger)
+		iterationErr = completeIterationWithReload(setup, reloadAuthority, result, iterationErr, logger)
 	}()
 
 	// 0.25. Create EventBuffer early (subscribes in constructor)
@@ -152,53 +158,12 @@ func runIteration(
 		return err
 	}
 
-	// 1+2. Wait for the HAProxyTemplateConfig to exist (fresh-install race),
-	// then fetch and validate it together with the credentials Secret.
-	bundle, err := waitAndLoadInitialConfig(setup.IterCtx, k8sClient, crdName, secretName, state, logger)
+	active, bundle, err := loadAcceptedIterationConfig(
+		setup, state, startup, k8sClient, crdName, secretName, typeBootstrapper, infra, logger)
 	if err != nil {
 		return err
 	}
-	cfg, crd, creds := bundle.Config, bundle.CRD, bundle.Credentials
-
-	// 2.4. Resolve watched-resource candidate versions against live discovery
-	// and derive the EFFECTIVE config: resolved entries carry the served
-	// version in APIVersion, unavailable optional resources are dropped, and
-	// snippets/tests requiring them are stripped. Everything downstream (the
-	// validationTests gate, watchers, typebootstrap, webhook, dry-run,
-	// testrunner, render context) consumes the effective config, so the
-	// literal-APIVersion consumers need no version awareness of their own.
-	// A required-but-unserved resource errors here — failing the iteration
-	// fast (retried by the run loop) instead of hanging in informer sync.
-	// The CRD watch started alongside re-resolves on relevant CRD changes so
-	// late installation, in-place upgrade, and serving removal converge at
-	// runtime (no helm operation, no pod restart).
-	cfg, err = installEffectiveConfig(setup.IterCtx, cfg, k8sClient, setup, infra, logger)
-	if err != nil {
-		return err
-	}
-
-	// 2.5. Fail-closed on the initial config's embedded validationTests. A
-	// running controller already rejects a live CRD change whose tests fail (the
-	// scatter-gather reinit gate), but a fresh pod — every helm upgrade restarts
-	// the controllers — loads the config after only structural validation. Run
-	// the suite here so a restart/upgrade can't quietly serve a config that fails
-	// its own tests. Returning an error keeps the controller un-initialized
-	// (/healthz 503) and the liveness probe restarts the pod, so the bad config
-	// surfaces as CrashLoopBackOff and a rolling upgrade stalls on the old, good
-	// pods. No validationTests in the config → zero-cost pass.
-	// On failure this records WHY on the CRD status (so an operator sees the
-	// rejection via `kubectl get/describe` rather than only in this crash-looping
-	// pod's logs) and then returns the error — the gate stays fail-closed.
-	if err := validateInitialConfigValidationTests(setup.IterCtx, cfg, bundle, k8sClient, typeBootstrapper, logger); err != nil {
-		return fmt.Errorf("initial HAProxyTemplateConfig %q failed validationTests on load: %w", crdName, err)
-	}
-
-	// Mark config as loaded and record initial CRD/Secret versions so the
-	// bootstrap watcher events don't trigger redundant reinitialization.
-	// Later events with different versions still flow through
-	// configChangeCh and trigger iteration restart — that's how
-	// credentials rotation reaches the controller.
-	finalizeConfigLoad(state, setup, bundle.ConfigVersion, bundle.CredentialsVersion)
+	cfg, crd, creds := active.Config, bundle.CRD, bundle.Credentials
 
 	// 3. Setup resource watchers
 	resourceWatcher, err := setupResourceWatchers(setup, cfg, k8sClient, logger)
@@ -294,7 +259,98 @@ func runIteration(
 	if err := finishIterationStartup(setup, state, infra, logger); err != nil {
 		return err
 	}
-	return waitForIterationExit(setup, logger)
+	result.Reload, err = waitForIterationExit(setup, reloadAuthority, logger)
+	return err
+}
+
+type iterationResult struct {
+	Reload *configchange.ReloadRequest
+}
+
+func nextIterationStartup(result *iterationResult) *configchange.ReloadRequest {
+	if result == nil {
+		return nil
+	}
+	return result.Reload
+}
+
+func loadAcceptedIterationConfig(
+	setup *componentSetup,
+	state *configState,
+	startup *configchange.ReloadRequest,
+	k8sClient *client.Client,
+	crdName string,
+	secretName string,
+	typeBootstrapper validator.TypeBootstrapper,
+	infra *persistentInfra,
+	logger *slog.Logger,
+) (*configchange.ValidatedSnapshot, *InitialConfigBundle, error) {
+	// The first iteration loads live state. Later iterations consume the exact
+	// accepted snapshot carried by the reload request.
+	bundle, err := loadIterationBundle(setup.IterCtx, k8sClient, crdName, secretName, state, startup, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// A direct config reload already passed every live validator. Fresh startup
+	// and served-CRD changes resolve against discovery and run the load gate.
+	cfg, resolution, alreadyValidated, err := effectiveConfigForIteration(
+		setup.IterCtx, startup, bundle.Config, k8sClient, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !alreadyValidated {
+		if err := validateInitialConfig(setup.IterCtx, cfg, bundle, k8sClient, typeBootstrapper, logger); err != nil {
+			return nil, nil, fmt.Errorf("initial HAProxyTemplateConfig %q failed validation on load: %w", crdName, err)
+		}
+	}
+
+	active := &configchange.ValidatedSnapshot{
+		RawConfig:          bundle.Config,
+		Config:             cfg,
+		Resolution:         resolution,
+		TemplateConfig:     bundle.CRD,
+		ConfigVersion:      bundle.ConfigVersion,
+		Credentials:        bundle.Credentials,
+		CredentialsVersion: bundle.CredentialsVersion,
+		Sources:            bundle.Sources,
+	}
+	setup.ConfigChangeHandler.SetInitialSnapshot(active)
+	configureEffectiveConfig(setup.IterCtx, active, k8sClient, setup, infra, logger)
+	finalizeConfigLoad(state, setup, bundle.ConfigVersion, bundle.CredentialsVersion)
+	return active, bundle, nil
+}
+
+func loadIterationBundle(
+	ctx context.Context,
+	k8sClient *client.Client,
+	crdName string,
+	secretName string,
+	state *configState,
+	startup *configchange.ReloadRequest,
+	logger *slog.Logger,
+) (*InitialConfigBundle, error) {
+	if startup != nil {
+		return initialConfigBundleFromSnapshot(startup.Snapshot)
+	}
+	return waitAndLoadInitialConfig(ctx, k8sClient, crdName, secretName, state, logger)
+}
+
+func effectiveConfigForIteration(
+	ctx context.Context,
+	startup *configchange.ReloadRequest,
+	rawCfg *coreconfig.Config,
+	k8sClient *client.Client,
+	logger *slog.Logger,
+) (*coreconfig.Config, *coreconfig.Resolution, bool, error) {
+	if startup != nil && !startup.Reasons.Has(configchange.ReloadReasonEffectiveConfig) {
+		return startup.Snapshot.Config, startup.Snapshot.Resolution, true, nil
+	}
+	effective, resolution, err := resolveEffectiveConfig(ctx, rawCfg, k8sClient, logger)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("resolving effective config: %w", err)
+	}
+	return effective, resolution, false, nil
 }
 
 func setupLeadershipAndWebhook(
@@ -334,20 +390,19 @@ func finishIterationStartup(
 
 func waitForIterationExit(
 	setup *componentSetup,
+	reloadAuthority *iterationReloadAuthority,
 	logger *slog.Logger,
-) error {
-	select {
-	case <-setup.IterCtx.Done():
-		err := iterationContextError(setup.IterCtx)
-		logger.Info("Controller iteration cancelled", "reason", err)
-		return err
-
-	case newConfig := <-setup.ConfigChangeCh:
+) (*configchange.ReloadRequest, error) {
+	<-setup.IterCtx.Done()
+	if reload := reloadAuthority.Latest(); reload != nil {
 		logger.Info("Configuration change detected, triggering reinitialization",
-			"new_config_version", fmt.Sprintf("%p", newConfig))
+			"new_config_version", reload.Snapshot.ConfigVersion)
 		logger.Info("Reinitialization triggered - starting new iteration")
-		return nil
+		return reload, nil
 	}
+	err := iterationContextError(setup.IterCtx)
+	logger.Info("Controller iteration cancelled", "reason", err)
+	return nil, err
 }
 
 func markIterationInitialized(setup *componentSetup, state *configState, infra *persistentInfra, logger *slog.Logger) {
@@ -381,6 +436,22 @@ func completeIteration(setup *componentSetup, iterationErr error, logger *slog.L
 		result = errors.Join(result, cause)
 	}
 	return result
+}
+
+func completeIterationWithReload(
+	setup *componentSetup,
+	authority *iterationReloadAuthority,
+	result *iterationResult,
+	iterationErr error,
+	logger *slog.Logger,
+) error {
+	if reload := authority.Latest(); reload != nil {
+		result.Reload = reload
+		if iterationErr == nil || isContextTermination(setup.IterCtx, iterationErr) {
+			iterationErr = nil
+		}
+	}
+	return completeIteration(setup, iterationErr, logger)
 }
 
 // maybeSetupWebhook sets up the webhook server when the chart has mounted a

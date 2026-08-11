@@ -152,9 +152,9 @@ func RelevantGroups(cfg *coreconfig.Config) map[string]bool {
 	return groups
 }
 
-// Start runs the CRD informer until the context is cancelled. Events observed
-// during the informer's initial sync are baseline, not changes — only
-// post-sync add/update/delete reaches the reload decision.
+// Start runs the CRD informer until the context is cancelled. Informer events
+// observed during initial sync are baseline; a post-sync resolution check
+// closes the gap between controller iterations before later events take over.
 func (c *Component) Start(ctx context.Context) error {
 	if len(c.groups) == 0 {
 		c.logger.Debug("No CRD-backed watched resources; CRD watch idle")
@@ -220,6 +220,12 @@ func (c *Component) Start(ctx context.Context) error {
 	}
 	c.synced.Store(true)
 	c.logger.Debug("CRD watch synced", "groups", len(c.groups))
+	// A CRD can change after the previous iteration stops but before this
+	// informer's baseline sync. Compare discovery once so that gap is visible.
+	select {
+	case c.pending <- struct{}{}:
+	default:
+	}
 
 	c.runDebounceLoop(ctx)
 	return nil

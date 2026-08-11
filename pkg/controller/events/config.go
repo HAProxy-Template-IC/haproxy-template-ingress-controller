@@ -153,6 +153,15 @@ type ConfigValidatedEvent struct {
 	Version       string
 	SecretVersion string
 
+	// CandidateGeneration identifies a live config-change validation owned by
+	// ConfigChangeHandler. Zero denotes state published outside that handler.
+	CandidateGeneration uint64
+
+	// ActiveSnapshotRestore replays the running iteration's state after a newer
+	// parsed generation retires an accepted candidate. State consumers apply it;
+	// validation and reload consumers must not treat it as a new verdict.
+	ActiveSnapshotRestore bool
+
 	// Sources names every config of the merged set, in merge order.
 	Sources []ConfigSourceRef
 

@@ -108,7 +108,7 @@ The controller SHALL watch CustomResourceDefinitions (apiextensions.k8s.io), fil
 
 ### Requirement: Transient Discovery Errors Fail Resolution Instead of Stripping
 
-Only an authoritative NotFound answer from apiserver discovery SHALL count as "unserved". A transient discovery error (apiserver blip, aggregated-API hiccup) SHALL fail the whole resolution with an error instead of being treated as unserved — silently treating it as unserved would strip optional features and bounce the controller through a spurious reinitialization on every blip. At iteration start, a failed resolution retries through the existing iteration retry loop. During CRD-change re-resolution, a resolution error SHALL skip the reload; the debounced watch re-evaluates on subsequent CRD events.
+Only an authoritative NotFound answer from apiserver discovery SHALL count as "unserved". A transient discovery error (apiserver blip, aggregated-API hiccup) SHALL fail the whole resolution with an error instead of being treated as unserved — silently treating it as unserved would strip optional features and bounce the controller through a spurious reinitialization on every blip. At iteration start, a failed resolution retries through the existing iteration retry loop. During CRD-change re-resolution, a resolution error SHALL skip the reload; the debounced watch re-evaluates at its bounded retry cadence.
 
 #### Scenario: Discovery blip does not strip optional features
 
@@ -118,7 +118,7 @@ Only an authoritative NotFound answer from apiserver discovery SHALL count as "u
 #### Scenario: CRD-change re-resolution failure skips the reload
 
 - **WHEN** a relevant CRD change triggers re-resolution and the re-resolution fails
-- **THEN** no iteration reload SHALL fire; the watch SHALL re-evaluate on the next CRD event.
+- **THEN** no iteration reload SHALL fire from that error; the watch SHALL re-evaluate at its bounded retry cadence.
 
 #### Scenario: Authoritative NotFound is unserved
 
@@ -127,12 +127,17 @@ Only an authoritative NotFound answer from apiserver discovery SHALL count as "u
 
 ### Requirement: CRD-Watch Filtering, Debounce, and Reload Subsumption
 
-The CRD watch SHALL derive its relevant API groups from the RAW configuration's candidate lists, so the groups of currently-unavailable optional resources are watched too — an unavailable resource's CRD appearing is exactly the event the watch exists for. A CRD update SHALL trigger evaluation only when the CRD's spec changed (`metadata.generation` bumped) — covering served-version changes AND in-place schema-content upgrades, which field-level stripping depends on; status and metadata churn SHALL be ignored. Change bursts SHALL be debounced by 2 seconds (an install applies many CRDs at once). After the debounce window, the watch SHALL re-resolve against fresh discovery and a fresh schema fetcher, and request a reload only when the fresh resolution differs from the running iteration's resolution. A single inconclusive re-resolution SHALL NOT be accepted as final: the apiserver's discovery endpoint propagates a CRD apply asynchronously, and the CRD's later Established flip bumps no generation, so no further informer event arrives. The watch SHALL therefore re-check at a bounded cadence (5 seconds) after any re-resolution that yields no change or errors, until EITHER a re-resolution differs from the running one (reload, as above) OR the answer has been stable-equal for 3 consecutive checks since the last observed CRD event (accept "no change" and go quiet). Errored re-resolutions SHALL never trigger a reload or feature stripping directly, SHALL NOT count toward — and SHALL reset — the stability streak, and SHALL schedule the next recheck; a new CRD event SHALL restart the debounce window and both streaks. A PERSISTENT failure SHALL NOT idle in the recheck loop indefinitely: after 6 consecutive failed re-resolutions the watch SHALL escalate by triggering the reload anyway, so the iteration restart re-resolves on the startup path where a genuinely lost required resource fails fast and surfaces through the health endpoint and the iteration retry loop. Reload requests SHALL be posted non-blockingly onto the capacity-1 config-change channel: a reload already queued subsumes further requests.
+The CRD watch SHALL derive its relevant API groups from the RAW configuration's candidate lists, so the groups of currently-unavailable optional resources are watched too — an unavailable resource's CRD appearing is exactly the event the watch exists for. A CRD update SHALL trigger evaluation only when the CRD's spec changed (`metadata.generation` bumped) — covering served-version changes AND in-place schema-content upgrades, which field-level stripping depends on; status and metadata churn SHALL be ignored. After each new iteration's CRD informer completes its baseline sync, the watch SHALL compare fresh discovery with the active snapshot once, so a schema change made between the previous watch stopping and the new watch syncing cannot disappear into the baseline. Change bursts SHALL be debounced by 2 seconds (an install applies many CRDs at once). After the debounce window, the watch SHALL re-resolve against fresh discovery and a fresh schema fetcher, and request a reload only when the fresh resolution differs from the running iteration's resolution. A single inconclusive re-resolution SHALL NOT be accepted as final: the apiserver's discovery endpoint propagates a CRD apply asynchronously, and the CRD's later Established flip bumps no generation, so no further informer event arrives. The watch SHALL therefore re-check at a bounded cadence (5 seconds) after any re-resolution that yields no change or errors, until EITHER a re-resolution differs from the running one (reload, as above) OR the answer has been stable-equal for 3 consecutive checks since the last observed CRD event (accept "no change" and go quiet). Errored re-resolutions SHALL never trigger a reload or feature stripping directly, SHALL NOT count toward — and SHALL reset — the stability streak, and SHALL schedule the next recheck; a new CRD event SHALL restart the debounce window and both streaks. A PERSISTENT failure SHALL NOT idle in the recheck loop indefinitely: after 6 consecutive failed re-resolutions the watch SHALL escalate by triggering the reload anyway, so the iteration restart re-resolves on the startup path where a genuinely lost required resource fails fast and surfaces through the health endpoint and the iteration retry loop. A reload observer SHALL own the config-change channel from the beginning of each iteration and SHALL cancel every startup wait as soon as it accepts a request. Reload requests SHALL carry independent config, credential, and effective-resolution reasons; superseding one reason SHALL preserve the others.
 
 #### Scenario: Status-only CRD churn ignored
 
 - **WHEN** a watched-group CRD's status is updated without changing its served versions
 - **THEN** no re-resolution SHALL be scheduled.
+
+#### Scenario: Iteration handoff gap interrupts startup
+
+- **WHEN** a relevant CRD disappears after the previous iteration's watch stops, the replacement CRD watch observes the difference after its baseline sync, and a configured resource watcher is still waiting for its removed API to sync
+- **THEN** the reload observer SHALL accept the effective-resolution request and cancel the startup wait so the iteration can re-resolve or fail fast instead of wedging.
 
 #### Scenario: Install burst coalesces into one reload
 
@@ -154,14 +159,14 @@ The CRD watch SHALL derive its relevant API groups from the RAW configuration's 
 - **WHEN** re-resolution fails on 6 consecutive bounded rechecks after a relevant CRD event (for example a required resource's CRD was genuinely removed)
 - **THEN** the watch SHALL trigger a reload so the fault surfaces through the iteration restart's fail-fast path instead of hiding behind recheck warnings.
 
-#### Scenario: Queued reload subsumes later requests
+#### Scenario: Newer reload state replaces queued state
 
 - **WHEN** a reload is already queued on the config-change channel and another CRD change requests one
-- **THEN** the later request SHALL be dropped; the queued reload covers it.
+- **THEN** the handler SHALL retain every independent reload reason and request effective-config re-resolution from the newest still-authoritative raw config.
 
 ### Requirement: Live Config Validation Against the Effective Config
 
-On a live HAProxyTemplateConfig change, the config-change handler SHALL transform the parsed config into the effective config — running the same resolution as iteration start, via the installed effective resolver — BEFORE fanning it out to the scatter-gather validators, so validators judge exactly what a reinitialized iteration would load. A resolution failure (a required resource with no served version, or a transient discovery error) SHALL be published as a ConfigInvalidEvent, and the currently-running configuration SHALL keep serving. The scatter-gather envelope SHALL be 45 seconds. Superseded queued config loads SHALL be coalesced to the latest parsed config before validation.
+On a live HAProxyTemplateConfig change, the config-change handler SHALL transform the parsed config into the effective config — running the same resolution as iteration start, via the installed effective resolver — BEFORE fanning it out to the scatter-gather validators, so validators judge exactly what a reinitialized iteration would load. A resolution failure (a required resource with no served version, or a transient discovery error) SHALL be published as a ConfigInvalidEvent, and the currently-running configuration SHALL keep serving. The scatter-gather envelope SHALL be derived from the validation-suite budget and remain strictly larger than every validator's deadline. Each parsed candidate SHALL receive a local generation. The handler SHALL keep the running iteration's active snapshot separate from the latest accepted candidate. A newer parsed candidate SHALL retire the older candidate's validation outcome, leadership replay state, and config-reload reason and restore active-only subscribers to the running snapshot; credential and effective-resolution reasons SHALL remain pending. The restoration SHALL NOT report a new validation verdict or trigger another reload. Only the latest successful generation may publish an accepted-candidate `ConfigValidatedEvent`, install candidate leadership replay state, or request a config restart. The restart SHALL carry the authoritative raw and effective configs, discovery resolution, source generations, and credentials into the next iteration. The next iteration SHALL consume that snapshot rather than refetching a possibly newer CR. That handoff SHALL be single-use: if the replacement attempt fails before accepting another reload, its retry SHALL fetch and validate live state rather than replaying the consumed snapshot indefinitely. A direct config handoff SHALL use the already-completed live verdict. Every fresh load or served-CRD re-resolution SHALL run Basic, Template, JSONPath, and validationTests synchronously against the resulting effective config before activation, including the Template validator when no validationTests exist.
 
 #### Scenario: Validators see the effective config
 
@@ -176,7 +181,37 @@ On a live HAProxyTemplateConfig change, the config-change handler SHALL transfor
 #### Scenario: Superseded config loads skipped
 
 - **WHEN** several config edits queue while a validation is pending
-- **THEN** the handler SHALL validate only the latest queued config.
+- **THEN** the handler SHALL validate only the latest queued config and SHALL discard the in-flight candidate's outcome if it finishes later.
+
+#### Scenario: Validated snapshot owns the next iteration
+
+- **WHEN** config B passes live validation and config C reaches the apiserver before the current iteration exits
+- **THEN** the next iteration SHALL start from B's handed-off effective config, resolution, sources, and credentials; C SHALL remain a new candidate until it passes validation.
+
+#### Scenario: Failed replacement does not pin its consumed snapshot
+
+- **WHEN** the iteration consuming config B's accepted handoff fails before its config watchers start and config C is now live
+- **THEN** the retry SHALL fetch and validate C instead of retrying B indefinitely.
+
+#### Scenario: Invalid config preserves credential rotation
+
+- **WHEN** credentials rotate and a newer config candidate subsequently fails validation
+- **THEN** the credential reload SHALL remain pending and SHALL use the active config with the rotated credentials.
+
+#### Scenario: Newer credentials supersede startup replay
+
+- **WHEN** a credential update is queued during startup and a newer credential event is handled before that queue entry is replayed
+- **THEN** the startup entry SHALL be retired and the next iteration SHALL receive only the newer credentials.
+
+#### Scenario: Superseded queued candidate cannot reactivate
+
+- **WHEN** config B passes validation and queues a reload, then config C is parsed before the iteration's reload authority accepts B
+- **THEN** C SHALL retract B's queued config reason; an independent credential or schema reason SHALL use the active snapshot until C passes.
+
+#### Scenario: Newly active malformed template fails without validation tests
+
+- **WHEN** served-CRD re-resolution un-strips a malformed template snippet and the effective config contains zero validationTests
+- **THEN** synchronous Template validation SHALL reject the re-resolved config before activation.
 
 ### Requirement: Machine-Generated Requires Edges
 

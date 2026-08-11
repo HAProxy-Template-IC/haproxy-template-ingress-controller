@@ -76,7 +76,7 @@ type ConfigChangeHandler struct {
 	eventBus       *busevents.EventBus
 	eventChan      <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
 	logger         *slog.Logger
-	configChangeCh chan<- *coreconfig.Config
+	configChangeCh chan *ReloadRequest
 	validators     []string
 
 	// State replay for leadership transitions (prevents "late subscriber problem")
@@ -86,7 +86,7 @@ type ConfigChangeHandler struct {
 	// Coalesces rapid CRD config changes to prevent reinitialization from interrupting renders
 	debounceInterval time.Duration
 	debounceTimer    timers.SafeTimer
-	pendingConfig    *coreconfig.Config
+	pendingReload    *ReloadRequest
 
 	// Async-validation single-flight state, owned by the Start loop goroutine
 	// (validationDone is the only cross-goroutine member and is a channel).
@@ -108,10 +108,12 @@ type ConfigChangeHandler struct {
 	// strictly ordered: at most one validation is in flight, and a parsed
 	// event arriving meanwhile waits in queuedParsed (latest wins — a
 	// superseded config is never validated).
-	validationInFlight bool
-	queuedParsed       *events.ConfigParsedEvent
-	validationDone     chan struct{}
-	startupReplay      chan busevents.Event
+	validationInFlight  bool
+	queuedParsed        *validationCandidate
+	validationDone      chan validationOutcome
+	candidateGeneration uint64
+	startupReplay       chan struct{}
+	effectiveReload     chan struct{}
 
 	// Mutex for initialConfigVersion and reinitializationEnabled
 	mu sync.RWMutex
@@ -124,7 +126,7 @@ type ConfigChangeHandler struct {
 	// config would reject configs whose stripped snippets reference
 	// unavailable resources. Nil (tests, callers without discovery) means
 	// identity.
-	effectiveResolver func(*coreconfig.Config) (*coreconfig.Config, error)
+	effectiveResolver func(*coreconfig.Config) (*ResolvedConfig, error)
 
 	// Initial config version tracking to prevent infinite reinitialization loop
 	// When a new iteration starts, CRDWatcher triggers onAdd for the existing CRD,
@@ -147,8 +149,28 @@ type ConfigChangeHandler struct {
 	reinitializationEnabled bool
 
 	// Changes newer than the fetched startup versions are replayed after startup.
-	pendingStartupConfig      *events.ConfigValidatedEvent
+	pendingStartupConfig      *ValidatedSnapshot
 	pendingStartupCredentials *events.CredentialsUpdatedEvent
+
+	currentCredentials        *coreconfig.Credentials
+	currentCredentialsVersion string
+	activeSnapshot            *ValidatedSnapshot
+	acceptedCandidate         *ValidatedSnapshot
+	activeReplay              *events.ConfigValidatedEvent
+	credentialsDirty          bool
+}
+
+type validationCandidate struct {
+	generation uint64
+	event      *events.ConfigParsedEvent
+}
+
+type validationOutcome struct {
+	candidate        *validationCandidate
+	rawConfig        *coreconfig.Config
+	resolved         *ResolvedConfig
+	valid            bool
+	validationErrors map[string][]string
 }
 
 // NewConfigChangeHandler creates a new ConfigChangeHandler.
@@ -166,7 +188,7 @@ type ConfigChangeHandler struct {
 func NewConfigChangeHandler(
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
-	configChangeCh chan<- *coreconfig.Config,
+	configChangeCh chan *ReloadRequest,
 	validators []string,
 	debounceInterval time.Duration,
 ) *ConfigChangeHandler {
@@ -195,11 +217,20 @@ func NewConfigChangeHandler(
 		validators:       validators,
 		configReplayer:   leadership.NewStateReplayer[*events.ConfigValidatedEvent](eventBus),
 		debounceInterval: debounceInterval,
-		pendingConfig:    nil,
 		// Capacity 1 suffices: single-flight means at most one validation
 		// goroutine has a completion to signal, so the send never blocks.
-		validationDone: make(chan struct{}, 1),
-		startupReplay:  make(chan busevents.Event, 2),
+		validationDone:  make(chan validationOutcome, 1),
+		startupReplay:   make(chan struct{}, 1),
+		effectiveReload: make(chan struct{}, 1),
+	}
+}
+
+// RequestEffectiveReload asks the handler to restart from its accepted raw
+// config after resolving API versions again.
+func (h *ConfigChangeHandler) RequestEffectiveReload() {
+	select {
+	case h.effectiveReload <- struct{}{}:
+	default:
 	}
 }
 
@@ -237,10 +268,34 @@ func (h *ConfigChangeHandler) SetInitialCredentialsVersion(version string) {
 // to every parsed config before validation (see the field doc). Like
 // SetInitialConfigVersion, this must be called after construction and before
 // the CRD watcher starts delivering events.
-func (h *ConfigChangeHandler) SetEffectiveResolver(resolve func(*coreconfig.Config) (*coreconfig.Config, error)) {
+func (h *ConfigChangeHandler) SetEffectiveResolver(resolve func(*coreconfig.Config) (*ResolvedConfig, error)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.effectiveResolver = resolve
+}
+
+// SetInitialSnapshot records the configuration and credentials owned by the
+// running iteration. It must run before reinitialization is enabled.
+func (h *ConfigChangeHandler) SetInitialSnapshot(snapshot *ValidatedSnapshot) {
+	h.mu.Lock()
+	h.activeSnapshot = cloneSnapshot(snapshot)
+	h.acceptedCandidate = nil
+	h.credentialsDirty = false
+	if snapshot == nil {
+		h.activeReplay = nil
+		h.mu.Unlock()
+		return
+	}
+	h.initialConfigVersion = snapshot.ConfigVersion
+	h.initialCredentialsVersion = snapshot.CredentialsVersion
+	h.currentCredentials = snapshot.Credentials
+	h.currentCredentialsVersion = snapshot.CredentialsVersion
+	activeReplay := events.NewConfigValidatedEvent(
+		snapshot.Config, snapshot.TemplateConfig, snapshot.ConfigVersion, snapshot.CredentialsVersion)
+	activeReplay.Sources = append([]events.ConfigSourceRef(nil), snapshot.Sources...)
+	h.activeReplay = activeReplay
+	h.mu.Unlock()
+	h.configReplayer.Cache(activeReplay)
 }
 
 // EnableReinitialization enables the reinitialization signaling mechanism.
@@ -258,15 +313,11 @@ func (h *ConfigChangeHandler) EnableReinitialization() {
 	pendingConfig := h.pendingStartupConfig
 	pendingCredentials := h.pendingStartupCredentials
 	h.pendingStartupConfig = nil
-	h.pendingStartupCredentials = nil
 	h.mu.Unlock()
 
 	h.logger.Debug("Reinitialization signaling enabled (startup complete)")
-	if pendingConfig != nil {
-		h.startupReplay <- pendingConfig
-	}
-	if pendingCredentials != nil {
-		h.startupReplay <- pendingCredentials
+	if pendingConfig != nil || pendingCredentials != nil {
+		h.startupReplay <- struct{}{}
 	}
 }
 
@@ -298,29 +349,32 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 			return nil
 		case <-h.debounceTimer.Chan():
 			h.debounceTimer.Fired()
-			h.sendPendingConfig()
-		case <-h.validationDone:
+			h.drainQueuedEvents()
+			h.sendPendingReload()
+			h.startQueuedValidation(ctx)
+		case outcome := <-h.validationDone:
 			h.validationInFlight = false
-			if next := h.queuedParsed; next != nil {
-				h.queuedParsed = nil
-				// Skip ahead to the newest parsed event already sitting on
-				// the channel: select may deliver validationDone before a
-				// newer ConfigParsedEvent, and validating the parked config
-				// as-is would spend a full multi-second run on a superseded
-				// version.
-				h.startOrQueueValidation(ctx, h.coalesceToLatestParsed(next))
+			h.drainQueuedEvents()
+			h.applyValidationOutcome(outcome)
+			h.startQueuedValidation(ctx)
+		case <-h.startupReplay:
+			if event := h.takePendingStartupCredentials(); event != nil {
+				h.dispatchSideEvent(event)
 			}
-		case event := <-h.startupReplay:
-			h.dispatchSideEvent(event)
+			if snapshot := h.acceptedCandidateSnapshot(); snapshot != nil {
+				h.scheduleReload(snapshot, ReloadReasonConfig)
+			}
+		case <-h.effectiveReload:
+			h.drainQueuedEvents()
+			h.retirePendingReload()
+			if reload := h.effectiveReloadRequest(); reload != nil {
+				h.sendReload(reload)
+			}
 		case event := <-h.eventChan:
-			// ConfigParsedEvent is coalesced against anything newer already
-			// queued, then validated asynchronously (single-flight) so this
-			// loop stays responsive to side events during the multi-second
-			// scatter-gather; every other handled type goes through the single
-			// dispatchSideEvent switch, shared with coalesceToLatestParsed so
-			// the two can't drift.
+			// Validation stays off-loop so leadership replay remains responsive.
 			if parsed, ok := event.(*events.ConfigParsedEvent); ok {
-				h.startOrQueueValidation(ctx, h.coalesceToLatestParsed(parsed))
+				h.recordParsed(parsed)
+				h.startQueuedValidation(ctx)
 			} else {
 				h.dispatchSideEvent(event)
 			}
@@ -331,45 +385,67 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 // cleanup performs cleanup when the component is shutting down.
 func (h *ConfigChangeHandler) cleanup() {
 	h.debounceTimer.Stop()
-	h.pendingConfig = nil
+	h.pendingReload = nil
 }
 
-// startOrQueueValidation runs handleConfigParsed for the given parsed config in
-// a spawned goroutine, or — when a validation is already in flight — parks it in
-// queuedParsed for the loop to start on completion (latest wins: a config
-// superseded while parked is never validated).
-//
-// Loop-owned: must only be called from the Start goroutine. The spawned
-// goroutine signals validationDone when finished; the loop clears
-// validationInFlight and starts the parked config, so at most one validation
-// runs at a time and ConfigValidatedEvents keep their publish order.
-func (h *ConfigChangeHandler) startOrQueueValidation(ctx context.Context, event *events.ConfigParsedEvent) {
-	if h.validationInFlight {
-		if h.queuedParsed != nil {
-			h.logger.Debug("Coalescing superseded config-parsed event",
-				"skipped_version", h.queuedParsed.Version, "newer_version", event.Version)
+// recordParsed assigns an authority generation and retires any restart armed
+// by an older candidate. The newest parked candidate wins.
+func (h *ConfigChangeHandler) recordParsed(event *events.ConfigParsedEvent) {
+	h.candidateGeneration++
+	h.mu.Lock()
+	retiredCandidate := h.acceptedCandidate != nil
+	h.acceptedCandidate = nil
+	h.pendingStartupConfig = nil
+	activeReplay := h.activeReplay
+	credentialsReload := h.credentialsReloadSnapshotLocked()
+	reinitializationEnabled := h.reinitializationEnabled
+	h.mu.Unlock()
+	if activeReplay != nil {
+		if retiredCandidate {
+			activeReplay = newActiveSnapshotRestore(activeReplay)
 		}
-		h.queuedParsed = event
+		h.configReplayer.Cache(activeReplay)
+		if retiredCandidate {
+			h.eventBus.Publish(activeReplay)
+		}
+	}
+	h.reviseQueuedReloadAfterCandidateRetired()
+	if credentialsReload != nil && reinitializationEnabled {
+		h.pendingReload = &ReloadRequest{
+			Snapshot: credentialsReload,
+			Reasons:  ReloadReasonCredentials,
+		}
+		if h.debounceTimer.Chan() == nil {
+			h.debounceTimer.Reset(h.debounceInterval)
+		}
+	} else {
+		h.retirePendingReload()
+	}
+	if h.queuedParsed != nil {
+		h.logger.Debug("Coalescing superseded config-parsed event",
+			"skipped_version", h.queuedParsed.event.Version, "newer_version", event.Version)
+	}
+	h.queuedParsed = &validationCandidate{generation: h.candidateGeneration, event: event}
+}
+
+func (h *ConfigChangeHandler) startQueuedValidation(ctx context.Context) {
+	if h.validationInFlight || h.queuedParsed == nil {
 		return
 	}
+	candidate := h.queuedParsed
+	h.queuedParsed = nil
 	h.validationInFlight = true
 	go func() {
-		// Buffered cap-1 send: single-flight guarantees at most one
-		// outstanding completion, so this never blocks even when the loop
-		// has already exited on shutdown.
-		defer func() { h.validationDone <- struct{}{} }()
-		h.handleConfigParsed(ctx, event)
+		h.validationDone <- h.validateCandidate(ctx, candidate)
 	}()
 }
 
-// handleConfigParsed coordinates validation for a parsed config using the
-// scatter-gather pattern. It blocks for the full validation (up to the
-// suite-size-scaled validator.SuiteValidationEnvelope), so it runs OFF the
-// event loop, in the goroutine
-// spawned by startOrQueueValidation. Everything it touches is safe off-loop:
-// effectiveResolver is read under h.mu, configReplayer is internally locked,
-// and EventBus Publish/Request are thread-safe.
-func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *events.ConfigParsedEvent) {
+// validateCandidate performs the long scatter-gather without publishing. The
+// event loop applies its result only while the candidate generation is current.
+func (h *ConfigChangeHandler) validateCandidate(ctx context.Context, candidate *validationCandidate) validationOutcome {
+	event := candidate.event
+	outcome := validationOutcome{candidate: candidate}
+
 	// Resolve the effective config BEFORE validation so the validators judge
 	// exactly what a reinitialized iteration would load. A resolution failure
 	// (a required resource with no served version) is reported like any other
@@ -377,34 +453,41 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 	h.mu.RLock()
 	resolve := h.effectiveResolver
 	h.mu.RUnlock()
-	if parsed, ok := event.Config.(*coreconfig.Config); resolve != nil && ok {
-		effective, err := resolve(parsed)
+	if parsed, ok := event.Config.(*coreconfig.Config); ok {
+		outcome.rawConfig = parsed
+		outcome.resolved = &ResolvedConfig{Config: parsed}
+	}
+	if resolve != nil && outcome.rawConfig != nil {
+		resolved, err := resolve(outcome.rawConfig)
 		if err != nil {
-			h.logger.Error("Effective-config resolution failed for parsed config",
-				"error", err, "version", event.Version)
-			invalidEvent := events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, map[string][]string{
+			outcome.validationErrors = map[string][]string{
 				"effective-config": {err.Error()},
-			})
-			invalidEvent.Sources = event.Sources
-			h.eventBus.Publish(invalidEvent)
-			return
+			}
+			return outcome
 		}
-		resolvedEvent := *event
-		resolvedEvent.Config = effective
-		event = &resolvedEvent
+		if resolved == nil || resolved.Config == nil {
+			outcome.validationErrors = map[string][]string{
+				"effective-config": {"effective-config resolver returned no config"},
+			}
+			return outcome
+		}
+		outcome.resolved = resolved
+	}
+	configToValidate := event.Config
+	if outcome.resolved != nil {
+		configToValidate = outcome.resolved.Config
 	}
 
 	// If no validators are configured, skip validation and immediately publish validated event
 	if len(h.validators) == 0 {
-		h.logger.Debug("No validators configured, skipping validation", "version", event.Version)
-		h.publishValidated(event)
-		return
+		outcome.valid = true
+		return outcome
 	}
 
 	h.logger.Info("Coordinating config validation", "version", event.Version)
 
 	// Create validation request
-	req := events.NewConfigValidationRequest(event.Config, event.Version)
+	req := events.NewConfigValidationRequest(configToValidate, event.Version)
 
 	// Send request and wait for responses using scatter-gather.
 	// The structural / template-syntax / JSONPath validators are sub-second even
@@ -421,7 +504,7 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 	// validator must always self-report before this deadline (#77). A non-
 	// *coreconfig.Config payload (unit-test stub) gets the zero-suite floor.
 	suiteSize := 0
-	if parsed, ok := event.Config.(*coreconfig.Config); ok {
+	if parsed, ok := configToValidate.(*coreconfig.Config); ok {
 		suiteSize = len(parsed.ValidationTests)
 	}
 	result, err := h.eventBus.Request(ctx, req, busevents.RequestOptions{
@@ -430,16 +513,10 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 	})
 
 	if err != nil {
-		h.logger.Error("Config validation request failed",
-			"error", err,
-			"version", event.Version)
-		// Publish invalid event with TemplateConfig reference for status updates
-		invalidEvent := events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, map[string][]string{
+		outcome.validationErrors = map[string][]string{
 			"coordinator": {err.Error()},
-		})
-		invalidEvent.Sources = event.Sources
-		h.eventBus.Publish(invalidEvent)
-		return
+		}
+		return outcome
 	}
 
 	// Collect validation errors
@@ -467,53 +544,208 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 	}
 
 	if allValid {
-		h.logger.Info("Config validation succeeded", "version", event.Version)
-		h.publishValidated(event)
-	} else {
-		h.logger.Error("Config validation failed",
-			"version", event.Version,
-			"error_count", len(validationErrors),
-			"validation_errors", validationErrors)
-		// Publish invalid event with TemplateConfig reference for status updates
-		invalidEvent := events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, validationErrors)
-		invalidEvent.Sources = event.Sources
-		h.eventBus.Publish(invalidEvent)
+		outcome.valid = true
+		return outcome
 	}
+	outcome.validationErrors = validationErrors
+	return outcome
 }
 
-// coalesceToLatestParsed non-blockingly drains the subscription channel and
-// returns the newest ConfigParsedEvent (the passed one if nothing newer is
-// queued). Any other event types pulled while draining are dispatched inline so
-// none are lost — this is the same set the Start() loop handles. Because the
-// drain is non-blocking, the common case (no pending events) returns the
-// original event immediately with no added latency.
-//
-// Loop-owned: must only be called from the Start goroutine (it reads
-// h.eventChan and dispatches side events, both loop-exclusive).
-func (h *ConfigChangeHandler) coalesceToLatestParsed(latest *events.ConfigParsedEvent) *events.ConfigParsedEvent {
+// drainQueuedEvents observes parsed candidates that were already delivered
+// before a validation completion won the select. This closes the cross-channel
+// ordering window in which an obsolete result could otherwise be accepted.
+func (h *ConfigChangeHandler) drainQueuedEvents() {
 	for {
 		select {
 		case ev := <-h.eventChan:
 			if parsed, ok := ev.(*events.ConfigParsedEvent); ok {
-				h.logger.Debug("Coalescing superseded config-parsed event",
-					"skipped_version", latest.Version, "newer_version", parsed.Version)
-				latest = parsed
+				h.recordParsed(parsed)
 				continue
 			}
-			// Any other handled type is dispatched normally so it isn't lost
-			// just because we drained the channel here.
 			h.dispatchSideEvent(ev)
 		default:
-			return latest
+			return
 		}
 	}
 }
 
-// dispatchSideEvent handles every subscribed event type EXCEPT ConfigParsedEvent
-// (which both callers special-case for coalescing). It's the single source of
-// truth for that dispatch, shared by the Start loop and coalesceToLatestParsed
-// so they can't drift. The default arm makes drift loud: if a new event type is
-// added to the subscription but not here, we log rather than silently drop it.
+func (h *ConfigChangeHandler) applyValidationOutcome(outcome validationOutcome) {
+	if outcome.candidate.generation != h.candidateGeneration {
+		h.logger.Debug("Discarding superseded config validation outcome",
+			"version", outcome.candidate.event.Version)
+		return
+	}
+	event := outcome.candidate.event
+	if !outcome.valid {
+		h.logger.Error("Config validation failed",
+			"version", event.Version,
+			"validation_errors", outcome.validationErrors)
+		invalidEvent := events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, outcome.validationErrors)
+		invalidEvent.Sources = event.Sources
+		h.eventBus.Publish(invalidEvent)
+		return
+	}
+
+	config := event.Config
+	if outcome.resolved != nil {
+		config = outcome.resolved.Config
+	}
+	validatedEvent := events.NewConfigValidatedEvent(config, event.TemplateConfig, event.Version, h.credentialsVersion())
+	validatedEvent.Sources = event.Sources
+	validatedEvent.CandidateGeneration = outcome.candidate.generation
+	h.configReplayer.Cache(validatedEvent)
+	h.eventBus.Publish(validatedEvent)
+
+	cfg, ok := config.(*coreconfig.Config)
+	if !ok || outcome.rawConfig == nil {
+		return
+	}
+	snapshot := &ValidatedSnapshot{
+		RawConfig:      outcome.rawConfig,
+		Config:         cfg,
+		TemplateConfig: event.TemplateConfig,
+		ConfigVersion:  event.Version,
+		Sources:        append([]events.ConfigSourceRef(nil), event.Sources...),
+	}
+	if outcome.resolved != nil {
+		snapshot.Resolution = outcome.resolved.Resolution
+	}
+	h.mu.RLock()
+	snapshot.Credentials = h.currentCredentials
+	snapshot.CredentialsVersion = h.currentCredentialsVersion
+	h.mu.RUnlock()
+	h.acceptValidatedSnapshot(snapshot)
+}
+
+func (h *ConfigChangeHandler) credentialsVersion() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.currentCredentialsVersion
+}
+
+func newActiveSnapshotRestore(active *events.ConfigValidatedEvent) *events.ConfigValidatedEvent {
+	if active == nil {
+		return nil
+	}
+	restored := events.NewConfigValidatedEvent(
+		active.Config, active.TemplateConfig, active.Version, active.SecretVersion)
+	restored.Sources = append([]events.ConfigSourceRef(nil), active.Sources...)
+	restored.ActiveSnapshotRestore = true
+	return restored
+}
+
+func (h *ConfigChangeHandler) effectiveReloadRequest() *ReloadRequest {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	reasons := ReloadReasonEffectiveConfig
+	base := h.acceptedCandidate
+	if base == nil {
+		base = h.activeSnapshot
+	} else {
+		reasons |= ReloadReasonConfig
+	}
+	if h.credentialsDirty {
+		reasons |= ReloadReasonCredentials
+	}
+	snapshot := cloneSnapshot(base)
+	if snapshot != nil {
+		snapshot.Credentials = h.currentCredentials
+		snapshot.CredentialsVersion = h.currentCredentialsVersion
+	}
+	if snapshot == nil {
+		return nil
+	}
+	return &ReloadRequest{Snapshot: snapshot, Reasons: reasons}
+}
+
+func (h *ConfigChangeHandler) acceptedCandidateSnapshot() *ValidatedSnapshot {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	snapshot := cloneSnapshot(h.acceptedCandidate)
+	if snapshot != nil {
+		snapshot.Credentials = h.currentCredentials
+		snapshot.CredentialsVersion = h.currentCredentialsVersion
+	}
+	return snapshot
+}
+
+func (h *ConfigChangeHandler) takePendingStartupCredentials() *events.CredentialsUpdatedEvent {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	event := h.pendingStartupCredentials
+	h.pendingStartupCredentials = nil
+	return event
+}
+
+func (h *ConfigChangeHandler) credentialsReloadSnapshotLocked() *ValidatedSnapshot {
+	if !h.credentialsDirty {
+		return nil
+	}
+	snapshot := cloneSnapshot(h.activeSnapshot)
+	if snapshot == nil {
+		return nil
+	}
+	snapshot.Credentials = h.currentCredentials
+	snapshot.CredentialsVersion = h.currentCredentialsVersion
+	return snapshot
+}
+
+func (h *ConfigChangeHandler) reloadForReasons(reasons ReloadReason) *ReloadRequest {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	base := h.activeSnapshot
+	if h.acceptedCandidate != nil {
+		base = h.acceptedCandidate
+	}
+	if reasons.Has(ReloadReasonConfig) {
+		if h.acceptedCandidate == nil {
+			reasons &^= ReloadReasonConfig
+		}
+	}
+	if reasons == 0 || base == nil {
+		return nil
+	}
+	snapshot := cloneSnapshot(base)
+	snapshot.Credentials = h.currentCredentials
+	snapshot.CredentialsVersion = h.currentCredentialsVersion
+	return &ReloadRequest{Snapshot: snapshot, Reasons: reasons}
+}
+
+func (h *ConfigChangeHandler) reviseQueuedReloadAfterCandidateRetired() {
+	select {
+	case queued := <-h.configChangeCh:
+		if queued == nil || !queued.Reasons.Has(ReloadReasonConfig) {
+			h.restoreQueuedReload(queued)
+			return
+		}
+		h.restoreQueuedReload(h.reloadForReasons(queued.Reasons &^ ReloadReasonConfig))
+	default:
+	}
+}
+
+func (h *ConfigChangeHandler) augmentQueuedReload(reason ReloadReason) {
+	select {
+	case queued := <-h.configChangeCh:
+		if queued == nil {
+			return
+		}
+		h.restoreQueuedReload(h.reloadForReasons(queued.Reasons | reason))
+	default:
+	}
+}
+
+func (h *ConfigChangeHandler) restoreQueuedReload(reload *ReloadRequest) {
+	if reload == nil {
+		return
+	}
+	select {
+	case h.configChangeCh <- reload:
+	default:
+		h.logger.Debug("Reload authority already accepted queued state")
+	}
+}
+
+// dispatchSideEvent handles every subscribed event except ConfigParsedEvent.
 func (h *ConfigChangeHandler) dispatchSideEvent(event busevents.Event) {
 	switch e := event.(type) {
 	case *events.ConfigValidatedEvent:
@@ -528,56 +760,30 @@ func (h *ConfigChangeHandler) dispatchSideEvent(event busevents.Event) {
 	}
 }
 
-// publishValidated builds a ConfigValidatedEvent from the parsed event,
-// caches it for leadership-transition replay, and publishes it. Used by both
-// the no-validators short-circuit and the all-valid branch of
-// handleConfigParsed.
-func (h *ConfigChangeHandler) publishValidated(event *events.ConfigParsedEvent) {
-	validatedEvent := events.NewConfigValidatedEvent(
-		event.Config,
-		event.TemplateConfig,
-		event.Version,
-		event.SecretVersion,
-	)
-	validatedEvent.Sources = event.Sources
-	h.configReplayer.Cache(validatedEvent)
-	h.eventBus.Publish(validatedEvent)
-}
-
 // handleConfigValidated signals controller reinitialization when config is validated.
 //
 // Reinitialization signals are debounced to coalesce rapid CRD config changes.
 // This prevents the race condition where reinitialization interrupts in-progress renders,
 // ensuring all config changes are fully rendered before reinitialization starts.
 func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidatedEvent) {
+	if event.CandidateGeneration != 0 || event.ActiveSnapshotRestore {
+		return
+	}
+
 	// Always cache the event for leadership transition replay
 	h.configReplayer.Cache(event)
 
 	// Skip synthetic bootstrap events (version="initial") - these don't trigger reinitialization
 	if event.Version == syntheticBootstrapVersion {
+		h.mu.Lock()
+		if h.activeReplay == nil {
+			h.activeReplay = event
+		}
+		h.mu.Unlock()
 		h.logger.Debug("Ignoring synthetic bootstrap ConfigValidatedEvent (version='initial')")
 		return
 	}
 
-	h.mu.Lock()
-	reinitEnabled := h.reinitializationEnabled
-	initialVersion := h.initialConfigVersion
-	if initialVersion != "" && event.Version == initialVersion {
-		h.mu.Unlock()
-		h.logger.Debug("Ignoring ConfigValidatedEvent (matches initial config version)",
-			"version", event.Version)
-		return
-	}
-	if !reinitEnabled {
-		h.pendingStartupConfig = event
-		h.mu.Unlock()
-		h.logger.Debug("Queued ConfigValidatedEvent received during startup",
-			"version", event.Version)
-		return
-	}
-	h.mu.Unlock()
-
-	// Extract the config
 	cfg, ok := event.Config.(*coreconfig.Config)
 	if !ok {
 		h.logger.Error("ConfigValidatedEvent contains invalid config type",
@@ -585,53 +791,80 @@ func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidate
 			"got", fmt.Sprintf("%T", event.Config))
 		return
 	}
+	h.mu.Lock()
+	snapshot := &ValidatedSnapshot{
+		RawConfig:          cfg,
+		Config:             cfg,
+		TemplateConfig:     event.TemplateConfig,
+		ConfigVersion:      event.Version,
+		Credentials:        h.currentCredentials,
+		CredentialsVersion: h.currentCredentialsVersion,
+		Sources:            append([]events.ConfigSourceRef(nil), event.Sources...),
+	}
+	h.mu.Unlock()
+	h.acceptValidatedSnapshot(snapshot)
+}
 
-	// Store config and reset debounce timer
-	// The timer callback will send the config after the debounce interval
-	h.pendingConfig = cfg
+func (h *ConfigChangeHandler) acceptValidatedSnapshot(snapshot *ValidatedSnapshot) {
+	h.mu.Lock()
+	initialVersion := h.initialConfigVersion
+	if initialVersion != "" && snapshot.ConfigVersion == initialVersion {
+		if h.activeSnapshot == nil {
+			h.activeSnapshot = cloneSnapshot(snapshot)
+			h.activeReplay = events.NewConfigValidatedEvent(
+				snapshot.Config, snapshot.TemplateConfig, snapshot.ConfigVersion, snapshot.CredentialsVersion)
+			h.activeReplay.Sources = append([]events.ConfigSourceRef(nil), snapshot.Sources...)
+		}
+		h.mu.Unlock()
+		h.logger.Debug("Ignoring validated config that matches the initial version",
+			"version", snapshot.ConfigVersion)
+		return
+	}
+	h.acceptedCandidate = cloneSnapshot(snapshot)
+	if !h.reinitializationEnabled {
+		h.pendingStartupConfig = cloneSnapshot(snapshot)
+		h.mu.Unlock()
+		h.augmentQueuedReload(ReloadReasonConfig)
+		h.logger.Debug("Queued validated config received during startup",
+			"version", snapshot.ConfigVersion)
+		return
+	}
+	h.mu.Unlock()
+	h.augmentQueuedReload(ReloadReasonConfig)
+	h.scheduleReload(snapshot, ReloadReasonConfig)
+}
 
-	h.logger.Debug("Config validated, reinitialization debounced",
-		"version", event.Version)
-
+func (h *ConfigChangeHandler) scheduleReload(snapshot *ValidatedSnapshot, reason ReloadReason) {
+	reasons := reason
+	if h.pendingReload != nil {
+		reasons |= h.pendingReload.Reasons
+	}
+	h.pendingReload = &ReloadRequest{
+		Snapshot: cloneSnapshot(snapshot),
+		Reasons:  reasons,
+	}
+	h.logger.Debug("Validated state queued for iteration restart",
+		"version", snapshot.ConfigVersion)
 	h.debounceTimer.Reset(h.debounceInterval)
 }
 
-// handleSecretRotation reacts to a Secret-rotation event (credentials or
-// webhook-cert) by signalling iteration restart through the same
-// configChangeCh path used for CRD changes. The bootstrap event the
-// watcher fires when it first observes the Secret is filtered out by
-// comparing against the initial version recorded at iteration startup.
-//
-// Because the iteration restart re-runs fetchAndValidateInitialConfig,
-// the new iteration loads the rotated Secret from the API server before
-// any component (notably the webhook server) starts up — there's no
-// hot-rotation in any individual component. This mirrors how CRD changes
-// flow through the same channel.
+func (h *ConfigChangeHandler) retirePendingReload() {
+	h.debounceTimer.Stop()
+	h.pendingReload = nil
+}
+
+// handleSecretRotation restarts from the active config and the event's exact
+// credentials; the bootstrap Secret version is ignored.
 func (h *ConfigChangeHandler) handleSecretRotation(kind string, event *events.CredentialsUpdatedEvent, initialVersion *string) {
 	version := event.SecretVersion
-	// Skip synthetic bootstrap events (version="initial"). webhook.go
-	// publishes a placeholder CredentialsUpdatedEvent("initial") during
-	// iteration startup so components subscribing to credentials state
-	// (discovery, etc.) get a known-good kick before the real
-	// CredentialsUpdatedEvent from the watcher's onAdd arrives. The
-	// synthetic carries the literal string "initial" which never
-	// matches the real Secret resourceVersion recorded via
-	// SetInitialCredentialsVersion, so without this skip it would slip
-	// past the bootstrap-match check below and trigger an iteration
-	// restart ~1s after every startup. Mirrors the same check in
-	// handleConfigValidated (line 363) — same root cause, same fix.
-	//
-	// Root cause for issue #46: that spurious restart raced
-	// UpdateBlocklistAndRestart in the HTTP-store invalid-update
-	// acceptance test. When the new iteration's empty HTTPStore ran
-	// its first fetch, the blocklist server had already swapped to
-	// invalid content; the live-fetch path cached invalid as accepted
-	// (because Fetch stores initial-fetch results directly as accepted
-	// with no validation), then HAProxy semantic validation rejected
-	// the rendered config, and the test's debug-endpoint query saw
-	// "no files rendered yet".
 	if version == syntheticBootstrapVersion {
 		h.logger.Debug("Ignoring synthetic bootstrap " + kind + " event (version='initial')")
+		return
+	}
+	creds, ok := event.Credentials.(*coreconfig.Credentials)
+	if !ok {
+		h.logger.Error("CredentialsUpdatedEvent contains invalid credentials type",
+			"got", fmt.Sprintf("%T", event.Credentials))
 		return
 	}
 
@@ -644,58 +877,83 @@ func (h *ConfigChangeHandler) handleSecretRotation(kind string, event *events.Cr
 			"version", version)
 		return
 	}
+	h.currentCredentials = creds
+	h.currentCredentialsVersion = version
+	activeVersion := ""
+	if h.activeSnapshot != nil {
+		activeVersion = h.activeSnapshot.CredentialsVersion
+	}
+	h.credentialsDirty = version != activeVersion
 	if !reinitEnabled {
 		if kind == "credentials" {
 			h.pendingStartupCredentials = event
 		}
 		h.mu.Unlock()
+		h.augmentQueuedReload(ReloadReasonCredentials)
 		h.logger.Debug("Queued "+kind+" Secret rotation received during startup",
 			"version", version)
 		return
 	}
+	h.pendingStartupCredentials = nil
+	base := h.acceptedCandidate
+	if base == nil {
+		base = h.activeSnapshot
+	}
+	snapshot := cloneSnapshot(base)
 	h.mu.Unlock()
 
-	cfg, ok := h.configReplayer.Get()
-	if !ok || cfg == nil {
+	if snapshot == nil {
 		h.logger.Warn("Cannot signal reinitialization for "+kind+" rotation: no validated config cached",
 			"version", version)
 		return
 	}
-	parsed, ok := cfg.Config.(*coreconfig.Config)
-	if !ok {
-		h.logger.Error("Cached config event has unexpected type",
-			"kind", kind,
-			"got", fmt.Sprintf("%T", cfg.Config))
-		return
-	}
+	snapshot.Credentials = creds
+	snapshot.CredentialsVersion = version
 
+	h.augmentQueuedReload(ReloadReasonCredentials)
 	h.logger.Info("Secret rotation detected; debouncing iteration restart",
 		"kind", kind,
 		"version", version)
-	h.pendingConfig = parsed
-	h.debounceTimer.Reset(h.debounceInterval)
+	h.scheduleReload(snapshot, ReloadReasonCredentials)
 }
 
-// sendPendingConfig sends the pending config to the controller.
+// sendPendingReload sends the pending state to the controller.
 // This is called after the debounce interval expires, ensuring rapid config changes are coalesced.
-func (h *ConfigChangeHandler) sendPendingConfig() {
-	cfg := h.pendingConfig
-	h.pendingConfig = nil
+func (h *ConfigChangeHandler) sendPendingReload() {
+	reload := h.pendingReload
+	h.pendingReload = nil
 
-	if cfg == nil {
+	if reload == nil {
 		// No pending config (e.g., already sent or cleared)
 		return
 	}
 
 	h.logger.Info("Signaling controller reinitialization after debounce")
 
-	// Signal controller to reinitialize
-	// Use non-blocking send to avoid deadlock if channel is full
+	h.sendReload(reload)
+}
+
+func (h *ConfigChangeHandler) sendReload(reload *ReloadRequest) {
 	select {
-	case h.configChangeCh <- cfg:
+	case h.configChangeCh <- reload:
 		h.logger.Debug("Reinitialization signal sent")
 	default:
-		h.logger.Warn("Failed to send reinitialization signal: channel full")
+		var queued *ReloadRequest
+		select {
+		case queued = <-h.configChangeCh:
+		default:
+		}
+		if queued != nil {
+			if merged := h.reloadForReasons(queued.Reasons | reload.Reasons); merged != nil {
+				reload = merged
+			}
+		}
+		select {
+		case h.configChangeCh <- reload:
+			h.logger.Debug("Reinitialization signal replaced with newer state")
+		default:
+			h.logger.Warn("Failed to replace reinitialization signal")
+		}
 	}
 }
 

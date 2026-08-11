@@ -59,6 +59,11 @@ func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (i
 			append(attrs, "validator", e.ValidatorName, "valid", e.Valid, "error_count", len(e.Errors))
 
 	case *events.ConfigValidatedEvent:
+		if e.ActiveSnapshotRestore {
+			return "Active configuration state restored",
+				append(attrs, "version", e.Version, "secret_version", e.SecretVersion)
+		}
+
 		// Correlate: how long did validation take?
 		validationRequests := ec.ringBuffer.FindByTypeInWindow(events.EventTypeConfigValidationRequest, validationLookbackWindow)
 		var correlationMsg string

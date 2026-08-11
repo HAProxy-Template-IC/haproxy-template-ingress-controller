@@ -95,37 +95,8 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 		return
 	}
 
-	var errors []string
-
-	// Resolve real typed reflect.Types via the injected bootstrapper.
-	// Failure here is a hard validation failure: the chart cannot be
-	// safely admitted without verifying every watched resource has
-	// its real schema, because typed Spec/Status access in any
-	// template would silently rebind to a mismatched / fallback
-	// shape downstream.
-	bootstrapCtx, cancel := context.WithTimeout(v.LifecycleContext(), templateValidatorBootstrapTimeout)
-	defer cancel()
-	bootstrapResult, bootstrapErr := v.bootstrap(bootstrapCtx, cfg)
-	if bootstrapErr != nil {
-		errors = append(errors,
-			"schema acquisition failed for one or more watched resources "+
-				"(typed template access cannot be validated without real schemas): "+
-				bootstrapErr.Error())
-	}
-
+	errors := validateTemplates(v.LifecycleContext(), cfg, v.bootstrap)
 	extraction := helpers.ExtractTemplatesFromConfig(cfg)
-
-	// Compile only if schemas resolved — otherwise the engine
-	// compile would itself fail or, worse, succeed against a
-	// partial declaration set and let typed-access errors slip
-	// through. Recording the bootstrap error in `errors` above is
-	// enough operator signal.
-	if bootstrapErr == nil {
-		additionalDeclarations := helpers.BuildAdditionalDeclarations(cfg, bootstrapResult)
-		if _, err := templating.New(extraction.AllTemplates, &templating.Options{EntryPoints: extraction.EntryPoints, Declarations: additionalDeclarations}); err != nil {
-			errors = append(errors, templating.FormatCompilationError(err, "templates", ""))
-		}
-	}
 
 	valid := len(errors) == 0
 	response := events.NewConfigValidationResponse(
@@ -164,3 +135,25 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 // clear "schema acquisition failed" reason so the operator
 // investigates RBAC / CRD installation / apiserver health.
 const templateValidatorBootstrapTimeout = 5 * time.Second
+
+func validateTemplates(ctx context.Context, cfg *coreconfig.Config, bootstrap TypeBootstrapper) []string {
+	bootstrapCtx, cancel := context.WithTimeout(ctx, templateValidatorBootstrapTimeout)
+	defer cancel()
+	bootstrapResult, err := bootstrap(bootstrapCtx, cfg)
+	if err != nil {
+		return []string{
+			"schema acquisition failed for one or more watched resources " +
+				"(typed template access cannot be validated without real schemas): " + err.Error(),
+		}
+	}
+
+	extraction := helpers.ExtractTemplatesFromConfig(cfg)
+	declarations := helpers.BuildAdditionalDeclarations(cfg, bootstrapResult)
+	if _, err := templating.New(extraction.AllTemplates, &templating.Options{
+		EntryPoints:  extraction.EntryPoints,
+		Declarations: declarations,
+	}); err != nil {
+		return []string{templating.FormatCompilationError(err, "templates", "")}
+	}
+	return nil
+}

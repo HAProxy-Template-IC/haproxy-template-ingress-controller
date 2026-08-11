@@ -61,6 +61,7 @@ type StateCache struct {
 	mu                   sync.RWMutex
 	currentConfig        *coreconfig.Config
 	currentConfigVersion string
+	activeLogLevel       string
 	currentCreds         *coreconfig.Credentials
 	currentCredsVersion  string
 	lastRendered         string
@@ -176,16 +177,26 @@ func (sc *StateCache) handleConfigValidated(e *events.ConfigValidatedEvent) {
 		return
 	}
 
+	targetLogLevel := cfg.Logging.Level
 	sc.mu.Lock()
 	sc.currentConfig = cfg
 	sc.currentConfigVersion = e.Version
+	if e.ActiveSnapshotRestore {
+		if targetLogLevel == "" {
+			targetLogLevel = sc.activeLogLevel
+		}
+	} else if e.CandidateGeneration == 0 {
+		sc.activeLogLevel = targetLogLevel
+		if sc.activeLogLevel == "" {
+			sc.activeLogLevel = logging.GetLevel()
+		}
+	}
 	sc.mu.Unlock()
 
-	// Update log level dynamically if configured in spec.logging.level on the CRD
-	// Empty Level means use LOG_LEVEL env var (don't change)
-	if cfg.Logging.Level != "" {
+	// Empty Level means use LOG_LEVEL; an active restore uses the captured level.
+	if targetLogLevel != "" {
 		oldLevel := logging.GetLevel()
-		logging.SetLevel(cfg.Logging.Level)
+		logging.SetLevel(targetLogLevel)
 		newLevel := logging.GetLevel()
 		if oldLevel != newLevel {
 			sc.Logger().Info("Log level updated from config",

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 )
@@ -58,36 +59,7 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 		return
 	}
 
-	// Collect all validation errors
-	var errors []string
-
-	// Validate WatchedResourcesIgnoreFields expressions
-	// Note: Empty expression validation is handled by indexer.ValidateJSONPath()
-	for i, expr := range cfg.WatchedResourcesIgnoreFields {
-		if err := indexer.ValidateJSONPath(expr); err != nil {
-			errors = append(errors, fmt.Sprintf("watched_resources_ignore_fields[%d]: %v", i, err))
-		}
-	}
-
-	// Validate IndexBy expressions for each watched resource
-	// Note: Empty expression validation is handled by indexer.ValidateJSONPath()
-	// Sort keys for deterministic error ordering
-	resourceNames := slices.Sorted(maps.Keys(cfg.WatchedResources))
-	for _, resourceName := range resourceNames {
-		resource := cfg.WatchedResources[resourceName]
-		for i, expr := range resource.IndexBy {
-			if err := indexer.ValidateJSONPath(expr); err != nil {
-				errors = append(errors, fmt.Sprintf("watched_resources.%s.index_by[%d]: %v", resourceName, i, err))
-			}
-		}
-
-		// Validate FieldSelector expression if present
-		if resource.FieldSelector != "" {
-			if _, err := indexer.NewFieldSelectorMatcher(resource.FieldSelector); err != nil {
-				errors = append(errors, fmt.Sprintf("watched_resources.%s.field_selector: %v", resourceName, err))
-			}
-		}
-	}
+	errors := validateJSONPaths(cfg)
 
 	// Publish validation response
 	valid := len(errors) == 0
@@ -123,4 +95,28 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 			"expression_count", expressionCount,
 			"error_count", len(errors))
 	}
+}
+
+func validateJSONPaths(cfg *coreconfig.Config) []string {
+	var errors []string
+	for i, expr := range cfg.WatchedResourcesIgnoreFields {
+		if err := indexer.ValidateJSONPath(expr); err != nil {
+			errors = append(errors, fmt.Sprintf("watched_resources_ignore_fields[%d]: %v", i, err))
+		}
+	}
+	resourceNames := slices.Sorted(maps.Keys(cfg.WatchedResources))
+	for _, resourceName := range resourceNames {
+		resource := cfg.WatchedResources[resourceName]
+		for i, expr := range resource.IndexBy {
+			if err := indexer.ValidateJSONPath(expr); err != nil {
+				errors = append(errors, fmt.Sprintf("watched_resources.%s.index_by[%d]: %v", resourceName, i, err))
+			}
+		}
+		if resource.FieldSelector != "" {
+			if _, err := indexer.NewFieldSelectorMatcher(resource.FieldSelector); err != nil {
+				errors = append(errors, fmt.Sprintf("watched_resources.%s.field_selector: %v", resourceName, err))
+			}
+		}
+	}
+	return errors
 }

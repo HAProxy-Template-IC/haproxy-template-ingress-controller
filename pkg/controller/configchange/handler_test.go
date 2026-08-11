@@ -34,7 +34,7 @@ const testDebounceInterval = 50 * time.Millisecond
 
 func TestNewConfigChangeHandler(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 	validators := []string{"basic", "template"}
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
@@ -51,7 +51,7 @@ func TestNewConfigChangeHandler(t *testing.T) {
 
 func TestConfigChangeHandler_StartWithContextCancel(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	bus.Start()
@@ -77,7 +77,7 @@ func TestConfigChangeHandler_StartWithContextCancel(t *testing.T) {
 
 func TestConfigChangeHandler_HandleConfigParsed_NoValidators(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	// No validators configured
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
@@ -102,7 +102,7 @@ func TestConfigChangeHandler_HandleConfigParsed_NoValidators(t *testing.T) {
 
 func TestConfigChangeHandler_CoalescesSupersededConfigParsed(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	// No validators: handleConfigParsed coalesces, then short-circuits to
 	// publishValidated — so the published ConfigValidatedEvent identifies which
@@ -143,7 +143,7 @@ func TestConfigChangeHandler_CoalescesSupersededConfigParsed(t *testing.T) {
 
 func TestConfigChangeHandler_HandleConfigValidated_SignalController(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
@@ -166,8 +166,8 @@ func TestConfigChangeHandler_HandleConfigValidated_SignalController(t *testing.T
 
 	// Should signal controller reinitialization
 	select {
-	case cfg := <-configCh:
-		assert.Equal(t, testConfig, cfg)
+	case reload := <-configCh:
+		assert.Same(t, testConfig, reload.Snapshot.Config)
 	case <-time.After(testutil.LongTimeout):
 		t.Fatal("timeout waiting for config signal")
 	}
@@ -175,7 +175,7 @@ func TestConfigChangeHandler_HandleConfigValidated_SignalController(t *testing.T
 
 func TestConfigChangeHandler_HandleConfigValidated_InitialVersion_SkipsSignal(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
@@ -201,7 +201,7 @@ func TestConfigChangeHandler_HandleConfigValidated_InitialVersion_SkipsSignal(t 
 
 func TestConfigChangeHandler_HandleConfigValidated_InvalidConfigType(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
@@ -224,10 +224,30 @@ func TestConfigChangeHandler_HandleConfigValidated_InvalidConfigType(t *testing.
 	}
 }
 
+func TestConfigChangeHandler_ActiveSnapshotRestoreDoesNotReload(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *ReloadRequest, 1)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+	handler.EnableReinitialization()
+	bus.Start()
+	go handler.Start(t.Context())
+
+	restore := events.NewConfigValidatedEvent(&coreconfig.Config{}, nil, "active", "secret")
+	restore.ActiveSnapshotRestore = true
+	bus.Publish(restore)
+
+	time.Sleep(testDebounceInterval * 2)
+	select {
+	case reload := <-configCh:
+		t.Fatalf("active snapshot restore triggered reload with version %q", reload.Snapshot.ConfigVersion)
+	default:
+	}
+}
+
 func TestConfigChangeHandler_HandleConfigValidated_ChannelFull(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	// Channel with no buffer
-	configCh := make(chan *coreconfig.Config)
+	configCh := make(chan *ReloadRequest)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
@@ -248,7 +268,7 @@ func TestConfigChangeHandler_HandleConfigValidated_ChannelFull(t *testing.T) {
 
 func TestConfigChangeHandler_HandleBecameLeader_NoValidatedConfig(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
@@ -269,7 +289,7 @@ func TestConfigChangeHandler_HandleBecameLeader_NoValidatedConfig(t *testing.T) 
 
 func TestConfigChangeHandler_HandleBecameLeader_WithValidatedConfig(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
@@ -297,7 +317,7 @@ func TestConfigChangeHandler_HandleBecameLeader_WithValidatedConfig(t *testing.T
 
 func TestConfigChangeHandler_StateCaching(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
@@ -325,7 +345,7 @@ func TestConfigChangeHandler_StateCaching(t *testing.T) {
 
 func TestConfigChangeHandler_IgnoresOtherEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	bus.Start()
@@ -344,7 +364,7 @@ func TestConfigChangeHandler_IgnoresOtherEvents(t *testing.T) {
 
 func TestConfigChangeHandler_HandleConfigParsed_WithValidators_AllValid(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	// Configure validators
 	validators := []string{"basic", "template"}
@@ -398,7 +418,7 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_AllValid(t *testi
 
 func TestConfigChangeHandler_HandleConfigParsed_WithValidators_ValidationFailed(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	// Configure validators
 	validators := []string{"basic", "template"}
@@ -453,42 +473,34 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_ValidationFailed(
 
 func TestConfigChangeHandler_HandleConfigParsed_WithValidators_Timeout(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	// Configure validators that will never respond
 	validators := []string{"nonexistent"}
 	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
 
-	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	// Use short timeout context
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
 	defer cancel()
 
-	go handler.Start(ctx)
-	time.Sleep(testutil.StartupDelay)
-
-	// Publish ConfigParsedEvent
 	testConfig := &coreconfig.Config{}
-	bus.Publish(events.NewConfigParsedEvent(testConfig, nil, "v1", "sv1"))
-
-	// Should publish ConfigInvalidEvent due to timeout
-	invalid := testutil.WaitForEvent[*events.ConfigInvalidEvent](t, eventChan, 15*time.Second)
-	assert.Equal(t, "v1", invalid.Version)
-	assert.Contains(t, invalid.ValidationErrors, "coordinator")
+	outcome := handler.validateCandidate(ctx, &validationCandidate{
+		generation: 1,
+		event:      events.NewConfigParsedEvent(testConfig, nil, "v1", "sv1"),
+	})
+	assert.False(t, outcome.valid)
+	assert.Contains(t, outcome.validationErrors, "coordinator")
 }
 
 func TestConfigChangeHandler_HandleConfigParsed_WithValidators_MissingResponder(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	// Configure validators - "missing" won't respond
 	validators := []string{"basic", "missing"}
 	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
-
-	// Subscribe to output events BEFORE bus.Start()
-	eventChan := bus.Subscribe("test-sub", 50)
 
 	// Subscribe mock validators BEFORE bus.Start()
 	validatorChan := bus.Subscribe("test-sub", 50)
@@ -498,8 +510,6 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_MissingResponder(
 	// Use short timeout context
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
 	defer cancel()
-
-	go handler.Start(ctx)
 
 	// Start mock validator - only "basic" responds
 	go func() {
@@ -519,20 +529,18 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_MissingResponder(
 
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish ConfigParsedEvent
 	testConfig := &coreconfig.Config{}
-	bus.Publish(events.NewConfigParsedEvent(testConfig, nil, "v1", "sv1"))
-
-	// Should publish ConfigInvalidEvent due to missing responder
-	invalid := testutil.WaitForEvent[*events.ConfigInvalidEvent](t, eventChan, 15*time.Second)
-	assert.Equal(t, "v1", invalid.Version)
-	// Coordinator error due to missing responder
-	assert.Contains(t, invalid.ValidationErrors, "coordinator")
+	outcome := handler.validateCandidate(ctx, &validationCandidate{
+		generation: 1,
+		event:      events.NewConfigParsedEvent(testConfig, nil, "v1", "sv1"),
+	})
+	assert.False(t, outcome.valid)
+	assert.Contains(t, outcome.validationErrors, "coordinator")
 }
 
 func TestConfigChangeHandler_RapidConfigChangesDebounced(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 10)
+	configCh := make(chan *ReloadRequest, 10)
 
 	// Use longer debounce interval for reliable testing
 	debounceInterval := 100 * time.Millisecond
@@ -577,7 +585,7 @@ func TestConfigChangeHandler_RapidConfigChangesDebounced(t *testing.T) {
 
 func TestConfigChangeHandler_DebounceTimerResetOnEachChange(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 10)
+	configCh := make(chan *ReloadRequest, 10)
 
 	debounceInterval := 80 * time.Millisecond
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, debounceInterval)
@@ -626,8 +634,8 @@ func TestConfigChangeHandler_DebounceTimerResetOnEachChange(t *testing.T) {
 
 	// Now we should have the signal
 	select {
-	case cfg := <-configCh:
-		assert.Equal(t, cfg2, cfg, "should receive the last config")
+	case reload := <-configCh:
+		assert.Same(t, cfg2, reload.Snapshot.Config, "should receive the last config")
 	case <-time.After(50 * time.Millisecond):
 		t.Fatal("expected signal after debounce completed")
 	}
@@ -635,7 +643,7 @@ func TestConfigChangeHandler_DebounceTimerResetOnEachChange(t *testing.T) {
 
 func TestConfigChangeHandler_CleanupWithPendingDebounce(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 10)
+	configCh := make(chan *ReloadRequest, 10)
 
 	// Use longer debounce to ensure we can stop before it fires
 	debounceInterval := 500 * time.Millisecond
@@ -694,7 +702,7 @@ func TestConfigChangeHandler_CleanupWithPendingDebounce(t *testing.T) {
 
 func TestConfigChangeHandler_DefaultDebounceInterval(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	// Pass 0 to use default
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, 0)
@@ -705,7 +713,7 @@ func TestConfigChangeHandler_DefaultDebounceInterval(t *testing.T) {
 
 func TestConfigChangeHandler_NegativeDebounceInterval(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	// Pass negative to use default
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, -100*time.Millisecond)
@@ -716,7 +724,7 @@ func TestConfigChangeHandler_NegativeDebounceInterval(t *testing.T) {
 
 func TestConfigChangeHandler_QueuesLatestChangeDuringBootstrap(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	handler.SetInitialConfigVersion("v1")
@@ -745,8 +753,8 @@ func TestConfigChangeHandler_QueuesLatestChangeDuringBootstrap(t *testing.T) {
 	handler.EnableReinitialization()
 
 	select {
-	case cfg := <-configCh:
-		assert.Same(t, latestConfig, cfg)
+	case reload := <-configCh:
+		assert.Same(t, latestConfig, reload.Snapshot.Config)
 	case <-time.After(testutil.LongTimeout):
 		t.Fatal("timeout waiting for queued startup change")
 	}
@@ -759,7 +767,7 @@ func TestConfigChangeHandler_BootstrapEventOrderingSyntheticThenReal(t *testing.
 	// 3. EnableReinitialization() called - marks startup complete
 	// 4. Real change event - NOT skipped
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	handler.SetInitialConfigVersion("4026")
@@ -804,8 +812,8 @@ func TestConfigChangeHandler_BootstrapEventOrderingSyntheticThenReal(t *testing.
 	time.Sleep(testDebounceInterval + 50*time.Millisecond)
 
 	select {
-	case cfg := <-configCh:
-		assert.Equal(t, testConfig3, cfg)
+	case reload := <-configCh:
+		assert.Same(t, testConfig3, reload.Snapshot.Config)
 	case <-time.After(testutil.LongTimeout):
 		t.Fatal("timeout waiting for config signal on real change")
 	}
@@ -816,7 +824,7 @@ func TestConfigChangeHandler_BootstrapEventOrderingSyntheticThenReal(t *testing.
 // dispatch wiring and that the bootstrap-version filter is applied.
 func TestConfigChangeHandler_HandleCredentialsUpdated_SignalsRotation(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	handler.SetInitialConfigVersion("v1")
 
@@ -835,7 +843,8 @@ func TestConfigChangeHandler_HandleCredentialsUpdated_SignalsRotation(t *testing
 	handler.SetInitialCredentialsVersion("creds-bootstrap")
 	handler.EnableReinitialization()
 
-	bus.Publish(events.NewCredentialsUpdatedEvent(nil, "creds-bootstrap"))
+	bootstrapCredentials := &coreconfig.Credentials{}
+	bus.Publish(events.NewCredentialsUpdatedEvent(bootstrapCredentials, "creds-bootstrap"))
 	time.Sleep(testDebounceInterval + 50*time.Millisecond)
 	select {
 	case <-configCh:
@@ -843,11 +852,13 @@ func TestConfigChangeHandler_HandleCredentialsUpdated_SignalsRotation(t *testing
 	case <-time.After(testutil.NoEventTimeout):
 	}
 
-	bus.Publish(events.NewCredentialsUpdatedEvent(nil, "creds-rotated"))
+	rotatedCredentials := &coreconfig.Credentials{}
+	bus.Publish(events.NewCredentialsUpdatedEvent(rotatedCredentials, "creds-rotated"))
 	time.Sleep(testDebounceInterval + 50*time.Millisecond)
 	select {
-	case cfg := <-configCh:
-		assert.Same(t, cachedConfig, cfg)
+	case reload := <-configCh:
+		assert.Same(t, cachedConfig, reload.Snapshot.Config)
+		assert.Same(t, rotatedCredentials, reload.Snapshot.Credentials)
 	case <-time.After(testutil.LongTimeout):
 		t.Fatal("timeout waiting for reinit signal after credentials rotation")
 	}
@@ -855,7 +866,7 @@ func TestConfigChangeHandler_HandleCredentialsUpdated_SignalsRotation(t *testing
 
 func TestConfigChangeHandler_QueuesCredentialsRotationDuringBootstrap(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	handler.SetInitialConfigVersion("config-bootstrap")
 	handler.SetInitialCredentialsVersion("credentials-bootstrap")
@@ -866,7 +877,8 @@ func TestConfigChangeHandler_QueuesCredentialsRotationDuringBootstrap(t *testing
 
 	cachedConfig := &coreconfig.Config{}
 	bus.Publish(events.NewConfigValidatedEvent(cachedConfig, nil, "config-bootstrap", ""))
-	bus.Publish(events.NewCredentialsUpdatedEvent(nil, "credentials-rotated"))
+	rotatedCredentials := &coreconfig.Credentials{}
+	bus.Publish(events.NewCredentialsUpdatedEvent(rotatedCredentials, "credentials-rotated"))
 	time.Sleep(testDebounceInterval + 50*time.Millisecond)
 
 	select {
@@ -878,8 +890,9 @@ func TestConfigChangeHandler_QueuesCredentialsRotationDuringBootstrap(t *testing
 	handler.EnableReinitialization()
 
 	select {
-	case cfg := <-configCh:
-		assert.Same(t, cachedConfig, cfg)
+	case reload := <-configCh:
+		assert.Same(t, cachedConfig, reload.Snapshot.Config)
+		assert.Same(t, rotatedCredentials, reload.Snapshot.Credentials)
 	case <-time.After(testutil.LongTimeout):
 		t.Fatal("timeout waiting for queued credentials rotation")
 	}
@@ -902,7 +915,7 @@ func TestConfigChangeHandler_QueuesCredentialsRotationDuringBootstrap(t *testing
 // handleConfigValidated already had at the top of its handler.
 func TestConfigChangeHandler_HandleSecretRotation_SkipsSyntheticInitialEvent(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	handler.SetInitialConfigVersion("v1")
 
@@ -932,7 +945,7 @@ func TestConfigChangeHandler_HandleSecretRotation_SkipsSyntheticInitialEvent(t *
 
 	// Synthetic credentials event — must NOT signal reinit even though
 	// "initial" != "1413".
-	bus.Publish(events.NewCredentialsUpdatedEvent(nil, "initial"))
+	bus.Publish(events.NewCredentialsUpdatedEvent(&coreconfig.Credentials{}, "initial"))
 	time.Sleep(testDebounceInterval + 50*time.Millisecond)
 	select {
 	case <-configCh:
@@ -944,11 +957,13 @@ func TestConfigChangeHandler_HandleSecretRotation_SkipsSyntheticInitialEvent(t *
 	// Sanity: a real rotation event (different from both "initial"
 	// and the recorded bootstrap version) still triggers reinit, so
 	// the "initial" skip didn't accidentally swallow real rotations.
-	bus.Publish(events.NewCredentialsUpdatedEvent(nil, "9999"))
+	rotatedCredentials := &coreconfig.Credentials{}
+	bus.Publish(events.NewCredentialsUpdatedEvent(rotatedCredentials, "9999"))
 	time.Sleep(testDebounceInterval + 50*time.Millisecond)
 	select {
-	case cfg := <-configCh:
-		assert.Same(t, cachedConfig, cfg)
+	case reload := <-configCh:
+		assert.Same(t, cachedConfig, reload.Snapshot.Config)
+		assert.Same(t, rotatedCredentials, reload.Snapshot.Credentials)
 	case <-time.After(testutil.LongTimeout):
 		t.Fatal("real credentials rotation must still signal reinit after the synthetic-skip fix")
 	}

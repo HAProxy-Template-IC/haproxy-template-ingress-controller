@@ -40,7 +40,7 @@ import (
 
 func TestSetInitialConfigVersion_BlocksMatchingVersionThenAllowsOthers(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
+	configCh := make(chan *ReloadRequest, 1)
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	bus.Start()
@@ -82,8 +82,8 @@ func TestSetInitialConfigVersion_BlocksMatchingVersionThenAllowsOthers(t *testin
 
 	select {
 	case got := <-configCh:
-		if got != cfg {
-			t.Fatalf("expected config pointer %p, got %p", cfg, got)
+		if got.Snapshot.Config != cfg {
+			t.Fatalf("expected config pointer %p, got %p", cfg, got.Snapshot.Config)
 		}
 		// Expected: signal fired for non-bootstrap version.
 	case <-time.After(testDebounceInterval + testutil.LongTimeout):
