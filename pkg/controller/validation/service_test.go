@@ -16,6 +16,7 @@ package validation
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"testing"
@@ -72,6 +73,80 @@ func TestValidationService_Validate_ValidConfig(t *testing.T) {
 	assert.Nil(t, result.Error)
 	assert.Empty(t, result.Phase)
 	assert.GreaterOrEqual(t, result.DurationMs, int64(0))
+}
+
+func TestValidationService_CancellationDoesNotCacheSuccess(t *testing.T) {
+	started := make(chan struct{})
+	restoreBlocking := dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheckContext(
+		func(ctx context.Context, _ string, _ []string) ([]byte, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, context.Cause(ctx)
+		},
+	))
+
+	svc := NewValidationService(&ValidationServiceConfig{Logger: slog.Default()})
+	cause := errors.New("retired reconciliation")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	done := make(chan *ValidationResult, 1)
+	go func() {
+		done <- validate(svc, ctx, testutil.MinimalHAProxyConfig, nil)
+	}()
+
+	<-started
+	cancel(cause)
+	result := <-done
+	restoreBlocking()
+	require.False(t, result.Valid)
+	require.ErrorIs(t, result.Error, cause)
+
+	var checks int
+	restoreSuccess := dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheck(
+		func(string, []string) ([]byte, error) {
+			checks++
+			return nil, nil
+		},
+	))
+	t.Cleanup(restoreSuccess)
+
+	result = validate(svc, t.Context(), testutil.MinimalHAProxyConfig, nil)
+	require.True(t, result.Valid, "validation failed: %v", result.Error)
+	assert.Equal(t, 1, checks)
+}
+
+func TestValidationService_PreservesPreCancellationCause(t *testing.T) {
+	svc := NewValidationService(&ValidationServiceConfig{Logger: slog.Default()})
+	cause := errors.New("iteration replaced")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(cause)
+
+	result := validate(svc, ctx, testutil.MinimalHAProxyConfig, nil)
+	require.False(t, result.Valid)
+	require.ErrorIs(t, result.Error, cause)
+	assert.EqualError(t, result.Error, "validation cancelled: iteration replaced")
+}
+
+func TestValidationService_DoesNotCacheAfterCancellationWhileWaiting(t *testing.T) {
+	svc := NewValidationService(&ValidationServiceConfig{Logger: slog.Default()})
+	svc.cacheMu.Lock()
+	svc.cachedChecksum = "baseline"
+
+	cause := errors.New("reconciliation retired while caching")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		done <- svc.cacheResult(ctx, "new", nil)
+	}()
+	<-started
+	cancel(cause)
+	svc.cacheMu.Unlock()
+
+	require.ErrorIs(t, <-done, cause)
+	svc.cacheMu.RLock()
+	defer svc.cacheMu.RUnlock()
+	assert.Equal(t, "baseline", svc.cachedChecksum)
 }
 
 func TestValidationService_Validate_SyntaxError(t *testing.T) {

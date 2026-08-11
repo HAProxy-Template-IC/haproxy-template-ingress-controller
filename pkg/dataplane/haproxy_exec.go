@@ -15,6 +15,7 @@
 package dataplane
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"sync/atomic"
@@ -27,41 +28,48 @@ import (
 // pkg/dataplane/dataplanetest.InstallFakeHAProxy in a TestMain).
 type HAProxyExecutor interface {
 	// Version returns the combined output of `haproxy -v`.
-	Version() (string, error)
+	Version(ctx context.Context) (string, error)
 	// Check runs `haproxy <args...>` with the working directory set to
 	// workDir and returns the combined output. The working directory
 	// matters: semantic validation invokes haproxy with a relative config
 	// path so that relative file references inside the config resolve.
-	Check(workDir string, args ...string) ([]byte, error)
+	Check(ctx context.Context, workDir string, args ...string) ([]byte, error)
 }
 
 // binaryHAProxyExecutor is the production implementation: it locates the
 // haproxy binary on PATH and executes it.
 type binaryHAProxyExecutor struct{}
 
-func (binaryHAProxyExecutor) Version() (string, error) {
+func (binaryHAProxyExecutor) Version(ctx context.Context) (string, error) {
 	haproxyBin, err := exec.LookPath("haproxy")
 	if err != nil {
 		return "", fmt.Errorf("haproxy binary not found: %w", err)
 	}
 
-	output, err := exec.Command(haproxyBin, "-v").CombinedOutput()
+	output, err := exec.CommandContext(ctx, haproxyBin, "-v").CombinedOutput()
 	if err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return "", cause
+		}
 		return "", fmt.Errorf("running haproxy -v: %w", err)
 	}
 
 	return string(output), nil
 }
 
-func (binaryHAProxyExecutor) Check(workDir string, args ...string) ([]byte, error) {
+func (binaryHAProxyExecutor) Check(ctx context.Context, workDir string, args ...string) ([]byte, error) {
 	haproxyBin, err := exec.LookPath("haproxy")
 	if err != nil {
 		return nil, fmt.Errorf("haproxy binary not found: %w", err)
 	}
 
-	cmd := exec.Command(haproxyBin, args...)
+	cmd := exec.CommandContext(ctx, haproxyBin, args...)
 	cmd.Dir = workDir
-	return cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
+	if cause := context.Cause(ctx); cause != nil {
+		return output, cause
+	}
+	return output, err
 }
 
 // haproxyExecutor holds the active executor. An atomic pointer (rather than

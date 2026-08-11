@@ -34,6 +34,7 @@
 package dataplanetest
 
 import (
+	"context"
 	"errors"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -52,6 +53,13 @@ type Option func(*fakeExecutor)
 // config: return output containing an "[ALERT]" line together with a non-nil
 // error, mirroring a real `haproxy -c` failure.
 func WithCheck(check func(workDir string, args []string) ([]byte, error)) Option {
+	return WithCheckContext(func(_ context.Context, workDir string, args []string) ([]byte, error) {
+		return check(workDir, args)
+	})
+}
+
+// WithCheckContext replaces the config-check behavior with a cancellable fake.
+func WithCheckContext(check func(ctx context.Context, workDir string, args []string) ([]byte, error)) Option {
 	return func(f *fakeExecutor) { f.check = check }
 }
 
@@ -85,16 +93,22 @@ func InstallFakeHAProxy(opts ...Option) (restore func()) {
 
 type fakeExecutor struct {
 	version string
-	check   func(workDir string, args []string) ([]byte, error)
+	check   func(ctx context.Context, workDir string, args []string) ([]byte, error)
 }
 
-func (f *fakeExecutor) Version() (string, error) {
+func (f *fakeExecutor) Version(ctx context.Context) (string, error) {
+	if cause := context.Cause(ctx); cause != nil {
+		return "", cause
+	}
 	return "HAProxy version " + f.version + " 2025/01/01 - https://haproxy.org/\n", nil
 }
 
-func (f *fakeExecutor) Check(workDir string, args ...string) ([]byte, error) {
+func (f *fakeExecutor) Check(ctx context.Context, workDir string, args ...string) ([]byte, error) {
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
 	if f.check != nil {
-		return f.check(workDir, args)
+		return f.check(ctx, workDir, args)
 	}
 	return nil, nil
 }

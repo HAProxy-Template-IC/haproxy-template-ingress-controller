@@ -119,11 +119,11 @@ type Component struct {
 // Note: The Discovery pure component is created lazily when the dataplane port
 // is configured via ConfigValidatedEvent. This constructor only detects the
 // local HAProxy version for future compatibility checking.
-func New(eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) {
+func New(ctx context.Context, eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) {
 	// Detect local HAProxy version at startup (fatal if fails). Happens
 	// before the Base subscribes so a failed constructor doesn't leak a
 	// subscription.
-	localVersion, err := dataplane.DetectLocalVersion()
+	localVersion, err := dataplane.DetectLocalVersionContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
 	}

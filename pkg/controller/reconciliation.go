@@ -109,7 +109,7 @@ func createReconciliationComponents(
 	reconcilerComponent := reconciler.New(setup.Bus, logger)
 
 	// Detect local HAProxy version and compute capabilities
-	localVersion, err := dataplane.DetectLocalVersion()
+	localVersion, err := dataplane.DetectLocalVersionContext(setup.IterCtx)
 	if err != nil {
 		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
 	}
@@ -187,7 +187,7 @@ func createReconciliationComponents(
 	// Create Discovery component and set pod store
 	// This detects the local HAProxy version (fatal if fails - controller cannot start
 	// without knowing its local version for compatibility checking)
-	discoveryComponent, err := discovery.New(setup.Bus, logger)
+	discoveryComponent, err := discovery.New(setup.IterCtx, setup.Bus, logger)
 	if err != nil {
 		return nil, fmt.Errorf("creating discovery component: %w", err)
 	}

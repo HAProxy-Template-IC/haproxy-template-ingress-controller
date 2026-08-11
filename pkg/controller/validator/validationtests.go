@@ -44,9 +44,7 @@ const validationTestsBootstrapTimeout = 5 * time.Second
 // always self-reports its result (pass, or "invalid: did not complete") BEFORE
 // the coordinator gives up on it (which would otherwise read as a missing
 // responder). The runner checks ctx between tests, so a slow-but-progressing
-// suite stops cleanly at the boundary. Note: a single `haproxy -c` is not itself
-// cancellable (the shared dataplane validation path takes no context), but those
-// checks are sub-second, so the bound holds in practice.
+// suite and any running `haproxy -c` stop at the boundary.
 //
 // This default binds only the LIVE change gate. The load-path gate
 // (controller.validateInitialConfigValidationTests) passes its own, much

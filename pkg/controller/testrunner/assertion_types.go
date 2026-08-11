@@ -31,7 +31,7 @@ import (
 //
 // This assertion uses the HAProxy binary to validate the configuration.
 func (r *Runner) assertHAProxyValid(
-	_ context.Context,
+	ctx context.Context,
 	haproxyConfig string,
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
 	assertion *config.ValidationAssertion,
@@ -67,7 +67,11 @@ func (r *Runner) assertHAProxyValid(
 	// Pass nil version to use default v3.0 schema (safest for validation)
 	// Use strict validation (skipDNSValidation=false) for CLI to catch DNS issues during local validation
 	// Ignore returned parsedConfig - CLI validation doesn't need it for sync optimization
-	_, err := dataplane.ValidateConfigurationUncached(haproxyConfig, auxiliaryFiles, validationPaths, nil, false)
+	_, err := dataplane.ValidateConfigurationUncachedContext(ctx, haproxyConfig, auxiliaryFiles, validationPaths, nil, false)
+	if cause := context.Cause(ctx); cause != nil && errors.Is(err, cause) {
+		result.incomplete = true
+		return result
+	}
 	// ErrValidationCacheHit means the config was already validated successfully, treat as pass
 	failed := err != nil && !errors.Is(err, dataplane.ErrValidationCacheHit)
 	if failed {

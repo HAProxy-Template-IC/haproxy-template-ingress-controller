@@ -104,7 +104,7 @@ type FileRenderResult struct {
 	Duration time.Duration
 }
 
-func runBenchmark(_ *cobra.Command, _ []string) error {
+func runBenchmark(cmd *cobra.Command, _ []string) error {
 	// Setup logging (minimal)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelWarn,
@@ -149,7 +149,7 @@ func runBenchmark(_ *cobra.Command, _ []string) error {
 		return errNoValidationTests
 	}
 
-	validationPaths, _, _, cleanupFunc, err := setupValidationPaths(configSpec)
+	validationPaths, _, _, cleanupFunc, err := setupValidationPaths(cmd.Context(), configSpec)
 	if err != nil {
 		return err
 	}

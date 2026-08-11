@@ -10,6 +10,8 @@ HAProxy configuration syntax validation using the HAProxy binary, and an embedde
 
 The system SHALL validate rendered HAProxy configuration by invoking the HAProxy binary with the `-c` flag. Validation SHALL write the configuration and all auxiliary files (maps, general files, SSL certificates, CRT lists) to a temporary directory before invoking the binary. A validation cache SHALL treat `ErrValidationCacheHit` as a pass (configuration already validated successfully). On failure, validation errors SHALL be simplified using `dataplane.SimplifyValidationError()` to produce user-readable messages.
 
+Semantic validation and local-version detection SHALL derive process execution and queue waiting from the caller context. A cancelled validation SHALL stop without executing after a serialized wait, SHALL terminate a running HAProxy process, and SHALL NOT populate or return a successful validation cache entry.
+
 #### Scenario: Valid configuration passes syntax check
 
 WHEN a rendered HAProxy configuration is syntactically valid

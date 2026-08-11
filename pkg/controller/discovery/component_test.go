@@ -38,7 +38,7 @@ func createTestComponent(t *testing.T, bus *busevents.EventBus) *Component {
 	t.Helper()
 
 	_, logger := testutil.NewTestBusAndLogger()
-	component, err := New(bus, logger)
+	component, err := New(t.Context(), bus, logger)
 	require.NoError(t, err)
 	component.mu.Lock()
 	component.lifecycleCtx = t.Context()
@@ -716,7 +716,7 @@ func addPodToStoreWithPort(t *testing.T, podStore types.Store, name, namespace, 
 
 func TestComponent_CleanupRemovedPods(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	component, err := New(bus, logger)
+	component, err := New(t.Context(), bus, logger)
 	require.NoError(t, err)
 	bus.Start()
 
@@ -762,7 +762,7 @@ func TestComponent_CleanupRemovedPods(t *testing.T) {
 
 func TestComponent_HandleRetryTimer_NoPendingPods(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	component, err := New(bus, logger)
+	component, err := New(t.Context(), bus, logger)
 	require.NoError(t, err)
 	bus.Start()
 
@@ -793,7 +793,7 @@ func TestComponent_HandleRetryTimer_NoPendingPods(t *testing.T) {
 
 func TestComponent_HandleRetryTimer_MissingRequirements(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	component, err := New(bus, logger)
+	component, err := New(t.Context(), bus, logger)
 	require.NoError(t, err)
 	bus.Start()
 
@@ -827,7 +827,7 @@ func TestComponent_HandleRetryTimer_MissingRequirements(t *testing.T) {
 
 func TestComponent_ScheduleRetryTimerLocked_NoPendingRetries(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	component, err := New(bus, logger)
+	component, err := New(t.Context(), bus, logger)
 	require.NoError(t, err)
 	bus.Start()
 
@@ -848,7 +848,7 @@ func TestComponent_ScheduleRetryTimerLocked_NoPendingRetries(t *testing.T) {
 
 func TestComponent_ScheduleRetryTimerLocked_WithPendingRetries(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	component, err := New(bus, logger)
+	component, err := New(t.Context(), bus, logger)
 	require.NoError(t, err)
 	bus.Start()
 
