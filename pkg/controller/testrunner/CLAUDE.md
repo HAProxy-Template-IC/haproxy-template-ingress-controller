@@ -132,7 +132,7 @@ Implements 8 assertion types (see the dispatch switch in `assertions.go`):
 - `file:<name>` - General file content; matches by filename
 - `cert:<name>` - SSL certificate content
 - `crt-list:<name>` - CRT-list file content (matched against the rendered file's basename or full path; works on any HAProxy version because crt-list files always render into the auxiliary files irrespective of how they're synced — see `pkg/dataplane/auxiliaryfiles/crtlist.go`)
-- `rendering_error` - The simplified render error string when render fails
+- `rendering_error` - The simplified template error string when rendering fails; resource-input failures always fail the test
 
 Unknown targets fall back to the main HAProxy config silently.
 

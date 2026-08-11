@@ -1,15 +1,18 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // configMapGVR is the resource these tests watch.
@@ -163,6 +166,58 @@ func TestCachedStore_AddAndGet(t *testing.T) {
 	if retrieved.GetName() != "test-cm" {
 		t.Errorf("expected name 'test-cm', got %q", retrieved.GetName())
 	}
+}
+
+func TestCachedStore_ForbiddenFailsRead(t *testing.T) {
+	wantErr := apierrors.NewForbidden(configMapGVR.GroupResource(), "test-cm", errors.New("access denied"))
+	results, err := fetchCachedStoreWithAPIError(t, wantErr)
+
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected wrapped API error %v, got %v", wantErr, err)
+	}
+	if results != nil {
+		t.Fatalf("failed read returned partial results: %#v", results)
+	}
+}
+
+func TestCachedStore_InternalErrorFailsRead(t *testing.T) {
+	wantErr := apierrors.NewInternalError(errors.New("apiserver unavailable"))
+	results, err := fetchCachedStoreWithAPIError(t, wantErr)
+
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected wrapped API error %v, got %v", wantErr, err)
+	}
+	if results != nil {
+		t.Fatalf("failed read returned partial results: %#v", results)
+	}
+}
+
+func TestCachedStore_StaleNotFoundReferenceIsAbsent(t *testing.T) {
+	notFound := apierrors.NewNotFound(configMapGVR.GroupResource(), "test-cm")
+	results, err := fetchCachedStoreWithAPIError(t, notFound)
+
+	if err != nil {
+		t.Fatalf("stale NotFound reference returned error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("stale NotFound reference returned %d results", len(results))
+	}
+}
+
+func fetchCachedStoreWithAPIError(t *testing.T, apiErr error) ([]any, error) {
+	t.Helper()
+	client := fake.NewSimpleDynamicClient(runtime.NewScheme())
+	client.PrependReactor("get", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apiErr
+	})
+
+	store := newTestCachedStore(t, client, createTestIndexer(), 2, 5*time.Minute)
+	resource := createTestResource("default", "test-cm")
+	if err := store.Add(resource, []string{"default", "test-cm"}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	store.cache.Purge()
+	return store.Get("default", "test-cm")
 }
 
 // TestCachedStore_NonUniqueKeys verifies multiple resources with same index keys.

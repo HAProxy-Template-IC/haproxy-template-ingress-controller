@@ -159,6 +159,11 @@ Escape dots in JSONPath keys that contain them (`labels.kubernetes\\.io/service-
 - `Fetch(...)` always returns a slice — use in `for` loops and when the index may match multiple resources.
 - `List()` returns everything in the store — avoid on `on-demand` stores (fetches everything).
 
+`GetSingle(...)` fails the render if its key matches multiple objects. Kubernetes
+read errors and schema-to-typed-value conversion errors also fail the render;
+they never turn into an empty resource set. A missing object remains `nil` or an
+empty slice.
+
 ## Narrowing the watch
 
 Two filters narrow what actually lands in the store:

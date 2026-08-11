@@ -48,6 +48,10 @@ The rendering context is assembled by `service.go`'s own `buildRenderingContext`
 
 `StoreWrapper` lazy-caches `.List()` per render — every resource is unwrapped from `*unstructured.Unstructured` to a plain map on the first call and reused for the rest of the reconciliation. `.Get` / `.GetSingle` unwrap on demand for the matched subset only.
 
+A Kubernetes read failure, typed-resource conversion failure, or ambiguous
+`.GetSingle()` result aborts the render. Only a stale on-demand reference whose
+live API object is already gone is treated as ordinary absence.
+
 ## See Also
 
 - [`pkg/controller/pipeline`](../pipeline/) — calls `RenderService.Render` then runs validation

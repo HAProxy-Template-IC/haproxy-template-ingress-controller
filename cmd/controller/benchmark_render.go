@@ -146,7 +146,7 @@ func buildBenchmarkContext(
 	httpStore *testrunner.FixtureHTTPStoreWrapper,
 	typedResourceTypes map[string]reflect.Type,
 	logger *slog.Logger,
-) map[string]any {
+) *rendercontext.BuildResult {
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
@@ -168,5 +168,5 @@ func buildBenchmarkContext(
 		rendercontext.WithTypedResources(typedResourceTypes),
 	)
 
-	return builder.Build().Context
+	return builder.Build()
 }

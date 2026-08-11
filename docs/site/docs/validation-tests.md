@@ -549,6 +549,8 @@ test-no-services-error:
       description: Render is rejected with the expected fail() message
 ```
 
+`rendering_error` can't accept a resource read, ambiguous `GetSingle`, or typed conversion failure. Those failures always fail the test.
+
 ### Testing auxiliary files
 
 ```yaml

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -202,12 +203,23 @@ func (s *CachedStore) fetchRefs(ctx context.Context, refs []resourceRef) ([]any,
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
 			}
-			// Skip resources that can't be fetched (may be deleted)
-			continue
+			if isNotFound(err) {
+				continue
+			}
+			return nil, err
 		}
 		results = append(results, resource)
 	}
 	return results, ctx.Err()
+}
+
+func isNotFound(err error) bool {
+	for current := err; current != nil; current = errors.Unwrap(current) {
+		if apierrors.IsNotFound(current) {
+			return true
+		}
+	}
+	return false
 }
 
 // ListCached returns only resources currently warm in the LRU cache —

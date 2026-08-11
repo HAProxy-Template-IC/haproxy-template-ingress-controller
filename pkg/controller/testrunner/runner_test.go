@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -544,6 +545,63 @@ func TestRunner_RenderError(t *testing.T) {
 	assert.False(t, testResult.Assertions[0].Passed)
 	assert.Equal(t, "contains", testResult.Assertions[1].Type)
 	assert.False(t, testResult.Assertions[1].Passed)
+}
+
+func TestRunner_ResourceInputErrorCannotSatisfyRenderingErrorAssertion(t *testing.T) {
+	elemType := reflect.StructOf([]reflect.StructField{
+		{Name: "Count", Type: reflect.TypeOf(0), Tag: `json:"count"`},
+	})
+	typedResult := &typebootstrap.Result{Types: map[string]reflect.Type{"widgets": elemType}}
+	spec := &v1alpha1.HAProxyTemplateConfigSpec{
+		HAProxyConfig: v1alpha1.HAProxyConfig{
+			Template: `# count: {{ len(resources.widgets.List()) }}`,
+		},
+		WatchedResources: map[string]v1alpha1.WatchedResource{
+			"widgets": {
+				APIVersion: "example.io/v1",
+				Resources:  "widgets",
+				IndexBy:    []string{"metadata.namespace", "metadata.name"},
+			},
+		},
+		ValidationTests: map[string]v1alpha1.ValidationTest{
+			"bad-resource-input": {
+				Fixtures: map[string][]runtime.RawExtension{
+					"widgets": {mustMarshalRawExtension(map[string]any{
+						"metadata": map[string]any{"namespace": "default", "name": "bad"},
+						"count":    "not-a-number",
+					})},
+				},
+				Assertions: []v1alpha1.ValidationAssertion{{
+					Type:    "contains",
+					Target:  "rendering_error",
+					Pattern: "reading template resources",
+				}},
+			},
+		},
+	}
+	engine, err := templating.New(
+		map[string]string{"haproxy.cfg": spec.HAProxyConfig.Template},
+		&templating.Options{
+			EntryPoints:  []string{"haproxy.cfg"},
+			Declarations: typebootstrap.BuildEngineDeclarations(typedResult),
+		},
+	)
+	require.NoError(t, err)
+	cfg, err := conversion.ConvertSpec(spec)
+	require.NoError(t, err)
+	runner := New(cfg, engine, &dataplane.ValidationPaths{}, &Options{
+		Workers:            1,
+		TypedResourceTypes: typedResult.Types,
+	})
+
+	results, err := runner.RunTests(t.Context(), "")
+	require.NoError(t, err)
+	require.Len(t, results.TestResults, 1)
+	assert.Equal(t, 1, results.FailedTests)
+	assert.False(t, results.TestResults[0].Passed)
+	assert.Contains(t, results.TestResults[0].RenderError, "reading template resources")
+	assert.Len(t, results.TestResults[0].Assertions, 1)
+	assert.Equal(t, "rendering", results.TestResults[0].Assertions[0].Type)
 }
 
 func TestTestResults_AllPassed(t *testing.T) {
