@@ -22,8 +22,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
 func TestNewMetrics(t *testing.T) {
@@ -531,16 +529,4 @@ func TestMetrics_ResetFleetConvergence(t *testing.T) {
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeploymentConsecutiveFailures))
 	// last_full_sync reset to ~now so a former leader doesn't accrue growing staleness.
 	assert.GreaterOrEqual(t, testutil.ToFloat64(metrics.LastFullSyncTimestamp), float64(before))
-}
-
-func TestMetrics_ParserCacheStatsReportLiveCounters(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-
-	// The parser-cache metrics are CounterFuncs wired straight to the
-	// parser package's cumulative counters, so on every scrape they must
-	// report exactly what parser.CacheStats() currently returns.
-	hits, misses := parser.CacheStats()
-	assert.Equal(t, float64(hits), testutil.ToFloat64(metrics.ParserCacheHits))
-	assert.Equal(t, float64(misses), testutil.ToFloat64(metrics.ParserCacheMisses))
 }

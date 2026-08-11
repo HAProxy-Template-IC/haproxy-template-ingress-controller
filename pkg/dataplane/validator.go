@@ -72,19 +72,8 @@ type ValidationPaths struct {
 //   - *parser.StructuredConfig: The parsed configuration
 //   - error: ValidationError with phase information if validation fails
 func ValidateSyntaxAndSchema(config string, version *Version) (*parser.StructuredConfig, error) {
-	return validateSyntaxAndSchema(config, version, parser.SourceRenderValidation, true)
-}
-
-// ValidateSyntaxAndSchemaUncached is ValidateSyntaxAndSchema for content that
-// is parsed once and never again — validationTest fixtures. Caching those
-// evicts the desired config, which is the only parse with reuse value (#139).
-func ValidateSyntaxAndSchemaUncached(config string, version *Version) (*parser.StructuredConfig, error) {
-	return validateSyntaxAndSchema(config, version, parser.SourceValidation, false)
-}
-
-func validateSyntaxAndSchema(config string, version *Version, source string, useCache bool) (*parser.StructuredConfig, error) {
 	// Phase 1: Syntax validation with client-native parser
-	parsedConfig, err := validateSyntaxFor(config, source, useCache)
+	parsedConfig, err := validateSyntax(config)
 	if err != nil {
 		return nil, phaseSyntax.wrap(err)
 	}
@@ -155,24 +144,10 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 
 // ValidateConfigurationContext is ValidateConfiguration with caller cancellation.
 func ValidateConfigurationContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) (*parser.StructuredConfig, error) {
-	return validateConfiguration(ctx, mainConfig, auxFiles, paths, version, skipDNSValidation, true)
+	return validateConfiguration(ctx, mainConfig, auxFiles, paths, version, skipDNSValidation)
 }
 
-// ValidateConfigurationUncached is ValidateConfiguration for configs that are
-// validated once and never parsed again — validationTest fixtures. The suite
-// runs hundreds of distinct ones per config load; routing them through the
-// four-slot parser cache flushed it wholesale, which measured as 1730 misses
-// to 2 hits on a live cluster (#139).
-func ValidateConfigurationUncached(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) (*parser.StructuredConfig, error) {
-	return ValidateConfigurationUncachedContext(context.Background(), mainConfig, auxFiles, paths, version, skipDNSValidation)
-}
-
-// ValidateConfigurationUncachedContext is ValidateConfigurationUncached with caller cancellation.
-func ValidateConfigurationUncachedContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) (*parser.StructuredConfig, error) {
-	return validateConfiguration(ctx, mainConfig, auxFiles, paths, version, skipDNSValidation, false)
-}
-
-func validateConfiguration(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation, useCache bool) (*parser.StructuredConfig, error) {
+func validateConfiguration(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) (*parser.StructuredConfig, error) {
 	if cause := context.Cause(ctx); cause != nil {
 		return nil, cause
 	}
@@ -197,11 +172,7 @@ func validateConfiguration(ctx context.Context, mainConfig string, auxFiles *Aux
 	// Phase 1: Syntax validation with client-native parser
 	// This also returns the parsed configuration for Phase 1.5
 	syntaxStart := time.Now()
-	source := parser.SourceRenderValidation
-	if !useCache {
-		source = parser.SourceValidation
-	}
-	parsedConfig, err := validateSyntaxFor(mainConfig, source, useCache)
+	parsedConfig, err := validateSyntax(mainConfig)
 	syntaxMs = time.Since(syntaxStart).Milliseconds()
 	if err != nil {
 		return nil, phaseSyntax.wrap(err)

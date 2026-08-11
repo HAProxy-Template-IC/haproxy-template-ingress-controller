@@ -101,13 +101,6 @@ Leader-only gauges (only the leader deploys). Followers reset them on leadership
 | `haptic_leader_election_transitions_total` | counter | — | Leadership changes observed |
 | `haptic_leader_election_time_as_leader_seconds_total` | counter | — | Cumulative seconds spent as leader |
 
-### Dataplane parser cache
-
-| Metric | Type | Labels | What it tracks |
-|--------|------|--------|----------------|
-| `haptic_parser_cache_hits_total` | counter | — | client-native parser result cache hits |
-| `haptic_parser_cache_misses_total` | counter | — | client-native parser result cache misses |
-
 ### Build info
 
 | Metric | Type | Labels | What it tracks |

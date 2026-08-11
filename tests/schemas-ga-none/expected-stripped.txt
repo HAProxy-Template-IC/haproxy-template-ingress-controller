@@ -58,6 +58,7 @@ test-gateway-static-addresses-per-ip-services
 test-gateway-status-listeners-typed-shape
 test-gateway-status-patches
 test-gateway-status-per-gateway-address
+test-gateway-two-gateways-share-host-path
 test-gateway-typed-access-smoke
 test-gatewayclass-status-transition-time-preserved
 test-governance-httproutes-cross-resource
@@ -87,6 +88,8 @@ test-httproute-method-matching
 test-httproute-multi-hostname-map-newlines
 test-httproute-no-retry-no-directive
 test-httproute-path-exact
+test-httproute-path-only-fallback-kept-within-route
+test-httproute-path-only-route-resolved-by-map
 test-httproute-path-regex
 test-httproute-precedence
 test-httproute-query-params

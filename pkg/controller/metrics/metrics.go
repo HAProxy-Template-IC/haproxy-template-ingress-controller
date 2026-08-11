@@ -19,7 +19,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
 )
 
@@ -120,12 +119,6 @@ type Metrics struct {
 	LeaderElectionIsLeader            prometheus.Gauge
 	LeaderElectionTransitionsTotal    prometheus.Counter
 	LeaderElectionTimeAsLeaderSeconds prometheus.Counter
-
-	// Parser cache metrics. Registered as CounterFuncs that report the
-	// parser package's cumulative hit/miss counters directly on each scrape,
-	// so there is no readback or delta tracking to keep them in sync.
-	ParserCacheHits   prometheus.CounterFunc
-	ParserCacheMisses prometheus.CounterFunc
 
 	// Discovery metrics — surfaces rejection of HAProxy pods that the
 	// controller refuses to talk to (most commonly version-incompatible).
@@ -364,21 +357,6 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"Cumulative time spent as leader in seconds",
 		),
 
-		// Parser cache metrics — reported straight from the parser package's
-		// cumulative counters on each scrape (no readback / delta math).
-		ParserCacheHits: pkgmetrics.NewCounterFunc(
-			registry,
-			"haptic_parser_cache_hits_total",
-			"Total number of parser cache hits",
-			func() float64 { hits, _ := parser.CacheStats(); return float64(hits) },
-		),
-		ParserCacheMisses: pkgmetrics.NewCounterFunc(
-			registry,
-			"haptic_parser_cache_misses_total",
-			"Total number of parser cache misses",
-			func() float64 { _, misses := parser.CacheStats(); return float64(misses) },
-		),
-
 		// Discovery metrics
 		HAProxyPodsRejectedTotal: pkgmetrics.NewCounterVec(
 			registry,
@@ -407,11 +385,6 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 	// fleet sync, staleness (time() - gauge) reads as uptime rather than the
 	// entire Unix epoch.
 	m.LastFullSyncTimestamp.Set(float64(time.Now().Unix()))
-
-	// Per-source parser-cache tallies. Registered as a collector because
-	// Prometheus has no labelled CounterFunc and the parser package owns the
-	// counters (see parser_cache_collector.go).
-	registry.MustRegister(newParserCacheBySource())
 
 	return m
 }

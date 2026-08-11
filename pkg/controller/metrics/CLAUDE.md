@@ -157,7 +157,7 @@ func (c *Component) Start(ctx context.Context) error {
             c.handleEvent(event)
         case <-ticker.C:
             c.metrics.SetObservabilityDrops(c.eventBus.DroppedEventsObservability())
-            // ... parser cache + subscriber count gauges
+            // ... subscriber count gauges
         case <-ctx.Done():
             return ctx.Err()
         }
@@ -583,17 +583,17 @@ func TestComponent_CacheEvents(t *testing.T) {
 ```markdown
 ### Cache Metrics
 
-**haptic_parser_cache_hits_total** (counter)
+**haptic_cache_hit_total** (counter)
 - Total number of cache hits
 
-**haptic_parser_cache_misses_total** (counter)
+**haptic_cache_miss_total** (counter)
 - Total number of cache misses
 
 **Example Queries:**
 \`\`\`promql
 # Cache hit rate
-rate(haptic_parser_cache_hits_total[5m]) /
-(rate(haptic_parser_cache_hits_total[5m]) + rate(haptic_parser_cache_misses_total[5m]))
+rate(haptic_cache_hit_total[5m]) /
+(rate(haptic_cache_hit_total[5m]) + rate(haptic_cache_miss_total[5m]))
 \`\`\`
 ```
 

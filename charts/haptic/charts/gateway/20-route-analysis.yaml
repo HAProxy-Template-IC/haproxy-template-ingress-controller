@@ -848,7 +848,9 @@ templateSnippets:
           {%- end %}
 
           {%- var routeIds = map_extract(updatedRoutes, "routeId") %}
-          {%- var conflictGroup = join(sort_strings(routeIds), "__") %}
+          {#- Group order, NOT sorted: this string is compared against the candidate set the
+              path map emits (41-maps-path.yaml), which joins the same list in this order. -#}
+          {%- var conflictGroup = join(routeIds, "__") %}
 
           {%- var finalRoutes = []any{} %}
           {%- for _, route := range updatedRoutes %}

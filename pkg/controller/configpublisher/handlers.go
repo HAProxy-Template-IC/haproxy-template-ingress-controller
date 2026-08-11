@@ -275,6 +275,8 @@ func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEve
 			"pod_uid", event.PodUID)
 		return
 	}
+	c.recordPodChecksum(event.PodNamespace, event.PodName, event.Checksum)
+
 	c.logger.Debug("Queuing deployment status update for pod",
 		"runtime_config_name", event.RuntimeConfigName,
 		"runtime_config_namespace", event.RuntimeConfigNamespace,
@@ -314,6 +316,8 @@ func (c *Component) handlePodTerminated(ctx context.Context, event *events.HAPro
 		delete(c.endpointAuthorities, key)
 	}
 	c.endpointAuthorityMu.Unlock()
+
+	c.forgetPodChecksum(event.PodNamespace, event.PodName)
 
 	// Get the namespace from cached templateConfig (namespace-scoped operations).
 	c.mu.RLock()
@@ -496,6 +500,7 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	// mu, never before, so this nesting can't deadlock.)
 	c.deployedPendingMu.Lock()
 	c.deployedPending = nil
+	c.deployedChecksumByPod = make(map[podAuthorityKey]string)
 	c.deployedPendingMu.Unlock()
 
 	c.pendingMu.Lock()
@@ -523,6 +528,7 @@ func (c *Component) enqueueDeployed(work *publishWorkItem) {
 	if !replaced {
 		c.deployedPending = append(c.deployedPending, work)
 	}
+	pruned := c.pruneSupersededDeployedLocked()
 	depth := len(c.deployedPending)
 	c.deployedPendingMu.Unlock()
 
@@ -530,12 +536,92 @@ func (c *Component) enqueueDeployed(work *publishWorkItem) {
 		"checksum", work.entry.contentChecksum,
 		"correlation_id", work.correlationID,
 		"replaced_same_checksum", replaced,
+		"pruned_superseded", pruned,
 		"queue_depth", depth)
 
 	select {
 	case c.deployedTrigger <- struct{}{}:
 	default: // already signalled; the worker drains the whole queue
 	}
+}
+
+// recordPodChecksum notes the checksum a pod reports running, so
+// pruneSupersededDeployedLocked can tell a checksum a reader may still
+// observe in status.deployedToPods from one the fleet has moved past.
+func (c *Component) recordPodChecksum(namespace, name, checksum string) {
+	if checksum == "" {
+		return
+	}
+	c.deployedPendingMu.Lock()
+	defer c.deployedPendingMu.Unlock()
+	if c.deployedChecksumByPod == nil {
+		c.deployedChecksumByPod = make(map[podAuthorityKey]string)
+	}
+	c.deployedChecksumByPod[podAuthorityKey{namespace: namespace, name: name}] = checksum
+}
+
+// forgetPodChecksum drops a pod's reported checksum once it is gone, so a
+// departed pod can't pin a queue entry forever.
+func (c *Component) forgetPodChecksum(namespace, name string) {
+	c.deployedPendingMu.Lock()
+	defer c.deployedPendingMu.Unlock()
+	delete(c.deployedChecksumByPod, podAuthorityKey{namespace: namespace, name: name})
+}
+
+// pruneSupersededDeployedLocked drops queued deployed renders the fleet has
+// demonstrably moved past, returning how many it removed. Caller holds
+// deployedPendingMu. A deployed entry owns its rendered bytes inline (it is
+// never in renderedConfigs), so dropping it from the queue frees them.
+//
+// The guarantee this preserves is the observable one: a checksum must reach
+// `spec` while some pod is still reported at it, because that is the only
+// window in which a reader can see it in status.deployedToPods and try to
+// resolve it. So an entry is dropped only when BOTH hold:
+//
+//   - no pod currently reports its checksum, and
+//   - a STRICTLY NEWER queued entry's checksum IS reported by some pod.
+//
+// The second condition is what makes this safe against the status lag: a pod
+// running the newer checksum proves the fleet advanced past everything queued
+// before it. Entries newer than the newest reported one are always kept, so a
+// deploy whose ConfigAppliedToPodEvent hasn't arrived yet can never be pruned.
+func (c *Component) pruneSupersededDeployedLocked() int {
+	if len(c.deployedPending) < 2 {
+		return 0
+	}
+
+	live := make(map[string]struct{}, len(c.deployedChecksumByPod))
+	for _, checksum := range c.deployedChecksumByPod {
+		live[checksum] = struct{}{}
+	}
+
+	// Newest queued entry that some pod actually reports. Everything before it
+	// has been superseded on the fleet; everything from it onward is kept.
+	newestLive := -1
+	for i := len(c.deployedPending) - 1; i >= 0; i-- {
+		if _, ok := live[c.deployedPending[i].entry.contentChecksum]; ok {
+			newestLive = i
+			break
+		}
+	}
+	if newestLive <= 0 {
+		return 0 // nothing reported yet, or the oldest entry is the live one
+	}
+
+	pruned := 0
+	kept := c.deployedPending[:0]
+	for i, work := range c.deployedPending {
+		if i < newestLive {
+			if _, ok := live[work.entry.contentChecksum]; !ok {
+				pruned++
+				continue
+			}
+		}
+		kept = append(kept, work)
+	}
+	clear(c.deployedPending[len(kept):]) // release the dropped entries' configs
+	c.deployedPending = kept
+	return pruned
 }
 
 // requeueDeployedFront puts a deployed render back at the head of the queue,

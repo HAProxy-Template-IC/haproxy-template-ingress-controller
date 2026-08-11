@@ -63,14 +63,7 @@ var (
 // Returns the parsed configuration for use in Phase 1.5 (API schema validation).
 // Uses a package-level singleton parser to avoid re-initializing parser internals
 // on every call.
-// validateSyntaxFor is validateSyntax with an explicit cache decision.
-//
-// The render path SHOULD cache: the orchestrator parses the same rendered
-// string again as the desired config, so validating it first warms that parse
-// for every replica. The validationTest path must NOT: it runs `haproxy_valid`
-// over hundreds of distinct fixture configs at load, none of which is ever
-// parsed again, so caching them evicts the desired config wholesale (#139).
-func validateSyntaxFor(config, source string, useCache bool) (*parser.StructuredConfig, error) {
+func validateSyntax(config string) (*parser.StructuredConfig, error) {
 	// Get or create singleton parser
 	syntaxParserOnce.Do(func() {
 		syntaxParser, syntaxParserErr = parser.New()
@@ -84,11 +77,7 @@ func validateSyntaxFor(config, source string, useCache bool) (*parser.Structured
 		parsed *parser.StructuredConfig
 		err    error
 	)
-	if useCache {
-		parsed, err = syntaxParser.ParseFromStringFor(source, config)
-	} else {
-		parsed, err = syntaxParser.ParseFromStringUncachedFor(source, config)
-	}
+	parsed, err = syntaxParser.ParseFromString(config)
 	if err != nil {
 		return nil, fmt.Errorf("syntax error: %w", err)
 	}

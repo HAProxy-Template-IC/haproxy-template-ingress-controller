@@ -270,7 +270,41 @@ func (c *Component) mapGVKToResourceAliases(gvk string) ([]resourceAlias, error)
 	key := mapping.Resource
 	aliases := c.aliasesByGVR[key]
 	if len(aliases) == 0 {
+		// The alias map is keyed by the ONE apiVersion the config resolved to,
+		// but the webhook intercepts every version the cluster serves for this
+		// resource (the chart renders its rules from the full candidate list).
+		// A watched resource is identified by group + plural; the version is an
+		// encoding of the same object, so fall back to matching on those.
+		// Without this an HTTPRoute written as v1beta1 is denied outright while
+		// the identical v1 object is admitted.
+		aliases = c.aliasesByGroupResource(key.Group, key.Resource)
+	}
+	if len(aliases) == 0 {
 		return nil, fmt.Errorf("GVK %q resolves to unconfigured resource %s", gvk, mapping.Resource.String())
 	}
 	return slices.Clone(aliases), nil
+}
+
+// aliasesByGroupResource finds the watched-resource aliases for a group and
+// plural, ignoring the apiVersion. Used only when the exact GVR misses, so the
+// configured version keeps its direct hit.
+//
+// Two watched-resource entries may name the same group+plural under different
+// apiVersions — nothing rejects that config, and buildResourceAliases keys by
+// the full GVR, so they land under separate keys. Every one of them watches the
+// object being admitted, so all their aliases are returned, exactly as the
+// exact-GVR path returns every alias registered for its key. Returning the first
+// match instead would drop the others, and pick which to drop at random: Go
+// randomizes map iteration order.
+//
+// Sorted by alias name so the overlay set is built in a stable order.
+func (c *Component) aliasesByGroupResource(group, resource string) []resourceAlias {
+	var matched []resourceAlias
+	for gvr, aliases := range c.aliasesByGVR {
+		if gvr.Group == group && gvr.Resource == resource {
+			matched = append(matched, aliases...)
+		}
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].name < matched[j].name })
+	return matched
 }
