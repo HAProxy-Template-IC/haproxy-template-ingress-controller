@@ -388,10 +388,9 @@ debounce non-zero (already a standing rule).
 Verified, both live at N=1 today; sharding multiplies the operations that reach
 them:
 
-- An in-process reinit into a failing load path yields a permanently Ready,
-  do-nothing controller (`beginIteration` re-arms the 90 s grace on every 5 s
-  retry); a startup load-gate failure is a `Running` pod with `/healthz` 503,
-  not CrashLoopBackOff — feedback is asynchronous via
+- A failing in-process reinit receives one 90 s grace episode. Its 5 s retries
+  keep the original deadline, after which `/healthz` returns 503; a startup
+  load-gate failure gets no grace. Feedback is asynchronous via
   `ValidationStatus=Invalid`.
 - **Blast radius via readiness:** 503 → NotReady → the webhook Service loses
   endpoints → the watched-resource rule (`failurePolicy: Fail`, no

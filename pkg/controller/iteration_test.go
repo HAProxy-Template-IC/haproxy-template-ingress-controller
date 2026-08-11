@@ -119,7 +119,7 @@ func TestFinishIterationStartupRejectsCanceledIteration(t *testing.T) {
 	require.ErrorIs(t, err, failure)
 	assert.False(t, state.IsInitialized())
 	infra.graceMu.Lock()
-	assert.False(t, infra.everInitialized)
+	assert.False(t, infra.iterationInitialized)
 	infra.graceMu.Unlock()
 }
 
