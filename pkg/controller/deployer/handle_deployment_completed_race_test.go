@@ -75,7 +75,7 @@ func TestHandleDeploymentCompleted_UsesEventChecksumNotLatestRender(t *testing.T
 	scheduler.lastContentChecksum = laterRender // newer render overwrote the cache
 	scheduler.mu.Unlock()
 
-	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	event := completionForActiveDeployment(scheduler, &events.DeploymentResult{
 		Total:           1,
 		Succeeded:       1,
 		ContentChecksum: deployedChecksum,
@@ -118,7 +118,7 @@ func TestHandleDeploymentCompleted_EmptyChecksumLeavesCacheUntouched(t *testing.
 	scheduler.mu.Unlock()
 
 	// Zero-endpoint deployment-completed event (no actual deploy happened).
-	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	event := completionForActiveDeployment(scheduler, &events.DeploymentResult{
 		Total: 0,
 		// ContentChecksum intentionally empty
 	})
@@ -156,7 +156,7 @@ func TestHandleDeploymentCompleted_FailedDeployLeavesCacheUntouched(t *testing.T
 
 	// Partial-failure completion: 2 endpoints, 1 succeeded, 1 failed. The new
 	// checksum must NOT become the last-deployed hash.
-	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	event := completionForActiveDeployment(scheduler, &events.DeploymentResult{
 		Total:           2,
 		Succeeded:       1,
 		Failed:          1,

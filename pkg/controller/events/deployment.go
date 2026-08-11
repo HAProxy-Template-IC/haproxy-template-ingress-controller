@@ -90,6 +90,9 @@ func (e *InstanceDeploymentFailedEvent) EventType() string { return EventTypeIns
 //
 // This event propagates the correlation ID from DeploymentStartedEvent.
 type DeploymentCompletedEvent struct {
+	// DeploymentID identifies the exact DeploymentScheduledEvent that finished.
+	DeploymentID string
+
 	Total              int   // Total number of instances
 	Succeeded          int   // Number of successful deployments
 	Failed             int   // Number of failed deployments
@@ -143,6 +146,9 @@ type DeploymentCompletedEvent struct {
 // DeploymentResult contains the outcome of a deployment operation.
 // Used with NewDeploymentCompletedEvent for cleaner parameter passing.
 type DeploymentResult struct {
+	// DeploymentID is the EventID of the DeploymentScheduledEvent being completed.
+	DeploymentID string
+
 	Total              int   // Total number of instances
 	Succeeded          int   // Number of successful deployments
 	Failed             int   // Number of failed deployments
@@ -203,6 +209,7 @@ func NewDeploymentCompletedEvent(result *DeploymentResult, opts ...CorrelationOp
 	}
 
 	return &DeploymentCompletedEvent{
+		DeploymentID:       result.DeploymentID,
 		Total:              result.Total,
 		Succeeded:          result.Succeeded,
 		Failed:             result.Failed,
@@ -436,8 +443,11 @@ func (e *DeploymentScheduledEvent) Coalescible() bool { return e.coalescible }
 // Published by: DeploymentScheduler (on timeout)
 // Consumed by: Deployer (to cancel running deployment)
 //
-// The CorrelationID must match the deployment being cancelled.
+// DeploymentID must match the scheduled event being cancelled.
 type DeploymentCancelRequestEvent struct {
+	// DeploymentID identifies the exact DeploymentScheduledEvent to cancel.
+	DeploymentID string
+
 	// Reason describes why the deployment is being cancelled.
 	Reason string
 
@@ -446,11 +456,12 @@ type DeploymentCancelRequestEvent struct {
 }
 
 // NewDeploymentCancelRequestEvent creates a new DeploymentCancelRequestEvent.
-func NewDeploymentCancelRequestEvent(reason string, opts ...CorrelationOption) *DeploymentCancelRequestEvent {
+func NewDeploymentCancelRequestEvent(deploymentID, reason string, opts ...CorrelationOption) *DeploymentCancelRequestEvent {
 	return &DeploymentCancelRequestEvent{
-		Reason:      reason,
-		timestamped: newTimestamped(),
-		Correlation: newCorrelation(opts...),
+		DeploymentID: deploymentID,
+		Reason:       reason,
+		timestamped:  newTimestamped(),
+		Correlation:  newCorrelation(opts...),
 	}
 }
 

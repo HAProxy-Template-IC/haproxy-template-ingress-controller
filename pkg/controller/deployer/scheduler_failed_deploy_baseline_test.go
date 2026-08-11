@@ -83,7 +83,7 @@ func TestDeployFailureDowngradesPendingRuntimeRawLane(t *testing.T) {
 	// 3. The structural deploy comes back FULLY FAILED (the DPA 409 case). The
 	// fix must drop the dispatch baseline and downgrade the parked pending to
 	// the structural lane before the loop grabs it.
-	s.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
 		Total: 2, Succeeded: 0, Failed: 2, ContentChecksum: "checksum-structural",
 	}))
 

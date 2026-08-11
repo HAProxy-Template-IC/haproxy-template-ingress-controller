@@ -44,6 +44,7 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 	defer c.healthTracker.EndProcessing()
 
 	correlationID := event.CorrelationID()
+	deploymentID := event.EventID()
 
 	// Defensive check: atomically set deploymentInProgress from false to true
 	// This prevents concurrent deployments if scheduler has bugs
@@ -61,6 +62,7 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 
 	// Store cancel function so it can be called on timeout
 	c.cancelMu.Lock()
+	c.activeDeploymentID = deploymentID
 	c.activeCorrelationID = correlationID
 	c.activeCancelFunc = cancel
 	c.deploymentDone = make(chan struct{})
@@ -69,6 +71,7 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 	// Ensure we clean up cancel state when deployment completes
 	defer func() {
 		c.cancelMu.Lock()
+		c.activeDeploymentID = ""
 		c.activeCorrelationID = ""
 		c.activeCancelFunc = nil
 		if c.deploymentDone != nil {
@@ -83,10 +86,11 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 		"endpoint_count", len(event.Endpoints),
 		"config_bytes", len(event.Config),
 		"has_parsed_config", event.ParsedConfig != nil,
+		"deployment_id", deploymentID,
 		"correlation_id", correlationID)
 
 	// Execute deployment with cancellable context
-	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, event.ParsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, event.ContentChecksum, event.StatusPatches, correlationID)
+	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, event.ParsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, event.ContentChecksum, event.StatusPatches, deploymentID, correlationID)
 }
 
 // deployToEndpoints deploys configuration to all HAProxy endpoints in parallel.
@@ -108,6 +112,7 @@ func (c *Component) deployToEndpoints(
 	reason string,
 	contentChecksum string,
 	statusPatches []templating.StatusPatch,
+	deploymentID string,
 	correlationID string,
 ) {
 	// Clear deployment flag after this function completes (after wg.Wait())
@@ -124,8 +129,8 @@ func (c *Component) deployToEndpoints(
 		// ContentChecksum stays empty — nothing was deployed, so the scheduler
 		// must not record this as a successful deploy.
 		c.EventBus().Publish(events.NewDeploymentCompletedEvent(
-			&events.DeploymentResult{StatusPatches: statusPatches},
-			events.WithCorrelation(correlationID, correlationID),
+			&events.DeploymentResult{DeploymentID: deploymentID, StatusPatches: statusPatches},
+			events.WithCorrelation(correlationID, deploymentID),
 		))
 		return
 	}
@@ -153,7 +158,7 @@ func (c *Component) deployToEndpoints(
 	// Publish DeploymentStartedEvent with correlation
 	c.EventBus().Publish(events.NewDeploymentStartedEvent(
 		len(endpoints),
-		events.WithCorrelation(correlationID, correlationID),
+		events.WithCorrelation(correlationID, deploymentID),
 	))
 
 	// Deploy to all endpoints in parallel
@@ -195,6 +200,7 @@ func (c *Component) deployToEndpoints(
 	// time (which an intervening reconcile may have changed).
 	c.EventBus().Publish(events.NewDeploymentCompletedEvent(
 		&events.DeploymentResult{
+			DeploymentID:       deploymentID,
 			Total:              len(endpoints),
 			Succeeded:          int(state.successCount),
 			Failed:             int(state.failureCount),
@@ -206,7 +212,7 @@ func (c *Component) deployToEndpoints(
 			OperationBreakdown: state.operationBreakdown,
 			BackendDiffFields:  state.backendDiffFields,
 		},
-		events.WithCorrelation(correlationID, correlationID),
+		events.WithCorrelation(correlationID, deploymentID),
 	))
 
 	// Publish the just-deployed config as the HAProxyCfg spec so its checksum —

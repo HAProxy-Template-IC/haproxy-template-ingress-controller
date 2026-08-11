@@ -75,9 +75,8 @@ var armedForCollapsing = map[string]coalescibleReason{
 	},
 	"DeploymentCompletedEvent": {
 		why: "one global deployment; carries the full per-deploy totals",
-		caveat: "the deployer must see EVERY instance to clear its in-flight flag, which is why " +
-			"deployer.CoalescesOn declares only deployment.scheduled. Collapsing is safe " +
-			"only for consumers that read the payload, like the status applier",
+		caveat: "the scheduler must see every instance to match the active deployment ID; " +
+			"its plain subscription never coalesces. Collapsing is safe only for payload consumers",
 	},
 	"DeploymentSkippedEvent": {
 		why: "one global skip decision; carries the patches describing what is already deployed",

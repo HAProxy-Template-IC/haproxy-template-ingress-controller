@@ -41,6 +41,8 @@ const (
 	// EventBufferSize is the size of the event subscription buffer.
 	// Low-volume component (~1-2 deployment events per reconciliation cycle).
 	EventBufferSize = busevents.StandardSubscriberBuffer
+
+	cancellationSubscriberName = ComponentName + "-cancellation"
 )
 
 // Component implements the deployer component.
@@ -51,7 +53,8 @@ const (
 //
 // Event subscriptions:
 //   - DeploymentScheduledEvent: Execute deployment to specified endpoints
-//   - DeploymentCancelRequestEvent: Cancel in-progress deployment
+//   - DeploymentCancelRequestEvent: Cancel in-progress deployment through a
+//     separate control loop that stays responsive while execution blocks
 //
 // The component publishes deployment result events for observability.
 type Component struct {
@@ -88,9 +91,11 @@ type Component struct {
 
 	// Deployment cancellation support
 	cancelMu            sync.Mutex
-	activeCorrelationID string             // Correlation ID of active deployment
-	activeCancelFunc    context.CancelFunc // Cancel function for active deployment
-	deploymentDone      chan struct{}      // Signals when deployment goroutine completes
+	activeDeploymentID  string                 // Event ID of the active DeploymentScheduledEvent
+	activeCorrelationID string                 // Trace correlation of the active deployment
+	activeCancelFunc    context.CancelFunc     // Cancel function for active deployment
+	deploymentDone      chan struct{}          // Signals when deployment goroutine completes
+	cancelEventChan     <-chan busevents.Event // Out-of-band control subscription
 }
 
 // New creates a new Deployer component.
@@ -130,9 +135,10 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, reloadVerificationTi
 		Handler:    c,
 		EventTypes: []string{
 			events.EventTypeDeploymentScheduled,
-			events.EventTypeDeploymentCancelRequest,
 		},
 	})
+	c.cancelEventChan = eventBus.SubscribeTypes(cancellationSubscriberName, EventBufferSize,
+		events.EventTypeDeploymentCancelRequest)
 	return c
 }
 
@@ -155,6 +161,7 @@ func (c *Component) Start(ctx context.Context) error {
 	// start flowing once this term's scheduler renders, which is gated behind
 	// the readiness signal.
 	c.FlushPending()
+	c.flushPendingCancellationRequests()
 
 	// Signal that subscription is complete for the SubscriptionReadySignaler
 	// interface. Subscription itself happened at construction (component.Base),
@@ -165,20 +172,22 @@ func (c *Component) Start(ctx context.Context) error {
 	c.versionCache.clear()
 
 	c.ctx = ctx
+	controlCtx, stopControl := context.WithCancel(ctx)
+	controlDone := make(chan struct{})
+	go c.runCancellationLoop(controlCtx, controlDone)
 	err := c.Base.Start(ctx)
 
+	stopControl()
 	c.cancelActiveDeployment("shutdown")
+	<-controlDone
 	return err
 }
 
 // HandleEvent implements component.EventHandler: it routes events to the
 // appropriate handler.
 func (c *Component) HandleEvent(event busevents.Event) {
-	switch e := event.(type) {
-	case *events.DeploymentScheduledEvent:
+	if e, ok := event.(*events.DeploymentScheduledEvent); ok {
 		c.performDeployment(c.ctx, e)
-	case *events.DeploymentCancelRequestEvent:
-		c.handleDeploymentCancelRequest(e)
 	}
 }
 
@@ -195,9 +204,6 @@ func (c *Component) HandleEvent(event busevents.Event) {
 // queued event in FIFO order — deploying the OLDEST pending config first
 // and falling further and further behind under load.
 func (c *Component) CoalescesOn() []string {
-	// ONLY deployment.scheduled: every deployment.completed must be seen
-	// individually (it clears the single-threaded deployer's in-flight
-	// bookkeeping), so it must never be listed here.
 	return []string{events.EventTypeDeploymentScheduled}
 }
 

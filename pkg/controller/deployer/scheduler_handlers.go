@@ -356,6 +356,44 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 // pipeline 2551671212 / TestIngressHaproxyRedirectTo for a real
 // reproduction.
 func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.DeploymentCompletedEvent) {
+	s.schedulerMutex.Lock()
+	if !s.state.deployInFlight || event.DeploymentID == "" || event.DeploymentID != s.state.activeDeploymentID {
+		activeDeploymentID := s.state.activeDeploymentID
+		s.schedulerMutex.Unlock()
+		s.logger.Warn("Ignoring completion for a deployment that is not active",
+			"completed_deployment_id", event.DeploymentID,
+			"active_deployment_id", activeDeploymentID,
+			"correlation_id", event.CorrelationID())
+		return
+	}
+
+	timedOut := s.state.deploymentTimedOut
+	s.state.deployInFlight = false
+	s.state.deploymentTimedOut = false
+	s.state.deploymentStartTime = time.Time{}
+	s.state.activeDeploymentID = ""
+	s.state.activeCorrelationID = ""
+	s.state.lastDeploymentEndTime = time.Now()
+
+	if timedOut {
+		s.schedulerMutex.Unlock()
+		s.logger.Info("Timed-out deployment terminated",
+			"deployment_id", event.DeploymentID,
+			"correlation_id", event.CorrelationID())
+		s.signalCompleted()
+		return
+	}
+
+	// A deploy that reported failures did not land on every pod. A successful
+	// deploy is the point where the dispatched render becomes the running one.
+	switch {
+	case event.Total > 0 && event.Failed > 0:
+		s.invalidateDispatchBaselineLocked()
+	case event.Total > 0:
+		s.lastActivatedConfig = s.lastDispatchedConfig
+	}
+	s.schedulerMutex.Unlock()
+
 	// Cache the deployed content checksum for future comparison (skip unchanged deployments).
 	// Empty ContentChecksum means the zero-endpoint code path — nothing deployed, don't
 	// touch the cache (otherwise we'd record "" as "last deployed" and force the next
@@ -375,37 +413,6 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 		s.lastDeployedTime = time.Now()
 	}
 	s.mu.Unlock()
-
-	s.schedulerMutex.Lock()
-
-	// Mark the deploy complete and record the end time (the loop rate-limits the
-	// next deploy from here). The deploy loop is blocked in awaitCompletion; the
-	// signal below releases it and it picks up any pending deployment on its own
-	// next cycle. We do NOT re-schedule here — that second scheduling path was
-	// the source of concurrent rate-limit goroutines and the reload storm.
-	s.state.deployInFlight = false
-	s.state.deploymentStartTime = time.Time{}
-	s.state.activeCorrelationID = ""
-	s.state.lastDeploymentEndTime = time.Now()
-
-	// A deploy that reported failures did NOT land on every pod: drop the
-	// dispatch baseline so the next dispatch — including the armed fast
-	// retry — classifies structural and full-syncs against the pods' real
-	// state (see invalidateDispatchBaselineLocked for the issue #76 incident
-	// this prevents).
-	//
-	// A deploy that landed everywhere is the moment the dispatched render
-	// becomes the RUNNING one, so it is the only place the structural lane may
-	// advance the activated baseline. The deploy loop is blocked in
-	// awaitCompletion until this fires, so no newer dispatch can have
-	// overwritten lastDispatchedConfig in between (#112).
-	switch {
-	case event.Total > 0 && event.Failed > 0:
-		s.invalidateDispatchBaselineLocked()
-	case event.Total > 0:
-		s.lastActivatedConfig = s.lastDispatchedConfig
-	}
-	s.schedulerMutex.Unlock()
 
 	// Fast self-reschedule: a retryable per-pod failure (e.g. a transient DPA
 	// transaction-version conflict) is otherwise only re-driven by the 60s drift
@@ -636,7 +643,9 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	// Clear all transient deploy state. The deploy loop itself exits via ctx
 	// cancellation on leadership loss; its channels are recreated on next Start.
 	s.state.deployInFlight = false
+	s.state.deploymentTimedOut = false
 	s.state.deploymentStartTime = time.Time{}
+	s.state.activeDeploymentID = ""
 	s.state.activeCorrelationID = ""
 	s.state.pending = nil
 

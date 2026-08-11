@@ -70,8 +70,9 @@ Notable details:
 
 - The scheduler only deploys when it has *all three* inputs: a rendered config, a successful validation, and at least one discovered HAProxy endpoint. Partial state waits.
 - "Latest wins" is a single slot — concurrent changes don't queue up as a FIFO, they coalesce to the most recent one.
-- `DeploymentCompletedEvent` both closes the in-progress flag in the scheduler *and* resets the drift-monitor's idle timer, which is why it's on the feedback edge in the diagram.
+- The `DeploymentCompletedEvent` matching the active deployment ID closes the scheduler's in-progress flag. Every completion resets the drift monitor's idle timer, which is why the event is on the feedback edge in the diagram.
 - `deploymentTimeout` is a safety net, not an operational target — hitting it means a lost completion event or a stuck dataplane call, both of which are bugs to investigate.
+- Cancellation uses a separate control subscription, so it reaches a blocked Dataplane call without waiting behind that call in the deployment mailbox. A timed-out deployment keeps the scheduler slot until its exact deployment ID reports termination; completions for any other attempt cannot change baselines, caches, or release queued work.
 
 ## Leadership Transitions
 

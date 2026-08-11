@@ -19,49 +19,33 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// HandleEvent is the deployer's two-case dispatch table. The
-// existing TestComponent_HandleEvent covers the happy paths for
-// non-deployment events (silent ignore) and DeploymentScheduledEvent
-// (routed to performDeployment). The DeploymentCancelRequestEvent
-// dispatch was uncovered: a regression that removed the cancel case
-// from the type switch would silently drop EVERY scheduler timeout
-// recovery — deployments stuck past the scheduler's timeout would
-// stay running forever (the scheduler publishes the cancel request,
-// but the deployer would no longer act on it).
-//
-// This file pins the cancel-event dispatch by going through
-// HandleEvent (not handleDeploymentCancelRequest directly, which
-// is already tested in deployment_lifecycle_test.go). The proof of
-// dispatch is the side effect: with a fake deployment installed,
-// the cancel func MUST be invoked.
-
-func TestComponent_HandleEvent_RoutesDeploymentCancelRequest(t *testing.T) {
+func TestComponent_CancellationLoopRoutesRequest(t *testing.T) {
 	bus := busevents.NewEventBus(10)
 	bus.Start()
 	c := createTestDeployer(bus)
-	c.ctx = context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go c.runCancellationLoop(ctx, done)
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
 
-	const cid = "deployment-to-cancel"
-	cancelInvoked, _ := installFakeDeployment(c, cid)
+	const deploymentID = "deployment-to-cancel"
+	cancelInvoked, _ := installFakeDeployment(c, deploymentID)
 
 	event := events.NewDeploymentCancelRequestEvent(
+		deploymentID,
 		"scheduler_timeout",
-		events.WithCorrelation(cid, ""),
+		events.WithCorrelation("trace", deploymentID),
 	)
 
-	c.HandleEvent(event)
+	bus.Publish(event)
 
 	select {
 	case <-cancelInvoked:
-		// expected: dispatch routed the event to handleDeploymentCancelRequest,
-		// which matched the correlation ID and invoked the active cancel func.
 	case <-time.After(time.Second):
 		require.Fail(t,
-			"DeploymentCancelRequestEvent MUST be routed by HandleEvent's "+
-				"type switch to handleDeploymentCancelRequest. A regression "+
-				"that removed the cancel case would silently drop EVERY "+
-				"scheduler timeout recovery — stuck deployments would stay "+
-				"running forever (scheduler keeps publishing cancels but the "+
-				"deployer no longer acts on them)")
+			"the cancellation control loop did not dispatch the request")
 	}
 }
