@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	pv "gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator/testutil"
 )
@@ -184,6 +185,60 @@ func TestManager_ValidateAll_TransportErrorNotCached(t *testing.T) {
 	// one — proven by getting two independent error lists.
 	if len(out1.Errors) == 0 || len(out2.Errors) == 0 {
 		t.Fatal("expected at least one error per call")
+	}
+}
+
+func TestManager_ValidateRenderedOutput_RejectsInconsistentResultWithoutCaching(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	if err := srv.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultError,
+		Warnings:        []pv.Diagnostic{},
+		Errors:          []pv.Diagnostic{},
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+
+	mgr, err := pv.NewManager(nil, []pv.ManagerConfig{{
+		Name:       "contract-check",
+		SocketPath: srv.SocketPath,
+		Files:      []string{"/etc/haproxy/haproxy.cfg"},
+		Timeout:    time.Second,
+	}})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	defer mgr.Close()
+	result := &pipeline.PipelineResult{HAProxyConfig: "global\n"}
+
+	_, validationErr := mgr.ValidateRenderedOutput(context.Background(), result)
+	if validationErr == nil {
+		t.Fatal("result:error without error diagnostics passed pipeline validation")
+	}
+	if !strings.Contains(validationErr.Error(), `use "valid"`) {
+		t.Fatalf("validation error %q does not explain the response contract", validationErr)
+	}
+
+	if err := srv.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultValid,
+		Warnings:        []pv.Diagnostic{},
+		Errors:          []pv.Diagnostic{},
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+	if _, err := mgr.ValidateRenderedOutput(context.Background(), result); err != nil {
+		t.Fatalf("conforming response after protocol failure: %v", err)
+	}
+	if got := len(srv.Requests()); got != 2 {
+		t.Fatalf("server saw %d requests, want 2; inconsistent response was cached", got)
+	}
+
+	if _, err := mgr.ValidateRenderedOutput(context.Background(), result); err != nil {
+		t.Fatalf("cached conforming response: %v", err)
+	}
+	if got := len(srv.Requests()); got != 2 {
+		t.Fatalf("server saw %d requests after cache hit, want 2", got)
 	}
 }
 

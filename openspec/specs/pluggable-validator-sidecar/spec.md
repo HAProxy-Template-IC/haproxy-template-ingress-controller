@@ -150,6 +150,8 @@ A response SHALL be a JSON object with the following fields:
 - `warnings` (array, always present, possibly empty): list of `Diagnostic` objects with `severity = Warning`.
 - `errors` (array, always present, possibly empty): list of `Diagnostic` objects with `severity = Error`.
 
+The controller SHALL reject a response whose `result` is missing, unknown, or inconsistent with the diagnostic arrays. The rejection SHALL be surfaced as a synthetic protocol error that fails the current validation and SHALL NOT be cached.
+
 The webhook caller maps the three results to admission outcomes:
 
 - `valid` → admission allowed; no message.
@@ -161,11 +163,16 @@ The webhook caller maps the three results to admission outcomes:
 WHEN a validator returns `result: "warning"` with one warning diagnostic
 THEN the webhook SHALL admit the resource AND populate `AdmissionResponse.Warnings` with the diagnostic message AND not deny.
 
+#### Scenario: Inconsistent result fails closed
+
+WHEN a validator returns `result: "error"` with empty `warnings` and `errors` arrays
+THEN the controller SHALL reject the response as a protocol error AND fail the current validation AND request the same input from the validator again on the next validation instead of serving the rejection from cache.
+
 ### Requirement: Result Cache
 
 The controller SHALL maintain a process-local LRU cache of validator responses keyed by `(validator-name, path, sha256(content))`. Cache hits skip the socket round-trip and return the cached `Response` byte-for-byte. Default capacity SHALL be 256 entries. Eviction SHALL be by least-recently-used insertion order.
 
-The cache SHALL NOT memoise transport-level (synthetic) failures; only real validator responses (including warning- and error-severity ones) SHALL be cached. The wire-protocol contract requires validator output to be a pure function of its input, so caching real responses is correct.
+The cache SHALL NOT memoise transport-level or protocol-decode (synthetic) failures; only protocol-conforming validator responses (including warning- and error-severity ones) SHALL be cached. The wire-protocol contract requires validator output to be a pure function of its input, so caching conforming responses is correct.
 
 #### Scenario: Repeat call returns cached response
 

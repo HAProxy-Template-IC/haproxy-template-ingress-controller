@@ -113,6 +113,8 @@ The result cache keys on the data files' content as well as the config file's, s
 | `warnings` | array | yes (possibly empty) | List of `Diagnostic` objects with implicit `severity = warning`. |
 | `errors` | array | yes (possibly empty) | List of `Diagnostic` objects with implicit `severity = error`. |
 
+The controller recomputes `result` from the diagnostic arrays. A missing or unknown value, or a value that disagrees with those arrays, is a decode failure. The controller discards the connection, fails the current render, and does not cache that response. Return the computed value shown in the table.
+
 A `Diagnostic` SHALL have:
 
 | Field | Type | Required | Semantics |
@@ -157,7 +159,7 @@ The current protocol is version `1`. Future evolution rules:
 
 ## Caching (client-side)
 
-The HAPTIC controller maintains a process-local LRU cache keyed by `(validator-name, path, sha256(content))`. Cache hits skip the round-trip and return the cached response. The cache holds successful round-trips (including responses with `result: "warning"` or `result: "error"`); it does NOT cache transport-level failures so a transient sidecar outage doesn't poison subsequent admissions.
+The HAPTIC controller maintains a process-local LRU cache keyed by `(validator-name, path, sha256(content))`. Cache hits skip the round-trip and return the cached response. The cache holds protocol-conforming round-trips (including responses with `result: "warning"` or `result: "error"`); it does NOT cache transport or protocol-decode failures so a transient outage or malformed response doesn't poison subsequent admissions.
 
 The cache is process-local — a controller restart re-warms it. There is no cross-pod sharing.
 

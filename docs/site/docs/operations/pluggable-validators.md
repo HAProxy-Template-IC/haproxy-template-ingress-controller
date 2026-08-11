@@ -188,7 +188,7 @@ For a typical webhook call with one validator and a handful of matched files, th
 | Validator returns an error response | The pipeline fails with the validator's message and row + column. |
 | Validator returns a warning response | The pipeline continues. Admission surfaces the warning through `AdmissionResponse.Warnings`. |
 | Validator times out | The pipeline fails with `validator <name>: validation timed out after Ns`. |
-| Validator returns garbage / wrong `protocol_version` | The pipeline fails with a transport error identifying the validator. |
+| Validator returns garbage, a wrong `protocol_version`, or a `result` that disagrees with its diagnostics | The pipeline fails with a protocol error identifying the validator. The response isn't cached. |
 | Validator panics mid-validation | The sidecar returns a synthetic error diagnostic and continues serving subsequent requests. The current render fails. |
 | Idle-closed connection on first reuse | Transparently reconnected and retried once. The operator sees no failure. |
 
