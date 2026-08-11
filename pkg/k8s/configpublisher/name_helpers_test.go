@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // ---------------------------------------------------------------------------
@@ -136,7 +138,6 @@ func TestGenerateRuntimeConfigName(t *testing.T) {
 		expected string
 	}{
 		{name: "simple name", input: "my-config", expected: "my-config-haproxycfg"},
-		{name: "empty string", input: "", expected: "-haproxycfg"},
 		{name: "with dots", input: "my.config.v1", expected: "my.config.v1-haproxycfg"},
 		{name: "with hyphens", input: "my-long-config-name", expected: "my-long-config-name-haproxycfg"},
 		{name: "already has suffix", input: "config-haproxycfg", expected: "config-haproxycfg-haproxycfg"},
@@ -147,6 +148,19 @@ func TestGenerateRuntimeConfigName(t *testing.T) {
 			assert.Equal(t, tt.expected, GenerateRuntimeConfigName(tt.input))
 		})
 	}
+
+	longName := strings.Repeat("a", validation.DNS1123SubdomainMaxLength)
+	otherLongName := strings.Repeat("a", validation.DNS1123SubdomainMaxLength-1) + "b"
+	validName := GenerateRuntimeConfigName(longName)
+	otherValidName := GenerateRuntimeConfigName(otherLongName)
+	assert.Empty(t, validation.IsDNS1123Subdomain(validName))
+	assert.LessOrEqual(t, len(validName), validation.DNS1123SubdomainMaxLength)
+	assert.NotEqual(t, validName, otherValidName)
+	assert.True(t, strings.HasSuffix(validName, runtimeConfigNameSuffix))
+
+	invalidName := runtimeConfigResourceName(longName, "-invalid")
+	assert.Empty(t, validation.IsDNS1123Subdomain(invalidName))
+	assert.True(t, strings.HasSuffix(invalidName, runtimeConfigNameSuffix+"-invalid"))
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +253,24 @@ func TestPublisher_GenerateCRTListFileName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, p.generateCRTListFileName(tt.listPath))
 		})
+	}
+}
+
+func TestResolveAuxiliaryResourceNames(t *testing.T) {
+	items := []string{"error.http", "error.lua", strings.Repeat("A", 300) + ".txt"}
+	names := resolveAuxiliaryResourceNames(
+		items,
+		"-invalid",
+		func(item string) string { return sanitizeResourceName("haproxy-file-", item) },
+		func(item string) string { return item },
+	)
+
+	require.Len(t, names, len(items))
+	assert.NotEqual(t, names[0], names[1])
+	for _, name := range names {
+		assert.Empty(t, validation.IsDNS1123Subdomain(name), name)
+		assert.LessOrEqual(t, len(name), validation.DNS1123SubdomainMaxLength)
+		assert.True(t, strings.HasSuffix(name, "-invalid"))
 	}
 }
 

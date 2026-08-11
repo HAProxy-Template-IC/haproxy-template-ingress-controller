@@ -17,7 +17,6 @@ package configpublisher
 import (
 	"context"
 	"errors"
-	"fmt"
 	"maps"
 	"slices"
 	"sync"
@@ -124,6 +123,10 @@ func (c *Component) processPublishWork(ctx context.Context, work *publishWorkIte
 	if ctx.Err() != nil {
 		return
 	}
+	if !c.publishWorkCurrent(work) {
+		c.discardCachedConfig(work.correlationID)
+		return
+	}
 
 	c.logger.Debug("Processing publish work",
 		"config_name", work.templateConfig.Name,
@@ -132,10 +135,9 @@ func (c *Component) processPublishWork(ctx context.Context, work *publishWorkIte
 		"correlation_id", work.correlationID,
 	)
 
-	// Skip publish if checksum unchanged (content deduplication).
-	// This prevents redundant CRD updates when config content hasn't changed,
-	// which commonly happens during high-frequency EndpointSlice reconciliations.
-	if c.skipIfAlreadyPublished(work, "skipping publish, config unchanged") {
+	// Repeated deploy notifications need no desired-state audit: the matching
+	// validation path performs that reconciliation.
+	if work.deployDriven && c.skipIfAlreadyPublished(work, "skipping publish, config unchanged") {
 		return
 	}
 
@@ -183,7 +185,7 @@ func (c *Component) processPublishWork(ctx context.Context, work *publishWorkIte
 	c.executePublish(ctx, work)
 }
 
-// flushPendingPublish publishes the buffered work item (if any) when the throttle timer expires.
+// flushPendingPublish publishes one buffered work item when the throttle timer expires.
 func (c *Component) flushPendingPublish(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
@@ -192,36 +194,39 @@ func (c *Component) flushPendingPublish(ctx context.Context) {
 	deployWork := c.takeDeployed()
 
 	c.pendingMu.Lock()
-	work := c.pendingPublish
-	c.pendingPublish = nil
+	validationWork := c.pendingPublish
+	if deployWork == nil {
+		c.pendingPublish = nil
+	}
 	c.pendingMu.Unlock()
 
-	// One deployed item per throttle window: the rest stay queued and the
-	// worker's own drain picks them up as the gate reopens, so the interval is
-	// still honoured and nothing is discarded.
-	if deployWork != nil && c.deployedQueueDepth() > 0 {
+	work := deployWork
+	if work == nil {
+		work = validationWork
+	}
+	if work == nil {
+		return
+	}
+
+	// Every deployed checksum stays ahead of the latest validation publish.
+	// Leave validationWork in its slot until the deployed queue is empty.
+	if deployWork != nil && (c.deployedQueueDepth() > 0 || validationWork != nil) {
 		c.publishThrottle.ScheduleFlush()
 	}
 
-	// Deploy-driven first: spec should reflect what's actually deployed, and the
-	// deployed checksum must become observable. When both slots carry the same
-	// content (the common case — deploy of the render that validation just
-	// published), skipIfAlreadyPublished collapses the second to a no-op, so this
-	// stays at one CRD write per window in steady state.
-	for _, w := range []*publishWorkItem{deployWork, work} {
-		if w == nil {
-			continue
-		}
-		// Re-check content deduplication (content may have been published by another path).
-		if c.skipIfAlreadyPublished(w, "skipping throttled publish, config already published") {
-			continue
-		}
-		c.logger.Debug("Flushing throttled CRD publish",
-			"correlation_id", w.correlationID,
-			"deploy_driven", w.deployDriven,
-		)
-		c.executePublish(ctx, w)
+	if !c.publishWorkCurrent(work) {
+		c.discardCachedConfig(work.correlationID)
+		return
 	}
+	// Re-check content deduplication (content may have been published by another path).
+	if work.deployDriven && c.skipIfAlreadyPublished(work, "skipping throttled publish, config already published") {
+		return
+	}
+	c.logger.Debug("Flushing throttled CRD publish",
+		"correlation_id", work.correlationID,
+		"deploy_driven", work.deployDriven,
+	)
+	c.executePublish(ctx, work)
 }
 
 // skipIfAlreadyPublished returns true when work's content checksum matches the
@@ -252,20 +257,20 @@ func (c *Component) skipIfAlreadyPublished(work *publishWorkItem, msg string) bo
 
 // executePublish performs the actual K8S API call to publish the config CRD.
 func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
-	request := c.buildPublishRequest(work.templateConfig, work.entry)
+	request := work.request
+	if request == nil {
+		request = c.buildPublishRequest(work.templateConfig, work.entry)
+		work.request = request
+	}
 
-	// Call pure publisher with timeout context
-	publishCtx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPILongTimeout)
-	defer cancel()
-
-	result, err := c.publisher.PublishConfig(publishCtx, request)
-	if err != nil {
-		c.logger.Error("Failed to publish runtime configuration",
-			"error", err,
-			"config_name", work.templateConfig.Name,
-			"correlation_id", work.correlationID,
-		)
+	result, complete := c.publishUntilComplete(ctx, request, work.correlationID, work.superseded, func() bool {
+		return c.publishWorkCurrent(work)
+	})
+	if !complete {
 		c.discardCachedConfig(work.correlationID)
+		return
+	}
+	if !c.commitPublish(ctx, work, request, result) {
 		return
 	}
 
@@ -276,22 +281,35 @@ func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
 		"checksum", checksumHex,
 		"correlation_id", work.correlationID,
 	)
+}
 
-	// Update last published checksum, mark throttle fired, clean up.
+func (c *Component) commitPublish(
+	ctx context.Context,
+	work *publishWorkItem,
+	request *configpublisher.PublishRequest,
+	result *configpublisher.PublishResult,
+) bool {
 	c.mu.Lock()
-	c.lastPublishedChecksum = checksumHex
+	defer c.mu.Unlock()
+	if ctx.Err() != nil || !c.publishWorkCurrentLocked(work) {
+		delete(c.renderedConfigs, work.correlationID)
+		return false
+	}
+
+	alreadyPublished := request.Checksum != "" && request.Checksum == c.lastPublishedChecksum
+	c.lastPublishedChecksum = request.Checksum
 	delete(c.renderedConfigs, work.correlationID)
-	c.mu.Unlock()
-
 	c.publishThrottle.MarkFired()
-
-	// Publish success event with runtime config info
+	if alreadyPublished {
+		return true
+	}
 	c.eventBus.Publish(events.NewConfigPublishedEvent(
 		result.RuntimeConfigName,
 		result.RuntimeConfigNamespace,
 		len(result.MapFileNames),
 		len(result.SecretNames),
 	))
+	return true
 }
 
 // validationFailedWorker processes validation failed work items asynchronously.
@@ -314,50 +332,101 @@ func (c *Component) validationFailedWorker(ctx context.Context) {
 
 // processValidationFailedWork performs the actual invalid config publishing.
 func (c *Component) processValidationFailedWork(ctx context.Context, work *validationFailedWorkItem) {
-	c.logger.Debug("Processing validation failed work",
-		"config_name", work.templateConfig.Name,
-		"config_namespace", work.templateConfig.Namespace,
-		"error_count", len(work.event.Errors),
-		"correlation_id", work.correlationID,
-	)
-
-	// Build validation error summary
-	var validationError string
-	if len(work.event.Errors) > 0 {
-		validationError = work.event.Errors[0]
-		if len(work.event.Errors) > 1 {
-			validationError = fmt.Sprintf("%s (+%d more errors)", validationError, len(work.event.Errors)-1)
-		}
-	}
-
-	// Layer the invalid-state extras on top of the shared request.
-	request := c.buildPublishRequest(work.templateConfig, work.entry)
-	request.NameSuffix = "-invalid"
-	request.ValidationError = validationError
-
-	// Call pure publisher with timeout context
-	publishCtx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPILongTimeout)
-	defer cancel()
-
-	result, err := c.publisher.PublishConfig(publishCtx, request)
-	if err != nil {
-		c.logger.Error("Failed to publish invalid runtime configuration",
-			"error", err,
-			"config_name", work.templateConfig.Name,
-			"correlation_id", work.correlationID,
-		)
+	if !c.invalidWorkCurrent(work) {
 		c.discardCachedConfig(work.correlationID)
 		return
 	}
 
-	c.logger.Warn("Invalid runtime configuration published",
-		"runtime_config_name", result.RuntimeConfigName,
-		"runtime_config_namespace", result.RuntimeConfigNamespace,
-		"validation_error", validationError,
+	c.logger.Debug("Processing validation failed work",
+		"config_name", work.templateConfig.Name,
+		"config_namespace", work.templateConfig.Namespace,
 		"correlation_id", work.correlationID,
 	)
 
-	c.discardCachedConfig(work.correlationID)
+	request := work.request
+	if request == nil {
+		request = c.buildPublishRequest(work.templateConfig, work.entry)
+		request.NameSuffix = "-invalid"
+		request.ValidationError = work.validationError
+		work.request = request
+	}
+
+	result, complete := c.publishUntilComplete(ctx, request, work.correlationID, work.superseded, func() bool {
+		return c.invalidWorkCurrent(work)
+	})
+	if !complete {
+		c.discardCachedConfig(work.correlationID)
+		return
+	}
+
+	c.mu.Lock()
+	if ctx.Err() != nil || !c.invalidWorkCurrentLocked(work) {
+		delete(c.renderedConfigs, work.correlationID)
+		c.mu.Unlock()
+		return
+	}
+	delete(c.renderedConfigs, work.correlationID)
+	c.mu.Unlock()
+
+	c.logger.Warn("Invalid runtime configuration published",
+		"runtime_config_name", result.RuntimeConfigName,
+		"runtime_config_namespace", result.RuntimeConfigNamespace,
+		"validation_error", work.validationError,
+		"correlation_id", work.correlationID,
+	)
+}
+
+func (c *Component) publishUntilComplete(
+	ctx context.Context,
+	request *configpublisher.PublishRequest,
+	correlationID string,
+	superseded <-chan struct{},
+	current func() bool,
+) (*configpublisher.PublishResult, bool) {
+	for retry := 0; ; retry++ {
+		if ctx.Err() != nil || !current() {
+			return nil, false
+		}
+
+		c.publicationCallMu.Lock()
+		if ctx.Err() != nil || !current() {
+			c.publicationCallMu.Unlock()
+			return nil, false
+		}
+		publishCtx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPILongTimeout)
+		result, err := c.publisher.PublishConfig(publishCtx, request)
+		cancel()
+		c.publicationCallMu.Unlock()
+		if err == nil {
+			return result, true
+		}
+		if ctx.Err() != nil || !current() {
+			return nil, false
+		}
+		if !configpublisher.IsRetryablePublicationError(err) {
+			c.logger.Error("Configuration publication rejected; fix the API error before retrying",
+				"error", err,
+				"config_name", request.TemplateConfigName,
+				"correlation_id", correlationID,
+			)
+			return nil, false
+		}
+
+		delay := publicationRetryBackoff(retry + 1)
+		c.logger.Warn("Configuration publication incomplete; retrying",
+			"error", err,
+			"config_name", request.TemplateConfigName,
+			"correlation_id", correlationID,
+			"retry_in", delay,
+		)
+		wait := c.publicationRetryWait
+		if wait == nil {
+			wait = waitForPublicationRetry
+		}
+		if !wait(ctx, delay, superseded) || !current() {
+			return nil, false
+		}
+	}
 }
 
 // statusWorker processes pod status update work items asynchronously with coalescing.

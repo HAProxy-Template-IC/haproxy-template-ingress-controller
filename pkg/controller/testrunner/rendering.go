@@ -178,7 +178,10 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 	dynamicFiles := fileRegistry.GetFiles()
 
 	// Merge static (pre-declared) and dynamic (registered) files
-	auxiliaryFiles := rendercontext.MergeAuxiliaryFiles(staticFiles, dynamicFiles)
+	auxiliaryFiles, err := rendercontext.MergeAuxiliaryFiles(staticFiles, dynamicFiles)
+	if err != nil {
+		return RenderOutput{}, fmt.Errorf("merging auxiliary files: %w", err)
+	}
 
 	// Debug logging
 	staticCount := len(staticFiles.MapFiles) + len(staticFiles.GeneralFiles) + len(staticFiles.SSLCertificates) + len(staticFiles.CRTListFiles)

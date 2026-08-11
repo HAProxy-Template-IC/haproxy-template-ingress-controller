@@ -142,12 +142,7 @@ func (c *Component) handleValidationCompleted(event *events.ValidationCompletedE
 	// - If channel is empty, work is queued immediately
 	// - If channel has pending work, replace it with newer work (coalescing)
 	// This ensures we always publish the latest config, not stale intermediate ones.
-	workItem := &publishWorkItem{
-		correlationID:  correlationID,
-		event:          event,
-		templateConfig: templateConfig,
-		entry:          entry,
-	}
+	workItem := c.makePublishWorkItem(correlationID, templateConfig, entry, false)
 
 	queueWithCoalesce(c, c.publishWork, workItem, "publish", correlationID,
 		func(w *publishWorkItem) string { return w.correlationID })
@@ -177,16 +172,16 @@ func (c *Component) handleDeployedConfigPublishRequest(event *events.DeployedCon
 		return
 	}
 
-	workItem := &publishWorkItem{
-		correlationID:  "deployed:" + event.ContentChecksum,
-		templateConfig: templateConfig,
-		entry: &renderedConfigEntry{
+	workItem := c.makePublishWorkItem(
+		"deployed:"+event.ContentChecksum,
+		templateConfig,
+		&renderedConfigEntry{
 			config:          event.Config,
 			auxFiles:        event.AuxiliaryFiles,
 			contentChecksum: event.ContentChecksum,
 		},
-		deployDriven: true,
-	}
+		true,
+	)
 
 	c.enqueueDeployed(workItem)
 }
@@ -211,12 +206,7 @@ func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) 
 	)
 
 	// Queue work for async processing
-	workItem := &validationFailedWorkItem{
-		correlationID:  correlationID,
-		event:          event,
-		templateConfig: templateConfig,
-		entry:          entry,
-	}
+	workItem := c.makeValidationFailedWorkItem(correlationID, event, templateConfig, entry)
 
 	queueWithCoalesce(c, c.validationFailedWork, workItem, "validation failed", correlationID,
 		func(w *validationFailedWorkItem) string { return w.correlationID })
@@ -451,6 +441,11 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	c.hasTemplateConfig = false
 	c.renderedConfigs = make(map[string]*renderedConfigEntry)
 	c.lastPublishedChecksum = ""
+	c.publicationTerm++
+	c.latestPublishGeneration = 0
+	c.latestInvalidGeneration = 0
+	c.publishSuperseded = supersedePublication(c.publishSuperseded)
+	c.invalidSuperseded = supersedePublication(c.invalidSuperseded)
 
 	// Drop every queued deploy-driven publish so a lost leader doesn't later
 	// flush a stale spec write. The Component outlives a leadership transition,

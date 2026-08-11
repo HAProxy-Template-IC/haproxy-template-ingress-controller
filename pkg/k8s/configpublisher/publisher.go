@@ -16,10 +16,16 @@ package configpublisher
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"path"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -73,10 +79,29 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 		"namespace", req.TemplateConfigNamespace,
 	)
 
-	// Create or update HAProxyCfg
+	runtimeConfigName := runtimeConfigResourceName(req.TemplateConfigName, req.NameSuffix)
+	canonicalRequest, err := canonicalizePublishRequest(req)
+	if err != nil {
+		return nil, incompletePublicationError(
+			PublicationStageAuxiliary,
+			req.TemplateConfigNamespace,
+			runtimeConfigName,
+			"AuxiliaryFiles",
+			runtimeConfigName,
+			fmt.Errorf("validating auxiliary files: %w", err),
+		)
+	}
+	req = canonicalRequest
 	runtimeConfig, err := p.createOrUpdateRuntimeConfig(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("creating/updating runtime config: %w", err)
+		return nil, incompletePublicationError(
+			PublicationStageRuntimeConfig,
+			req.TemplateConfigNamespace,
+			runtimeConfigName,
+			runtimeConfigKind,
+			runtimeConfigName,
+			fmt.Errorf("creating or updating runtime config: %w", err),
+		)
 	}
 
 	result := &PublishResult{
@@ -88,19 +113,24 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 		CRTListFileNames:       []string{},
 	}
 
-	// Publish auxiliary files (map files, SSL secrets, general files, crt-list files)
 	if req.AuxiliaryFiles != nil {
-		p.publishAuxiliaryFiles(ctx, req, runtimeConfig, result)
+		if err := p.publishAuxiliaryFiles(ctx, req, runtimeConfig, result); err != nil {
+			return result, err
+		}
 	}
 
-	// Update HAProxyCfg status with child resource references
 	if err := p.updateRuntimeConfigStatus(ctx, runtimeConfig, result); err != nil {
-		p.logger.Debug("Status update conflict (will retry on next reconciliation)",
-			"type", "runtime_config_status",
-			"name", runtimeConfig.Name,
-			"error", err,
+		return result, incompletePublicationError(
+			PublicationStageReferences,
+			runtimeConfig.Namespace,
+			runtimeConfig.Name,
+			runtimeConfigKind,
+			runtimeConfig.Name,
+			fmt.Errorf("updating auxiliary references: %w", err),
 		)
-		// Non-blocking - status update is informational
+	}
+	if err := p.pruneAuxiliaryFiles(ctx, runtimeConfig, result); err != nil {
+		return result, err
 	}
 
 	p.logger.Debug("Published runtime config",
@@ -114,69 +144,177 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 	return result, nil
 }
 
+func canonicalizePublishRequest(req *PublishRequest) (*PublishRequest, error) {
+	canonical := *req
+	inputFiles := &dataplane.AuxiliaryFiles{}
+	if req.AuxiliaryFiles != nil {
+		inputFiles = &dataplane.AuxiliaryFiles{
+			MapFiles:        req.AuxiliaryFiles.MapFiles,
+			SSLCertificates: req.AuxiliaryFiles.SSLCertificates,
+			SSLCaFiles:      req.AuxiliaryFiles.SSLCaFiles,
+			GeneralFiles:    req.AuxiliaryFiles.GeneralFiles,
+			CRTListFiles:    req.AuxiliaryFiles.CRTListFiles,
+		}
+	}
+	files, err := dataplane.CanonicalizeAuxiliaryFiles(inputFiles)
+	if err != nil {
+		return nil, err
+	}
+	canonical.AuxiliaryFiles = &AuxiliaryFiles{
+		MapFiles:        files.MapFiles,
+		SSLCertificates: files.SSLCertificates,
+		SSLCaFiles:      files.SSLCaFiles,
+		GeneralFiles:    files.GeneralFiles,
+		CRTListFiles:    files.CRTListFiles,
+	}
+
+	serialized, err := json.Marshal(canonical.AuxiliaryFiles)
+	if err != nil {
+		return nil, fmt.Errorf("serializing auxiliary set: %w", err)
+	}
+	hash := sha256.Sum256(serialized)
+	canonical.auxiliarySetID = fmt.Sprintf("sha256:%x", hash)
+	return &canonical, nil
+}
+
 // publishAuxiliaryFiles creates or updates all auxiliary file resources.
-// Errors are logged but don't fail the overall publish operation.
+func publishAuxiliaryResource(
+	initialName, baseName, suffix, identity, ownerName string,
+	publish func(string) (string, error),
+) (publishedName, attemptedName string, err error) {
+	publishedName, err = publish(initialName)
+	if err == nil {
+		return publishedName, initialName, nil
+	}
+	var ownershipError *auxiliaryResourceOwnershipError
+	if !errors.As(err, &ownershipError) {
+		return "", initialName, err
+	}
+
+	scopedName := disambiguatedResourceName(baseName, suffix, ownerName+"\x00"+identity)
+	publishedName, err = publish(scopedName)
+	return publishedName, scopedName, err
+}
+
 func (p *Publisher) publishAuxiliaryFiles(
 	ctx context.Context,
 	req *PublishRequest,
 	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
 	result *PublishResult,
-) {
+) error {
+	mapFileNames := resolveAuxiliaryResourceNames(
+		req.AuxiliaryFiles.MapFiles,
+		req.NameSuffix,
+		func(file auxiliaryfiles.MapFile) string { return p.generateMapFileName(path.Base(file.Path)) },
+		func(file auxiliaryfiles.MapFile) string { return file.Path },
+	)
 	// Create or update map files
-	for _, mapFile := range req.AuxiliaryFiles.MapFiles {
-		mapFileName, err := p.createOrUpdateMapFile(ctx, req, runtimeConfig, mapFile)
+	for i, mapFile := range req.AuxiliaryFiles.MapFiles {
+		baseName := p.generateMapFileName(path.Base(mapFile.Path))
+		mapFileName, name, err := publishAuxiliaryResource(
+			mapFileNames[i], baseName, req.NameSuffix, mapFile.Path, runtimeConfig.Name,
+			func(name string) (string, error) {
+				return p.createOrUpdateMapFile(ctx, req, runtimeConfig, mapFile, name)
+			},
+		)
 		if err != nil {
-			p.logger.Debug("Auxiliary file update conflict (will retry on next reconciliation)",
-				"type", "map_file",
-				"name", mapFile.Path,
-				"error", err,
+			return incompletePublicationError(
+				PublicationStageAuxiliary,
+				runtimeConfig.Namespace,
+				runtimeConfig.Name,
+				"HAProxyMapFile",
+				name,
+				err,
 			)
-			continue
 		}
 		result.MapFileNames = append(result.MapFileNames, mapFileName)
 	}
 
+	secretNames := resolveAuxiliaryResourceNames(
+		req.AuxiliaryFiles.SSLCertificates,
+		req.NameSuffix,
+		func(file auxiliaryfiles.SSLCertificate) string { return p.generateSecretName(path.Base(file.Path)) },
+		func(file auxiliaryfiles.SSLCertificate) string { return file.Path },
+	)
 	// Create or update SSL certificate secrets
-	for _, cert := range req.AuxiliaryFiles.SSLCertificates {
-		secretName, err := p.createOrUpdateSSLSecret(ctx, req, runtimeConfig, cert)
+	for i, cert := range req.AuxiliaryFiles.SSLCertificates {
+		baseName := p.generateSecretName(path.Base(cert.Path))
+		secretName, name, err := publishAuxiliaryResource(
+			secretNames[i], baseName, req.NameSuffix, cert.Path, runtimeConfig.Name,
+			func(name string) (string, error) {
+				return p.createOrUpdateSSLSecret(ctx, req, runtimeConfig, cert, name)
+			},
+		)
 		if err != nil {
-			p.logger.Debug("Auxiliary file update conflict (will retry on next reconciliation)",
-				"type", "ssl_secret",
-				"path", cert.Path,
-				"error", err,
+			return incompletePublicationError(
+				PublicationStageAuxiliary,
+				runtimeConfig.Namespace,
+				runtimeConfig.Name,
+				"Secret",
+				name,
+				err,
 			)
-			continue
 		}
 		result.SecretNames = append(result.SecretNames, secretName)
 	}
 
+	generalFileNames := resolveAuxiliaryResourceNames(
+		req.AuxiliaryFiles.GeneralFiles,
+		req.NameSuffix,
+		func(file auxiliaryfiles.GeneralFile) string { return p.generateGeneralFileName(file.Filename) },
+		func(file auxiliaryfiles.GeneralFile) string { return file.Filename },
+	)
 	// Create or update general files
-	for _, generalFile := range req.AuxiliaryFiles.GeneralFiles {
-		generalFileName, err := p.createOrUpdateGeneralFile(ctx, req, runtimeConfig, generalFile)
+	for i, generalFile := range req.AuxiliaryFiles.GeneralFiles {
+		baseName := p.generateGeneralFileName(generalFile.Filename)
+		generalFileName, name, err := publishAuxiliaryResource(
+			generalFileNames[i], baseName, req.NameSuffix, generalFile.Filename, runtimeConfig.Name,
+			func(name string) (string, error) {
+				return p.createOrUpdateGeneralFile(ctx, req, runtimeConfig, generalFile, name)
+			},
+		)
 		if err != nil {
-			p.logger.Debug("Auxiliary file update conflict (will retry on next reconciliation)",
-				"type", "general_file",
-				"name", generalFile.Filename,
-				"error", err,
+			return incompletePublicationError(
+				PublicationStageAuxiliary,
+				runtimeConfig.Namespace,
+				runtimeConfig.Name,
+				"HAProxyGeneralFile",
+				name,
+				err,
 			)
-			continue
 		}
 		result.GeneralFileNames = append(result.GeneralFileNames, generalFileName)
 	}
 
+	crtListFileNames := resolveAuxiliaryResourceNames(
+		req.AuxiliaryFiles.CRTListFiles,
+		req.NameSuffix,
+		func(file auxiliaryfiles.CRTListFile) string { return p.generateCRTListFileName(file.Path) },
+		func(file auxiliaryfiles.CRTListFile) string { return file.Path },
+	)
 	// Create or update crt-list files
-	for _, crtListFile := range req.AuxiliaryFiles.CRTListFiles {
-		crtListFileName, err := p.createOrUpdateCRTListFile(ctx, req, runtimeConfig, crtListFile)
+	for i, crtListFile := range req.AuxiliaryFiles.CRTListFiles {
+		baseName := p.generateCRTListFileName(crtListFile.Path)
+		crtListFileName, name, err := publishAuxiliaryResource(
+			crtListFileNames[i], baseName, req.NameSuffix, crtListFile.Path, runtimeConfig.Name,
+			func(name string) (string, error) {
+				return p.createOrUpdateCRTListFile(ctx, req, runtimeConfig, crtListFile, name)
+			},
+		)
 		if err != nil {
-			p.logger.Debug("Auxiliary file update conflict (will retry on next reconciliation)",
-				"type", "crt_list_file",
-				"path", crtListFile.Path,
-				"error", err,
+			return incompletePublicationError(
+				PublicationStageAuxiliary,
+				runtimeConfig.Namespace,
+				runtimeConfig.Name,
+				"HAProxyCRTListFile",
+				name,
+				err,
 			)
-			continue
 		}
 		result.CRTListFileNames = append(result.CRTListFileNames, crtListFileName)
 	}
+
+	return nil
 }
 
 // DeleteRuntimeConfig deletes a HAProxyCfg resource.

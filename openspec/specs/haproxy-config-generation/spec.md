@@ -109,7 +109,7 @@ THEN it SHALL return an error listing the valid file types.
 
 ### Requirement: Auxiliary File Rendering
 
-The RenderService SHALL render auxiliary files (maps, general files, SSL certificates) declared in the configuration in parallel using an errgroup. Each auxiliary file template SHALL be rendered with the same template context as the main configuration. The resulting files SHALL be merged with dynamically registered files from the FileRegistry. The merged result SHALL be sorted for deterministic output.
+The RenderService SHALL render auxiliary files (maps, general files, SSL certificates) declared in the configuration in parallel using an errgroup. Each auxiliary file template SHALL be rendered with the same template context as the main configuration. The resulting files SHALL be merged with dynamically registered files from the FileRegistry without mutating either input. The merged result SHALL use each Dataplane API storage kind's effective identity, deduplicate identical definitions, reject conflicting definitions, and sort the canonical set for deterministic output.
 
 #### Scenario: Map files rendered in parallel
 
@@ -120,6 +120,16 @@ THEN all 3 map files SHALL be rendered and included in the AuxiliaryFiles.MapFil
 
 WHEN the configuration declares 2 map templates and a template dynamically registers 1 map file via FileRegistry
 THEN AuxiliaryFiles.MapFiles SHALL contain 3 entries after merging.
+
+#### Scenario: Identical auxiliary definitions collapse
+
+WHEN static and dynamically registered files define the same storage identity with identical content and options
+THEN the rendered auxiliary set SHALL contain one independent copy of that file.
+
+#### Scenario: Conflicting auxiliary definitions fail rendering
+
+WHEN two auxiliary definitions resolve to the same Dataplane API storage identity but differ in content, path, type, or options
+THEN the RenderService SHALL fail before validation or deployment and instruct the operator to keep one definition.
 
 #### Scenario: No auxiliary files configured
 

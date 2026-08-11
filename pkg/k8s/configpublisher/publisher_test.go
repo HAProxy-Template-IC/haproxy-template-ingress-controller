@@ -16,6 +16,7 @@ package configpublisher
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -28,9 +29,13 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // testLogger creates a slog logger for tests that discards output.
@@ -128,6 +133,495 @@ func TestPublishConfig_CreateNew(t *testing.T) {
 		secrets.Items[0].Data["certificate"])
 	assert.Equal(t, []byte("/etc/haproxy/ssl/cert.pem"),
 		secrets.Items[0].Data["path"])
+}
+
+func TestPublishConfig_RejectsConflictingAuxiliaryIdentitiesBeforeMutation(t *testing.T) {
+	ctx, k8sClient, crdClient, publisher := newTestPublisher(t)
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{
+		{Path: "routes.map", Content: "one"},
+		{Path: "routes.map", Content: "two"},
+	}}
+
+	result, err := publisher.PublishConfig(ctx, &req)
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.False(t, IsRetryablePublicationError(err))
+	configs, listErr := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, listErr)
+	assert.Empty(t, configs.Items)
+	mapFiles, listErr := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, listErr)
+	assert.Empty(t, mapFiles.Items)
+	secrets, listErr := k8sClient.CoreV1().Secrets("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, listErr)
+	assert.Empty(t, secrets.Items)
+}
+
+func TestPublishConfig_DeduplicatesIdenticalAuxiliaryIdentities(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{
+		{Path: "routes.map", Content: "one"},
+		{Path: "routes.map", Content: "one"},
+	}}
+
+	result, err := publisher.PublishConfig(ctx, &req)
+
+	require.NoError(t, err)
+	require.Len(t, result.MapFileNames, 1)
+	configs, listErr := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, listErr)
+	require.Len(t, configs.Items, 1)
+	require.NotNil(t, configs.Items[0].Status.AuxiliaryFiles)
+	assert.Len(t, configs.Items[0].Status.AuxiliaryFiles.MapFiles, 1)
+}
+
+func TestPublishConfig_StaleCleanupCannotDeleteNewPublication(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	initial := basePublishRequest()
+	initial.Checksum = "initial"
+	initial.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{
+		{Path: "keep.map", Content: "keep"},
+		{Path: "restored.map", Content: "restored"},
+	}}
+	initialResult, err := publisher.PublishConfig(ctx, &initial)
+	require.NoError(t, err)
+
+	staleRequest := initial
+	staleRequest.Checksum = "stale-exclusion"
+	staleRequest.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: initial.AuxiliaryFiles.MapFiles[:1]}
+	canonicalStale, err := canonicalizePublishRequest(&staleRequest)
+	require.NoError(t, err)
+	staleRuntimeConfig, err := publisher.createOrUpdateRuntimeConfig(ctx, canonicalStale)
+	require.NoError(t, err)
+	staleResult := &PublishResult{
+		RuntimeConfigName:      staleRuntimeConfig.Name,
+		RuntimeConfigNamespace: staleRuntimeConfig.Namespace,
+		MapFileNames:           initialResult.MapFileNames[:1],
+	}
+
+	newRequest := initial
+	newRequest.Checksum = "new-inclusion"
+	_, err = publisher.PublishConfig(ctx, &newRequest)
+	require.NoError(t, err)
+
+	err = publisher.pruneAuxiliaryFiles(ctx, staleRuntimeConfig, staleResult)
+	require.ErrorContains(t, err, "superseded; skip stale cleanup")
+	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, initialResult.MapFileNames[1], metav1.GetOptions{})
+	require.NoError(t, err)
+}
+
+func TestPublishConfig_StaleCleanupCannotDeleteNewNameForSameAuxiliarySet(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	foreign := basePublishRequest()
+	foreign.TemplateConfigName = "foreign-config"
+	foreign.TemplateConfigUID = types.UID("foreign-uid")
+	foreign.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
+		Path: "/maps/host.map", Content: "foreign",
+	}}}
+	foreignResult, err := publisher.PublishConfig(ctx, &foreign)
+	require.NoError(t, err)
+
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
+		Path: "/maps/host.map", Content: "ours",
+	}}}
+	staleResult, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	require.Len(t, staleResult.MapFileNames, 1)
+	assert.NotEqual(t, foreignResult.MapFileNames[0], staleResult.MapFileNames[0])
+	staleRuntimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, staleResult.RuntimeConfigName, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Delete(ctx, foreignResult.MapFileNames[0], metav1.DeleteOptions{})
+	require.NoError(t, err)
+	currentResult, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	require.Len(t, currentResult.MapFileNames, 1)
+	assert.Equal(t, foreignResult.MapFileNames[0], currentResult.MapFileNames[0])
+
+	err = publisher.pruneAuxiliaryFiles(ctx, staleRuntimeConfig, staleResult)
+	require.ErrorContains(t, err, "no longer owns the committed auxiliary references")
+	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, currentResult.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+}
+
+func TestPublishConfig_ReportsIncompleteAuxiliaryPublication(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	crdClient.PrependReactor("create", "haproxymapfiles", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewServiceUnavailable("map storage unavailable")
+	})
+
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
+		Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n",
+	}}}
+	result, err := publisher.PublishConfig(ctx, &req)
+
+	require.Error(t, err)
+	require.NotNil(t, result)
+	var publicationErr *IncompletePublicationError
+	require.ErrorAs(t, err, &publicationErr)
+	assert.Equal(t, PublicationStageAuxiliary, publicationErr.Stage)
+	assert.Equal(t, "HAProxyMapFile", publicationErr.ResourceKind)
+	assert.Equal(t, "haproxy-map-host", publicationErr.ResourceName)
+	assert.Empty(t, result.MapFileNames)
+
+	runtimeConfig, getErr := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, getErr)
+	assert.Nil(t, runtimeConfig.Status.AuxiliaryFiles)
+}
+
+func TestPublishConfig_RetriesIncompleteAuxiliaryReferences(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	statusFailures := 1
+	crdClient.PrependReactor("update", "haproxycfgs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetSubresource() != statusSubresource || statusFailures == 0 {
+			return false, nil, nil
+		}
+		statusFailures--
+		return true, nil, apierrors.NewServiceUnavailable("status storage unavailable")
+	})
+
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
+		Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n",
+	}}}
+	result, err := publisher.PublishConfig(ctx, &req)
+	require.Error(t, err)
+	require.Len(t, result.MapFileNames, 1)
+	var publicationErr *IncompletePublicationError
+	require.ErrorAs(t, err, &publicationErr)
+	assert.Equal(t, PublicationStageReferences, publicationErr.Stage)
+
+	result, err = publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, runtimeConfig.Status.AuxiliaryFiles)
+	require.Len(t, runtimeConfig.Status.AuxiliaryFiles.MapFiles, 1)
+	assert.Equal(t, result.MapFileNames[0], runtimeConfig.Status.AuxiliaryFiles.MapFiles[0].Name)
+}
+
+func TestPublishConfig_RetriesValidationStatusWithUnchangedChecksum(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	statusFailures := 1
+	crdClient.PrependReactor("update", "haproxycfgs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetSubresource() != statusSubresource || statusFailures == 0 {
+			return false, nil, nil
+		}
+		statusFailures--
+		return true, nil, apierrors.NewServiceUnavailable("status storage unavailable")
+	})
+
+	req := basePublishRequest()
+	req.NameSuffix = "-invalid"
+	req.ValidationError = "maxconn must be numeric"
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.Error(t, err)
+	var publicationErr *IncompletePublicationError
+	require.True(t, errors.As(err, &publicationErr))
+	assert.Equal(t, PublicationStageRuntimeConfig, publicationErr.Stage)
+
+	_, err = publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg-invalid", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, req.ValidationError, runtimeConfig.Status.ValidationError)
+}
+
+func TestPublishConfig_IsolatesInvalidAuxiliaryResources(t *testing.T) {
+	ctx, k8sClient, crdClient, publisher := newTestPublisher(t)
+	valid := basePublishRequest()
+	valid.AuxiliaryFiles = &AuxiliaryFiles{
+		MapFiles:        []auxiliaryfiles.MapFile{{Path: "/maps/host.map", Content: "valid map"}},
+		SSLCertificates: []auxiliaryfiles.SSLCertificate{{Path: "/certs/site.pem", Content: "valid cert"}},
+		GeneralFiles:    []auxiliaryfiles.GeneralFile{{Filename: "error.http", Path: "/files/error.http", Content: "valid file"}},
+		CRTListFiles:    []auxiliaryfiles.CRTListFile{{Path: "/lists/site.list", Content: "valid list"}},
+	}
+	validResult, err := publisher.PublishConfig(ctx, &valid)
+	require.NoError(t, err)
+
+	invalid := valid
+	invalid.Config = "invalid config"
+	invalid.Checksum = "invalid-checksum"
+	invalid.NameSuffix = "-invalid"
+	invalid.ValidationError = "configuration rejected"
+	invalid.AuxiliaryFiles = &AuxiliaryFiles{
+		MapFiles:        []auxiliaryfiles.MapFile{{Path: "/maps/host.map", Content: "invalid map"}},
+		SSLCertificates: []auxiliaryfiles.SSLCertificate{{Path: "/certs/site.pem", Content: "invalid cert"}},
+		GeneralFiles:    []auxiliaryfiles.GeneralFile{{Filename: "error.http", Path: "/files/error.http", Content: "invalid file"}},
+		CRTListFiles:    []auxiliaryfiles.CRTListFile{{Path: "/lists/site.list", Content: "invalid list"}},
+	}
+	invalidResult, err := publisher.PublishConfig(ctx, &invalid)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"haproxy-map-host"}, validResult.MapFileNames)
+	assert.Equal(t, []string{"haproxy-cert-site"}, validResult.SecretNames)
+	assert.Equal(t, []string{"haproxy-file-error"}, validResult.GeneralFileNames)
+	assert.Equal(t, []string{"haproxy-crtlist-site"}, validResult.CRTListFileNames)
+	assert.Equal(t, []string{"haproxy-map-host-invalid"}, invalidResult.MapFileNames)
+	assert.Equal(t, []string{"haproxy-cert-site-invalid"}, invalidResult.SecretNames)
+	assert.Equal(t, []string{"haproxy-file-error-invalid"}, invalidResult.GeneralFileNames)
+	assert.Equal(t, []string{"haproxy-crtlist-site-invalid"}, invalidResult.CRTListFileNames)
+
+	validMap, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, validResult.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	invalidMap, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, invalidResult.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "valid map", validMap.Spec.Entries)
+	assert.Equal(t, "invalid map", invalidMap.Spec.Entries)
+	require.Len(t, validMap.OwnerReferences, 1)
+	require.Len(t, invalidMap.OwnerReferences, 1)
+	assert.Equal(t, validResult.RuntimeConfigName, validMap.OwnerReferences[0].Name)
+	assert.Equal(t, invalidResult.RuntimeConfigName, invalidMap.OwnerReferences[0].Name)
+
+	validSecret, err := k8sClient.CoreV1().Secrets("default").
+		Get(ctx, validResult.SecretNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	invalidSecret, err := k8sClient.CoreV1().Secrets("default").
+		Get(ctx, invalidResult.SecretNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("valid cert"), validSecret.Data["certificate"])
+	assert.Equal(t, []byte("invalid cert"), invalidSecret.Data["certificate"])
+}
+
+func TestPublishConfig_DisambiguatesCollidingAuxiliaryResourceNames(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{GeneralFiles: []auxiliaryfiles.GeneralFile{
+		{Filename: "error.http", Path: "/files/error.http", Content: "HTTP error page"},
+		{Filename: "error.lua", Path: "/files/error.lua", Content: "Lua error handler"},
+	}}
+
+	result, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	require.Len(t, result.GeneralFileNames, 2)
+	assert.NotEqual(t, result.GeneralFileNames[0], result.GeneralFileNames[1])
+
+	published := make(map[string]string, 2)
+	for _, name := range result.GeneralFileNames {
+		file, getErr := crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles("default").
+			Get(ctx, name, metav1.GetOptions{})
+		require.NoError(t, getErr)
+		published[file.Spec.FileName] = file.Spec.Content
+	}
+	assert.Equal(t, map[string]string{
+		"error.http": "HTTP error page",
+		"error.lua":  "Lua error handler",
+	}, published)
+
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, result.RuntimeConfigName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, runtimeConfig.Status.AuxiliaryFiles)
+	assert.Len(t, runtimeConfig.Status.AuxiliaryFiles.GeneralFiles, 2)
+}
+
+func TestPublishConfig_DoesNotTakeOverAnotherRuntimeConfigsAuxiliaryResource(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	first := basePublishRequest()
+	first.TemplateConfigName = "first-config"
+	first.TemplateConfigUID = types.UID("first-uid")
+	first.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
+		Path: "/maps/host.map", Content: "first map",
+	}}}
+	firstResult, err := publisher.PublishConfig(ctx, &first)
+	require.NoError(t, err)
+
+	second := basePublishRequest()
+	second.TemplateConfigName = "second-config"
+	second.TemplateConfigUID = types.UID("second-uid")
+	second.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
+		Path: "/maps/host.map", Content: "second map",
+	}}}
+	secondResult, err := publisher.PublishConfig(ctx, &second)
+	require.NoError(t, err)
+	require.Len(t, firstResult.MapFileNames, 1)
+	require.Len(t, secondResult.MapFileNames, 1)
+	assert.NotEqual(t, firstResult.MapFileNames[0], secondResult.MapFileNames[0])
+
+	firstMap, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, firstResult.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	secondMap, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, secondResult.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "first map", firstMap.Spec.Entries)
+	assert.Equal(t, firstResult.RuntimeConfigName, firstMap.OwnerReferences[0].Name)
+	assert.Equal(t, "second map", secondMap.Spec.Entries)
+	assert.Equal(t, secondResult.RuntimeConfigName, secondMap.OwnerReferences[0].Name)
+
+	_, err = publisher.PublishConfig(ctx, &first)
+	require.NoError(t, err)
+	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, secondResult.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+}
+
+func TestPublishConfig_PrunesObsoleteAuxiliaryResources(t *testing.T) {
+	ctx, k8sClient, crdClient, publisher := newTestPublisher(t)
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{
+		MapFiles:        []auxiliaryfiles.MapFile{{Path: "/maps/host.map", Content: "map"}},
+		SSLCertificates: []auxiliaryfiles.SSLCertificate{{Path: "/certs/site.pem", Content: "cert"}},
+		GeneralFiles: []auxiliaryfiles.GeneralFile{
+			{Filename: "error.http", Path: "/files/error.http", Content: "HTTP"},
+			{Filename: "error.lua", Path: "/files/error.lua", Content: "Lua"},
+		},
+		CRTListFiles: []auxiliaryfiles.CRTListFile{{Path: "/lists/site.list", Content: "list"}},
+	}
+	initial, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	require.Len(t, initial.GeneralFileNames, 2)
+
+	_, err = k8sClient.CoreV1().Secrets("default").Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "default"},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	req.Checksum = "next"
+	req.AuxiliaryFiles = &AuxiliaryFiles{GeneralFiles: []auxiliaryfiles.GeneralFile{
+		{Filename: "error.http", Path: "/files/error.http", Content: "HTTP"},
+	}}
+	result, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"haproxy-file-error"}, result.GeneralFileNames)
+
+	mapFiles, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, mapFiles.Items)
+	crtLists, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, crtLists.Items)
+	secrets, err := k8sClient.CoreV1().Secrets("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, secrets.Items, 1)
+	assert.Equal(t, "unrelated", secrets.Items[0].Name)
+	generalFiles, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, generalFiles.Items, 1)
+	assert.Equal(t, "haproxy-file-error", generalFiles.Items[0].Name)
+
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, result.RuntimeConfigName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, runtimeConfig.Status.AuxiliaryFiles)
+	assert.Empty(t, runtimeConfig.Status.AuxiliaryFiles.MapFiles)
+	assert.Empty(t, runtimeConfig.Status.AuxiliaryFiles.SSLCertificates)
+	assert.Empty(t, runtimeConfig.Status.AuxiliaryFiles.CRTListFiles)
+	require.Len(t, runtimeConfig.Status.AuxiliaryFiles.GeneralFiles, 1)
+	assert.Equal(t, "haproxy-file-error", runtimeConfig.Status.AuxiliaryFiles.GeneralFiles[0].Name)
+}
+
+func TestPublishConfig_RetriesIncompleteAuxiliaryCleanup(t *testing.T) {
+	ctx, _, crdClient, publisher := newTestPublisher(t)
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
+		Path: "/maps/host.map", Content: "map",
+	}}}
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+
+	deleteFailures := 1
+	crdClient.PrependReactor("delete", "haproxymapfiles", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if deleteFailures == 0 {
+			return false, nil, nil
+		}
+		deleteFailures--
+		return true, nil, apierrors.NewServiceUnavailable("map storage unavailable")
+	})
+	req.Checksum = "without-map"
+	req.AuxiliaryFiles = &AuxiliaryFiles{}
+	_, err = publisher.PublishConfig(ctx, &req)
+	require.Error(t, err)
+	var publicationErr *IncompletePublicationError
+	require.ErrorAs(t, err, &publicationErr)
+	assert.Equal(t, PublicationStageCleanup, publicationErr.Stage)
+	assert.Equal(t, "HAProxyMapFile", publicationErr.ResourceKind)
+	assert.Equal(t, "haproxy-map-host", publicationErr.ResourceName)
+	assert.True(t, IsRetryablePublicationError(err))
+
+	_, err = publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, "haproxy-map-host", metav1.GetOptions{})
+	assert.True(t, apierrors.IsNotFound(err))
+}
+
+func TestPublishConfig_RepairsDesiredStateWithUnchangedChecksums(t *testing.T) {
+	ctx, k8sClient, crdClient, publisher := newTestPublisher(t)
+	req := basePublishRequest()
+	req.AuxiliaryFiles = &AuxiliaryFiles{
+		MapFiles:        []auxiliaryfiles.MapFile{{Path: "/maps/host.map", Content: "map content"}},
+		SSLCertificates: []auxiliaryfiles.SSLCertificate{{Path: "/certs/site.pem", Content: "cert content"}},
+	}
+	result, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, result.RuntimeConfigName, metav1.GetOptions{})
+	require.NoError(t, err)
+	runtimeConfig.Spec.Path = "/stale/haproxy.cfg"
+	runtimeConfig.Labels = map[string]string{"stale": "true"}
+	runtimeConfig.OwnerReferences[0].UID = types.UID("stale-template-uid")
+	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Update(ctx, runtimeConfig, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	mapFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, result.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	mapFile.Spec.Path = "/stale/host.map"
+	mapFile.Labels = map[string]string{"stale": "true"}
+	mapFile.OwnerReferences[0].UID = types.UID("stale-runtime-uid")
+	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Update(ctx, mapFile, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	secret, err := k8sClient.CoreV1().Secrets("default").
+		Get(ctx, result.SecretNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	secret.Data["path"] = []byte("/stale/site.pem")
+	secret.Labels = map[string]string{"stale": "true"}
+	secret.OwnerReferences[0].UID = types.UID("stale-runtime-uid")
+	_, err = k8sClient.CoreV1().Secrets("default").Update(ctx, secret, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	_, err = publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+
+	runtimeConfig, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, result.RuntimeConfigName, metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, req.ConfigPath, runtimeConfig.Spec.Path)
+	assert.Equal(t, req.TemplateConfigUID, runtimeConfig.OwnerReferences[0].UID)
+	assert.Equal(t, req.TemplateConfigName, runtimeConfig.Labels["haproxy-haptic.org/template-config"])
+
+	mapFile, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, result.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, req.AuxiliaryFiles.MapFiles[0].Path, mapFile.Spec.Path)
+	assert.Equal(t, result.RuntimeConfigName, mapFile.Labels[runtimeConfigLabelKey])
+	assert.NotEqual(t, types.UID("stale-runtime-uid"), mapFile.OwnerReferences[0].UID)
+
+	secret, err = k8sClient.CoreV1().Secrets("default").
+		Get(ctx, result.SecretNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []byte(req.AuxiliaryFiles.SSLCertificates[0].Path), secret.Data["path"])
+	assert.Equal(t, result.RuntimeConfigName, secret.Labels[runtimeConfigLabelKey])
+	assert.NotEqual(t, types.UID("stale-runtime-uid"), secret.OwnerReferences[0].UID)
 }
 
 func TestPublishConfig_Update(t *testing.T) {

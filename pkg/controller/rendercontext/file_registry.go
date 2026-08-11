@@ -247,34 +247,19 @@ func (r *FileRegistry) GetFiles() *dataplane.AuxiliaryFiles {
 	return files
 }
 
-// MergeAuxiliaryFiles merges two AuxiliaryFiles structures, with dynamic files
-// appended to static files.
-//
-// This is used to combine:
-//   - Pre-declared templates (maps, files, certs from config)
-//   - Dynamically registered files (via FileRegistry during rendering).
-func MergeAuxiliaryFiles(static, dynamic *dataplane.AuxiliaryFiles) *dataplane.AuxiliaryFiles {
-	if static == nil && dynamic == nil {
-		return &dataplane.AuxiliaryFiles{}
+// MergeAuxiliaryFiles combines static and dynamically registered files without
+// mutating either input. Conflicting definitions of one storage object fail.
+func MergeAuxiliaryFiles(static, dynamic *dataplane.AuxiliaryFiles) (*dataplane.AuxiliaryFiles, error) {
+	result := &dataplane.AuxiliaryFiles{}
+	for _, files := range []*dataplane.AuxiliaryFiles{static, dynamic} {
+		if files == nil {
+			continue
+		}
+		result.MapFiles = append(result.MapFiles, files.MapFiles...)
+		result.GeneralFiles = append(result.GeneralFiles, files.GeneralFiles...)
+		result.SSLCertificates = append(result.SSLCertificates, files.SSLCertificates...)
+		result.SSLCaFiles = append(result.SSLCaFiles, files.SSLCaFiles...)
+		result.CRTListFiles = append(result.CRTListFiles, files.CRTListFiles...)
 	}
-
-	if static == nil {
-		dynamic.Sort()
-		return dynamic
-	}
-
-	if dynamic == nil {
-		static.Sort()
-		return static
-	}
-
-	result := &dataplane.AuxiliaryFiles{
-		MapFiles:        append(static.MapFiles, dynamic.MapFiles...),
-		GeneralFiles:    append(static.GeneralFiles, dynamic.GeneralFiles...),
-		SSLCertificates: append(static.SSLCertificates, dynamic.SSLCertificates...),
-		SSLCaFiles:      append(static.SSLCaFiles, dynamic.SSLCaFiles...),
-		CRTListFiles:    append(static.CRTListFiles, dynamic.CRTListFiles...),
-	}
-	result.Sort()
-	return result
+	return dataplane.CanonicalizeAuxiliaryFiles(result)
 }

@@ -9,6 +9,7 @@
 package configpublisher
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,7 @@ import (
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // runtimeConfigOwnerRefs and runtimeConfigLabels are pure helpers shared by all
@@ -83,6 +85,40 @@ func TestRuntimeConfigOwnerRefs_PreservesOwnerMetadata(t *testing.T) {
 	}
 }
 
+func TestManagedByRuntimeConfig_DoesNotTakeOverForeignOwner(t *testing.T) {
+	runtimeConfigName := "runtime-config"
+	matchingLabel := map[string]string{
+		runtimeConfigLabelKey: runtimeConfigLabelValue(runtimeConfigName),
+	}
+
+	labelOnly := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Labels: matchingLabel}}
+	assert.True(t, managedByRuntimeConfig(labelOnly, runtimeConfigName))
+
+	foreignController := true
+	foreignOwned := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{
+		Labels: matchingLabel,
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: "apps/v1", Kind: "Deployment", Name: "foreign", Controller: &foreignController,
+		}},
+	}}
+	assert.False(t, managedByRuntimeConfig(foreignOwned, runtimeConfigName))
+}
+
+func TestDeletionOptions_FencesListedObjectVersion(t *testing.T) {
+	object := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{
+		UID:             types.UID("child-uid"),
+		ResourceVersion: "17",
+	}}
+
+	options := deletionOptions(object)
+
+	require.NotNil(t, options.Preconditions)
+	require.NotNil(t, options.Preconditions.UID)
+	assert.Equal(t, types.UID("child-uid"), *options.Preconditions.UID)
+	require.NotNil(t, options.Preconditions.ResourceVersion)
+	assert.Equal(t, "17", *options.Preconditions.ResourceVersion)
+}
+
 func TestRuntimeConfigLabels(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -113,6 +149,17 @@ func TestRuntimeConfigLabels(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestRuntimeConfigLabels_LongOwnerUsesValidStableValue(t *testing.T) {
+	longOwner := strings.Repeat("a", 80)
+	got := runtimeConfigLabels(&haproxyv1alpha1.HAProxyCfg{
+		ObjectMeta: metav1.ObjectMeta{Name: longOwner},
+	})
+	value := got[runtimeConfigLabelKey]
+	assert.NotEqual(t, longOwner, value)
+	assert.Empty(t, validation.IsValidLabelValue(value))
+	assert.Equal(t, value, runtimeConfigLabelValue(longOwner))
 }
 
 // Each call must return an independent map so callers can mutate without

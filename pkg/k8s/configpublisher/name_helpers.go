@@ -19,9 +19,12 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"unicode"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // removePodFromStatus removes a pod from the deployment status list.
@@ -54,11 +57,23 @@ func buildPodStatus(update *DeploymentStatusUpdate) haproxyv1alpha1.PodDeploymen
 	return podStatus
 }
 
+const runtimeConfigNameSuffix = "-haproxycfg"
+
 // GenerateRuntimeConfigName generates the HAProxyCfg resource name from a template config name.
-// This is the single source of truth for the naming convention used by both
-// the ConfigPublisher and DeploymentScheduler.
 func GenerateRuntimeConfigName(templateConfigName string) string {
-	return templateConfigName + "-haproxycfg"
+	return stableResourceName(templateConfigName, runtimeConfigNameSuffix, templateConfigName)
+}
+
+func runtimeConfigResourceName(templateConfigName, suffix string) string {
+	return stableResourceName(templateConfigName, runtimeConfigNameSuffix+suffix, templateConfigName)
+}
+
+func runtimeConfigLabelValue(runtimeConfigName string) string {
+	if len(validation.IsValidLabelValue(runtimeConfigName)) == 0 {
+		return runtimeConfigName
+	}
+	hash := sha256.Sum256([]byte(runtimeConfigName))
+	return fmt.Sprintf("haptic-%x", hash[:8])
 }
 
 // sanitizeResourceName strips a file extension from source and applies the
@@ -91,6 +106,71 @@ func (p *Publisher) generateGeneralFileName(fileName string) string {
 
 func (p *Publisher) generateCRTListFileName(listPath string) string {
 	return sanitizeResourceName("haproxy-crtlist-", path.Base(listPath), "_", "-")
+}
+
+func resolveAuxiliaryResourceNames[T any](
+	items []T,
+	suffix string,
+	baseName func(T) string,
+	identity func(T) string,
+) []string {
+	baseNames := make([]string, len(items))
+	counts := make(map[string]int, len(items))
+	for i, item := range items {
+		baseNames[i] = baseName(item)
+		counts[baseNames[i]]++
+	}
+
+	names := make([]string, len(items))
+	for i, item := range items {
+		if counts[baseNames[i]] == 1 {
+			names[i] = stableResourceName(baseNames[i], suffix, identity(item))
+			continue
+		}
+		names[i] = disambiguatedResourceName(baseNames[i], suffix, identity(item))
+	}
+	return names
+}
+
+func stableResourceName(base, suffix, identity string) string {
+	candidate := base + suffix
+	if len(validation.IsDNS1123Subdomain(candidate)) == 0 {
+		return candidate
+	}
+	return disambiguatedResourceName(base, suffix, identity)
+}
+
+func disambiguatedResourceName(base, suffix, identity string) string {
+	hash := sha256.Sum256([]byte(identity))
+	tail := fmt.Sprintf("-%x%s", hash[:6], suffix)
+	maxStemLength := validation.DNS1123SubdomainMaxLength - len(tail)
+	if maxStemLength < 1 {
+		return fmt.Sprintf("haptic-%x", hash)
+	}
+
+	var stem strings.Builder
+	stem.Grow(min(len(base), maxStemLength))
+	lastWasSeparator := false
+	for _, r := range strings.ToLower(base) {
+		isLetterOrDigit := r <= unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r))
+		if isLetterOrDigit {
+			if stem.Len() == maxStemLength {
+				break
+			}
+			stem.WriteRune(r)
+			lastWasSeparator = false
+			continue
+		}
+		if stem.Len() > 0 && stem.Len() < maxStemLength && !lastWasSeparator {
+			stem.WriteByte('-')
+			lastWasSeparator = true
+		}
+	}
+	value := strings.TrimRight(stem.String(), "-")
+	if value == "" {
+		value = "haptic"[:min(len("haptic"), maxStemLength)]
+	}
+	return value + tail
 }
 
 func calculateChecksum(content string) string {

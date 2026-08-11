@@ -16,7 +16,7 @@ package component
 
 import "sync"
 
-// ReadySignal is a one-shot signal used by leader-only components to let
+// ReadySignal is a per-Start signal used by leader-only components to let
 // callers wait until the component has finished subscribing to the event
 // bus. Leader-only components subscribe in Start() (not in their
 // constructor), and the controller start-up sequence waits on
@@ -42,8 +42,9 @@ import "sync"
 //	    // ... event loop
 //	}
 type ReadySignal struct {
-	ch   chan struct{}
-	once sync.Once
+	mu    sync.Mutex
+	ch    chan struct{}
+	ready bool
 }
 
 // NewReadySignal constructs an un-signalled ReadySignal.
@@ -56,14 +57,30 @@ func NewReadySignal() *ReadySignal {
 // interface satisfaction at call sites rather than by import to avoid a
 // cyclic dependency on pkg/lifecycle).
 func (r *ReadySignal) SubscriptionReady() <-chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.ch
 }
 
-// MarkReady closes the underlying channel exactly once. Subsequent calls
-// are no-ops, so components can invoke it defensively at the end of their
-// subscription step without caring whether Start has already run.
+// MarkReady closes the current channel exactly once. Subsequent calls are
+// no-ops until Rearm prepares the next lifecycle term.
 func (r *ReadySignal) MarkReady() {
-	r.once.Do(func() {
-		close(r.ch)
-	})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ready {
+		return
+	}
+	close(r.ch)
+	r.ready = true
+}
+
+// Rearm prepares the signal for the next lifecycle Start call.
+func (r *ReadySignal) Rearm() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.ready {
+		return
+	}
+	r.ch = make(chan struct{})
+	r.ready = false
 }

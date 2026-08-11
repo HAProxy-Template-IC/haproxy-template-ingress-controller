@@ -292,11 +292,25 @@ func TestMergeAuxiliaryFiles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := MergeAuxiliaryFiles(tt.static, tt.dynamic)
+			got, err := MergeAuxiliaryFiles(tt.static, tt.dynamic)
+			require.NoError(t, err)
 			assert.Equal(t, len(tt.want.MapFiles), len(got.MapFiles))
 			if len(tt.want.MapFiles) > 0 {
 				assert.Equal(t, tt.want.MapFiles[0].Path, got.MapFiles[0].Path)
 			}
 		})
 	}
+}
+
+func TestMergeAuxiliaryFiles_RejectsStaticDynamicConflict(t *testing.T) {
+	static := &dataplane.AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
+		Path: "routes.map", Content: "static",
+	}}}
+	dynamic := &dataplane.AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
+		Path: "routes.map", Content: "dynamic",
+	}}}
+
+	_, err := MergeAuxiliaryFiles(static, dynamic)
+
+	require.ErrorContains(t, err, `Map file "routes.map" has conflicting definitions`)
 }

@@ -132,3 +132,58 @@ func TestComponentShutdownDoesNotFlushPendingWrites(t *testing.T) {
 	require.Empty(t, crdClient.Actions(), "shutdown must not detach and publish pending CRD work")
 	require.Empty(t, kubeClient.Actions(), "shutdown must not detach and publish pending Secret work")
 }
+
+func TestComponentPublishesAfterLeadershipReacquisition(t *testing.T) {
+	crdClient := crdclientfake.NewSimpleClientset()
+	bus := busevents.NewEventBus(16)
+	publisher := configpublisher.NewWithListers(
+		k8sfake.NewClientset(), crdClient, nil, testutil.NewTestLogger())
+	c := New(publisher, bus, testutil.NewTestLogger())
+	published := bus.Subscribe("reacquired-publication", 16)
+	bus.Start()
+
+	runTerm := func(checksum string) {
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		ready := c.SubscriptionReady()
+		go func() { done <- c.Start(ctx) }()
+		select {
+		case <-ready:
+		case <-time.After(time.Second):
+			t.Fatal("config publisher did not become ready")
+		}
+
+		work := c.makePublishWorkItem(
+			"term:"+checksum,
+			&v1alpha1.HAProxyTemplateConfig{ObjectMeta: metav1.ObjectMeta{
+				Name: "test", Namespace: "default", UID: types.UID("test-uid"),
+			}},
+			&renderedConfigEntry{config: "global\n# " + checksum, contentChecksum: checksum},
+			false,
+		)
+		c.publishWork <- work
+		waitForConfigPublished(t, ctx, published)
+
+		cancel()
+		select {
+		case err := <-done:
+			assert.ErrorIs(t, err, context.Canceled)
+		case <-time.After(time.Second):
+			t.Fatal("config publisher did not stop")
+		}
+	}
+
+	runTerm("first")
+	secondReady := c.SubscriptionReady()
+	select {
+	case <-secondReady:
+		t.Fatal("next lifecycle signal was already closed")
+	default:
+	}
+	runTerm("second")
+
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(t.Context(), "test-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "second", runtimeConfig.Spec.Checksum)
+}
