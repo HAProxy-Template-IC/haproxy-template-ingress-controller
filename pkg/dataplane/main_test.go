@@ -15,6 +15,7 @@
 package dataplane
 
 import (
+	"context"
 	"errors"
 	"os"
 	"testing"
@@ -30,11 +31,11 @@ const fakeHAProxyVersionLine = "HAProxy version 3.2.0 2025/01/01 - https://hapro
 // lives here.
 type fakeHAProxyExecutor struct{}
 
-func (fakeHAProxyExecutor) Version() (string, error) {
+func (fakeHAProxyExecutor) Version(context.Context) (string, error) {
 	return fakeHAProxyVersionLine, nil
 }
 
-func (fakeHAProxyExecutor) Check(_ string, _ ...string) ([]byte, error) {
+func (fakeHAProxyExecutor) Check(context.Context, string, ...string) ([]byte, error) {
 	return nil, nil
 }
 
@@ -43,11 +44,11 @@ func (fakeHAProxyExecutor) Check(_ string, _ ...string) ([]byte, error) {
 // dataplanetest.WithRejectAll for this package's internal tests.
 type rejectingHAProxyExecutor struct{ alertDetail string }
 
-func (rejectingHAProxyExecutor) Version() (string, error) {
+func (rejectingHAProxyExecutor) Version(context.Context) (string, error) {
 	return fakeHAProxyVersionLine, nil
 }
 
-func (r rejectingHAProxyExecutor) Check(_ string, _ ...string) ([]byte, error) {
+func (r rejectingHAProxyExecutor) Check(context.Context, string, ...string) ([]byte, error) {
 	output := "[ALERT]    (1) : config : " + r.alertDetail + "\n" +
 		"[ALERT]    (1) : config : fatal errors found in configuration.\n"
 	return []byte(output), errors.New("exit status 1")

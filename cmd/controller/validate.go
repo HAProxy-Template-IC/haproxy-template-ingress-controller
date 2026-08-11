@@ -141,7 +141,7 @@ func init() {
 	_ = validateCmd.MarkFlagRequired("file")
 }
 
-func runValidate(_ *cobra.Command, _ []string) error {
+func runValidate(cmd *cobra.Command, _ []string) error {
 	logger := newValidateLogger()
 	if validateDumpMerged {
 		return dumpMergedSpec()
@@ -150,7 +150,7 @@ func runValidate(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	_, err = validateAndReport(context.Background(), schemas, logger)
+	_, err = validateAndReport(cmd.Context(), schemas, logger)
 	return err
 }
 
@@ -255,7 +255,7 @@ func setupValidation(ctx context.Context, schemas schemaSource, logger *slog.Log
 
 	// Setup validation paths in temp directory
 	// Pass configSpec so setupValidationPaths can derive subdirectory names from dataplane configuration
-	validationPaths, capabilities, haproxyVersion, cleanupFunc, err := setupValidationPaths(configSpec)
+	validationPaths, capabilities, haproxyVersion, cleanupFunc, err := setupValidationPaths(ctx, configSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -800,7 +800,7 @@ func createTemplateEngine(
 // Returns the validation paths, capabilities, and a cleanup function.
 // IMPORTANT: Subdirectory names are derived from the HAProxyTemplateConfig's dataplane configuration
 // to ensure consistency between production and validation environments.
-func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
+func setupValidationPaths(ctx context.Context, configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 	paths *dataplane.ValidationPaths,
 	capabilities dataplane.Capabilities,
 	haproxyVersion *dataplane.Version,
@@ -809,7 +809,7 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 ) {
 	// Detect local HAProxy version to determine capabilities
 	// CRT-list storage is only available in HAProxy 3.2+
-	localVersion, err := dataplane.DetectLocalVersion()
+	localVersion, err := dataplane.DetectLocalVersionContext(ctx)
 	if err != nil {
 		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("detecting local HAProxy version: %w\nHint: Ensure 'haproxy' is in PATH", err)
 	}

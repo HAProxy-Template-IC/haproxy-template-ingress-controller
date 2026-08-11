@@ -572,10 +572,10 @@ if err != nil {
 HAProxy validation errors are simplified using `dataplane.SimplifyValidationError()`:
 
 ```go
-// Real signature: ValidateConfiguration(mainConfig, auxFiles, paths, version, skipDNSValidation)
+// Real signature: ValidateConfigurationUncachedContext(ctx, mainConfig, auxFiles, paths, version, skipDNSValidation)
 // returns (*parser.StructuredConfig, error). The structured config is the cached
 // parse result — callers that just want pass/fail can ignore it.
-_, err := dataplane.ValidateConfiguration(haproxyConfig, auxiliaryFiles, validationPaths, nil, false)
+_, err := dataplane.ValidateConfigurationUncachedContext(ctx, haproxyConfig, auxiliaryFiles, validationPaths, nil, false)
 if err != nil {
     result.Error = dataplane.SimplifyValidationError(err)
 }

@@ -16,10 +16,16 @@ package testrunner
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
 )
 
 func TestAppendAssertionResultPreservesVerdictCompletedAfterDeadline(t *testing.T) {
@@ -50,6 +56,54 @@ func TestAppendAssertionResultOmitsCancellationFailure(t *testing.T) {
 	})
 
 	assert.True(t, incomplete)
+	assert.True(t, result.Passed)
+	assert.Empty(t, result.Assertions)
+}
+
+func TestHAProxyAssertionCancellationIsIncomplete(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	restore := dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheckContext(
+		func(ctx context.Context, _ string, _ []string) ([]byte, error) {
+			close(started)
+			select {
+			case <-ctx.Done():
+				return nil, context.Cause(ctx)
+			case <-release:
+				return nil, nil
+			}
+		},
+	))
+	t.Cleanup(func() {
+		close(release)
+		restore()
+	})
+
+	tempDir := t.TempDir()
+	paths := &dataplane.ValidationPaths{
+		MapsDir:           filepath.Join(tempDir, "maps"),
+		SSLCertsDir:       filepath.Join(tempDir, "ssl"),
+		GeneralStorageDir: filepath.Join(tempDir, "general"),
+		ConfigFile:        filepath.Join(tempDir, "haproxy.cfg"),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan AssertionResult, 1)
+	go func() {
+		done <- (&Runner{}).assertHAProxyValid(ctx, "global\n    daemon\n", nil, &config.ValidationAssertion{}, paths)
+	}()
+
+	<-started
+	cancel()
+	var assertion AssertionResult
+	select {
+	case assertion = <-done:
+	case <-time.After(time.Second):
+		t.Fatal("HAProxy assertion did not stop after cancellation")
+	}
+
+	result := &TestResult{Passed: true}
+	assert.True(t, appendAssertionResult(ctx, result, &assertion))
+	assert.True(t, assertion.incomplete)
 	assert.True(t, result.Passed)
 	assert.Empty(t, result.Assertions)
 }

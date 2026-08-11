@@ -86,7 +86,7 @@ func RunValidationTests(
 		return Result{Passed: true}, nil
 	}
 
-	paths, capabilities, haproxyVersion, cleanup, err := buildValidationPaths(cfg)
+	paths, capabilities, haproxyVersion, cleanup, err := buildValidationPaths(ctx, cfg)
 	if err != nil {
 		return Result{}, fmt.Errorf("preparing HAProxy validation environment: %w", err)
 	}
@@ -131,14 +131,14 @@ func RunValidationTests(
 // production layout (maps/ssl/general dirs + config-file path) so the
 // testrunner's `haproxy_valid` assertions can run `haproxy -c`. The returned
 // cleanup removes the temp tree.
-func buildValidationPaths(cfg *config.Config) (
+func buildValidationPaths(ctx context.Context, cfg *config.Config) (
 	paths *dataplane.ValidationPaths,
 	capabilities dataplane.Capabilities,
 	haproxyVersion *dataplane.Version,
 	cleanup func(),
 	err error,
 ) {
-	localVersion, err := dataplane.DetectLocalVersion()
+	localVersion, err := dataplane.DetectLocalVersionContext(ctx)
 	if err != nil {
 		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("detecting local HAProxy version: %w", err)
 	}

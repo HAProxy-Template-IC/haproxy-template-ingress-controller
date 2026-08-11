@@ -256,9 +256,8 @@ type Capabilities = client.Capabilities
 When the controller runs alongside HAProxy (e.g., in sidecar mode), use `CapabilitiesFromVersion()` to detect capabilities from the local HAProxy binary:
 
 ```go
-// Detect local HAProxy version (runs `haproxy -v` via the installed
-// HAProxyExecutor — see haproxy_exec.go; no context arg).
-localVersion, err := dataplane.DetectLocalVersion()
+// Detect local HAProxy version through the installed HAProxyExecutor.
+localVersion, err := dataplane.DetectLocalVersionContext(ctx)
 if err != nil {
     return fmt.Errorf("failed to detect local HAProxy: %w", err)
 }
@@ -724,10 +723,10 @@ func TestSync_Integration(t *testing.T) {
 ### Faking the HAProxy Binary (required in unit tests)
 
 **Unit tests must never shell out to external binaries.** Both places this
-package executes haproxy (`DetectLocalVersion` → `haproxy -v`, semantic
+package executes haproxy (`DetectLocalVersionContext` → `haproxy -v`, semantic
 validation → `haproxy -c`) go through the `HAProxyExecutor` seam in
-`haproxy_exec.go`. Any test package whose tests reach those paths installs the
-fake once per package:
+`haproxy_exec.go`. Both operations honor caller cancellation. Any test package
+whose tests reach those paths installs the fake once per package:
 
 ```go
 func TestMain(m *testing.M) {

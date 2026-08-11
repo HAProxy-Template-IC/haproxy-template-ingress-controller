@@ -240,12 +240,15 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 	startTime := time.Now()
 
 	// Check for context cancellation before starting
-	if err := ctx.Err(); err != nil {
-		return failedResult(fmt.Errorf("validation cancelled: %w", err), "setup", startTime)
+	if err := validationCancellationError(ctx); err != nil {
+		return failedResult(err, "setup", startTime)
 	}
 
 	// Check validation cache - skip all phases if content unchanged
 	if cachedConfig := s.getCachedResult(checksum); cachedConfig != nil {
+		if err := validationCancellationError(ctx); err != nil {
+			return failedResult(err, "setup", startTime)
+		}
 		return &ValidationResult{
 			Valid:        true,
 			DurationMs:   time.Since(startTime).Milliseconds(),
@@ -261,6 +264,9 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 	if err != nil {
 		return failedResult(err, validationPhase(err), startTime)
 	}
+	if err := validationCancellationError(ctx); err != nil {
+		return failedResult(err, "setup", startTime)
+	}
 
 	// Short-circuit: when the deployment pipeline opts out of semantic
 	// validation, syntax + schema is enough. The chart's bundled
@@ -270,7 +276,9 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 	// (the dominant fixed cost on the rolling-restart hot path) without
 	// affecting admission-time correctness.
 	if s.skipSemanticValidation {
-		s.cacheResult(checksum, parsedConfig)
+		if err := s.cacheResult(ctx, checksum, parsedConfig); err != nil {
+			return failedResult(err, "setup", startTime)
+		}
 		return &ValidationResult{
 			Valid:        true,
 			DurationMs:   time.Since(startTime).Milliseconds(),
@@ -314,20 +322,22 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 	}
 
 	// Check for context cancellation before running semantic validation
-	if err := ctx.Err(); err != nil {
-		return failedResult(fmt.Errorf("validation cancelled: %w", err), "setup", startTime)
+	if err := validationCancellationError(ctx); err != nil {
+		return failedResult(err, "setup", startTime)
 	}
 
 	// Step 4: Run semantic validation with haproxy -c using the MODIFIED config
 	// This validates that HAProxy can actually load the config with all file references resolved.
-	err = dataplane.ValidateSemantics(validationConfig, auxFiles, paths, s.skipDNSValidation)
+	err = dataplane.ValidateSemanticsContext(ctx, validationConfig, auxFiles, paths, s.skipDNSValidation)
 	if err != nil {
 		return failedResult(err, validationPhase(err), startTime)
 	}
 
 	// Step 5: Cache successful result and return the ORIGINAL parsed config
 	// (with production paths, not temp paths).
-	s.cacheResult(checksum, parsedConfig)
+	if err := s.cacheResult(ctx, checksum, parsedConfig); err != nil {
+		return failedResult(err, "setup", startTime)
+	}
 
 	return &ValidationResult{
 		Valid:        true,
@@ -358,6 +368,13 @@ func validationPhase(err error) string {
 	return "unknown"
 }
 
+func validationCancellationError(ctx context.Context) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return fmt.Errorf("validation cancelled: %w", cause)
+	}
+	return nil
+}
+
 func (s *ValidationService) getCachedResult(checksum string) *parser.StructuredConfig {
 	s.cacheMu.RLock()
 	defer s.cacheMu.RUnlock()
@@ -367,9 +384,13 @@ func (s *ValidationService) getCachedResult(checksum string) *parser.StructuredC
 	return nil
 }
 
-func (s *ValidationService) cacheResult(checksum string, parsedConfig *parser.StructuredConfig) {
+func (s *ValidationService) cacheResult(ctx context.Context, checksum string, parsedConfig *parser.StructuredConfig) error {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
+	if err := validationCancellationError(ctx); err != nil {
+		return err
+	}
 	s.cachedChecksum = checksum
 	s.cachedParsedConfig = parsedConfig
+	return nil
 }

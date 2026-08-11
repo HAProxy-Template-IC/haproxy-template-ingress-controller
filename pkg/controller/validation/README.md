@@ -8,9 +8,9 @@ Three-phase HAProxy configuration validator with per-instance result caching.
 
 1. **Syntax** — `client-native` parser via `pkg/dataplane/parser`.
 2. **OpenAPI schema** — version-specific Dataplane API schema check via `pkg/generated`.
-3. **Semantic** — actual `haproxy -c` invocation. Each call writes auxiliary files into its own per-call `os.MkdirTemp` and rewrites the rendered config's `default-path origin` to point at it, so callers do *not* contend on shared paths. The serialisation that does exist sits one layer down in `pkg/dataplane.haproxyCheckMutex` — it serialises the `haproxy -c` binary invocation itself because concurrent runs interfere with each other even with isolated temp directories.
+3. **Semantic** — actual `haproxy -c` invocation. Each call writes auxiliary files into its own per-call `os.MkdirTemp` and rewrites the rendered config's `default-path origin` to point at it, so callers don't contend on shared paths. A cancellable gate serialises the binary invocation because concurrent runs interfere even with isolated temp directories.
 
-The result of a successful validation is cached per-instance keyed by a content checksum of the config + auxiliary files. Identical content (the common case during drift-prevention cycles) skips all three phases and returns the cached `*parser.StructuredConfig` immediately. Failures are never cached — a failed validation always retries on the next call.
+The result of a successful validation is cached per-instance keyed by a content checksum of the config + auxiliary files. Identical content (the common case during drift-prevention cycles) skips all three phases and returns the cached `*parser.StructuredConfig` immediately. Cancellation terminates a running or queued binary check and is never cached as success.
 
 The service is consumed by `pkg/controller/pipeline.Pipeline.Execute`, which is in turn driven by both the leader-side reconciler (`pkg/controller/reconciler.Coordinator`) and the webhook-side proposal validator (`pkg/controller/proposalvalidator`). Per-instance caching keeps the webhook from evicting the main pipeline's cache.
 

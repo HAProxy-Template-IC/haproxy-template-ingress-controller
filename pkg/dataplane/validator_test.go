@@ -672,7 +672,9 @@ func TestValidationCacheMechanism(t *testing.T) {
 		t.Error("isValidationCached() should return false for uncached config")
 	}
 
-	cacheValidationResult(configHash, auxHash, versionHash)
+	if err := cacheValidationResult(t.Context(), configHash, auxHash, versionHash); err != nil {
+		t.Fatalf("cacheValidationResult: %v", err)
+	}
 
 	if !isValidationCached(configHash, auxHash, versionHash) {
 		t.Error("isValidationCached() should return true for cached config")

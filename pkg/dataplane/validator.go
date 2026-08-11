@@ -15,6 +15,7 @@
 package dataplane
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -111,7 +112,12 @@ func validateSyntaxAndSchema(config string, version *Version, source string, use
 // Returns:
 //   - error: ValidationError with phase "semantic" if validation fails
 func ValidateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
-	if err := validateSemantics(mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
+	return ValidateSemanticsContext(context.Background(), mainConfig, auxFiles, paths, skipDNSValidation)
+}
+
+// ValidateSemanticsContext is ValidateSemantics with caller cancellation.
+func ValidateSemanticsContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
+	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
 		return phaseSemantic.wrap(err)
 	}
 	return nil
@@ -144,7 +150,12 @@ func ValidateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *Valid
 //   - *parser.StructuredConfig: The pre-parsed configuration from syntax validation (nil on cache hit or error)
 //   - error: nil if validation succeeds, ValidationError with phase information if validation fails
 func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) (*parser.StructuredConfig, error) {
-	return validateConfiguration(mainConfig, auxFiles, paths, version, skipDNSValidation, true)
+	return ValidateConfigurationContext(context.Background(), mainConfig, auxFiles, paths, version, skipDNSValidation)
+}
+
+// ValidateConfigurationContext is ValidateConfiguration with caller cancellation.
+func ValidateConfigurationContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) (*parser.StructuredConfig, error) {
+	return validateConfiguration(ctx, mainConfig, auxFiles, paths, version, skipDNSValidation, true)
 }
 
 // ValidateConfigurationUncached is ValidateConfiguration for configs that are
@@ -153,16 +164,28 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 // four-slot parser cache flushed it wholesale, which measured as 1730 misses
 // to 2 hits on a live cluster (#139).
 func ValidateConfigurationUncached(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) (*parser.StructuredConfig, error) {
-	return validateConfiguration(mainConfig, auxFiles, paths, version, skipDNSValidation, false)
+	return ValidateConfigurationUncachedContext(context.Background(), mainConfig, auxFiles, paths, version, skipDNSValidation)
 }
 
-func validateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation, useCache bool) (*parser.StructuredConfig, error) {
+// ValidateConfigurationUncachedContext is ValidateConfigurationUncached with caller cancellation.
+func ValidateConfigurationUncachedContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) (*parser.StructuredConfig, error) {
+	return validateConfiguration(ctx, mainConfig, auxFiles, paths, version, skipDNSValidation, false)
+}
+
+func validateConfiguration(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation, useCache bool) (*parser.StructuredConfig, error) {
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
+
 	// Check validation cache first - skip validation if same config already validated
 	configHash := hashValidationInput(mainConfig)
 	auxHash := hashAuxFiles(auxFiles)
 	versionHash := hashVersion(version)
 
 	if isValidationCached(configHash, auxHash, versionHash) {
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, cause
+		}
 		slog.Debug("Validation cache hit, skipping validation")
 		return nil, ErrValidationCacheHit // Cache hit - caller should use parser cache if parsed config needed
 	}
@@ -183,17 +206,23 @@ func validateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 	if err != nil {
 		return nil, phaseSyntax.wrap(err)
 	}
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
 
 	// Phase 1.5: API schema validation with OpenAPI spec
 	schemaStart := time.Now()
 	if err := validateAPISchema(parsedConfig, version); err != nil {
 		return nil, phaseSchema.wrap(err)
 	}
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
 	schemaMs = time.Since(schemaStart).Milliseconds()
 
 	// Phase 2: Semantic validation with haproxy binary
 	semanticStart := time.Now()
-	if err := validateSemantics(mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
+	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
 		return nil, phaseSemantic.wrap(err)
 	}
 	semanticMs = time.Since(semanticStart).Milliseconds()
@@ -206,8 +235,9 @@ func validateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 		"semantic_ms", semanticMs,
 	)
 
-	// Cache successful validation result for future checks
-	cacheValidationResult(configHash, auxHash, versionHash)
+	if err := cacheValidationResult(ctx, configHash, auxHash, versionHash); err != nil {
+		return nil, err
+	}
 
 	return parsedConfig, nil
 }
@@ -265,11 +295,15 @@ func isValidationCached(configHash, auxHash, versionHash string) bool {
 }
 
 // cacheValidationResult stores the successful validation result for future checks.
-func cacheValidationResult(configHash, auxHash, versionHash string) {
+func cacheValidationResult(ctx context.Context, configHash, auxHash, versionHash string) error {
 	validationCache.mu.Lock()
 	defer validationCache.mu.Unlock()
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
 
 	validationCache.lastConfigHash = configHash
 	validationCache.lastAuxHash = auxHash
 	validationCache.lastVersionHash = versionHash
+	return nil
 }

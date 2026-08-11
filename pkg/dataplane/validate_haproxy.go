@@ -15,6 +15,7 @@
 package dataplane
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,20 +23,20 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
-// haproxyCheckMutex serializes HAProxy validation to work around issues with
-// concurrent haproxy -c execution. Without this, concurrent validations can
-// interfere with each other even though they use isolated temp directories.
-var haproxyCheckMutex sync.Mutex
+// The gate serializes HAProxy checks while allowing cancelled waiters to leave.
+var haproxyCheckGate = make(chan struct{}, 1)
 
 // validateSemantics performs semantic validation using haproxy binary.
 // This writes files to actual /etc/haproxy/ directories and runs haproxy -c.
 // If skipDNSValidation is true, the -dr flag is passed to HAProxy to skip DNS resolution
 // failures (servers with unresolvable hostnames start in DOWN state instead of failing).
-func validateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
+func validateSemantics(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
 	// Timing for file I/O setup vs haproxy check
 	var clearMs, writeAuxMs, writeConfigMs, haproxyCheckMs int64
 
@@ -45,6 +46,9 @@ func validateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *Valid
 		return fmt.Errorf("clearing validation directories: %w", err)
 	}
 	clearMs = time.Since(clearStart).Milliseconds()
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
 
 	// Write auxiliary files to their respective directories
 	writeAuxStart := time.Now()
@@ -52,6 +56,9 @@ func validateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *Valid
 		return fmt.Errorf("writing auxiliary files: %w", err)
 	}
 	writeAuxMs = time.Since(writeAuxStart).Milliseconds()
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
 
 	// Write main configuration to ConfigFile path
 	writeConfigStart := time.Now()
@@ -59,10 +66,13 @@ func validateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *Valid
 		return fmt.Errorf("writing config file: %w", err)
 	}
 	writeConfigMs = time.Since(writeConfigStart).Milliseconds()
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
 
 	// Run haproxy -c -f <ConfigFile>
 	haproxyCheckStart := time.Now()
-	if err := runHAProxyCheck(paths.ConfigFile, mainConfig, skipDNSValidation); err != nil {
+	if err := runHAProxyCheck(ctx, paths.ConfigFile, mainConfig, skipDNSValidation); err != nil {
 		return err
 	}
 	haproxyCheckMs = time.Since(haproxyCheckStart).Milliseconds()
@@ -250,10 +260,16 @@ func writeAuxiliaryFiles(auxFiles *AuxiliaryFiles, paths *ValidationPaths) error
 //
 // Execution goes through the installed HAProxyExecutor (see haproxy_exec.go)
 // so unit tests can substitute a fake instead of shelling out.
-func runHAProxyCheck(configPath, configContent string, skipDNSValidation bool) error {
-	// Serialize HAProxy execution to work around concurrent execution issues
-	haproxyCheckMutex.Lock()
-	defer haproxyCheckMutex.Unlock()
+func runHAProxyCheck(ctx context.Context, configPath, configContent string, skipDNSValidation bool) error {
+	select {
+	case haproxyCheckGate <- struct{}{}:
+		defer func() { <-haproxyCheckGate }()
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
 
 	// Get absolute path for config file
 	absConfigPath, err := filepath.Abs(configPath)
@@ -274,14 +290,20 @@ func runHAProxyCheck(configPath, configContent string, skipDNSValidation bool) e
 
 	// Run haproxy with the working directory set to the config file
 	// directory so relative paths inside the config resolve.
-	output, err := getHAProxyExecutor().Check(filepath.Dir(absConfigPath), args...)
+	output, err := getHAProxyExecutor().Check(ctx, filepath.Dir(absConfigPath), args...)
 	if err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
 		// Lookup failures (no binary on PATH) carry no haproxy output to
 		// interpret — surface them directly, matching the pre-seam behavior.
 		if len(output) == 0 && errors.Is(err, exec.ErrNotFound) {
 			return err
 		}
 		return interpretHAProxyExitError(output, err, configContent)
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
 	}
 
 	return nil

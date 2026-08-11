@@ -165,7 +165,7 @@ sequenceDiagram
     Note over Validate: Per-instance cache (cacheMu, RWMutex)<br/>checksum hit → return cached parsed config
 
     Validate->>Validate: os.MkdirTemp("", "haproxy-validation-*")
-    Note over Validate: Per-call sandbox — every Validate gets<br/>its own unique /tmp dir. File I/O is per-call,<br/>but the haproxy -c binary is serialised by<br/>a package-global haproxyCheckMutex
+    Note over Validate: Per-call sandbox — every Validate gets<br/>its own unique /tmp dir. File I/O is per-call;<br/>a cancellable gate serialises haproxy -c
 
     Validate->>Parser: validateSyntax(config)
     alt Syntax error
@@ -199,7 +199,7 @@ sequenceDiagram
 
 1. **Pipeline call**: `Coordinator.handleReconciliationTriggered` calls `Pipeline.Execute` synchronously. The pipeline first renders, then validates — both in the same call stack, no event hop.
 2. **Cache check**: `ValidationService` keys its per-instance cache on a SHA-256 of `(config + aux files)` (`pkg/dataplane.ComputeContentChecksum`). Identical content during drift-prevention cycles returns the cached `*parser.StructuredConfig` without running any phase. Failures are *not* cached — every failure retries.
-3. **Sandbox**: each `Validate` call creates its own `os.MkdirTemp("", "haproxy-validation-*")` and rewrites the rendered config's `default-path origin` to point at it. File I/O is fully isolated per call. The `haproxy -c` binary invocation itself is still serialised by a package-global `haproxyCheckMutex` (`pkg/dataplane/validate_haproxy.go`) because concurrent runs of the binary have been observed to interfere even with isolated sandboxes; on top of that, a small per-instance `cacheMu` (`sync.RWMutex`) guards the cached `*parser.StructuredConfig` lookup.
+3. **Sandbox**: each `Validate` call creates its own `os.MkdirTemp("", "haproxy-validation-*")` and rewrites the rendered config's `default-path origin` to point at it. File I/O is fully isolated per call. A context-aware gate serialises `haproxy -c`; cancellation removes queued checks or terminates the running process. A per-instance `cacheMu` (`sync.RWMutex`) guards the cached `*parser.StructuredConfig` lookup.
 4. **Phase 1 — Syntax**: client-native parser checks grammar and section structure. Cheap.
 5. **Phase 1.5 — OpenAPI schema**: parsed structure cross-checked against the version-specific Dataplane API OpenAPI spec via `pkg/generated/validators`. Catches out-of-range values, pattern violations, missing required fields. Also cheap (in-memory, no fork).
 6. **Phase 2 — Semantic**: writes the config + auxiliary files into a per-call temp directory, runs `haproxy -c -f <tempdir>/haproxy.cfg`, parses the binary's stderr on failure. The temp directory mirrors the production layout (`maps/`, `ssl/`, `general/`) under `default-path origin <tempdir>` so file references resolve exactly like at runtime.

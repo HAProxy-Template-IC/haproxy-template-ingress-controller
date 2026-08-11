@@ -1,6 +1,7 @@
 package dataplane
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -80,7 +81,19 @@ func ParseVersionString(version string) (*Version, error) {
 // and returns the local HAProxy version.
 // Returns an error if haproxy is not found or version cannot be parsed.
 func DetectLocalVersion() (*Version, error) {
-	output, err := getHAProxyExecutor().Version()
+	return DetectLocalVersionContext(context.Background())
+}
+
+// DetectLocalVersionContext is DetectLocalVersion with caller cancellation.
+func DetectLocalVersionContext(ctx context.Context) (*Version, error) {
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
+	output, err := getHAProxyExecutor().Version(ctx)
+	cause := context.Cause(ctx)
+	if cause != nil {
+		return nil, cause
+	}
 	if err != nil {
 		return nil, err
 	}
