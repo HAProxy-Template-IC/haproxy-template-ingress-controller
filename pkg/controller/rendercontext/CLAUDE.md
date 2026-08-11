@@ -33,6 +33,7 @@ The production renderer (`pkg/controller/renderer/service.go`) builds its contex
 import "gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 
 builder := rendercontext.NewBuilder(
+    ctx,
     cfg,
     pathResolver,
     logger,
@@ -73,7 +74,7 @@ marked "optional"):
 
 | Option | Purpose |
 |--------|---------|
-| `WithStores(map[string]stores.Store)` | Resource stores keyed by watched-resource name; ends up in `resources` |
+| `WithStores(map[string]stores.Store)` | Resource stores keyed by watched-resource name; ends up in `resources`; API-backed reads use the `NewBuilder` context |
 | `WithHAProxyPodStore(stores.Store)` | HAProxy pod store; ends up in `controller["haproxy_pods"]` |
 | `WithHTTPFetcher(templating.HTTPFetcher)` | Wires the `http` runtime variable so templates can call `http.Fetch(...)` |
 | `WithCurrentConfig(*parser.StructuredConfig)` | Adds `currentConfig` to the context so templates can reason about the live HAProxy config; nil on the first deployment |

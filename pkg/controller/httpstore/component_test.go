@@ -597,14 +597,11 @@ func TestComponent_ValidationCompleted_WithActualPendingContent(t *testing.T) {
 	pendingURLs := store.GetPendingURLs()
 	require.Len(t, pendingURLs, 1, "should have one URL with pending content")
 
-	// Set a known pendingValidationID to simulate the component having triggered validation
-	testRequestID := "test-validation-request-id"
-	component.mu.Lock()
-	component.pendingValidationID = testRequestID
-	component.mu.Unlock()
+	component.triggerProposalValidation(server.URL)
+	request := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, eventChan, testutil.EventTimeout)
 
 	// Publish ProposalValidationCompletedEvent with matching request ID
-	bus.Publish(events.NewProposalValidationCompletedEvent(testRequestID, 100))
+	bus.Publish(events.NewProposalValidationCompletedEvent(request.ID, 100))
 
 	// Wait for and verify HTTPResourceAcceptedEvent
 	timeout := time.After(2 * time.Second)
@@ -643,6 +640,7 @@ func TestComponent_ValidationFailed_WithActualPendingContent(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
 	store := component.GetStore()
+	requestChan := bus.SubscribeTypes("test-requests", 1, events.EventTypeProposalValidationRequested)
 
 	bus.Start()
 
@@ -665,14 +663,11 @@ func TestComponent_ValidationFailed_WithActualPendingContent(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 
-	// Set a known pendingValidationID to simulate the component having triggered validation
-	testRequestID := "test-validation-request-id"
-	component.mu.Lock()
-	component.pendingValidationID = testRequestID
-	component.mu.Unlock()
+	component.triggerProposalValidation(server.URL)
+	request := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, requestChan, testutil.EventTimeout)
 
 	component.handleProposalValidationCompleted(
-		events.NewProposalValidationFailedEvent(testRequestID, "validation", nil, 100),
+		events.NewProposalValidationFailedEvent(request.ID, "validation", nil, 100),
 	)
 
 	pendingURLs := store.GetPendingURLs()
@@ -683,6 +678,104 @@ func TestComponent_ValidationFailed_WithActualPendingContent(t *testing.T) {
 	assert.Equal(t, "initial content", content)
 }
 
-// Note: Tests for RegisterURL/refreshURL timer behavior removed due to race conditions
-// in test setup. These paths are covered by integration tests and the existing
-// validation flow tests above. Coverage for httpstore is already at 85%+.
+func TestValidationVerdictFinalizesOnlyItsSnapshot(t *testing.T) {
+	newChangingServer := func(initial, updated string) *httptest.Server {
+		var requests atomic.Int32
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if requests.Add(1) == 1 {
+				_, _ = w.Write([]byte(initial))
+				return
+			}
+			_, _ = w.Write([]byte(updated))
+		}))
+	}
+
+	serverA := newChangingServer("accepted-a", "validated-a")
+	defer serverA.Close()
+	serverB := newChangingServer("accepted-b", "unvalidated-b")
+	defer serverB.Close()
+
+	bus, logger := testutil.NewTestBusAndLogger()
+	component := New(bus, logger, 0)
+	requests := bus.SubscribeTypes("test-requests", 2, events.EventTypeProposalValidationRequested)
+	bus.Start()
+
+	ctx := t.Context()
+	_, err := component.store.Fetch(ctx, serverA.URL, httpstore.FetchOptions{}, nil)
+	require.NoError(t, err)
+	_, err = component.store.Fetch(ctx, serverB.URL, httpstore.FetchOptions{}, nil)
+	require.NoError(t, err)
+
+	changed, err := component.store.RefreshURL(ctx, serverA.URL)
+	require.NoError(t, err)
+	require.True(t, changed)
+	component.triggerProposalValidation(serverA.URL)
+	requestA := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, requests, testutil.EventTimeout)
+	require.True(t, requestA.HTTPOverlay.HasPendingURL(serverA.URL))
+	require.False(t, requestA.HTTPOverlay.HasPendingURL(serverB.URL))
+
+	changed, err = component.store.RefreshURL(ctx, serverB.URL)
+	require.NoError(t, err)
+	require.True(t, changed)
+	component.handleProposalValidationCompleted(events.NewProposalValidationCompletedEvent(requestA.ID, 100))
+
+	acceptedA, ok := component.store.Get(serverA.URL)
+	require.True(t, ok)
+	assert.Equal(t, "validated-a", acceptedA)
+	acceptedB, ok := component.store.Get(serverB.URL)
+	require.True(t, ok)
+	assert.Equal(t, "accepted-b", acceptedB)
+	assert.Equal(t, []string{serverB.URL}, component.store.GetPendingURLs())
+
+	requestB := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, requests, testutil.EventTimeout)
+	assert.NotEqual(t, requestA.ID, requestB.ID)
+	assert.False(t, requestB.HTTPOverlay.HasPendingURL(serverA.URL))
+	assert.True(t, requestB.HTTPOverlay.HasPendingURL(serverB.URL))
+}
+
+func TestSupersededPendingVersionStartsNewValidationBatch(t *testing.T) {
+	responses := []string{"accepted", "first-pending", "replacement-pending"}
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		index := min(int(requestCount.Add(1)-1), len(responses)-1)
+		_, _ = w.Write([]byte(responses[index]))
+	}))
+	defer server.Close()
+
+	bus, logger := testutil.NewTestBusAndLogger()
+	component := New(bus, logger, 0)
+	requests := bus.SubscribeTypes("test-requests", 2, events.EventTypeProposalValidationRequested)
+	bus.Start()
+
+	ctx := t.Context()
+	_, err := component.store.Fetch(ctx, server.URL, httpstore.FetchOptions{}, nil)
+	require.NoError(t, err)
+	changed, err := component.store.RefreshURL(ctx, server.URL)
+	require.NoError(t, err)
+	require.True(t, changed)
+	component.triggerProposalValidation(server.URL)
+	firstRequest := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, requests, testutil.EventTimeout)
+
+	require.True(t, component.store.RejectPending(server.URL))
+	changed, err = component.store.RefreshURL(ctx, server.URL)
+	require.NoError(t, err)
+	require.True(t, changed)
+	component.triggerProposalValidation(server.URL)
+	replacementRequest := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, requests, testutil.EventTimeout)
+	require.NotEqual(t, firstRequest.ID, replacementRequest.ID)
+	replacementContent, ok := replacementRequest.HTTPOverlay.GetContent(server.URL)
+	require.True(t, ok)
+	assert.Equal(t, "replacement-pending", replacementContent)
+
+	component.handleProposalValidationCompleted(events.NewProposalValidationCompletedEvent(firstRequest.ID, 100))
+	accepted, ok := component.store.Get(server.URL)
+	require.True(t, ok)
+	assert.Equal(t, "accepted", accepted)
+	assert.Equal(t, []string{server.URL}, component.store.GetPendingURLs())
+
+	component.handleProposalValidationCompleted(events.NewProposalValidationCompletedEvent(replacementRequest.ID, 100))
+	accepted, ok = component.store.Get(server.URL)
+	require.True(t, ok)
+	assert.Equal(t, "replacement-pending", accepted)
+	assert.Empty(t, component.store.GetPendingURLs())
+}

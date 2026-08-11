@@ -4,7 +4,7 @@ Component registry, startup coordination, and health tracking for the controller
 
 ## Overview
 
-The controller iterates by spinning up ~20 components in a coordinated startup sequence. `*Registry` is where they all register; it then drives `StartAll(ctx, isLeader)` (all-replica), then `StartLeaderOnlyComponentsAsync(ctx)` once leadership is acquired, tracking the per-component status (`Pending` / `Starting` / `Running` / `Failed` / `Stopped` / `Standby` (Standby = registered leader-only component on a follower replica — see `pkg/lifecycle/CLAUDE.md`)).
+The controller iterates by spinning up ~20 components in a coordinated startup sequence. `*Registry` is where they all register; it then drives `StartAll(ctx, isLeader)` (all-replica), then `StartLeaderOnly(ctx)` once leadership is acquired, tracking the per-component status (`Pending` / `Starting` / `Running` / `Failed` / `Stopped` / `Standby` (Standby = registered leader-only component on a follower replica — see `pkg/lifecycle/CLAUDE.md`)).
 
 Components implement the `Component` interface (`Name() string` + `Start(ctx) error`); optionally they can also implement `HealthChecker` for active health probes and `SubscriptionReadySignaler` for "I've subscribed and am ready to receive events" signalling.
 
@@ -26,10 +26,10 @@ registry.Register(deployerComponent, true)
 // Boot
 if err := registry.StartAll(ctx, isLeader); err != nil { /* ... */ }
 if isLeader {
-    errCh, err := registry.StartLeaderOnlyComponentsAsync(ctx)
+    run, err := registry.StartLeaderOnly(ctx)
     if err != nil { /* ... */ }
     go func() {
-        if err := <-errCh; err != nil { /* ... */ }
+        if err := run.Wait(); err != nil { /* ... */ }
     }()
 }
 
@@ -43,9 +43,9 @@ for name, info := range registry.Status() {
 
 ## Registration
 
-`Register(c Component, leaderOnly bool)` — pass `leaderOnly=true` for components that should only start inside `StartLeaderOnlyComponentsAsync` (after leadership is acquired), not in `StartAll`.
+`Register(c Component, leaderOnly bool)` — pass `leaderOnly=true` for components that should only start inside `StartLeaderOnly` (after leadership is acquired), not in `StartAll`.
 
-`StartLeaderOnlyComponentsAsync` returns once all leader-only components are subscription-ready and hands back an error channel so the caller can track failures asynchronously — this is what makes the EventBus Pause/Start replay pattern safe.
+`StartLeaderOnly` returns a `ComponentRun` once every leader-only component is subscription-ready. `ComponentRun.Wait()` completes only after every owned `Component.Start` call returns, so leadership teardown can cancel and join the whole term before another term starts.
 
 ## Status
 

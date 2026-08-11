@@ -224,3 +224,134 @@ func TestDeployFailureRetry_PartialFailureAlsoReschedules(t *testing.T) {
 	assert.Equal(t, "deploy_failure_retry", sd.Reason,
 		"a partial failure (Failed>0) must arm the fast retry to re-drive the un-converged pods")
 }
+
+func TestStopFailureRetriesJoinsRunningCallback(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	s := NewDeploymentScheduler(bus, logger, time.Millisecond, time.Second)
+	s.ctx = context.Background()
+
+	s.mu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
+
+	s.scheduleFailureRetry(fullFailure("checksum"))
+	require.Eventually(t, func() bool {
+		s.schedulerMutex.Lock()
+		defer s.schedulerMutex.Unlock()
+		return s.retryTimer == nil
+	}, testutil.LongTimeout, time.Millisecond)
+
+	stopped := make(chan struct{})
+	go func() {
+		s.stopFailureRetries()
+		close(stopped)
+	}()
+	require.Eventually(t, func() bool {
+		s.schedulerMutex.Lock()
+		defer s.schedulerMutex.Unlock()
+		return s.retryStopped
+	}, testutil.LongTimeout, time.Millisecond)
+	select {
+	case <-stopped:
+		t.Fatal("stop returned while retry callback was running")
+	default:
+	}
+
+	s.mu.Unlock()
+	locked = false
+	select {
+	case <-stopped:
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("stop did not join retry callback")
+	}
+}
+
+func TestDeployFailureRetry_NewerWorkRejectsRunningCallback(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	s := NewDeploymentScheduler(bus, logger, time.Millisecond, time.Second)
+	s.ctx = context.Background()
+
+	s.mu.Lock()
+	s.lastValidatedConfig = "retry-A"
+	s.lastValidatedContentChecksum = "checksum-A"
+	s.hasValidConfig = true
+	s.currentEndpoints = oneEndpoint()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
+
+	s.scheduleFailureRetry(fullFailure("checksum-A"))
+	require.Eventually(t, func() bool {
+		s.schedulerMutex.Lock()
+		defer s.schedulerMutex.Unlock()
+		return s.retryTimer == nil
+	}, testutil.LongTimeout, time.Millisecond)
+
+	s.scheduleOrQueue(context.Background(), "newer-B", nil, nil, oneEndpoint(), "config_validation", "correlation-B", nil, true, "checksum-B")
+	s.mu.Unlock()
+	locked = false
+	waitForRetryCallbacks(t, s)
+
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+	require.NotNil(t, s.state.pending)
+	assert.Equal(t, "newer-B", s.state.pending.config)
+	assert.Equal(t, "checksum-B", s.state.pending.contentChecksum)
+}
+
+func TestDeployFailureRetry_CancelAfterCallbackStartsDoesNotPublish(t *testing.T) {
+	bus := testutil.NewTestBus()
+	scheduledCh := bus.SubscribeTypes("cancelled-retry-watcher", 1, events.EventTypeDeploymentScheduled)
+	bus.Start()
+
+	s := NewDeploymentScheduler(bus, testutil.NewTestLogger(), time.Millisecond, time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startLoopForTest(t, s, ctx)
+
+	s.mu.Lock()
+	s.lastValidatedConfig = "retry-A"
+	s.lastValidatedContentChecksum = "checksum-A"
+	s.hasValidConfig = true
+	s.currentEndpoints = oneEndpoint()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
+
+	s.scheduleFailureRetry(fullFailure("checksum-A"))
+	require.Eventually(t, func() bool {
+		s.schedulerMutex.Lock()
+		defer s.schedulerMutex.Unlock()
+		return s.retryTimer == nil
+	}, testutil.LongTimeout, time.Millisecond)
+
+	s.cancelFailureRetry()
+	s.mu.Unlock()
+	locked = false
+	waitForRetryCallbacks(t, s)
+	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 50*time.Millisecond)
+}
+
+func waitForRetryCallbacks(t *testing.T, s *DeploymentScheduler) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		s.retryCallbacks.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("retry callback did not finish")
+	}
+}

@@ -72,6 +72,7 @@ func TestLeadingEdge_ScheduleFlushSignals(t *testing.T) {
 	t.Parallel()
 
 	throttle := New(30 * time.Millisecond)
+	defer throttle.Stop()
 	throttle.MarkFired()
 	throttle.ScheduleFlush()
 
@@ -82,46 +83,68 @@ func TestLeadingEdge_ScheduleFlushSignals(t *testing.T) {
 	}
 }
 
-// TestLeadingEdge_MultipleScheduleFlushCoalesce verifies that the helper's
-// FiredCh emits at least one wakeup when ScheduleFlush is called repeatedly
-// inside the refractory window, and that the total number of signals never
-// exceeds the number of calls. The cap-1 channel coalesces signals that
-// arrive while the buffer is full, but a consumer that drains between
-// AfterFunc firings can still observe up to N signals for N calls; the
-// guarantee is "no signal explosion," not "exactly one." The worker side
-// is fine with this — it just calls processAllPendingStatusWork on each
-// wake, which is idempotent on an empty pending queue.
 func TestLeadingEdge_MultipleScheduleFlushCoalesce(t *testing.T) {
 	t.Parallel()
 
 	const calls = 3
 	throttle := New(30 * time.Millisecond)
+	defer throttle.Stop()
 	throttle.MarkFired()
 
 	for range calls {
 		throttle.ScheduleFlush()
 	}
 
-	// First receive is required: at least one wakeup must arrive.
 	select {
 	case <-throttle.FiredCh():
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected at least one FiredCh signal")
 	}
 
-	// Drain any extras. Total signals (1 + extras) must not exceed `calls`.
-	extras := 0
-	for {
-		select {
-		case <-throttle.FiredCh():
-			extras++
-		case <-time.After(60 * time.Millisecond):
-			goto Done
-		}
+	select {
+	case <-throttle.FiredCh():
+		t.Fatal("repeated ScheduleFlush calls created more than one timer signal")
+	case <-time.After(60 * time.Millisecond):
 	}
-Done:
-	total := 1 + extras
-	assert.LessOrEqual(t, total, calls,
-		"helper must not amplify ScheduleFlush calls into more signals — "+
-			"the cap-1 channel bounds in-flight signals; got %d signals from %d calls", total, calls)
+}
+
+func TestLeadingEdge_StopCancelsAndDrainsWakeup(t *testing.T) {
+	t.Parallel()
+
+	throttle := New(time.Hour)
+	throttle.MarkFired()
+	throttle.ScheduleFlush()
+	throttle.Stop()
+	throttle.Stop()
+
+	assert.False(t, throttle.Available())
+	select {
+	case <-throttle.FiredCh():
+		t.Fatal("stopped throttle delivered a pending wakeup")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestLeadingEdge_MarkFiredRearmsPendingWakeup(t *testing.T) {
+	t.Parallel()
+
+	const interval = 120 * time.Millisecond
+	throttle := New(interval)
+	defer throttle.Stop()
+	throttle.mu.Lock()
+	throttle.lastFire = time.Now().Add(-100 * time.Millisecond)
+	throttle.mu.Unlock()
+	throttle.ScheduleFlush()
+	throttle.MarkFired()
+
+	select {
+	case <-throttle.FiredCh():
+		t.Fatal("pending wakeup fired on the previous refractory deadline")
+	case <-time.After(50 * time.Millisecond):
+	}
+	select {
+	case <-throttle.FiredCh():
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("rearmed wakeup did not fire on the new refractory deadline")
+	}
 }

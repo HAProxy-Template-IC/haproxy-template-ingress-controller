@@ -9,7 +9,6 @@
 package testrunner
 
 import (
-	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -108,7 +107,7 @@ func TestAssertDeterministic_DetectsConfigDivergence(t *testing.T) {
 	const wrongFirstConfig = "# stale-render-output\nfrontend test\n  bind *:8080"
 	emptyAux := &dataplane.AuxiliaryFiles{}
 
-	result := r.assertDeterministic(context.Background(), assertion, wrongFirstConfig, emptyAux, deps)
+	result := r.assertDeterministic(t.Context(), assertion, wrongFirstConfig, emptyAux, deps)
 
 	assert.False(t, result.Passed,
 		"assertDeterministic MUST fail when firstConfig differs from "+
@@ -159,7 +158,7 @@ func TestAssertDeterministic_DetectsAuxiliaryFileDivergence(t *testing.T) {
 		},
 	}
 
-	result := r.assertDeterministic(context.Background(), assertion, matchingFirstConfig, firstAuxFiles, deps)
+	result := r.assertDeterministic(t.Context(), assertion, matchingFirstConfig, firstAuxFiles, deps)
 
 	assert.False(t, result.Passed,
 		"assertDeterministic MUST fail when first/second aux files diverge — "+

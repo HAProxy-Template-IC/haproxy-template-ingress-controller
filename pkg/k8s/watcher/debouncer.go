@@ -20,15 +20,18 @@ import (
 // Thread-safe for concurrent access.
 type Debouncer struct {
 	mu                 sync.Mutex
+	callbacks          sync.WaitGroup
 	interval           time.Duration
 	timer              *time.Timer
 	stats              types.ChangeStats
 	callback           types.OnChangeCallback
 	store              types.Store
 	pending            bool
+	generation         uint64
 	lastFired          time.Time // Track when callback last fired for refractory period
 	syncMode           bool      // True during initial synchronization
 	suppressDuringSync bool      // True to suppress callbacks during sync
+	stopped            bool
 }
 
 // NewDebouncer creates a new debouncer with the specified interval and callback.
@@ -57,6 +60,9 @@ func NewDebouncer(interval time.Duration, callback types.OnChangeCallback, store
 func (d *Debouncer) RecordCreate() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.stopped {
+		return
+	}
 
 	d.stats.Created++
 	d.scheduleCallback()
@@ -66,6 +72,9 @@ func (d *Debouncer) RecordCreate() {
 func (d *Debouncer) RecordUpdate() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.stopped {
+		return
+	}
 
 	d.stats.Modified++
 	d.scheduleCallback()
@@ -75,6 +84,9 @@ func (d *Debouncer) RecordUpdate() {
 func (d *Debouncer) RecordDelete() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.stopped {
+		return
+	}
 
 	d.stats.Deleted++
 	d.scheduleCallback()
@@ -92,25 +104,39 @@ func (d *Debouncer) scheduleCallback() {
 	}
 
 	d.pending = true
+	d.generation++
+	generation := d.generation
 
 	// Check if enough time has passed since last fire (refractory period)
 	timeSinceLastFire := time.Since(d.lastFired)
 
 	if timeSinceLastFire >= d.interval {
 		// No recent activity - fire immediately (leading edge)
-		go d.fireCallback()
+		d.callbacks.Add(1)
+		go d.runCallback(generation)
 	} else {
 		// In refractory period - schedule for when interval expires
 		remaining := d.interval - timeSinceLastFire
+		d.callbacks.Add(1)
 		d.timer = time.AfterFunc(remaining, func() {
-			d.fireCallback()
+			d.runCallback(generation)
 		})
 	}
 }
 
+func (d *Debouncer) runCallback(generation uint64) {
+	defer d.callbacks.Done()
+	d.fireCallback(generation)
+}
+
 // fireCallback invokes the callback with aggregated statistics.
-func (d *Debouncer) fireCallback() {
+func (d *Debouncer) fireCallback(generation uint64) {
 	d.mu.Lock()
+	if d.stopped || generation != d.generation {
+		d.mu.Unlock()
+		return
+	}
+	d.timer = nil
 
 	// Check if we should suppress during sync
 	suppress := d.syncMode && d.suppressDuringSync
@@ -140,15 +166,23 @@ func (d *Debouncer) fireCallback() {
 
 // Flush immediately invokes the callback with current statistics.
 //
-// This is useful during shutdown or sync completion to ensure pending changes are processed.
+// This is useful during sync completion to ensure pending changes are processed.
 // Flush always invokes the callback regardless of suppressDuringSync setting.
 func (d *Debouncer) Flush() {
 	d.mu.Lock()
+	if d.stopped {
+		d.mu.Unlock()
+		return
+	}
 
 	// Stop pending timer if any
 	if d.timer != nil {
-		d.timer.Stop()
+		if d.timer.Stop() {
+			d.callbacks.Done()
+		}
+		d.timer = nil
 	}
+	d.generation++
 
 	// Get stats and reset
 	stats := d.stats
@@ -156,26 +190,38 @@ func (d *Debouncer) Flush() {
 	d.stats = types.ChangeStats{}
 	d.pending = false
 	d.lastFired = time.Now() // Record fire time for refractory period
+	invoke := d.callback != nil && !stats.IsEmpty()
+	if invoke {
+		d.callbacks.Add(1)
+	}
 
 	d.mu.Unlock()
 
 	// Invoke callback outside lock (always, even if suppressed)
-	if d.callback != nil && !stats.IsEmpty() {
+	if invoke {
+		defer d.callbacks.Done()
 		d.callback(d.store, stats)
 	}
 }
 
-// Stop cancels any pending callback.
+// Stop discards pending changes and waits for callbacks already in progress.
 func (d *Debouncer) Stop() {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if d.timer != nil {
-		d.timer.Stop()
-		d.timer = nil
+	if !d.stopped {
+		d.stopped = true
+		d.generation++
+		if d.timer != nil {
+			if d.timer.Stop() {
+				d.callbacks.Done()
+			}
+			d.timer = nil
+		}
+		d.stats = types.ChangeStats{}
+		d.pending = false
 	}
+	d.mu.Unlock()
 
-	d.pending = false
+	d.callbacks.Wait()
 }
 
 // SetSyncMode enables or disables initial sync mode.
@@ -187,6 +233,10 @@ func (d *Debouncer) Stop() {
 // are flushed to ensure ADD events accumulated during sync are delivered.
 func (d *Debouncer) SetSyncMode(enabled bool) {
 	d.mu.Lock()
+	if d.stopped {
+		d.mu.Unlock()
+		return
+	}
 	wasSyncMode := d.syncMode
 	d.syncMode = enabled
 	hasPending := !d.stats.IsEmpty()

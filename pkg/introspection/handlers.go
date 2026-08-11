@@ -129,8 +129,12 @@ func (s *Server) handleVar(w http.ResponseWriter, r *http.Request) {
 //
 // Returns HTTP 200 if all components healthy, HTTP 503 if any component unhealthy.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	s.healthCheckerMu.RLock()
+	healthChecker := s.healthChecker
+	s.healthCheckerMu.RUnlock()
+
 	// Simple response if no health checker configured
-	if s.healthChecker == nil {
+	if healthChecker == nil {
 		WriteJSON(w, map[string]string{
 			"status": "ok",
 		})
@@ -138,7 +142,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get component health status
-	components := s.healthChecker()
+	components := healthChecker()
 
 	// Check if all components are healthy
 	allHealthy := true

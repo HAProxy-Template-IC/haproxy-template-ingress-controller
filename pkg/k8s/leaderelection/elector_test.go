@@ -123,6 +123,61 @@ func TestNew_NilClientset(t *testing.T) {
 	assert.Contains(t, err.Error(), "clientset cannot be nil")
 }
 
+func TestNew_InvalidDurations(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*Config)
+		want      string
+	}{
+		{
+			name: "lease duration",
+			configure: func(cfg *Config) {
+				cfg.LeaseDuration = 0
+			},
+			want: "lease duration must be greater than zero",
+		},
+		{
+			name: "renew deadline",
+			configure: func(cfg *Config) {
+				cfg.RenewDeadline = 0
+			},
+			want: "renew deadline must be greater than zero",
+		},
+		{
+			name: "retry period",
+			configure: func(cfg *Config) {
+				cfg.RetryPeriod = 0
+			},
+			want: "retry period must be greater than zero",
+		},
+		{
+			name: "lease and renew order",
+			configure: func(cfg *Config) {
+				cfg.LeaseDuration = cfg.RenewDeadline
+			},
+			want: "lease duration must be greater than renew deadline",
+		},
+		{
+			name: "retry jitter",
+			configure: func(cfg *Config) {
+				cfg.RenewDeadline = 2 * time.Second
+				cfg.RetryPeriod = 2 * time.Second
+			},
+			want: "renew deadline must be greater than retry period with jitter",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validConfig()
+			test.configure(cfg)
+			elector, err := New(cfg, fake.NewClientset(), Callbacks{}, nil)
+			require.ErrorContains(t, err, test.want)
+			assert.Nil(t, elector)
+		})
+	}
+}
+
 func TestNew_NilLogger(t *testing.T) {
 	clientset := fake.NewClientset()
 	callbacks := Callbacks{}

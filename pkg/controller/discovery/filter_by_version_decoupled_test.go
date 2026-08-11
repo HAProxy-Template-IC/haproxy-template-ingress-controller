@@ -53,6 +53,7 @@ func TestFilterByVersion_Admits34BinaryAgainst33DataPlaneAPI(t *testing.T) {
 	candidate := dataplane.Endpoint{URL: srv.URL, PodName: "haproxy-0", PodNamespace: "haptic"}
 
 	admitted, rejections := c.filterByVersion(
+		t.Context(),
 		[]dataplane.Endpoint{candidate},
 		coreconfig.Credentials{DataplaneUsername: "admin", DataplanePassword: "pw"},
 	)
@@ -75,6 +76,7 @@ func TestFilterByVersion_RejectsUnsupportedMajor(t *testing.T) {
 	candidate := dataplane.Endpoint{URL: srv.URL, PodName: "haproxy-legacy", PodNamespace: "haptic"}
 
 	admitted, rejections := c.filterByVersion(
+		t.Context(),
 		[]dataplane.Endpoint{candidate},
 		coreconfig.Credentials{DataplaneUsername: "admin", DataplanePassword: "pw"},
 	)

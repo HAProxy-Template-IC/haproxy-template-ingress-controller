@@ -141,6 +141,7 @@ type Component struct {
 	statusWorkPending   map[string]*statusWorkItem // Key: namespace/runtimeConfig/podName
 	statusWorkPendingMu sync.Mutex
 	statusWorkTrigger   chan struct{} // Signals worker to process pending updates
+	statusRetrySignals  *delayedSignals
 
 	// deployedPending is every deployed render awaiting publication, in arrival
 	// order and deduplicated by content checksum.
@@ -225,6 +226,7 @@ func New(
 		validationFailedWork: make(chan *validationFailedWorkItem, publishWorkChannelSize),
 		statusWorkPending:    make(map[string]*statusWorkItem),
 		statusWorkTrigger:    make(chan struct{}, statusWorkTriggerSize),
+		statusRetrySignals:   newDelayedSignals(),
 	}
 
 	for _, opt := range opts {
@@ -284,9 +286,16 @@ func (c *Component) Start(ctx context.Context) error {
 	// Start async workers for K8S API operations.
 	// These workers process work items from their channels, allowing the main
 	// event loop to continue processing events without blocking on slow API calls.
-	go c.publishWorker(ctx)
-	go c.validationFailedWorker(ctx)
-	go c.statusWorker(ctx)
+	var workers sync.WaitGroup
+	workers.Go(func() { c.publishWorker(ctx) })
+	workers.Go(func() { c.validationFailedWorker(ctx) })
+	workers.Go(func() { c.statusWorker(ctx) })
+	defer func() {
+		c.publishThrottle.Stop()
+		c.statusThrottle.Stop()
+		c.statusRetrySignals.Stop()
+		workers.Wait()
+	}()
 
 	for {
 		select {

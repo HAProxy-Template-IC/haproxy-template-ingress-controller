@@ -36,7 +36,7 @@ THEN all buffered events SHALL be delivered to subscribers in the order they wer
 
 ### Requirement: Pause and Resume Buffering
 
-`Pause()` SHALL return a started bus to buffering mode: events published while paused SHALL be buffered instead of delivered, and `Publish` SHALL return 0 for them. A subsequent `Start()` SHALL replay the buffered events to subscribers in publish order. This pause/resume cycle exists so leadership transitions can buffer events while late-subscribing leader-only components register, without those components missing state. Both `Pause()` and `Start()` SHALL be idempotent and safe to call concurrently with `Publish` and `Subscribe`.
+`Pause()` SHALL return a started bus to buffering mode: events published while paused SHALL be buffered instead of delivered, and `Publish` SHALL return 0 for them. A subsequent `Start()` SHALL replay the buffered events to subscribers in publish order. A context-bound start SHALL stop before replaying another event when its context is cancelled, leave the bus paused, and retain the unplayed suffix. This pause/resume cycle exists so leadership transitions can buffer events while late-subscribing leader-only components register, without those components missing state. Both `Pause()` and `Start()` SHALL be idempotent and safe to call concurrently with `Publish` and `Subscribe`.
 
 The buffer (both pre-start and paused) SHALL be capped at MaxPreStartBufferSize (1000 events); once full, further buffered publishes SHALL be dropped with a WARN log naming the event type.
 
@@ -44,6 +44,11 @@ The buffer (both pre-start and paused) SHALL be capped at MaxPreStartBufferSize 
 
 - **WHEN** the bus is paused, three events are published, a new component subscribes, and Start() is called
 - **THEN** the new subscriber SHALL receive all three events in publish order.
+
+#### Scenario: Expired authority aborts replay
+
+- **WHEN** a context-bound start observes cancellation before or during buffered-event replay
+- **THEN** it SHALL deliver no later buffered event, leave the bus paused, and retain the unplayed events.
 
 #### Scenario: Publish returns zero while buffering
 
@@ -64,6 +69,8 @@ The buffer (both pre-start and paused) SHALL be capped at MaxPreStartBufferSize 
 
 Subscriptions SHALL be either critical (the default `Subscribe` and `SubscribeTypes`) or lossy (`SubscribeLossy`, universal subscriptions only), and the bus SHALL account for buffer-full drops separately per class. A drop from a critical subscription SHALL increment the critical drop counter AND invoke the optional drop callback registered via `SetDropCallback` (receiving the event type, subscriber name, and buffer size). A drop from a lossy subscription SHALL increment the observability drop counter silently — no callback — because drops from observability consumers (commentator, debug taps) are expected under load and must not raise the same alerts as business-critical backpressure. Both counters SHALL be readable at runtime.
 
+The controller SHALL treat the first critical drop as an iteration failure. It SHALL preserve drop metrics across the per-iteration Prometheus registry swap, cancel the iteration with a typed cause, and rebuild its subscribers and state before processing more work. A critical drop during buffered-event replay SHALL prevent that iteration from becoming initialized. Lossy drops SHALL NOT cancel the iteration.
+
 Subscribing after `Start()` on a non-suppressed path SHALL log a WARN including the caller's source file and line, since the subscriber may have missed buffered events; the leader-only typed subscription variant SHALL suppress this warning because late subscription is intentional there. Subscriber buffer sizes SHALL be drawn from named tier constants (10, 50, 100, 200, 1000) rather than ad-hoc per-component numbers.
 
 #### Scenario: Critical drop fires callback and counter
@@ -75,6 +82,16 @@ Subscribing after `Start()` on a non-suppressed path SHALL log a WARN including 
 
 - **WHEN** a lossy subscriber's buffer is full and an event is published
 - **THEN** the observability drop counter SHALL increment and the drop callback SHALL NOT be invoked.
+
+#### Scenario: Controller reconstructs after a critical drop
+
+- **WHEN** the controller's drop callback receives a critical drop
+- **THEN** the current iteration SHALL be cancelled once with the drop details and the controller SHALL start a fresh iteration after teardown.
+
+#### Scenario: Replay drop fails startup
+
+- **WHEN** buffered-event replay overflows a critical subscriber during `Start()`
+- **THEN** the controller iteration SHALL fail before it is marked initialized.
 
 #### Scenario: Late subscription warns with caller location
 

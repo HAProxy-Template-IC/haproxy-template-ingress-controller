@@ -71,7 +71,7 @@ THEN a StoreError SHALL be returned indicating the key count mismatch.
 
 ### Requirement: CachedStore
 
-CachedStore SHALL store only resource references (namespace, name, index keys) in memory and fetch full resources from the Kubernetes API on access. Fetched resources SHALL be cached using an LRU cache with a configurable TTL (default 2m10s). The maximum cache size SHALL default to 256 entries. Cache entries that are accessed SHALL have their TTL reset. API fetches SHALL use a 10-second timeout. Fetched resources SHALL be processed through the indexer (field filtering, float-to-int conversion) before caching.
+CachedStore SHALL store only resource references (namespace, name, index keys) in memory and fetch full resources from the Kubernetes API on access. Fetched resources SHALL be cached using an LRU cache with a configurable TTL (default 2m10s). The maximum cache size SHALL default to 256 entries. Cache entries that are accessed SHALL have their TTL reset. API fetches SHALL use a 10-second timeout derived from the caller context. Fetched resources SHALL be processed through the indexer (field filtering, float-to-int conversion) before caching. The legacy Get and List methods SHALL remain available, while GetContext and ListContext SHALL cancel in-flight fetches and stop before fetching another matching reference.
 
 #### Scenario: Cache hit returns resource without API call
 
@@ -97,6 +97,11 @@ THEN the cache entry's expiration time SHALL be reset to now plus the configured
 
 WHEN a resource cannot be fetched from the API (e.g., it has been deleted)
 THEN the resource SHALL be omitted from the Get results without returning an error.
+
+#### Scenario: Context cancellation stops sequential cache misses
+
+WHEN GetContext or ListContext is canceled while an API fetch is in flight and more matching references remain
+THEN the in-flight request SHALL be canceled, no later reference SHALL be fetched, and the context error SHALL be returned.
 
 #### Scenario: List warns about performance impact
 
@@ -152,7 +157,7 @@ THEN IsEmpty SHALL return true.
 
 ### Requirement: CompositeStore
 
-CompositeStore SHALL wrap a base store with a StoreOverlay to provide a merged read-only view. Get and List SHALL return base store resources excluding those marked for deletion or modification, plus the overlay's converted modifications and additions. Write operations (Add, Update, Delete, Clear) SHALL return a ReadOnlyStoreError.
+CompositeStore SHALL wrap a base store with a StoreOverlay to provide a merged read-only view. Get and List SHALL return base store resources excluding those marked for deletion or modification, plus the overlay's converted modifications and additions. Context-aware reads and warm-cache listing SHALL be forwarded to the base store while preserving the overlay. Write operations (Add, Update, Delete, Clear) SHALL return a ReadOnlyStoreError.
 
 #### Scenario: Get excludes deleted resources
 
@@ -214,7 +219,7 @@ THEN GetStore SHALL return base stores directly and GetHTTPOverlay SHALL return 
 
 ### Requirement: TypesStoreAdapter
 
-TypesStoreAdapter SHALL bridge the structurally identical Store interfaces defined in pkg/k8s/types and pkg/stores by delegating all Store method calls to an inner store.
+TypesStoreAdapter SHALL bridge the structurally identical Store interfaces defined in pkg/k8s/types and pkg/stores by delegating all Store method calls to an inner store. It SHALL preserve optional context-aware reads and warm-cache listing when the inner store provides them, without changing the legacy Store interface.
 
 #### Scenario: Adapter delegates Get to inner store
 

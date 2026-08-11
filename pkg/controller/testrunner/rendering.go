@@ -119,7 +119,7 @@ type RenderOutput struct {
 // include-stats (when profiling) bundled in a RenderOutput, plus the render error.
 func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string, testExtraContext map[string]any) (RenderOutput, error) {
 	// Build rendering context with fixture stores
-	renderCtx := r.buildRenderingContext(storeMap, validationPaths, httpStore, currentConfig, currentFiles)
+	renderCtx := r.buildRenderingContext(ctx, storeMap, validationPaths, httpStore, currentConfig, currentFiles)
 
 	mergeTestExtraContext(renderCtx, testExtraContext)
 
@@ -346,7 +346,7 @@ func collectEvents(renderCtx map[string]any) string {
 //   - Creates PathResolver from ValidationPaths (not from config.Dataplane)
 //   - Separates haproxy-pods store from resource stores
 //   - Accepts optional currentConfig for slot-aware server assignment testing
-func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string) map[string]any {
+func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string) map[string]any {
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
@@ -363,6 +363,7 @@ func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validat
 	// use the typed shape compile against the same surface the
 	// production renderer provides.
 	builder := rendercontext.NewBuilder(
+		ctx,
 		r.config,
 		pathResolver,
 		r.logger,

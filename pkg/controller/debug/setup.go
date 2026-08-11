@@ -178,28 +178,23 @@ func RegisterVariables(
 	}))
 }
 
-// RegisterEventsHandler registers the /debug/events endpoint with correlation query support.
-//
-// This handler supports:
-//   - GET /debug/events - Returns last 100 events
-//   - GET /debug/events?limit=N - Returns last N events
-//   - GET /debug/events?correlation_id=<id> - Returns events with matching correlation ID
-//
-// Example:
-//
-//	debug.RegisterEventsHandler(server, eventBuffer)
-//	go server.Start(ctx)
-func RegisterEventsHandler(server *introspection.Server, eventBuffer *EventBuffer) {
-	server.RegisterHandler("/debug/events", func(w http.ResponseWriter, r *http.Request) {
+// EventSource provides the event queries exposed by /debug/events.
+type EventSource interface {
+	GetLast(int) []Event
+	FindByCorrelationID(string) []Event
+}
+
+// EventsHandler returns the /debug/events handler.
+func EventsHandler(eventSource EventSource) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			introspection.WriteError(w, http.StatusMethodNotAllowed, "only GET is allowed")
 			return
 		}
 
-		// Check for correlation_id query parameter
 		correlationID := r.URL.Query().Get("correlation_id")
 		if correlationID != "" {
-			events := eventBuffer.FindByCorrelationID(correlationID)
+			events := eventSource.FindByCorrelationID(correlationID)
 			introspection.WriteJSON(w, map[string]any{
 				"correlation_id": correlationID,
 				keyEvents:        events,
@@ -208,7 +203,6 @@ func RegisterEventsHandler(server *introspection.Server, eventBuffer *EventBuffe
 			return
 		}
 
-		// Default: return last N events
 		limit := 100
 		if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 			if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
@@ -216,11 +210,16 @@ func RegisterEventsHandler(server *introspection.Server, eventBuffer *EventBuffe
 			}
 		}
 
-		events := eventBuffer.GetLast(limit)
+		events := eventSource.GetLast(limit)
 		introspection.WriteJSON(w, map[string]any{
 			keyEvents: events,
 			"count":   len(events),
 			"limit":   limit,
 		})
-	})
+	}
+}
+
+// RegisterEventsHandler registers the process-owned /debug/events endpoint.
+func RegisterEventsHandler(server *introspection.Server, eventSource EventSource) {
+	server.RegisterHandler("/debug/events", EventsHandler(eventSource))
 }

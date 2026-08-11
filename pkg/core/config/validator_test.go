@@ -31,6 +31,64 @@ func TestValidateStructure_NilConfig(t *testing.T) {
 	assert.Contains(t, err.Error(), "config is nil")
 }
 
+func TestValidateStructure_RejectsInvalidLeaderElectionDurations(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*LeaderElectionConfig)
+		want      string
+	}{
+		{
+			name: "invalid lease duration",
+			configure: func(cfg *LeaderElectionConfig) {
+				cfg.LeaseDuration = "later"
+			},
+			want: "lease_duration",
+		},
+		{
+			name: "non-positive renew deadline",
+			configure: func(cfg *LeaderElectionConfig) {
+				cfg.RenewDeadline = "0s"
+			},
+			want: "renew_deadline must be greater than zero",
+		},
+		{
+			name: "renew deadline reaches lease duration",
+			configure: func(cfg *LeaderElectionConfig) {
+				cfg.LeaseDuration = "10s"
+				cfg.RenewDeadline = "10s"
+			},
+			want: "lease_duration must be greater than renew_deadline",
+		},
+		{
+			name: "renew deadline inside retry jitter",
+			configure: func(cfg *LeaderElectionConfig) {
+				cfg.LeaseDuration = "30s"
+				cfg.RenewDeadline = "6s"
+				cfg.RetryPeriod = "5s"
+			},
+			want: "renew_deadline must be more than 20% greater than retry_period",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validConfig()
+			test.configure(&cfg.Controller.LeaderElection)
+			assert.ErrorContains(t, ValidateStructure(cfg), test.want)
+		})
+	}
+}
+
+func TestValidateStructure_AcceptsLeaderElectionDurations(t *testing.T) {
+	cfg := validConfig()
+	cfg.Controller.LeaderElection = LeaderElectionConfig{
+		LeaseDuration: "30s",
+		RenewDeadline: "20s",
+		RetryPeriod:   "5s",
+	}
+	assert.NoError(t, ValidateStructure(cfg))
+}
+
 func TestValidateStructure_RejectsInvalidValidatorGlobs(t *testing.T) {
 	tests := []struct {
 		name      string

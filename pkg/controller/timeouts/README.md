@@ -15,7 +15,6 @@ Centralising these prevents the same magic numbers from drifting apart across co
 | `HTTPServerTimeout` | `10 * time.Second` | Read/write timeout for HTTP servers (webhook admission server) |
 | `InformerResyncPeriod` | `30 * time.Second` | Resync interval for shared informers |
 | `TickerPollInterval` | `5 * time.Second` | Periodic polling (metrics collection, deployment timeout checks) |
-| `GracefulStopDelay` | `100 * time.Millisecond` | Brief pause after stopping components to drain in-flight work |
 
 These are deliberately Go constants rather than CRD fields — they're tuning knobs that should travel with the code, not with the deployment.
 

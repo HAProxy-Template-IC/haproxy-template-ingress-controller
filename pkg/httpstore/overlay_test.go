@@ -135,16 +135,28 @@ func TestHTTPOverlay_SnapshotIsFrozen(t *testing.T) {
 
 	// Add a new pending URL after the overlay was built.
 	now := time.Now()
+	store.mu.Lock()
+	store.cache["http://a"].PendingContent = "replacement"
+	store.cache["http://a"].PendingChecksum = checksum("replacement")
 	store.cache["http://b"] = &CacheEntry{
-		URL:             "http://b",
-		PendingContent:  "x",
-		PendingChecksum: checksum("x"),
-		HasPending:      true,
-		LastAccessTime:  now,
+		URL:              "http://b",
+		AcceptedContent:  "old-b",
+		AcceptedChecksum: checksum("old-b"),
+		PendingContent:   "new-b",
+		PendingChecksum:  checksum("new-b"),
+		HasPending:       true,
+		LastAccessTime:   now,
 	}
+	store.mu.Unlock()
 
 	// Snapshot must still report only the original URLs.
 	got := overlay.PendingURLs()
 	assert.Equal(t, []string{"http://a"}, got)
 	assert.False(t, overlay.HasPendingURL("http://b"))
+	content, ok := overlay.GetContent("http://a")
+	require.True(t, ok)
+	assert.Equal(t, "new-http://a", content)
+	content, ok = overlay.GetContent("http://b")
+	require.True(t, ok)
+	assert.Equal(t, "old-b", content)
 }

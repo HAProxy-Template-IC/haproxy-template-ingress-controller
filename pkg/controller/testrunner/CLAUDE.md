@@ -555,7 +555,7 @@ root.
 Rendering errors are simplified using `dataplane.SimplifyRenderingError()`:
 
 ```go
-haproxyConfig, auxiliaryFiles, err := r.renderWithStores(stores)
+rendered, err := r.renderWithStores(ctx, engine, stores, validationPaths, httpStore, currentConfig, currentFiles, extraContext)
 if err != nil {
     result.RenderError = dataplane.SimplifyRenderingError(err)
     // Result is marked as failed, error is user-friendly
@@ -641,6 +641,7 @@ Fixtures are wrapped with `rendercontext.StoreWrapper` for template access via t
 
 ```go
 builder := rendercontext.NewBuilder(
+    ctx,
     r.config, pathResolver, r.logger,
     rendercontext.WithStores(resourceStores),
     rendercontext.WithHAProxyPodStore(haproxyPodStore),

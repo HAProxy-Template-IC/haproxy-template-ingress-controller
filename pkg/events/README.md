@@ -80,10 +80,10 @@ Don't nest `Request()` calls on the same path without spawning a goroutine for t
 
 Publish is non-blocking. If a subscriber's buffer is full, the event is **dropped for that subscriber** (others still receive it). The drop accounting splits into two paths (see `recordDrop` in `bus.go`):
 
-- **Non-lossy ("critical") subscribers** — the default `Subscribe` / `SubscribeTypes`. Drops bump `DroppedEventsCritical` *and* fire the registered `DropCallback` (used by `pkg/controller/metrics` to emit `haptic_events_dropped_critical_total` and `haptic_events_dropped_by_subscriber_total`).
+- **Non-lossy ("critical") subscribers** — the default `Subscribe` / `SubscribeTypes`. Drops bump `DroppedEventsCritical` *and* fire the registered `DropCallback`. The controller records the drop, cancels the current iteration, and rebuilds every component from authoritative state.
 - **Lossy subscribers** — opt-in via `SubscribeLossy` (universal subscriptions only). Drops bump `DroppedEventsObservability` only; the `DropCallback` is **not** invoked. Use this for observability subscribers (commentator, debug ring buffer) where occasional drops on a burst are acceptable and shouldn't trip the per-subscriber alert metric.
 
-Slow consumers are your problem — hand work off to a goroutine or raise the subscriber buffer.
+Keep critical handlers responsive. A full critical buffer restarts the controller iteration because continuing after lost coordination work is unsafe.
 
 ## Buffer Sizing Rule of Thumb
 

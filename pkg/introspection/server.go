@@ -60,18 +60,20 @@ type ComponentHealth struct {
 //	server.Setup()
 //	go server.Serve(ctx)
 //
-// The two-phase pattern allows registering handlers and health checkers before
-// routes are finalized, while enabling the server to start serving immediately.
+// The two-phase pattern allows registering custom handlers before routes are
+// finalized. The health checker may be replaced while the server is running.
 type Server struct {
-	addr           string
-	addrMu         sync.RWMutex
-	registry       *Registry
-	server         *http.Server
-	logger         *slog.Logger
-	mux            *http.ServeMux
-	customHandlers []customHandler
-	healthChecker  HealthCheckFunc
-	setupDone      bool // Tracks whether Setup() has been called
+	addr            string
+	addrMu          sync.RWMutex
+	registry        *Registry
+	server          *http.Server
+	logger          *slog.Logger
+	mux             *http.ServeMux
+	customHandlers  []customHandler
+	healthCheckerMu sync.RWMutex
+	healthChecker   HealthCheckFunc
+	setupDone       bool // Tracks whether Setup() has been called
+	listening       chan struct{}
 }
 
 // customHandler holds a pattern and handler for custom endpoint registration.
@@ -104,6 +106,7 @@ func NewServer(addr string, registry *Registry) *Server {
 		logger:         logger,
 		mux:            mux,
 		customHandlers: []customHandler{},
+		listening:      make(chan struct{}),
 	}
 
 	// Setup must be called separately so custom handlers can be registered first
@@ -131,8 +134,7 @@ func (s *Server) RegisterHandler(pattern string, handler http.HandlerFunc) {
 	})
 }
 
-// SetHealthChecker sets a function to check component health.
-// This must be called before Setup().
+// SetHealthChecker sets or replaces the function used to check component health.
 //
 // The health checker function is called by the /health endpoint to get
 // the health status of all components. If not set, /health just returns "ok".
@@ -155,7 +157,14 @@ func (s *Server) RegisterHandler(pattern string, handler http.HandlerFunc) {
 //	    return result
 //	})
 func (s *Server) SetHealthChecker(checker HealthCheckFunc) {
+	s.healthCheckerMu.Lock()
+	defer s.healthCheckerMu.Unlock()
 	s.healthChecker = checker
+}
+
+// Listening closes after the TCP listener has bound successfully.
+func (s *Server) Listening() <-chan struct{} {
+	return s.listening
 }
 
 // setupRoutes registers all HTTP handlers.
@@ -187,8 +196,7 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 }
 
 // Setup initializes routes and prepares the server for serving.
-// This must be called before Serve(). Custom handlers and health checker
-// can be registered after NewServer() but before Setup().
+// This must be called before Serve(). Custom handlers must be registered first.
 //
 // After Setup() is called, no new handlers can be registered.
 //
@@ -245,29 +253,42 @@ func (s *Server) Serve(ctx context.Context) error {
 	s.addrMu.Lock()
 	s.addr = listener.Addr().String()
 	s.addrMu.Unlock()
+	close(s.listening)
 
-	serverErr := make(chan error, 1)
+	serveDone := make(chan error, 1)
 
 	go func() {
 		s.logger.Info("Starting debug server", "addr", s.addr)
-		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		err := s.server.Serve(listener)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.Error("Debug server error", "error", err)
-			serverErr <- err
 		}
+		serveDone <- err
 	}()
 
 	select {
 	case <-ctx.Done():
 		s.logger.Info("Debug server shutting down", "reason", ctx.Err())
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := s.server.Shutdown(shutdownCtx); err != nil {
-			s.logger.Error("Debug server shutdown error", "error", err)
-			return fmt.Errorf("server shutdown failed: %w", err)
+		shutdownErr := s.server.Shutdown(shutdownCtx)
+		cancel()
+		if shutdownErr != nil {
+			s.logger.Error("Debug server shutdown error", "error", shutdownErr)
+			shutdownErr = errors.Join(shutdownErr, s.server.Close())
+		}
+		serveErr := <-serveDone
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			serveErr = nil
 		}
 		s.logger.Info("Debug server stopped")
-		return nil
-	case err := <-serverErr:
+		return errors.Join(shutdownErr, serveErr)
+	case err := <-serveDone:
+		if errors.Is(err, http.ErrServerClosed) {
+			return errors.New("server stopped unexpectedly")
+		}
+		if err == nil {
+			return errors.New("server exited without an error")
+		}
 		return fmt.Errorf("server error: %w", err)
 	}
 }

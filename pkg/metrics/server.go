@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -41,6 +42,7 @@ type Server struct {
 	registryMu sync.RWMutex
 	server     *http.Server
 	logger     *slog.Logger
+	listening  chan struct{}
 }
 
 // NewServer creates a new metrics server.
@@ -63,9 +65,10 @@ func NewServer(addr string, registry prometheus.Gatherer) *Server {
 	logger := slog.Default().With("component", "metrics-server")
 
 	s := &Server{
-		addr:     addr,
-		registry: registry,
-		logger:   logger,
+		addr:      addr,
+		registry:  registry,
+		logger:    logger,
+		listening: make(chan struct{}),
 	}
 
 	mux := http.NewServeMux()
@@ -105,17 +108,19 @@ func (s *Server) Start(ctx context.Context) error {
 	s.addrMu.Lock()
 	s.addr = listener.Addr().String()
 	s.addrMu.Unlock()
+	close(s.listening)
 
-	serverErr := make(chan error, 1)
+	serveDone := make(chan error, 1)
 
 	// Start server in background
 	go func() {
 		s.logger.Info("Starting metrics server", "addr", s.addr)
 
-		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		err := s.server.Serve(listener)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.Error("Metrics server error", "error", err)
-			serverErr <- err
 		}
+		serveDone <- err
 	}()
 
 	// Wait for context cancellation or server error
@@ -123,21 +128,34 @@ func (s *Server) Start(ctx context.Context) error {
 	case <-ctx.Done():
 		s.logger.Info("Metrics server shutting down", "reason", ctx.Err())
 
-		// Graceful shutdown with timeout
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		if err := s.server.Shutdown(shutdownCtx); err != nil {
-			s.logger.Error("Metrics server shutdown error", "error", err)
-			return fmt.Errorf("server shutdown failed: %w", err)
+		shutdownErr := s.server.Shutdown(shutdownCtx)
+		cancel()
+		if shutdownErr != nil {
+			s.logger.Error("Metrics server shutdown error", "error", shutdownErr)
+			shutdownErr = errors.Join(shutdownErr, s.server.Close())
 		}
-
+		serveErr := <-serveDone
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			serveErr = nil
+		}
 		s.logger.Info("Metrics server stopped")
-		return nil
+		return errors.Join(shutdownErr, serveErr)
 
-	case err := <-serverErr:
+	case err := <-serveDone:
+		if errors.Is(err, http.ErrServerClosed) {
+			return errors.New("server stopped unexpectedly")
+		}
+		if err == nil {
+			return errors.New("server exited without an error")
+		}
 		return fmt.Errorf("server error: %w", err)
 	}
+}
+
+// Listening closes after the TCP listener has bound successfully.
+func (s *Server) Listening() <-chan struct{} {
+	return s.listening
 }
 
 // SetRegistry replaces the Prometheus registry used to serve metrics.

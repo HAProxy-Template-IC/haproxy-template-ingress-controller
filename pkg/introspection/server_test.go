@@ -132,6 +132,35 @@ func TestServer_ServeAndShutdown(t *testing.T) {
 	}
 }
 
+func TestServer_ServeReportsUnexpectedPostBindClose(t *testing.T) {
+	server := NewServer("localhost:0", NewRegistry())
+	server.Setup()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- server.Serve(ctx)
+	}()
+
+	<-server.Listening()
+	require.Eventually(t, func() bool {
+		resp, err := http.Get("http://" + server.addrForTest() + "/healthz")
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return true
+	}, time.Second, 5*time.Millisecond)
+	require.NoError(t, server.server.Close())
+
+	select {
+	case err := <-done:
+		require.ErrorContains(t, err, "server stopped unexpectedly")
+	case <-time.After(time.Second):
+		t.Fatal("Serve did not report the stopped listener")
+	}
+}
+
 func TestServer_HandleIndex(t *testing.T) {
 	registry := NewRegistry()
 	registry.Publish("config", Func(func() (any, error) {

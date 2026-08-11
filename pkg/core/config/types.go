@@ -240,14 +240,13 @@ type LeaderElectionConfig struct {
 	// LeaseDuration is the duration that non-leader candidates will wait
 	// to force acquire leadership (measured against time of last observed ack).
 	// Format: Go duration string (e.g., "60s", "1m")
-	// Default: 60s
-	// Minimum: 15s
+	// Default: 30s
 	LeaseDuration string `yaml:"lease_duration"`
 
 	// RenewDeadline is the duration that the acting leader will retry
 	// refreshing leadership before giving up.
 	// Format: Go duration string (e.g., "15s")
-	// Default: 15s
+	// Default: 20s
 	// Must be less than LeaseDuration
 	RenewDeadline string `yaml:"renew_deadline"`
 

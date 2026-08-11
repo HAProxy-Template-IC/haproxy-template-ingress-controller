@@ -21,24 +21,42 @@ import (
 // PromotePending promotes pending content to accepted for a URL.
 // This should be called after successful validation.
 func (s *HTTPStore) PromotePending(url string) bool {
-	return s.finalizePending(url, true)
+	return s.finalizePending(url, "", 0, false, true, false)
+}
+
+// PromotePendingVersion promotes only the pending version that was validated.
+func (s *HTTPStore) PromotePendingVersion(url, expectedChecksum string, expectedRevision uint64) bool {
+	return s.finalizePending(url, expectedChecksum, expectedRevision, true, true, false)
 }
 
 // RejectPending discards pending content for a URL.
 // This should be called when validation fails.
 func (s *HTTPStore) RejectPending(url string) bool {
-	return s.finalizePending(url, false)
+	return s.finalizePending(url, "", 0, false, false, false)
 }
 
-// finalizePending atomically clears the pending entry for url, optionally
-// promoting it to accepted. It logs at INFO on promotion and WARN on
-// rejection. Returns false if there is no pending entry for url.
-func (s *HTTPStore) finalizePending(url string, promote bool) bool {
+// RejectPendingVersion rejects only the pending version that was validated.
+func (s *HTTPStore) RejectPendingVersion(url, expectedChecksum string, expectedRevision uint64) bool {
+	return s.finalizePending(url, expectedChecksum, expectedRevision, true, false, false)
+}
+
+// DiscardPendingVersion discards one exact version without recording a validation failure.
+func (s *HTTPStore) DiscardPendingVersion(url, expectedChecksum string, expectedRevision uint64) bool {
+	return s.finalizePending(url, expectedChecksum, expectedRevision, true, false, true)
+}
+
+// finalizePending applies a verdict atomically and can require an exact pending version.
+func (s *HTTPStore) finalizePending(
+	url, expectedChecksum string,
+	expectedRevision uint64,
+	conditional, promote, quiet bool,
+) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	entry, exists := s.cache[url]
-	if !exists || !entry.HasPending {
+	if !exists || !entry.HasPending || conditional &&
+		(entry.PendingChecksum != expectedChecksum || entry.PendingRevision != expectedRevision) {
 		return false
 	}
 
@@ -51,6 +69,11 @@ func (s *HTTPStore) finalizePending(url string, promote bool) bool {
 		entry.AcceptedChecksum = entry.PendingChecksum
 		entry.AcceptedTime = time.Now()
 		entry.ValidationState = StateAccepted
+	} else if quiet {
+		s.logger.Debug("Discarding pending content from retired HTTP refresh",
+			"url", url,
+			"checksum", checksumPrefix(entry.PendingChecksum))
+		entry.ValidationState = StateAccepted
 	} else {
 		s.logger.Warn("Rejecting pending content, keeping accepted version",
 			"url", url,
@@ -61,7 +84,9 @@ func (s *HTTPStore) finalizePending(url string, promote bool) bool {
 
 	entry.PendingContent = ""
 	entry.PendingChecksum = ""
+	entry.PendingRevision = 0
 	entry.HasPending = false
+	entry.mutationRevision++
 
 	return true
 }

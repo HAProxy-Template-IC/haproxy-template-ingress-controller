@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,9 +20,52 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	kubefake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/cache"
 
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
+
+type blockingCRDWatch struct {
+	watch.Interface
+	started     chan struct{}
+	stopStarted chan struct{}
+	release     chan struct{}
+	startOnce   sync.Once
+	stopOnce    sync.Once
+}
+
+func (w *blockingCRDWatch) Stop() {
+	w.stopOnce.Do(func() {
+		close(w.stopStarted)
+		<-w.release
+		w.Interface.Stop()
+	})
+}
+
+func newBlockingCRDWatchClient() (*client.Client, *blockingCRDWatch) {
+	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+		runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{crdGVR: "CustomResourceDefinitionList"},
+	)
+	blockingWatch := &blockingCRDWatch{
+		Interface:   watch.NewRaceFreeFake(),
+		started:     make(chan struct{}),
+		stopStarted: make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	fakeDynamicClient.PrependWatchReactor("*", func(k8stesting.Action) (bool, watch.Interface, error) {
+		blockingWatch.startOnce.Do(func() { close(blockingWatch.started) })
+		return true, blockingWatch, nil
+	})
+	return client.NewFromClientset(kubefake.NewClientset(), fakeDynamicClient, "default"), blockingWatch
+}
 
 func crdObj(name, group string, servedVersions ...string) *unstructured.Unstructured {
 	vs := make([]any, len(servedVersions))
@@ -231,6 +275,79 @@ func TestComponent_InitialSyncBaselineIgnored(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 	assert.False(t, triggered.Load(), "pre-sync baseline adds must not trigger a reload")
+}
+
+func TestComponent_StartWaitsForInformerStop(t *testing.T) {
+	k8sClient, blockingWatch := newBlockingCRDWatchClient()
+	c := New(k8sClient, map[string]bool{"g.io": true}, func() (bool, error) {
+		return false, nil
+	}, func() {}, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- c.Start(ctx)
+	}()
+	require.Eventually(t, c.synced.Load, time.Second, 5*time.Millisecond)
+
+	cancel()
+	select {
+	case <-blockingWatch.stopStarted:
+	case <-time.After(time.Second):
+		t.Fatal("CRD watch was not stopped")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("component returned before its informer stopped: %v", err)
+	default:
+	}
+
+	close(blockingWatch.release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("component did not return after its informer stopped")
+	}
+}
+
+func TestComponent_SyncFailureStopsAndJoinsInformer(t *testing.T) {
+	k8sClient, blockingWatch := newBlockingCRDWatchClient()
+	c := New(k8sClient, map[string]bool{"g.io": true}, func() (bool, error) {
+		return false, nil
+	}, func() {}, slog.Default())
+	c.waitForCacheSync = func(<-chan struct{}, ...cache.InformerSynced) bool {
+		<-blockingWatch.started
+		return false
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- c.Start(ctx)
+	}()
+
+	select {
+	case <-blockingWatch.stopStarted:
+	case <-time.After(time.Second):
+		t.Fatal("CRD watch was not stopped after cache sync failed")
+	}
+	require.NoError(t, ctx.Err())
+	select {
+	case err := <-done:
+		t.Fatalf("component returned before its informer stopped: %v", err)
+	default:
+	}
+
+	close(blockingWatch.release)
+	select {
+	case err := <-done:
+		require.ErrorContains(t, err, "cache sync failed")
+		require.NoError(t, ctx.Err())
+	case <-time.After(time.Second):
+		t.Fatal("component did not return after its informer stopped")
+	}
 }
 
 // TestComponent_IrrelevantGroupIgnored pins the group filter.

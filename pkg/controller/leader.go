@@ -17,32 +17,31 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"sync"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/deployer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	leaderelectionctrl "gitlab.com/haproxy-haptic/haptic/pkg/controller/leaderelection"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	k8sleaderelection "gitlab.com/haproxy-haptic/haptic/pkg/k8s/leaderelection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
-
-	ctrlconfigpublisher "gitlab.com/haproxy-haptic/haptic/pkg/controller/configpublisher"
 )
 
 // leaderOnlyComponents holds components that only the leader should run.
 type leaderOnlyComponents struct {
-	deployer            *deployer.Component
-	deploymentScheduler *deployer.DeploymentScheduler
-	configPublisher     *ctrlconfigpublisher.Component
-	ctx                 context.Context
-	cancel              context.CancelFunc
+	cancel context.CancelFunc
+	run    *lifecycle.ComponentRun
+}
+
+type leadershipLostError struct{}
+
+func (*leadershipLostError) Error() string {
+	return "leader election loop exited: lease lost without shutdown"
 }
 
 // startReconciliationComponents starts all-replica reconciliation components using the lifecycle registry.
@@ -73,42 +72,25 @@ func startReconciliationComponents(
 // components are ready to receive replayed events.
 func startLeaderOnlyComponents(
 	parentCtx context.Context,
-	wiring *reconciliationWiring,
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
 	parentCancel context.CancelFunc,
 	errGroup *errgroup.Group,
-) *leaderOnlyComponents {
+) (*leaderOnlyComponents, error) {
 	// Create separate context for leader-only components
 	leaderCtx, leaderCancel := context.WithCancel(parentCtx)
 
-	// Start leader-only components using the async registry method.
-	// StartLeaderOnlyComponentsAsync blocks until all components have signaled they're
-	// subscription-ready, then returns. This ensures all leader-only components are subscribed
-	// before the leaderelection callback calls eventBus.Start() to replay buffered events.
-	errCh, err := registry.StartLeaderOnlyComponentsAsync(leaderCtx)
-	if err != nil {
-		logger.Error("Failed to start leader-only components", "error", err)
-		parentCancel()
-		// Return empty components struct - the error will propagate via errgroup
-		return &leaderOnlyComponents{
-			ctx:    leaderCtx,
-			cancel: leaderCancel,
-		}
-	}
+	// Wait for every subscription before the election adapter replays buffered events.
+	run, startErr := registry.StartLeaderOnly(leaderCtx)
+	components := &leaderOnlyComponents{cancel: leaderCancel, run: run}
+	startupFailed := startErr != nil && parentCtx.Err() == nil
 
-	// Track component errors in the errgroup for graceful shutdown coordination.
-	// This goroutine monitors the error channel and propagates any component failures.
 	errGroup.Go(func() error {
-		select {
-		case err, ok := <-errCh:
-			if ok && err != nil && leaderCtx.Err() == nil {
-				logger.Error("Leader-only component failed", "error", err)
-				parentCancel()
-				return err
-			}
-		case <-leaderCtx.Done():
-			// Leadership lost or context cancelled
+		err := run.Wait()
+		if err != nil && (startupFailed || leaderCtx.Err() == nil) {
+			logger.Error("Leader-only component failed", "error", err)
+			parentCancel()
+			return err
 		}
 		return nil
 	})
@@ -116,27 +98,22 @@ func startLeaderOnlyComponents(
 	logger.Debug("Leader-only components started via lifecycle registry",
 		"components", "Coordinator, DriftMonitor, Deployer, DeploymentScheduler, ConfigPublisher, StatusUpdater")
 
-	return &leaderOnlyComponents{
-		deployer:            wiring.deployer,
-		deploymentScheduler: wiring.deploymentScheduler,
-		configPublisher:     wiring.configPublisher,
-		ctx:                 leaderCtx,
-		cancel:              leaderCancel,
-	}
+	return components, startErr
 }
 
 // stopLeaderOnlyComponents stops leader-only components gracefully.
 func stopLeaderOnlyComponents(components *leaderOnlyComponents, logger *slog.Logger) {
-	if components == nil || components.cancel == nil {
+	if components == nil {
 		return
 	}
 
 	logger.Info("Stopping leader-only components")
-	components.cancel()
-
-	// Brief pause to allow graceful shutdown
-	time.Sleep(timeouts.GracefulStopDelay)
-
+	if components.cancel != nil {
+		components.cancel()
+	}
+	if components.run != nil {
+		_ = components.run.Wait()
+	}
 	logger.Info("Leader-only components stopped")
 }
 
@@ -144,13 +121,12 @@ func stopLeaderOnlyComponents(components *leaderOnlyComponents, logger *slog.Log
 // Extracting these to a struct makes the dependencies explicit rather than
 // relying on closure scope, improving code clarity and testability.
 type leaderCallbackDeps struct {
-	iterCtx  context.Context
-	wiring   *reconciliationWiring
-	registry *lifecycle.Registry
-	logger   *slog.Logger
-	cancel   context.CancelFunc
-	podName  string
-	errGroup *errgroup.Group
+	registry    *lifecycle.Registry
+	logger      *slog.Logger
+	cancel      context.CancelFunc
+	cancelCause context.CancelCauseFunc
+	podName     string
+	errGroup    *errgroup.Group
 }
 
 // leaderCallbackState holds mutable state shared across leader callbacks.
@@ -158,6 +134,27 @@ type leaderCallbackDeps struct {
 type leaderCallbackState struct {
 	mu         sync.Mutex
 	components *leaderOnlyComponents
+	stopped    bool
+}
+
+func (s *leaderCallbackState) take() *leaderOnlyComponents {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopped = true
+	components := s.components
+	s.components = nil
+	return components
+}
+
+func (s *leaderCallbackState) stop(logger *slog.Logger) {
+	stopLeaderOnlyComponents(s.take(), logger)
+}
+
+func (s *leaderCallbackState) cancel() {
+	components := s.take()
+	if components != nil && components.cancel != nil {
+		components.cancel()
+	}
 }
 
 // makeLeaderCallbacks creates leader election callbacks with explicit dependencies.
@@ -166,25 +163,30 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 	state := &leaderCallbackState{}
 
 	callbacks := k8sleaderelection.Callbacks{
-		OnStartedLeading: func(_ context.Context) {
+		OnStartedLeading: func(ctx context.Context) {
 			deps.logger.Debug("Became leader, starting deployment components")
 			state.mu.Lock()
 			defer state.mu.Unlock()
-			state.components = startLeaderOnlyComponents(
-				deps.iterCtx,
-				deps.wiring,
+			if state.stopped || ctx.Err() != nil {
+				return
+			}
+			components, err := startLeaderOnlyComponents(
+				ctx,
 				deps.registry,
 				deps.logger,
 				deps.cancel,
 				deps.errGroup,
 			)
+			state.components = components
+			if err != nil && ctx.Err() == nil {
+				deps.logger.Error("Failed to start leader-only components", "error", err)
+				deps.cancel()
+			}
 		},
 		OnStoppedLeading: func() {
 			deps.logger.Warn("Lost leadership, stopping deployment components")
-			state.mu.Lock()
-			defer state.mu.Unlock()
-			stopLeaderOnlyComponents(state.components, deps.logger)
-			state.components = nil
+			deps.cancelCause(&leadershipLostError{})
+			state.stop(deps.logger)
 		},
 		OnNewLeader: func(identity string) {
 			deps.logger.Debug("New leader observed",
@@ -219,6 +221,11 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 // the acquire loop until the context is cancelled.
 func superviseElection(ctx context.Context, start func(context.Context) error, logger *slog.Logger) error {
 	err := start(ctx)
+	var leadershipLost *leadershipLostError
+	if errors.As(context.Cause(ctx), &leadershipLost) {
+		logger.Error("Leader election failed, triggering reinitialization to restart election", "error", leadershipLost)
+		return leadershipLost
+	}
 	select {
 	case <-ctx.Done():
 		// Normal teardown (shutdown or config-change reinitialization);
@@ -227,7 +234,7 @@ func superviseElection(ctx context.Context, start func(context.Context) error, l
 	default:
 	}
 	if err == nil {
-		err = errors.New("leader election loop exited: lease lost without shutdown")
+		err = &leadershipLostError{}
 	}
 	logger.Error("Leader election failed, triggering reinitialization to restart election", "error", err)
 	return err
@@ -241,9 +248,8 @@ func setupLeaderElection(
 	setup *componentSetup,
 	cfg *coreconfig.Config,
 	k8sClient *client.Client,
-	wiring *reconciliationWiring,
 	logger *slog.Logger,
-) *leaderCallbackState {
+) (*leaderCallbackState, error) {
 	if cfg.Controller.LeaderElection.Enabled {
 		// Read pod identity from environment
 		podName := os.Getenv("POD_NAME")
@@ -277,20 +283,18 @@ func setupLeaderElection(
 
 		// Create callbacks with explicit dependencies
 		callbacks, state := makeLeaderCallbacks(leaderCallbackDeps{
-			iterCtx:  setup.IterCtx,
-			wiring:   wiring,
-			registry: setup.Registry,
-			logger:   logger,
-			cancel:   setup.Cancel,
-			podName:  podName,
-			errGroup: setup.ErrGroup,
+			registry:    setup.Registry,
+			logger:      logger,
+			cancel:      setup.Cancel,
+			cancelCause: setup.CancelCause,
+			podName:     podName,
+			errGroup:    setup.ErrGroup,
 		})
 
 		// Create leader election component (event adapter)
 		elector, err := leaderelectionctrl.New(leConfig, k8sClient.Clientset(), setup.Bus, callbacks, logger)
 		if err != nil {
-			logger.Error("Failed to create leader elector", "error", err)
-			return state
+			return nil, fmt.Errorf("creating leader elector: %w", err)
 		}
 
 		// Start leader election loop in errgroup for graceful shutdown
@@ -300,7 +304,7 @@ func setupLeaderElection(
 		})
 
 		logger.Info("Leader election initialized", "identity", podName, "lease_name", leConfig.LeaseName, "lease_namespace", leConfig.LeaseNamespace)
-		return state
+		return state, nil
 	}
 
 	// Leader election disabled - start leader-only components immediately.
@@ -309,9 +313,14 @@ func setupLeaderElection(
 	logger.Info("Leader election disabled, starting all components")
 	setup.Bus.Pause()
 	setup.Bus.Publish(events.NewBecameLeaderEvent("standalone"))
-	state := &leaderCallbackState{
-		components: startLeaderOnlyComponents(setup.IterCtx, wiring, setup.Registry, logger, setup.Cancel, setup.ErrGroup),
+	state := &leaderCallbackState{}
+	components, err := startLeaderOnlyComponents(setup.IterCtx, setup.Registry, logger, setup.Cancel, setup.ErrGroup)
+	state.components = components
+	if err != nil {
+		return state, fmt.Errorf("starting leader-only components: %w", err)
 	}
-	setup.Bus.Start()
-	return state
+	if err := startEventBus(setup); err != nil {
+		return state, err
+	}
+	return state, nil
 }

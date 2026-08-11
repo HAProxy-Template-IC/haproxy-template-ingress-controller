@@ -42,10 +42,13 @@ type Watcher struct {
 	fieldSelectorMatcher *indexer.FieldSelectorMatcher // nil if no field selector configured
 	store                types.Store
 	debouncer            *Debouncer
+	informerFactory      dynamicinformer.DynamicSharedInformerFactory
 	informer             cache.SharedIndexInformer
 	stopCh               chan struct{}
 	stopOnce             sync.Once // guards stopCh close so Stop() is idempotent
-	synced               bool      // True after initial sync completes
+	startOnce            sync.Once
+	startErr             error
+	synced               bool // True after initial sync completes
 	syncMu               sync.RWMutex
 	initialCount         int          // Number of resources loaded during initial sync
 	lastWatchErrNanos    atomic.Int64 // observability: most recent watch-connection error
@@ -193,9 +196,8 @@ func (w *Watcher) createInformer() error {
 	}
 
 	// Create informer factory
-	var informerFactory dynamicinformer.DynamicSharedInformerFactory
 	if w.config.Namespace != "" {
-		informerFactory = dynamicinformer.NewFilteredDynamicSharedInformerFactory(
+		w.informerFactory = dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 			dynamicClient,
 			0, // No resync
 			w.config.Namespace,
@@ -204,7 +206,7 @@ func (w *Watcher) createInformer() error {
 			},
 		)
 	} else {
-		informerFactory = dynamicinformer.NewFilteredDynamicSharedInformerFactory(
+		w.informerFactory = dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 			dynamicClient,
 			0, // No resync
 			metav1.NamespaceAll,
@@ -215,7 +217,7 @@ func (w *Watcher) createInformer() error {
 	}
 
 	// Get informer for resource
-	w.informer = informerFactory.ForResource(w.config.GVR).Informer()
+	w.informer = w.informerFactory.ForResource(w.config.GVR).Informer()
 
 	// Every store type gets a transform, but they differ, and the difference is
 	// load-bearing. Both run before the informer caches the object and before
@@ -301,23 +303,44 @@ func (w *Watcher) applyListOptions(options *metav1.ListOptions) {
 // This method blocks until the context is cancelled or an error occurs.
 // Initial sync is performed before continuing, and OnSyncComplete is called if configured.
 func (w *Watcher) Start(ctx context.Context) error {
-	// Start informer
-	go w.informer.Run(w.stopCh)
+	w.startOnce.Do(func() {
+		stopOnCancel := context.AfterFunc(ctx, func() {
+			_ = w.Stop()
+		})
+		defer stopOnCancel()
 
-	if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
-		return errors.New("syncing cache")
+		w.informerFactory.Start(w.stopCh)
+		if !cache.WaitForCacheSync(w.stopCh, w.informer.HasSynced) {
+			w.startErr = ctx.Err()
+			if w.startErr == nil {
+				w.startErr = errors.New("syncing cache")
+			}
+			return
+		}
+		select {
+		case <-w.stopCh:
+			w.startErr = ctx.Err()
+			if w.startErr == nil {
+				w.startErr = errors.New("syncing cache")
+			}
+			return
+		default:
+		}
+
+		w.markSyncComplete()
+		if w.config.OnSyncComplete != nil {
+			w.config.OnSyncComplete(w.store, w.initialCount)
+		}
+	})
+	if w.startErr != nil {
+		_ = w.Stop()
+		return w.startErr
 	}
 
-	// Mark sync as complete and disable sync mode
-	w.markSyncComplete()
-
-	// Call OnSyncComplete if configured
-	if w.config.OnSyncComplete != nil {
-		w.config.OnSyncComplete(w.store, w.initialCount)
+	select {
+	case <-ctx.Done():
+	case <-w.stopCh:
 	}
-
-	// Wait for context cancellation
-	<-ctx.Done()
 
 	return w.Stop()
 }
@@ -328,11 +351,9 @@ func (w *Watcher) Start(ctx context.Context) error {
 // SingleWatcher.Stop) — a double close of stopCh would otherwise panic.
 func (w *Watcher) Stop() error {
 	w.stopOnce.Do(func() {
-		// Stop informer
 		close(w.stopCh)
-
-		// Flush pending changes
-		w.debouncer.Flush()
+		w.debouncer.Stop()
+		w.informerFactory.Shutdown()
 	})
 
 	return nil

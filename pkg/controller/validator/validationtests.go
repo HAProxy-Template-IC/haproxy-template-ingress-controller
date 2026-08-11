@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configtest"
@@ -141,14 +140,6 @@ type ValidationTestsValidator struct {
 	// overridable in tests to exercise the fail-closed-on-timeout path without
 	// waiting a real budget.
 	budgetFor func(testCount int) time.Duration
-
-	// lifecycleCtx is the iteration/shutdown context captured in Start, so the
-	// (potentially multi-second) bootstrap + test run abort promptly on
-	// controller shutdown instead of running to their own timeout. component.Base
-	// doesn't pass a context to HandleEvent, so we capture it here rather than
-	// changing the shared validator interface.
-	mu           sync.RWMutex
-	lifecycleCtx context.Context
 }
 
 // NewValidationTestsValidator creates the validationTests validator.
@@ -171,26 +162,6 @@ func NewValidationTestsValidator(eventBus *busevents.EventBus, logger *slog.Logg
 	}
 	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameValidationTests, v)
 	return v
-}
-
-// Start captures the lifecycle context (so an in-flight bootstrap/run is
-// cancelled on shutdown) and then runs the embedded validator event loop.
-func (v *ValidationTestsValidator) Start(ctx context.Context) error {
-	v.mu.Lock()
-	v.lifecycleCtx = ctx
-	v.mu.Unlock()
-	return v.BaseValidator.Start(ctx)
-}
-
-// baseCtx returns the captured lifecycle context, or Background if Start hasn't
-// run yet (e.g. in unit tests that call HandleRequest directly).
-func (v *ValidationTestsValidator) baseCtx() context.Context {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-	if v.lifecycleCtx != nil {
-		return v.lifecycleCtx
-	}
-	return context.Background()
 }
 
 // HandleRequest runs the embedded validationTests for the candidate config and
@@ -244,7 +215,7 @@ func (v *ValidationTestsValidator) HandleRequest(req *events.ConfigValidationReq
 // runTests delegates to RunValidationTestsSync with this validator's bootstrap,
 // the suite-size-scaled run budget, and lifecycle context.
 func (v *ValidationTestsValidator) runTests(cfg *coreconfig.Config, budget time.Duration) (configtest.Result, error) {
-	return RunValidationTestsSync(v.baseCtx(), cfg, v.bootstrap, budget, v.logger)
+	return RunValidationTestsSync(v.LifecycleContext(), cfg, v.bootstrap, budget, v.logger)
 }
 
 // RunValidationTestsSync resolves typed schemas, builds a throwaway engine, and

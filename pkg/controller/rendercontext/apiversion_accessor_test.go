@@ -30,6 +30,7 @@ func TestBuildResourcesValue_APIVersionAccessor(t *testing.T) {
 	}
 
 	value := BuildResourcesValue(
+		t.Context(),
 		nil, // no live stores needed: the accessor is pure metadata
 		nil, // untyped path
 		[]string{"httproutes", "services"},

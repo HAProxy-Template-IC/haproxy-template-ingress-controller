@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -28,8 +27,8 @@ import (
 // Components are started concurrently.
 // Leader-only components are skipped unless isLeader is true.
 //
-// This method blocks until all components are running or an error occurs.
-// Returns the first error encountered, or nil if all components started successfully.
+// This method blocks until every started Component.Start call returns.
+// Returns the first component error, or nil after graceful cancellation.
 //
 // Parameters:
 //   - ctx: Context for cancellation
@@ -70,7 +69,9 @@ func (r *Registry) prepareComponentsToStart(isLeader bool) []*registeredComponen
 	for _, comp := range r.components {
 		// Skip leader-only components if not leader, but mark them as standby
 		if comp.leaderOnly && !isLeader {
-			comp.status = StatusStandby
+			if comp.status == StatusPending {
+				comp.status = StatusStandby
+			}
 			r.logger.Debug("Setting leader-only component to standby (not leader)",
 				"name", comp.component.Name())
 			continue
@@ -85,65 +86,50 @@ func (r *Registry) prepareComponentsToStart(isLeader bool) []*registeredComponen
 
 // startComponent starts a single component and updates its status.
 //
-// Design note on timing: Status is set to Running and ready channel is closed
-// after Start() has been entered. This ensures:
-//  1. All-replica components subscribe in their constructor, not in Start()
-//  2. Leader-only components subscribe in Start() and implement SubscriptionReadySignaler
-//
-// For leader-only components that implement SubscriptionReadySignaler, we wait for
-// their signal before considering them ready. This prevents a race condition where
-// EventBus.Start() replays events before leader-only components have subscribed.
+// Components that subscribe in Start must implement SubscriptionReadySignaler;
+// all others are ready because their subscriptions were created by the constructor.
 func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent) error {
 	name := comp.component.Name()
 
 	r.logger.Debug("Starting component", "name", name)
 
-	// Set status to Running before calling Start()
-	r.updateStatus(name, StatusRunning, nil)
-
-	// Use channels to coordinate Start() entry with ready signal
-	startEntered := make(chan struct{})
-	errChan := make(chan error, 1)
-
-	go func() {
-		// Signal that Start() is about to be called
-		close(startEntered)
-		// Run the component (blocks until context cancelled or error)
-		errChan <- comp.component.Start(ctx)
-	}()
-
-	// Wait for goroutine to reach the point where Start() is about to be called
-	<-startEntered
-
-	// Check if component implements SubscriptionReadySignaler for precise synchronization.
-	// Leader-only components subscribe during Start(), so they need this mechanism to
-	// ensure EventBus.Start() doesn't replay events before subscription is complete.
+	var err error
 	if signaler, ok := comp.component.(SubscriptionReadySignaler); ok {
 		readyCh := signaler.SubscriptionReady()
 		if readyCh != nil {
-			// Wait for component to signal subscription complete
+			errChan := make(chan error, 1)
+			go func() {
+				errChan <- comp.component.Start(ctx)
+			}()
+
 			select {
 			case <-readyCh:
 				r.logger.Debug("Component subscription ready", "name", name)
+				r.updateStatus(name, StatusRunning, nil)
+				close(comp.ready)
+				err = <-errChan
+			case err = <-errChan:
+				if err == nil && ctx.Err() == nil {
+					err = fmt.Errorf("component %s exited before signalling subscription readiness", name)
+				}
 			case <-ctx.Done():
-				return ctx.Err()
+				err = <-errChan
 			}
+		} else {
+			r.updateStatus(name, StatusRunning, nil)
+			close(comp.ready)
+			err = comp.component.Start(ctx)
 		}
 	} else {
-		// Yield to scheduler to give the Start() call a chance to actually begin.
-		// This reduces race conditions where callers waiting on the ready channel
-		// proceed before the component's Start() has actually begun executing code.
-		runtime.Gosched()
+		r.updateStatus(name, StatusRunning, nil)
+		close(comp.ready)
+		err = comp.component.Start(ctx)
 	}
 
-	// Signal that this component is ready
-	close(comp.ready)
-
-	// Wait for Start() to complete
-	err := <-errChan
-
-	// Update status after Start() returns
-	if err != nil && !errors.Is(err, context.Canceled) {
+	if err == nil && ctx.Err() == nil {
+		err = fmt.Errorf("component %s stopped before context cancellation", name)
+	}
+	if err != nil && !isContextTermination(ctx, err) {
 		r.updateStatus(name, StatusFailed, err)
 		r.logger.Error("Component failed", "name", name, "error", err)
 
@@ -154,4 +140,8 @@ func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent
 	r.logger.Info("Component stopped", "name", name)
 
 	return nil
+}
+
+func isContextTermination(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && errors.Is(err, ctx.Err())
 }

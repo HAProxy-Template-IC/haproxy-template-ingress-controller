@@ -34,7 +34,7 @@ import (
 // cleanup callback on the iteration setup so the manager's
 // connection pools are drained on teardown (every iteration
 // restart, every config change, every shutdown).
-func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *coreconfig.Config, logger *slog.Logger) (*pluggablevalidator.Manager, error) {
+func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *coreconfig.Config, logger *slog.Logger) (*pluggablevalidator.Manager, *sharedCleanup, error) {
 	configs := make([]pluggablevalidator.ManagerConfig, 0, len(cfg.Validators))
 	for _, v := range cfg.Validators {
 		mc := pluggablevalidator.ManagerConfig{
@@ -56,7 +56,7 @@ func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *corec
 	mgr, err := pluggablevalidator.NewManager(logger, configs,
 		pluggablevalidator.WithStagedRoot(filepath.Dir(cfg.Dataplane.MapsDir)))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if mgr.Configured() {
 		logger.Info("Pluggable validators registered",
@@ -64,11 +64,12 @@ func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *corec
 			slog.Any("names", mgr.Names()),
 		)
 	}
-	setup.AddCleanup(func() {
+	cleanup := newSharedCleanup(func() {
 		logger.Debug("Closing pluggable-validator connection pools")
 		mgr.Close()
 	})
-	return mgr, nil
+	setup.AddCleanup(cleanup.Release)
+	return mgr, cleanup, nil
 }
 
 // waitAndLoadInitialConfig polls until the HAProxyTemplateConfig exists (the
@@ -118,7 +119,7 @@ func runIteration(
 	webhookPort int,
 	infra *persistentInfra,
 	logger *slog.Logger,
-) error {
+) (iterationErr error) {
 	logger.Info("Starting controller iteration")
 
 	// Reinit-grace accounting (a voluntary restart must not flip /healthz
@@ -131,8 +132,10 @@ func runIteration(
 	// The type bootstrapper is also reused by the step-2.5 startup validationTests
 	// gate below, so it's hoisted to a local rather than constructed inline.
 	typeBootstrapper := newIterationTypeBootstrapper(k8sClient, logger)
-	setup := setupComponents(ctx, infra.IntrospectionRegistry, typeBootstrapper, crdName, logger)
-	defer setup.Cancel()
+	setup := setupComponents(ctx, infra.IntrospectionRegistry, infra.eventDropMetrics, typeBootstrapper, crdName, logger)
+	defer func() {
+		iterationErr = completeIteration(setup, iterationErr, logger)
+	}()
 
 	// 0.25. Create EventBuffer early (subscribes in constructor)
 	// Must be created before startEarlyInfrastructureServers() to register /debug/events handler
@@ -145,11 +148,13 @@ func runIteration(
 	// Uses two-phase initialization (Setup/Serve) to register /debug/events before serving
 	// The introspection server persists across iterations to avoid port rebinding issues
 	// We pass the main ctx (not setup.IterCtx) so the server stays alive across iterations
-	startEarlyInfrastructureServers(ctx, debugPort, infra, setup, state, eventBuffer, logger)
+	if err := startEarlyInfrastructureServers(ctx, debugPort, infra, setup, state, eventBuffer, logger); err != nil {
+		return err
+	}
 
 	// 1+2. Wait for the HAProxyTemplateConfig to exist (fresh-install race),
 	// then fetch and validate it together with the credentials Secret.
-	bundle, err := waitAndLoadInitialConfig(ctx, k8sClient, crdName, secretName, state, logger)
+	bundle, err := waitAndLoadInitialConfig(setup.IterCtx, k8sClient, crdName, secretName, state, logger)
 	if err != nil {
 		return err
 	}
@@ -167,7 +172,7 @@ func runIteration(
 	// The CRD watch started alongside re-resolves on relevant CRD changes so
 	// late installation, in-place upgrade, and serving removal converge at
 	// runtime (no helm operation, no pod restart).
-	cfg, err = installEffectiveConfig(ctx, cfg, k8sClient, setup, infra, logger)
+	cfg, err = installEffectiveConfig(setup.IterCtx, cfg, k8sClient, setup, infra, logger)
 	if err != nil {
 		return err
 	}
@@ -184,7 +189,7 @@ func runIteration(
 	// On failure this records WHY on the CRD status (so an operator sees the
 	// rejection via `kubectl get/describe` rather than only in this crash-looping
 	// pod's logs) and then returns the error — the gate stays fail-closed.
-	if err := validateInitialConfigValidationTests(ctx, cfg, bundle, k8sClient, typeBootstrapper, logger); err != nil {
+	if err := validateInitialConfigValidationTests(setup.IterCtx, cfg, bundle, k8sClient, typeBootstrapper, logger); err != nil {
 		return fmt.Errorf("initial HAProxyTemplateConfig %q failed validationTests on load: %w", crdName, err)
 	}
 
@@ -230,7 +235,7 @@ func runIteration(
 	}
 
 	// 5.5. Construct the validator used by every render pipeline.
-	pluggableMgr, err := buildAndRegisterPluggableValidatorManager(setup, cfg, logger)
+	pluggableMgr, pluggableMgrCleanup, err := buildAndRegisterPluggableValidatorManager(setup, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("creating pluggable validators: %w", err)
 	}
@@ -264,14 +269,13 @@ func runIteration(
 	// All components have now subscribed during their construction, so we can safely start
 	// the bus without race conditions or timing-based sleeps
 	logger.Info("Starting EventBus (all components subscribed)")
-	setup.Bus.Start()
+	if err := startEventBus(setup); err != nil {
+		return err
+	}
 
-	// 7. Setup leader election
-	logger.Info("Stage 6: Initializing leader election")
-	leaderState := setupLeaderElection(setup, cfg, k8sClient, wiring, logger)
-
-	// 8. Setup webhook validation if enabled (start pre-created DryRunValidator)
-	maybeSetupWebhook(ctx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, setup, k8sClient, dryrunValidator, logger)
+	if err := setupLeadershipAndWebhook(ctx, setup, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, k8sClient, dryrunValidator, pluggableMgrCleanup, logger); err != nil {
+		return err
+	}
 
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
@@ -287,18 +291,61 @@ func runIteration(
 	// signal — see configState.SetInitialized's docstring and the
 	// "initialized" entry in the full health checker installed by
 	// setupInfrastructureServers.
-	markIterationInitialized(setup, state, infra, logger)
+	if err := finishIterationStartup(setup, state, infra, logger); err != nil {
+		return err
+	}
+	return waitForIterationExit(setup, logger)
+}
 
-	// 10. Wait for config change signal or context cancellation
+func setupLeadershipAndWebhook(
+	procCtx context.Context,
+	setup *componentSetup,
+	infra *persistentInfra,
+	cfg *coreconfig.Config,
+	webhookCertDir string,
+	webhookAdmissionTimeouts WebhookAdmissionTimeouts,
+	webhookPort int,
+	k8sClient *client.Client,
+	dryrunValidator *dryrunvalidator.Component,
+	pluggableMgrCleanup *sharedCleanup,
+	logger *slog.Logger,
+) error {
+	logger.Info("Stage 6: Initializing leader election")
+	state, err := setupLeaderElection(setup, cfg, k8sClient, logger)
+	setup.LeaderState = state
+	if err != nil {
+		return err
+	}
+	return maybeSetupWebhook(procCtx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, setup, k8sClient, dryrunValidator, pluggableMgrCleanup, logger)
+}
+
+func finishIterationStartup(
+	setup *componentSetup,
+	state *configState,
+	infra *persistentInfra,
+	logger *slog.Logger,
+) error {
+	if err := iterationContextError(setup.IterCtx); err != nil {
+		return err
+	}
+	markIterationInitialized(setup, state, infra, logger)
+	return nil
+}
+
+func waitForIterationExit(
+	setup *componentSetup,
+	logger *slog.Logger,
+) error {
 	select {
 	case <-setup.IterCtx.Done():
-		handleIterationCancellation(leaderState, setup, logger)
-		return nil
+		err := iterationContextError(setup.IterCtx)
+		logger.Info("Controller iteration cancelled", "reason", err)
+		return err
 
 	case newConfig := <-setup.ConfigChangeCh:
 		logger.Info("Configuration change detected, triggering reinitialization",
 			"new_config_version", fmt.Sprintf("%p", newConfig))
-		handleConfigurationChange(leaderState, setup, logger)
+		logger.Info("Reinitialization triggered - starting new iteration")
 		return nil
 	}
 }
@@ -310,51 +357,30 @@ func markIterationInitialized(setup *componentSetup, state *configState, infra *
 	logger.Info("Controller iteration initialized successfully - entering event loop")
 }
 
-// handleIterationCancellation handles cleanup when the controller iteration is cancelled.
-func handleIterationCancellation(
-	leaderState *leaderCallbackState,
-	setup *componentSetup,
-	logger *slog.Logger,
-) {
-	logger.Info("Controller iteration cancelled", "reason", setup.IterCtx.Err())
-
-	// Cleanup leader-only components if still running
-	leaderState.mu.Lock()
-	if leaderState.components != nil {
-		stopLeaderOnlyComponents(leaderState.components, logger)
+func teardownIteration(setup *componentSetup, logger *slog.Logger) error {
+	setup.Cancel()
+	if setup.LeaderState != nil {
+		setup.LeaderState.cancel()
 	}
-	leaderState.mu.Unlock()
-
-	// Wait for all goroutines to finish gracefully
-	waitForGoroutinesToFinish(setup.ErrGroup, logger, "Shutdown")
-
-	// Run registered cleanups (drains connection pools, etc.).
+	err := waitForGoroutinesToFinish(setup.ErrGroup, logger, "Iteration teardown", ShutdownTimeout)
+	var timeoutErr *iterationTeardownTimeoutError
+	if errors.As(err, &timeoutErr) {
+		return err
+	}
+	if isContextTermination(setup.IterCtx, err) {
+		err = nil
+	}
 	setup.RunCleanups()
+	return err
 }
 
-// handleConfigurationChange handles cleanup and reinitialization when configuration changes.
-func handleConfigurationChange(
-	leaderState *leaderCallbackState,
-	setup *componentSetup,
-	logger *slog.Logger,
-) {
-	// Stop leader-only components before canceling context
-	leaderState.mu.Lock()
-	if leaderState.components != nil {
-		stopLeaderOnlyComponents(leaderState.components, logger)
+func completeIteration(setup *componentSetup, iterationErr error, logger *slog.Logger) error {
+	cause := context.Cause(setup.IterCtx)
+	result := errors.Join(iterationErr, teardownIteration(setup, logger))
+	if cause != nil && !errors.Is(cause, context.Canceled) && !errors.Is(result, cause) {
+		result = errors.Join(result, cause)
 	}
-	leaderState.mu.Unlock()
-
-	// Cancel iteration context to stop all components and watchers
-	setup.Cancel()
-
-	// Wait for all goroutines to finish before reinitializing
-	waitForGoroutinesToFinish(setup.ErrGroup, logger, "Reinitialization")
-
-	// Run registered cleanups (drains connection pools, etc.).
-	setup.RunCleanups()
-
-	logger.Info("Reinitialization triggered - starting new iteration")
+	return result
 }
 
 // maybeSetupWebhook sets up the webhook server when the chart has mounted a
@@ -375,16 +401,13 @@ func maybeSetupWebhook(
 	setup *componentSetup,
 	k8sClient *client.Client,
 	dryrunValidator *dryrunvalidator.Component,
+	pluggableMgrCleanup *sharedCleanup,
 	logger *slog.Logger,
-) {
+) error {
 	if webhookCertDir == "" {
 		logger.Debug("No webhook TLS cert directory configured; skipping webhook setup")
-		return
-	}
-	if dryrunValidator == nil {
-		logger.Debug("No webhook validators wired; skipping webhook setup")
-		return
+		return nil
 	}
 	logger.Info("Stage 7: Setting up webhook validation")
-	setupWebhook(procCtx, setup.IterCtx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, k8sClient, dryrunValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
+	return setupWebhook(procCtx, setup.IterCtx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, k8sClient, dryrunValidator, pluggableMgrCleanup, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
 }

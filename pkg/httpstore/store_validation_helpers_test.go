@@ -64,3 +64,28 @@ func TestChecksumPrefix(t *testing.T) {
 		})
 	}
 }
+
+func TestFinalizePendingVersionDoesNotFinalizeReplacement(t *testing.T) {
+	tests := []struct {
+		name     string
+		finalize func(*HTTPStore, string, string, uint64) bool
+	}{
+		{name: "promote", finalize: (*HTTPStore).PromotePendingVersion},
+		{name: "reject", finalize: (*HTTPStore).RejectPendingVersion},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const url = "http://pending"
+			store := newPendingStore(t, url)
+			staleChecksum := store.cache[url].PendingChecksum
+			staleRevision := store.cache[url].PendingRevision
+			store.cache[url].PendingRevision++
+
+			assert.False(t, test.finalize(store, url, staleChecksum, staleRevision))
+			entry := store.GetEntry(url)
+			assert.True(t, entry.HasPending)
+			assert.Equal(t, "new-"+url, entry.PendingContent)
+		})
+	}
+}

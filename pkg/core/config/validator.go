@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // logLevelInfo is the canonical default log level; also keeps the repeated
 // "INFO" literal (validator + tests) constified for goconst.
 const logLevelInfo = "INFO"
+
+// client-go rejects renew deadlines within its 20% retry jitter window.
+const leaderElectionRetryJitterFactor = 1.2
 
 // ValidateStructure performs basic structural validation on the configuration.
 // Validates required fields, value ranges, and non-empty slices.
@@ -25,9 +29,9 @@ func ValidateStructure(cfg *Config) error {
 		return err
 	}
 
-	// Controller config (currently only LeaderElection, which has its own
-	// defaults and is validated at runtime when its durations are parsed) needs
-	// no structural validation here.
+	if err := validateLeaderElectionConfig(&cfg.Controller.LeaderElection); err != nil {
+		return fmt.Errorf("controller.leader_election: %w", err)
+	}
 
 	if err := validateLoggingConfig(&cfg.Logging); err != nil {
 		return fmt.Errorf("logging: %w", err)
@@ -49,6 +53,54 @@ func ValidateStructure(cfg *Config) error {
 
 	// Validate requires references (snippets/tests → watched resources)
 	return validateRequires(cfg)
+}
+
+func validateLeaderElectionConfig(cfg *LeaderElectionConfig) error {
+	leaseDuration, err := parseLeaderElectionDuration(
+		"lease_duration",
+		cfg.LeaseDuration,
+		DefaultLeaderElectionLeaseDuration,
+	)
+	if err != nil {
+		return err
+	}
+	renewDeadline, err := parseLeaderElectionDuration(
+		"renew_deadline",
+		cfg.RenewDeadline,
+		DefaultLeaderElectionRenewDeadline,
+	)
+	if err != nil {
+		return err
+	}
+	retryPeriod, err := parseLeaderElectionDuration(
+		"retry_period",
+		cfg.RetryPeriod,
+		DefaultLeaderElectionRetryPeriod,
+	)
+	if err != nil {
+		return err
+	}
+	if leaseDuration <= renewDeadline {
+		return errors.New("lease_duration must be greater than renew_deadline")
+	}
+	if float64(renewDeadline) <= leaderElectionRetryJitterFactor*float64(retryPeriod) {
+		return errors.New("renew_deadline must be more than 20% greater than retry_period")
+	}
+	return nil
+}
+
+func parseLeaderElectionDuration(field, value string, defaultValue time.Duration) (time.Duration, error) {
+	if value == "" {
+		return defaultValue, nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s %q is not a duration: %w", field, value, err)
+	}
+	if duration <= 0 {
+		return 0, fmt.Errorf("%s must be greater than zero", field)
+	}
+	return duration, nil
 }
 
 func validateValidators(validators []ValidatorConfig) error {

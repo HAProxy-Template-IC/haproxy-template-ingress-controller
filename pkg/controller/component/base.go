@@ -119,6 +119,8 @@ type Base struct {
 	handler   EventHandler
 	stopCh    chan struct{}
 	stopOnce  sync.Once
+	contextMu sync.RWMutex
+	lifecycle context.Context
 
 	// Mailbox state (only used when the handler is a CoalescingHandler
 	// with a non-empty CoalescesOn; see startMailbox).
@@ -185,6 +187,10 @@ func New(cfg *Config) *Base {
 // CoalescingHandler (non-empty CoalescesOn) run in mailbox mode — see
 // CoalescingHandler for the semantics and why.
 func (b *Base) Start(ctx context.Context) error {
+	b.contextMu.Lock()
+	b.lifecycle = ctx
+	b.contextMu.Unlock()
+
 	b.logger.Debug(b.name + " starting")
 
 	if ch, ok := b.handler.(CoalescingHandler); ok {
@@ -235,7 +241,9 @@ func (b *Base) startMailbox(ctx context.Context, eventTypes []string) error {
 		coalesced[t] = struct{}{}
 	}
 
+	intakeDone := make(chan struct{})
 	go func() {
+		defer close(intakeDone)
 		for {
 			select {
 			case event := <-b.eventChan:
@@ -247,6 +255,7 @@ func (b *Base) startMailbox(ctx context.Context, eventTypes []string) error {
 			}
 		}
 	}()
+	defer func() { <-intakeDone }()
 
 	for {
 		select {
@@ -452,6 +461,16 @@ func (b *Base) Stop() {
 // EventBus returns the bus the component subscribed to, for use in handler
 // implementations that need to publish response events.
 func (b *Base) EventBus() *busevents.EventBus { return b.eventBus }
+
+// LifecycleContext returns the context of the current Start call.
+func (b *Base) LifecycleContext() context.Context {
+	b.contextMu.RLock()
+	defer b.contextMu.RUnlock()
+	if b.lifecycle == nil {
+		return context.Background()
+	}
+	return b.lifecycle
+}
 
 // Logger returns the component-annotated logger.
 func (b *Base) Logger() *slog.Logger { return b.logger }

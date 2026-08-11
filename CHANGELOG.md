@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Rendered-resource apply and orphan-prune failures no longer publish successful infrastructure status. An incomplete desired set also no longer drives pruning, so a transient API or discovery failure cannot delete a resource that is still rendered.
+- A full critical EventBus subscriber buffer now fails and rebuilds the controller iteration instead of logging the lost coordination event and continuing with partial state. Drop counters survive the rebuild; explicitly lossy observability subscribers remain non-fatal.
+- Controller reinitialization and leadership loss now join every owned worker, informer, timer, and admission call before closing dependencies or starting replacement work. Obsolete leader terms can no longer publish configuration after losing authority, and invalid leader-election timings fail the configuration gate before startup.
+- HTTP refresh validation now binds verdicts and timer callbacks to exact content revisions. Late results and retired refreshers can no longer promote or strand newer pending content.
 - Validation-suite deadlines now cancel the active main, auxiliary-file, Kubernetes-resource, and determinism renders instead of taking effect only between tests.
 - Admission no longer accepts changed invalid output merely because the live baseline is also invalid. The recovery exception now requires both renders to complete and produce identical content checksums.
 - Webhook validator registration is atomic and fails controller initialization when any configured kind can't be mapped or the dry-run validator is absent. A request routed to an unregistered kind is denied with HTTP 503 instead of admitted.

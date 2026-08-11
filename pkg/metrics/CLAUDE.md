@@ -100,17 +100,25 @@ func NewServer(addr string, registry prometheus.Gatherer) *Server {
 
 ```go
 func (s *Server) Start(ctx context.Context) error {
+    serveDone := make(chan error, 1)
     go func() {
-        <-ctx.Done()
-        // Graceful shutdown with 10s timeout
-        shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-        defer cancel()
-        s.server.Shutdown(shutdownCtx)
+        serveDone <- s.server.Serve(listener)
     }()
 
-    return s.server.ListenAndServe()
+    select {
+    case <-ctx.Done():
+        shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+        defer cancel()
+        shutdownErr := s.server.Shutdown(shutdownCtx)
+        return errors.Join(shutdownErr, <-serveDone)
+    case err := <-serveDone:
+        return err
+    }
 }
 ```
+
+`Start` always joins the internal `Serve` goroutine. A post-bind listener exit
+is returned immediately instead of leaving the owner blocked on its context.
 
 3. **Security settings**
 

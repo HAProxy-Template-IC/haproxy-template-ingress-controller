@@ -20,7 +20,7 @@ func main() {
     // In production, point the server at the directory where the TLS Secret
     // is mounted (cert-manager writes tls.crt/tls.key there). The server
     // re-reads them per handshake and hot-reloads on rotation — no restart.
-    srv := webhook.NewServer(&webhook.ServerConfig{
+    srv, err := webhook.NewServer(&webhook.ServerConfig{
         Port:    9443,
         CertDir: "/etc/webhook/certs",
         // For unit tests without a mounted Secret, set CertPEM/KeyPEM instead
@@ -28,6 +28,9 @@ func main() {
         // BindAddress defaults to 0.0.0.0, Path to /validate,
         // ReadTimeout and WriteTimeout to 10s.
     })
+    if err != nil {
+        log.Fatal(err)
+    }
 
     srv.RegisterValidator("networking.k8s.io/v1.Ingress", validateIngress)
     srv.RegisterValidator("gateway.networking.k8s.io/v1.HTTPRoute", validateHTTPRoute)
@@ -47,12 +50,12 @@ func validateIngress(ctx *webhook.ValidationContext) (bool, string, []string, er
 }
 ```
 
-`RegisterValidator` is thread-safe — you can add or replace validators while the server is running, though in practice the controller registers everything before calling `Start`.
+`RegisterValidator` is thread-safe and suits a static table. Reconfiguring callers use `ReplaceValidatorGeneration` to swap a complete table atomically; it waits for requests using the previous generation before calling that generation's retirement callback.
 
 ## Types at a Glance
 
 - **`ServerConfig`** — port (default `9443`), bind address, path (default `/validate`), read/write timeouts, and the TLS source. In production set `CertDir` to the directory holding `tls.crt`/`tls.key` (typically the mounted cert Secret); the server resolves the cert per handshake via a `tls.Config.GetCertificate` callback and a `certReloader` that re-parses the files on content change — a cert-manager renewal is served without a restart. When `CertDir` is unset (e.g. unit tests), it serves a fixed cert from the PEM-encoded `CertPEM`/`KeyPEM` instead.
-- **`Server`** — wraps an `http.Server`, maintains a GVK → `ValidationFunc` map under an `RWMutex`.
+- **`Server`** — wraps an `http.Server` and atomically dispatches each request through one validator generation.
 - **`ValidationContext`** — everything the server extracts from an `AdmissionRequest`: `Object`, `OldObject`, `Operation`, `Namespace`, `Name`, `UID`, `UserInfo`. `Object` and `OldObject` are `*unstructured.Unstructured` so validators don't need their own typed decoders.
 - **`ValidationFunc`** — `func(*ValidationContext) (allowed bool, reason string, warnings []string, err error)`. The `allowed`/`reason` pair maps to `AdmissionResponse.Allowed` and `.Status.Message`; `warnings` surfaces as `AdmissionResponse.Warnings` (visible to `kubectl` users even when `allowed` is true). A non-nil error is treated as a *denied* decision (`Allowed: false`, `Result.Code: 500`, `Result.Message: "validation error: <err>"`) — *not* a transport-layer HTTP 500. The HTTP response itself is always 200 OK with a well-formed `AdmissionReview`. The API server's `failurePolicy` only kicks in when the webhook fails to *respond* (TLS handshake failure, malformed body, etc.); a `ValidationFunc` returning an error never triggers it.
 
@@ -77,7 +80,7 @@ Unknown GVKs are rejected with a denial message — the server never calls an un
 
 ## Graceful Shutdown
 
-`Start(ctx)` blocks until either the server returns an error or `ctx` is cancelled. On cancellation it calls `http.Server.Shutdown` with a 30-second deadline. Any in-flight admission calls run to completion (subject to the shutdown deadline) — the API server sees their responses.
+`Start(ctx)` blocks until either the HTTP serve loop fails or `ctx` is cancelled. On cancellation it calls `http.Server.Shutdown` with a 30-second deadline and joins the serve loop. Any in-flight admission calls run to completion subject to that deadline.
 
 ## What's NOT In This Package
 

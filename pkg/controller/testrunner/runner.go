@@ -436,7 +436,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 6. Build template context for JSONPath assertions
-	templateContext := r.buildRenderingContext(fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles)
+	templateContext := r.buildRenderingContext(ctx, fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles)
 
 	// 7. Create render dependencies for deterministic assertion (if needed)
 	renderDeps := &RenderDependencies{

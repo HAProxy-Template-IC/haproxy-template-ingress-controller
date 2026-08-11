@@ -238,8 +238,8 @@ s, err := store.NewCachedStore(&store.CachedStoreConfig{
     Indexer:      idx,
 })
 
-// First access: fetches from API; subsequent within TTL: serves from LRU cache
-resource, _ := s.Get("default", "my-secret")
+// Rendering paths use GetContext so cancellation stops an in-flight API fetch.
+resource, _ := s.GetContext(ctx, "default", "my-secret")
 ```
 
 **When to use CachedStore:**

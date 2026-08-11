@@ -100,6 +100,8 @@ const (
 // the analogous race for the per-pod version cache; this field closes the
 // scheduler-side leg.
 type scheduledDeployment struct {
+	workRevision    uint64
+	retryGeneration uint64
 	config          string
 	auxFiles        *dataplane.AuxiliaryFiles
 	parsedConfig    *parser.StructuredConfig
@@ -167,24 +169,16 @@ type DeploymentScheduler struct {
 	// Deployment scheduling and rate limiting
 	schedulerMutex    sync.Mutex
 	state             schedulerState
+	workRevision      uint64
 	deploymentTimeout time.Duration
 
-	// Fast self-reschedule of a retryable deploy failure. When a completed deploy
-	// reports failures, a single time.AfterFunc timer re-dispatches the
-	// last-validated render through the EXISTING scheduleOrQueue path after a
-	// bounded exponential backoff — so the first retry of a transiently-failed
-	// deploy doesn't wait up to a full DriftPreventionInterval (60s) for the drift
-	// backstop. The ONLY new async primitive is this one timer; its callback
-	// (rescheduleLastValidated) writes the single state.pending slot, so all
-	// timing stays in the one runDeployLoop and no second scheduling path (the
-	// reload-storm regression) is ever created. All three fields are guarded by
-	// schedulerMutex.
-	//   - retryTimer: the pending AfterFunc, nil when none is armed.
-	//   - deployFailureRetries: fast retries spent on the CURRENT failing render;
-	//     reset when a new render's checksum earns a fresh budget, capped at
-	//     maxDeployFailureRetries (beyond which the 60s drift backstop takes over).
-	//   - lastFailedRetryChecksum: the ContentChecksum the current budget tracks.
+	// Fast deploy-failure retries requeue the last validated render through the
+	// normal scheduler. schedulerMutex protects the timer owner and retry budget.
 	retryTimer              *time.Timer
+	retryTimerDone          func()
+	retryCallbacks          sync.WaitGroup
+	retryGeneration         uint64
+	retryStopped            bool
 	deployFailureRetries    int
 	lastFailedRetryChecksum string
 
@@ -305,6 +299,10 @@ func (s *DeploymentScheduler) Name() string {
 //   - Error only in exceptional circumstances
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	s.ctx = ctx // Save context for scheduling operations
+	s.schedulerMutex.Lock()
+	s.retryStopped = false
+	s.retryGeneration++
+	s.schedulerMutex.Unlock()
 
 	// Create deploy-loop channels fresh for this leadership term (see struct).
 	s.pendingSignal = make(chan struct{}, 1)
@@ -356,6 +354,7 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 
 		case <-ctx.Done():
 			s.logger.Info("DeploymentScheduler shutting down", "reason", ctx.Err())
+			s.stopFailureRetries()
 			s.runtimeBypass.Close()
 			<-s.loopDone // join the deploy loop (it returns on ctx.Done())
 			return nil

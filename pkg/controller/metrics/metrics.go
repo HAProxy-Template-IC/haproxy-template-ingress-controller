@@ -626,10 +626,16 @@ func (m *Metrics) AddTimeAsLeader(seconds float64) {
 //   - subscriberName: The name of the subscriber that dropped the event
 //   - eventType: The event type that was dropped
 func (m *Metrics) RecordEventDrop(subscriberName, eventType string) {
-	m.EventsDropped.Inc()
-	// Also increment critical drops since onDrop callback is only called for critical subscribers
-	m.EventsDroppedCritical.Inc()
-	m.EventsDroppedBySubscriber.WithLabelValues(subscriberName, eventType).Inc()
+	m.AddEventDrops(subscriberName, eventType, 1)
+}
+
+// AddEventDrops restores process-lifetime critical-drop totals into a new
+// per-iteration registry.
+func (m *Metrics) AddEventDrops(subscriberName, eventType string, count uint64) {
+	increment := float64(count)
+	m.EventsDropped.Add(increment)
+	m.EventsDroppedCritical.Add(increment)
+	m.EventsDroppedBySubscriber.WithLabelValues(subscriberName, eventType).Add(increment)
 }
 
 // SetObservabilityDrops sets the observability drop gauge from EventBus statistics.

@@ -367,6 +367,56 @@ func TestDebouncer_Stop(t *testing.T) {
 	assert.Equal(t, int32(1), callCount.Load())
 }
 
+func TestDebouncer_StopWaitsForRunningCallback(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	debouncer := NewDebouncer(time.Second, func(types.Store, types.ChangeStats) {
+		close(started)
+		<-release
+	}, &mockStore{}, false)
+	debouncer.SetSyncMode(false)
+	debouncer.RecordCreate()
+	<-started
+
+	stopped := make(chan struct{})
+	go func() {
+		debouncer.Stop()
+		close(stopped)
+	}()
+
+	assert.Never(t, func() bool {
+		select {
+		case <-stopped:
+			return true
+		default:
+			return false
+		}
+	}, 50*time.Millisecond, 5*time.Millisecond)
+	close(release)
+	require.Eventually(t, func() bool {
+		select {
+		case <-stopped:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 5*time.Millisecond)
+}
+
+func TestDebouncer_StopDiscardsSuppressedSyncChanges(t *testing.T) {
+	var callCount atomic.Int32
+	debouncer := NewDebouncer(time.Second, func(types.Store, types.ChangeStats) {
+		callCount.Add(1)
+	}, &mockStore{}, true)
+
+	debouncer.RecordCreate()
+	debouncer.Stop()
+	debouncer.Flush()
+	debouncer.RecordUpdate()
+
+	assert.Equal(t, int32(0), callCount.Load())
+}
+
 func TestDebouncer_SyncMode(t *testing.T) {
 	store := &mockStore{}
 	recorder := newCallbackRecorder()

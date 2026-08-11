@@ -62,7 +62,7 @@ func TestComponent_RegisterURL_HappyPath_AddsTimerForURLWithDelay(t *testing.T) 
 	c.RegisterURL(server.URL)
 
 	c.mu.Lock()
-	timer, exists := c.refreshers[server.URL]
+	_, exists := c.refreshers[server.URL]
 	got := len(c.refreshers)
 	c.mu.Unlock()
 
@@ -73,7 +73,5 @@ func TestComponent_RegisterURL_HappyPath_AddsTimerForURLWithDelay(t *testing.T) 
 			"see stale content indefinitely")
 	assert.Equal(t, 1, got, "exactly one refresh timer must be added")
 
-	if timer != nil {
-		timer.Stop() // prevent leak past the test
-	}
+	c.StopRefresher(server.URL)
 }

@@ -24,6 +24,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -65,6 +66,8 @@ const (
 	ShutdownTimeout = 25 * time.Second
 	// ShutdownProgressInterval is how often to log progress during shutdown.
 	ShutdownProgressInterval = 5 * time.Second
+	// ProcessShutdownTimeout leaves one second before Kubernetes' default SIGKILL deadline.
+	ProcessShutdownTimeout = 29 * time.Second
 )
 
 // buildVersionInfo holds build-time version information exposed via haptic_build_info metric.
@@ -206,16 +209,16 @@ type persistentInfra struct {
 	MetricsServer         *pkgmetrics.Server
 	serverStarted         bool // True after first iteration has started the server
 	metricsServerStarted  bool // True after first iteration has started the metrics server
+	eventDropMetrics      *persistentEventDropMetrics
+	processCancel         context.CancelFunc
+	introspectionRun      *persistentServerRun
+	metricsRun            *persistentServerRun
+	eventSource           *eventSourceDelegate
 
-	// Admission listener. Held here for the same reason as the servers above —
-	// a per-iteration listener re-binds its port on every config change — but
-	// with a sharper consequence: while it is down the API server dials a dead
-	// port, and the chart's failurePolicy=Ignore turns that into a silent admit
-	// of the very config change that closed it (#110). Each iteration installs
-	// its validator table onto this one server; the previous table keeps
-	// serving until it does.
+	// The process-owned admission listener stays bound between validator generations.
 	webhookMu     sync.Mutex
 	WebhookServer *pkgwebhook.Server
+	webhookRun    *persistentServerRun
 	// webhookServerConfig is what the listener was actually built with, kept so
 	// a later iteration passing something different is reported rather than
 	// silently ignored.
@@ -237,6 +240,46 @@ type persistentInfra struct {
 	everInitialized    bool
 	iterationStartedAt time.Time
 	settledThisIter    bool
+}
+
+type persistentServerRun struct {
+	done chan struct{}
+	err  error
+}
+
+type namedPersistentServerRun struct {
+	name string
+	run  *persistentServerRun
+}
+
+func newPersistentServerRun() *persistentServerRun {
+	return &persistentServerRun{done: make(chan struct{})}
+}
+
+func (r *persistentServerRun) finish(err error) {
+	r.err = err
+	close(r.done)
+}
+
+func (r *persistentServerRun) Done() <-chan struct{} {
+	return r.done
+}
+
+func (r *persistentServerRun) Wait() error {
+	<-r.done
+	return r.err
+}
+
+type persistentWebhookServerError struct {
+	err error
+}
+
+func (e *persistentWebhookServerError) Error() string {
+	return fmt.Sprintf("persistent webhook server stopped: %v", e.err)
+}
+
+func (e *persistentWebhookServerError) Unwrap() error {
+	return e.err
 }
 
 // ReinitGraceWindow is how long after a voluntary iteration restart /healthz
@@ -266,17 +309,7 @@ func (p *persistentInfra) EnsureWebhookServer(
 	defer p.webhookMu.Unlock()
 
 	if p.WebhookServer != nil {
-		// The bound listener wins — that is the whole point — but a caller whose
-		// config no longer matches it would otherwise be reading values the
-		// running server does not use. In practice every field here comes from a
-		// process-level CLI flag and cannot change without a restart, so a
-		// difference means a wiring bug, not a reconfiguration. Say so.
-		if diff := describeServerConfigDiff(p.webhookServerConfig, config); diff != "" {
-			logger.Warn("Webhook server config changed after the listener was bound; the bound listener keeps its original settings",
-				"differences", diff,
-				"note", "only the validator table changes across iterations")
-		}
-		return p.WebhookServer, nil
+		return p.reuseWebhookServer(config, logger)
 	}
 
 	server, err := pkgwebhook.NewServer(config)
@@ -284,28 +317,139 @@ func (p *persistentInfra) EnsureWebhookServer(
 		return nil, fmt.Errorf("creating persistent webhook server: %w", err)
 	}
 
-	serverErrCh := make(chan error, 1)
-	go func() {
-		if err := server.Start(ctx); err != nil {
-			logger.Error("Persistent webhook server error", "error", err)
-			serverErrCh <- err
-		}
-	}()
-
-	select {
-	case <-server.Listening():
-	case err := <-serverErrCh:
-		return nil, fmt.Errorf("persistent webhook server failed before bind: %w", err)
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	run := p.startProcessServer(ctx, "webhook", server.Start, logger)
+	p.WebhookServer = server
+	p.webhookServerConfig = config
+	p.webhookRun = run
+	if err := waitForPersistentWebhookBind(ctx, server, run); err != nil {
+		return nil, err
 	}
 
 	logger.Info("Persistent webhook listener bound; it now survives config reinitializations",
 		"port", config.Port, "path", config.Path)
 
-	p.WebhookServer = server
-	p.webhookServerConfig = config
 	return server, nil
+}
+
+func (p *persistentInfra) reuseWebhookServer(
+	config *pkgwebhook.ServerConfig,
+	logger *slog.Logger,
+) (*pkgwebhook.Server, error) {
+	if diff := describeServerConfigDiff(p.webhookServerConfig, config); diff != "" {
+		logger.Warn("Webhook server config changed after the listener was bound; the bound listener keeps its original settings",
+			"differences", diff,
+			"note", "only the validator table changes across iterations")
+	}
+	if p.webhookRun == nil {
+		return nil, &persistentWebhookServerError{err: errors.New("server has no completion owner")}
+	}
+	select {
+	case <-p.webhookRun.Done():
+		err := p.webhookRun.Wait()
+		if err == nil {
+			err = errors.New("server exited without an error")
+		}
+		return nil, &persistentWebhookServerError{err: err}
+	default:
+		return p.WebhookServer, nil
+	}
+}
+
+func waitForPersistentWebhookBind(
+	ctx context.Context,
+	server *pkgwebhook.Server,
+	run *persistentServerRun,
+) error {
+	select {
+	case <-server.Listening():
+		return nil
+	case <-run.Done():
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		err := run.Wait()
+		if err == nil {
+			err = errors.New("server exited before binding")
+		}
+		return &persistentWebhookServerError{err: err}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *persistentInfra) currentWebhookRun() *persistentServerRun {
+	p.webhookMu.Lock()
+	defer p.webhookMu.Unlock()
+	return p.webhookRun
+}
+
+func waitForPersistentServer(name string, run *persistentServerRun) error {
+	if run == nil {
+		return nil
+	}
+	if err := run.Wait(); err != nil {
+		return fmt.Errorf("%s server: %w", name, err)
+	}
+	return nil
+}
+
+func persistentServerStopped(run *persistentServerRun) bool {
+	select {
+	case <-run.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+func waitForPersistentServerStop(run *persistentServerRun, timeout <-chan time.Time) bool {
+	if persistentServerStopped(run) {
+		return true
+	}
+	select {
+	case <-run.Done():
+		return true
+	case <-timeout:
+		return false
+	}
+}
+
+func collectStoppedPersistentServers(runs []namedPersistentServerRun, collected []bool) error {
+	var result error
+	for i, server := range runs {
+		if collected[i] || server.run == nil || !persistentServerStopped(server.run) {
+			continue
+		}
+		result = errors.Join(result, waitForPersistentServer(server.name, server.run))
+	}
+	return result
+}
+
+func (p *persistentInfra) waitForPersistentServers(timeout time.Duration) error {
+	runs := []namedPersistentServerRun{
+		{name: "introspection", run: p.introspectionRun},
+		{name: "metrics", run: p.metricsRun},
+		{name: "webhook", run: p.currentWebhookRun()},
+	}
+
+	remaining := max(timeout, 0)
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	collected := make([]bool, len(runs))
+	var result error
+	for i, server := range runs {
+		if server.run == nil {
+			collected[i] = true
+			continue
+		}
+		if !waitForPersistentServerStop(server.run, timer.C) {
+			result = errors.Join(result, collectStoppedPersistentServers(runs, collected))
+			return errors.Join(result, fmt.Errorf("persistent servers did not stop within the remaining %s process shutdown budget", remaining))
+		}
+		result = errors.Join(result, waitForPersistentServer(server.name, server.run))
+		collected[i] = true
+	}
+	return result
 }
 
 // describeServerConfigDiff names the fields on which a later EnsureWebhookServer
@@ -412,57 +556,92 @@ func Run(
 		"webhook_cert_dir", webhookCertDir,
 		"namespace", k8sClient.Namespace())
 
-	// Create persistent infrastructure (lives across iterations)
-	// This prevents port binding race conditions during rapid reinitializations
-	infra := &persistentInfra{
-		IntrospectionRegistry: introspection.NewRegistry(),
-	}
-
-	// Create and start the introspection server once, before the loop
-	// The server will be reused across iterations with the registry cleared between them
-	if debugPort > 0 {
-		infra.IntrospectionServer = introspection.NewServer(fmt.Sprintf(":%d", debugPort), infra.IntrospectionRegistry)
-		// Note: Setup() and Serve() will be called in startEarlyInfrastructureServers
-		// on the first iteration only
-	}
-
-	// Create the metrics server once, before the loop.
-	// The registry will be swapped via SetRegistry() on each iteration.
 	metricsPort, err := listenerPortFromEnv("METRICS_PORT", 9090, true)
 	if err != nil {
 		return err
-	}
-	if metricsPort > 0 {
-		infra.MetricsServer = pkgmetrics.NewServer(fmt.Sprintf(":%d", metricsPort), prometheus.NewRegistry())
 	}
 	webhookPort, err := listenerPortFromEnv("WEBHOOK_PORT", 9443, false)
 	if err != nil {
 		return err
 	}
 
-	// Main reinitialization loop
+	procCtx, procCancel := context.WithCancel(ctx)
+	shutdownStarted := make(chan time.Time, 1)
+	stopShutdownClock := context.AfterFunc(procCtx, func() {
+		shutdownStarted <- time.Now()
+	})
+	defer stopShutdownClock()
+	infra := &persistentInfra{
+		IntrospectionRegistry: introspection.NewRegistry(),
+		eventDropMetrics:      &persistentEventDropMetrics{},
+		processCancel:         procCancel,
+	}
+	if debugPort > 0 {
+		infra.IntrospectionServer = introspection.NewServer(fmt.Sprintf(":%d", debugPort), infra.IntrospectionRegistry)
+	}
+	if metricsPort > 0 {
+		infra.MetricsServer = pkgmetrics.NewServer(fmt.Sprintf(":%d", metricsPort), prometheus.NewRegistry())
+	}
+
+	err = runIterations(procCtx, logger, RetryDelay, func() error {
+		return runIteration(procCtx, k8sClient, crdName, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, webhookPort, infra, logger)
+	})
+	procCancel()
+	shutdownAt := <-shutdownStarted
+	remainingShutdown := ProcessShutdownTimeout - time.Since(shutdownAt)
+	var teardownTimeout *iterationTeardownTimeoutError
+	if errors.As(err, &teardownTimeout) {
+		remainingShutdown = min(remainingShutdown, ProcessShutdownTimeout-ShutdownTimeout)
+	}
+	serverErr := infra.waitForPersistentServers(remainingShutdown)
+	if ctx.Err() != nil {
+		return nil
+	}
+	if err != nil {
+		return errors.Join(err, serverErr)
+	}
+	return serverErr
+}
+
+func runIterations(ctx context.Context, logger *slog.Logger, retryDelay time.Duration, run func() error) error {
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			logger.Info("Controller shutting down", "reason", ctx.Err())
 			return nil
-		default:
-			// Run one iteration
-			err := runIteration(ctx, k8sClient, crdName, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, webhookPort, infra, logger)
-			if err != nil {
-				// Check if error is context cancellation (graceful shutdown)
-				if ctx.Err() != nil {
-					logger.Info("Controller shutting down during iteration", "reason", ctx.Err())
-					return nil // Graceful shutdown is not an error
-				}
+		}
 
-				// Log error and retry after delay
-				logger.Error("Controller iteration failed, retrying",
-					"error", err,
-					"retry_delay", RetryDelay)
-				time.Sleep(RetryDelay)
+		err := run()
+		if err == nil {
+			continue
+		}
+		if ctx.Err() != nil {
+			logger.Info("Controller shutting down during iteration", "reason", ctx.Err())
+			return nil
+		}
+		var teardownTimeout *iterationTeardownTimeoutError
+		if errors.As(err, &teardownTimeout) {
+			return err
+		}
+		var webhookServerFailure *persistentWebhookServerError
+		if errors.As(err, &webhookServerFailure) {
+			return err
+		}
+
+		logger.Error("Controller iteration failed, retrying",
+			"error", err,
+			"retry_delay", retryDelay)
+		timer := time.NewTimer(retryDelay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
-			// If err == nil, config change occurred and we reinitialize immediately
+			logger.Info("Controller shutting down during retry", "reason", ctx.Err())
+			return nil
 		}
 	}
 }
@@ -497,8 +676,10 @@ type componentSetup struct {
 	ConfigChangeHandler   *configchange.ConfigChangeHandler // For setting initial config version
 	IterCtx               context.Context
 	Cancel                context.CancelFunc
+	CancelCause           context.CancelCauseFunc
 	ConfigChangeCh        chan *coreconfig.Config
 	ErrGroup              *errgroup.Group // Tracks all background goroutines for graceful shutdown
+	LeaderState           *leaderCallbackState
 
 	// cleanups holds tear-down callbacks registered by helpers
 	// during setup. RunCleanups invokes them in reverse-registration
@@ -548,6 +729,7 @@ func (s *componentSetup) RunCleanups() {
 func setupComponents(
 	ctx context.Context,
 	introspectionRegistry *introspection.Registry,
+	eventDropMetrics *persistentEventDropMetrics,
 	typeBootstrapper validator.TypeBootstrapper,
 	crdName string,
 	logger *slog.Logger,
@@ -563,18 +745,14 @@ func setupComponents(
 	// Create metrics collector
 	domainMetrics := metrics.NewMetrics(registry)
 	domainMetrics.SetBuildInfo(buildVersionInfo.version, buildVersionInfo.haproxyVersion, buildVersionInfo.goVersion)
+	eventDropMetrics.Attach(domainMetrics)
 	metricsComponent := metrics.New(domainMetrics, bus)
 
-	// Register event drop callback for observability
-	bus.SetDropCallback(func(info busevents.DropInfo) {
-		logger.Warn("Event dropped due to full subscriber buffer",
-			"subscriber", info.SubscriberName,
-			"event_type", info.EventType,
-			"buffer_size", info.BufferSize,
-			"subscribed_types", info.EventTypes,
-		)
-		domainMetrics.RecordEventDrop(info.SubscriberName, info.EventType)
-	})
+	iterCtx, cancelCause := context.WithCancelCause(ctx)
+	cancel := func() { cancelCause(nil) }
+	g, gCtx := errgroup.WithContext(iterCtx)
+
+	bus.SetDropCallback(newCriticalEventDropCallback(logger, eventDropMetrics.Record, cancelCause))
 
 	// Create components
 	eventCommentator := commentator.NewEventCommentator(bus, logger, 500)
@@ -604,12 +782,6 @@ func setupComponents(
 		0, // Use default debounce interval (5s)
 	)
 
-	// Start components in goroutines with iteration-specific context
-	iterCtx, cancel := context.WithCancel(ctx)
-
-	// Create errgroup to track all background goroutines for graceful shutdown
-	g, gCtx := errgroup.WithContext(iterCtx)
-
 	// Start components in errgroup (these return nil on graceful shutdown)
 	startInErrGroup(g, gCtx, logger, cancel, "event commentator", eventCommentator.Start)
 	startInErrGroup(g, gCtx, logger, cancel, "config loader", configLoaderComponent.Start)
@@ -637,6 +809,7 @@ func setupComponents(
 		ConfigChangeHandler:   configChangeHandlerComponent,
 		IterCtx:               gCtx, // Use errgroup context so cancellation propagates
 		Cancel:                cancel,
+		CancelCause:           cancelCause,
 		ConfigChangeCh:        configChangeCh,
 		ErrGroup:              g,
 	}

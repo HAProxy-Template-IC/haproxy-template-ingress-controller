@@ -54,7 +54,9 @@ wrappedCallbacks := k8sleaderelection.Callbacks{
         if callbacks.OnStartedLeading != nil {
             callbacks.OnStartedLeading(ctx) // construct & subscribe leader-only comps
         }
-        c.eventBus.Start()                                            // replay buffer
+        if ctx.Err() == nil {
+            c.eventBus.Start()                                        // replay buffer
+        }
     },
     OnStoppedLeading: func() {
         // No pause/resume on the way down: leader-only components are torn
@@ -76,6 +78,8 @@ wrappedCallbacks := k8sleaderelection.Callbacks{
 - The Pause/Start pair is the contract that makes leader-only late-subscribers
   safe — see "Late Subscriber Problem" in `pkg/controller/CLAUDE.md`.
 - User callbacks can fail without affecting event publishing.
+- A lease lost during startup leaves the bus paused; the next iteration rebuilds
+  and replays state only after it owns leadership.
 
 ### Pure Component Delegation
 

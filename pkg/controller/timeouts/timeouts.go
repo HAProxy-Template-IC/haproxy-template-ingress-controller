@@ -36,8 +36,4 @@ const (
 	// TickerPollInterval is the interval for periodic polling operations
 	// such as metrics collection and deployment timeout checks.
 	TickerPollInterval = 5 * time.Second
-
-	// GracefulStopDelay is the brief pause after stopping components
-	// to allow in-flight operations to complete.
-	GracefulStopDelay = 100 * time.Millisecond
 )

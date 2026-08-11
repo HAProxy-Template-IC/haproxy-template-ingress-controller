@@ -17,6 +17,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -37,6 +38,10 @@ import (
 //  6. Publishes HAProxyPodTerminatedEvent for removed pods
 //  7. Publishes HAProxyPodsDiscoveredEvent with version-validated endpoints
 func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfig.Credentials, source string) {
+	ctx := c.lifecycleContext()
+	if ctx == nil || ctx.Err() != nil {
+		return
+	}
 	c.Logger().Debug("Triggering HAProxy pod discovery", "source", source)
 
 	// Call pure Discovery component with logger for debugging
@@ -60,7 +65,10 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 	// Filter candidates by version compatibility. Rejections are published
 	// as HAProxyPodRejectedEvent below (outside the discovery mutex) so the
 	// metrics component can increment haptic_haproxy_pods_rejected_total.
-	admittedEndpoints, rejections := c.filterByVersion(candidates, credentials)
+	admittedEndpoints, rejections := c.filterByVersion(ctx, candidates, credentials)
+	if ctx.Err() != nil {
+		return
+	}
 	for _, r := range rejections {
 		c.EventBus().Publish(events.NewHAProxyPodRejectedEvent(r.podName, r.reason))
 	}
@@ -145,7 +153,11 @@ type rejection struct {
 // are published as HAProxyPodRejectedEvent by the caller (after the mutex
 // is released) so operators can alert on persistent rejections via the
 // haptic_haproxy_pods_rejected_total Prometheus counter.
-func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials coreconfig.Credentials) ([]*dataplane.Endpoint, []rejection) {
+func (c *Component) filterByVersion(
+	ctx context.Context,
+	candidates []dataplane.Endpoint,
+	credentials coreconfig.Credentials,
+) ([]*dataplane.Endpoint, []rejection) {
 	admitted := make([]*dataplane.Endpoint, 0, len(candidates))
 	var rejections []rejection
 
@@ -153,6 +165,9 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 	defer c.mu.Unlock()
 
 	for i := range candidates {
+		if ctx.Err() != nil {
+			break
+		}
 		candidate := &candidates[i]
 		podName := candidate.PodName
 
@@ -166,8 +181,11 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 		}
 
 		// New pod - check remote version
-		remoteVersion, err := c.checkRemoteVersion(candidate)
+		remoteVersion, err := c.checkRemoteVersion(ctx, candidate)
 		if err != nil {
+			if ctx.Err() != nil {
+				break
+			}
 			// Version check failed - add to pending retries
 			c.handleVersionCheckFailure(podName, err)
 			rejections = append(rejections, rejection{podName: podName, reason: "version_check_failed"})
@@ -235,14 +253,16 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 	}
 
 	// Schedule retry timer if there are pending pods
-	c.scheduleRetryTimerLocked()
+	if ctx.Err() == nil {
+		c.scheduleRetryTimerLocked()
+	}
 
 	return admitted, rejections
 }
 
 // checkRemoteVersion checks the remote HAProxy version via /v3/info endpoint.
-func (c *Component) checkRemoteVersion(endpoint *dataplane.Endpoint) (*dataplane.Version, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (c *Component) checkRemoteVersion(ctx context.Context, endpoint *dataplane.Endpoint) (*dataplane.Version, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	// Create client endpoint for version detection
@@ -347,10 +367,8 @@ func (c *Component) scheduleRetryTimerLocked() {
 	// Schedule timer
 	c.retryTimerMu.Lock()
 	defer c.retryTimerMu.Unlock()
-
-	// Stop existing timer if any
-	if c.retryTimer != nil {
-		c.retryTimer.Stop()
+	if c.retryTimerStopped {
+		return
 	}
 
 	// Calculate delay (minimum 1 second to avoid tight loops)
@@ -359,10 +377,41 @@ func (c *Component) scheduleRetryTimerLocked() {
 	c.Logger().Debug("Scheduling retry timer for pending pods",
 		"pending_count", len(c.pendingRetries),
 		"delay", delay)
+	c.armRetryTimerLocked(delay)
+}
 
+func (c *Component) armRetryTimerLocked(delay time.Duration) {
+	if c.retryTimer != nil {
+		if c.retryTimer.Stop() && c.retryTimerDone != nil {
+			c.retryTimerDone()
+		}
+	}
+	c.retryGeneration++
+	generation := c.retryGeneration
+
+	c.retryCallbacks.Add(1)
+	var doneOnce sync.Once
+	done := func() {
+		doneOnce.Do(c.retryCallbacks.Done)
+	}
+	c.retryTimerDone = done
 	c.retryTimer = time.AfterFunc(delay, func() {
-		c.handleRetryTimer()
+		defer done()
+		c.runRetryTimer(generation)
 	})
+}
+
+func (c *Component) runRetryTimer(generation uint64) {
+	c.retryTimerMu.Lock()
+	if c.retryTimerStopped || generation != c.retryGeneration {
+		c.retryTimerMu.Unlock()
+		return
+	}
+	c.retryTimer = nil
+	c.retryTimerDone = nil
+	c.retryTimerMu.Unlock()
+
+	c.handleRetryTimer()
 }
 
 // handleRetryTimer is called when the retry timer fires to re-check pending pods.

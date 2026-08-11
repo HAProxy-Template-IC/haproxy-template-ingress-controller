@@ -18,11 +18,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 )
 
 func TestLogBackgroundComponentError(t *testing.T) {
@@ -60,4 +64,130 @@ func TestLogBackgroundComponentError(t *testing.T) {
 			assert.Empty(t, output.String())
 		})
 	}
+}
+
+func TestStartNonFatalInErrGroupTracksWithoutCancelling(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	group, groupCtx := errgroup.WithContext(ctx)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	finished := make(chan struct{})
+	var calls atomic.Int64
+
+	startNonFatalInErrGroup(group, groupCtx, logger, "test component", func(context.Context) error {
+		calls.Add(1)
+		close(finished)
+		return errors.New("component failed")
+	})
+
+	<-finished
+	assert.NoError(t, groupCtx.Err())
+	cancel()
+	require.NoError(t, group.Wait())
+	assert.Equal(t, int64(1), calls.Load())
+}
+
+func TestStartInErrGroupIgnoresContextTermination(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	group, groupCtx := errgroup.WithContext(ctx)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	started := make(chan struct{})
+
+	startInErrGroup(group, groupCtx, logger, cancel, "test component", func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	<-started
+	cancel()
+	require.NoError(t, group.Wait())
+}
+
+func TestStartInErrGroupRejectsUnexpectedStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	group, groupCtx := errgroup.WithContext(ctx)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	startInErrGroup(group, groupCtx, logger, cancel, "test component", func(context.Context) error {
+		return nil
+	})
+
+	require.ErrorContains(t, group.Wait(), "test component stopped unexpectedly")
+}
+
+func TestWaitForGoroutinesToFinishTimesOut(t *testing.T) {
+	group := &errgroup.Group{}
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	group.Go(func() error {
+		defer close(finished)
+		<-release
+		return nil
+	})
+
+	err := waitForGoroutinesToFinish(
+		group,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"test teardown",
+		10*time.Millisecond,
+	)
+	var timeoutErr *iterationTeardownTimeoutError
+	require.ErrorAs(t, err, &timeoutErr)
+	close(release)
+	<-finished
+}
+
+func TestTeardownIterationNormalizesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	group, groupCtx := errgroup.WithContext(ctx)
+	started := make(chan struct{})
+	group.Go(func() error {
+		close(started)
+		<-groupCtx.Done()
+		return groupCtx.Err()
+	})
+	<-started
+	var cleaned atomic.Bool
+	setup := &componentSetup{
+		IterCtx:  groupCtx,
+		Cancel:   cancel,
+		ErrGroup: group,
+	}
+	setup.AddCleanup(func() {
+		cleaned.Store(true)
+	})
+
+	require.NoError(t, teardownIteration(setup, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	assert.True(t, cleaned.Load())
+}
+
+func TestRunIterationsDoesNotRetryUnjoinedIteration(t *testing.T) {
+	var attempts atomic.Int64
+	err := runIterations(
+		t.Context(),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		0,
+		func() error {
+			attempts.Add(1)
+			return &iterationTeardownTimeoutError{phase: "iteration teardown", timeout: time.Second}
+		},
+	)
+	var timeoutErr *iterationTeardownTimeoutError
+	require.ErrorAs(t, err, &timeoutErr)
+	assert.Equal(t, int64(1), attempts.Load())
+}
+
+func TestRunIterationsDoesNotRetryStoppedWebhookServer(t *testing.T) {
+	var attempts atomic.Int64
+	err := runIterations(
+		t.Context(),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		0,
+		func() error {
+			attempts.Add(1)
+			return &persistentWebhookServerError{err: errors.New("serve failed")}
+		},
+	)
+	var serverErr *persistentWebhookServerError
+	require.ErrorAs(t, err, &serverErr)
+	assert.Equal(t, int64(1), attempts.Load())
 }

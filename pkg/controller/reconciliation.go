@@ -15,9 +15,11 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/discovery/cached/memory"
@@ -59,16 +61,11 @@ import (
 // again after construction is deliberately NOT carried here.
 //
 // Consumers:
-//   - deployer/deploymentScheduler/configPublisher: read by
-//     startLeaderOnlyComponents to build leaderOnlyComponents.
 //   - httpStore/capabilities/engineWiring/gvrMapper: read by
 //     createDryRunValidator when the webhook validators are wired up.
 type reconciliationWiring struct {
-	deployer            *deployer.Component
-	deploymentScheduler *deployer.DeploymentScheduler
-	configPublisher     *ctrlconfigpublisher.Component
-	httpStore           *httpstore.Component   // HTTP resource fetcher for dynamic content
-	capabilities        dataplane.Capabilities // HAProxy/DataPlane API capabilities
+	httpStore    *httpstore.Component   // HTTP resource fetcher for dynamic content
+	capabilities dataplane.Capabilities // HAProxy/DataPlane API capabilities
 
 	// engineWiring carries the type-bootstrap output shared between
 	// the reconciliation engine (the coordinator path constructed here) and
@@ -208,10 +205,11 @@ func createReconciliationComponents(
 	}
 
 	// Create publisher with informer-backed listers for cached reads
-	purePublisher, err := createConfigPublisher(setup.IterCtx.Done(), crdClientset, k8sClient, logger)
+	purePublisher, stopPublisherInformers, err := createConfigPublisher(setup.IterCtx, crdClientset, k8sClient, logger)
 	if err != nil {
 		return nil, err
 	}
+	setup.AddCleanup(stopPublisherInformers)
 	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, setup.Bus, logger,
 		ctrlconfigpublisher.WithPublishInterval(cfg.Dataplane.GetConfigPublishInterval()),
 	)
@@ -276,13 +274,10 @@ func createReconciliationComponents(
 	)
 
 	return &reconciliationWiring{
-		deployer:            deployerComponent,
-		deploymentScheduler: deploymentSchedulerComponent,
-		configPublisher:     configPublisherComponent,
-		httpStore:           httpStoreComponent,
-		capabilities:        capabilities,
-		engineWiring:        wiring,
-		gvrMapper:           gvrMapper,
+		httpStore:    httpStoreComponent,
+		capabilities: capabilities,
+		engineWiring: wiring,
+		gvrMapper:    gvrMapper,
 	}, nil
 }
 
@@ -368,10 +363,7 @@ func newResourceApplier(crd *v1alpha1.HAProxyTemplateConfig, k8sClient *client.C
 
 // createConfigPublisher creates a config publisher with informer-backed listers for cached reads.
 // This significantly reduces API calls by checking cached state before doing status updates.
-// stopCh must be the iteration's Done channel: the controller rebuilds its
-// components per iteration, so informers tied to anything longer-lived leak a
-// reflector per informer per iteration.
-func createConfigPublisher(stopCh <-chan struct{}, crdClientset versioned.Interface, k8sClient *client.Client, logger *slog.Logger) (*configpublisher.Publisher, error) {
+func createConfigPublisher(ctx context.Context, crdClientset versioned.Interface, k8sClient *client.Client, logger *slog.Logger) (*configpublisher.Publisher, func(), error) {
 	// Create shared informer factory for HAProxy CRDs
 	// The informers provide cached reads for status updates, significantly reducing API calls.
 	// We use a 30-second resync period to keep the cache reasonably fresh while minimizing overhead.
@@ -391,21 +383,25 @@ func createConfigPublisher(stopCh <-chan struct{}, crdClientset versioned.Interf
 		HAProxyCfgs:  haproxyInformers.HAProxyCfgs().Lister(),
 	}
 
-	// Start informers in background - they'll begin watching and populating the cache
-	// The factory tracks all created informers and starts them together
-	informerFactory.Start(stopCh)
+	informerCtx, cancelInformers := context.WithCancel(ctx)
+	stopInformers := sync.OnceFunc(func() {
+		cancelInformers()
+		informerFactory.Shutdown()
+	})
+	informerFactory.StartWithContext(informerCtx)
 
 	// Wait for cache to sync before creating publisher
 	// This ensures listers have initial data before first use
 	logger.Debug("Waiting for HAProxy CRD informer caches to sync")
-	syncResult := informerFactory.WaitForCacheSync(stopCh)
-	for informerType, synced := range syncResult {
+	syncResult := informerFactory.WaitForCacheSyncWithContext(informerCtx)
+	for informerType, synced := range syncResult.Synced {
 		if !synced {
-			return nil, fmt.Errorf("informer cache sync failed for %v", informerType)
+			stopInformers()
+			return nil, nil, fmt.Errorf("informer cache sync failed for %v: %w", informerType, syncResult.Err)
 		}
 	}
 	logger.Debug("HAProxy CRD informer caches synced")
 
 	// Create publisher with listers for cached reads
-	return configpublisher.NewWithListers(k8sClient.Clientset(), crdClientset, listers, logger), nil
+	return configpublisher.NewWithListers(k8sClient.Clientset(), crdClientset, listers, logger), stopInformers, nil
 }

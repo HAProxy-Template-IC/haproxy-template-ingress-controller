@@ -10,11 +10,11 @@ HAProxyTemplateConfig admission does not exist (ADR-0016): Kubernetes admits obj
 
 ### Requirement: Webhook Server
 
-The webhook SHALL be served over HTTPS using TLS certificates loaded from a Kubernetes Secret. The server SHALL listen on port 9443 by default at the `/validate` path. Read and write timeouts SHALL both be 10 seconds. The server SHALL expose a `/healthz` endpoint returning HTTP 200. The server SHALL handle concurrent requests in a thread-safe manner. When the context is cancelled, the server SHALL perform graceful shutdown with a 30-second timeout.
+The webhook SHALL be served over HTTPS using TLS certificates loaded from a Kubernetes Secret. The server SHALL listen on port 9443 by default at the `/validate` path. The read timeout SHALL be 10 seconds, and the write timeout SHALL exceed the resource-validation deadline by 2 seconds. The server SHALL expose a `/healthz` endpoint returning HTTP 200. The server SHALL handle concurrent requests in a thread-safe manner. When the context is cancelled, the server SHALL perform graceful shutdown with a 30-second timeout.
 
 #### Scenario: TLS certificate validation on startup
 
-WHEN the webhook component starts with empty CertPEM or KeyPEM
+WHEN the webhook component starts without CertDir and with empty CertPEM or KeyPEM
 THEN startup SHALL fail with an error indicating the certificate or key is empty.
 
 #### Scenario: Health endpoint available
@@ -44,20 +44,20 @@ THEN the webhook SHALL parse both `request.Object.Raw` and `request.OldObject.Ra
 #### Scenario: No validator registered for resource type
 
 WHEN an AdmissionReview arrives for a GVK with no registered validator
-THEN the webhook SHALL return `Allowed: true` (fail-open for unregistered types).
+THEN the webhook SHALL return `Allowed: false` with HTTP status 503 and tell the caller to retry after controller initialization.
 
 ### Requirement: Intercepted Operations
 
-The webhook SHALL intercept CREATE and UPDATE operations on resources configured in the webhook rules. Webhook rules SHALL be extracted from the controller configuration based on watched resources with `webhookValidation` enabled. Each rule SHALL specify API groups, API versions, resource types, and operations.
+The webhook SHALL intercept CREATE and UPDATE operations on resources configured in the webhook rules. Webhook rules SHALL be extracted from the controller configuration based on watched resources with `enableValidationWebhook` enabled. Each rule SHALL specify API groups, API versions, resource types, and operations.
 
 #### Scenario: Watched resource with webhook enabled
 
-WHEN a watched resource has `webhookValidation: true` in the configuration
+WHEN a watched resource has `enableValidationWebhook: true` in the configuration
 THEN the webhook SHALL register a validator for that resource's GVK and intercept CREATE and UPDATE operations.
 
 #### Scenario: Watched resource without webhook disabled
 
-WHEN a watched resource does not have `webhookValidation` enabled
+WHEN a watched resource does not have `enableValidationWebhook` enabled
 THEN the webhook SHALL NOT register a validator for that resource type.
 
 ### Requirement: GVK Resolution
@@ -74,9 +74,9 @@ THEN the GVK SHALL be formatted as `"v1.Service"`.
 WHEN a webhook rule references `ingresses` in group `networking.k8s.io` version `v1`
 THEN the GVK SHALL be formatted as `"networking.k8s.io/v1.Ingress"`.
 
-### Requirement: Three-Phase Dry-Run Validation
+### Requirement: Dry-Run Render and HAProxy Validation
 
-The DryRunValidator SHALL perform validation in phases: (1) Template rendering using an overlay store that simulates the proposed resource change, (2) HAProxy syntax validation of the rendered configuration, and (3) Embedded test execution if validation tests are configured. A failure in any phase SHALL reject the admission request with a user-readable reason. At admission, the render-validate pipeline (phases 1 and 2) SHALL run synchronously via the DryRunValidator on the caller's context, which the webhook bounds to 9 seconds. The 30-second `DefaultValidationTimeout` applies only to the event-driven proposal path (ProposalValidator's `ProcessProposal`), which the webhook does NOT use.
+The DryRunValidator SHALL render with an overlay store that simulates the proposed resource change, then validate the rendered HAProxy configuration. A failure in either phase SHALL reject the admission request with a user-readable reason. The pipeline SHALL run synchronously on the caller's context, which the webhook bounds to 9 seconds. The 30-second `DefaultValidationTimeout` applies only to the event-driven proposal path (ProposalValidator's `ProcessProposal`), which the webhook does NOT use.
 
 #### Scenario: Rendering failure rejects admission
 
@@ -88,14 +88,9 @@ THEN the admission response SHALL be `Allowed: false` with the simplified render
 WHEN the rendered configuration fails HAProxy syntax validation
 THEN the admission response SHALL be `Allowed: false` with the simplified validation error as the reason.
 
-#### Scenario: Validation tests fail rejects admission
+#### Scenario: Render and validation pass allows admission
 
-WHEN the configuration passes rendering and syntax validation but an embedded validation test fails
-THEN the admission response SHALL be `Allowed: false` with a detailed message listing failed test names and assertion failures.
-
-#### Scenario: All phases pass allows admission
-
-WHEN template rendering succeeds, HAProxy syntax validation passes, and all embedded tests pass
+WHEN template rendering and HAProxy syntax validation pass
 THEN the admission response SHALL be `Allowed: true`.
 
 ### Requirement: Overlay Store Pattern
@@ -140,14 +135,19 @@ The DryRunValidator SHALL NOT run validation tests: the suite is a property of t
 WHEN a watched-resource admission request is validated
 THEN the dry-run render and `haproxy -c` SHALL run, and the configuration's validationTests SHALL NOT.
 
-### Requirement: Fail-Open Without Validator
+### Requirement: Fail-Closed Validator Availability
 
-When the DryRunValidator is nil (not configured), the webhook component SHALL allow all requests (fail-open) and log a warning. This occurs when no webhook rules are extracted from the configuration.
+The webhook SHALL deny a routed request when no DryRunValidator is available or its iteration has been cancelled. Missing validation machinery SHALL never turn into admission without validation.
 
-#### Scenario: Fail-open when no validator configured
+#### Scenario: Missing validator denies admission
 
 WHEN a validation request arrives and the DryRunValidator is nil
-THEN the webhook SHALL return `Allowed: true` and log a warning about the missing validator.
+THEN the webhook SHALL return `Allowed: false` and tell the caller to retry after controller initialization.
+
+#### Scenario: Retired iteration denies admission
+
+WHEN a validation request acquired an iteration's validator as that iteration is cancelled
+THEN the validator SHALL return a fail-closed unavailable decision instead of using the retired iteration's resources.
 
 ### Requirement: Basic Structural Validation
 
@@ -160,11 +160,11 @@ THEN the webhook SHALL return `Allowed: false` with reason `"metadata.name or me
 
 ### Requirement: Webhook Timeout
 
-The webhook component SHALL enforce a 10-second read/write timeout on the HTTPS server. The dry-run validation call to ValidateDirect SHALL use a 9-second context timeout, and the render-validate pipeline SHALL run synchronously on that 9-second context at admission. The 30-second `DefaultValidationTimeout` SHALL apply only to the event-driven proposal path (ProposalValidator's `ProcessProposal`), not to admission.
+The webhook component SHALL enforce a 10-second read timeout and a write timeout 2 seconds longer than its resource-validation deadline. The dry-run validation call to ValidateDirect SHALL use a 9-second context timeout by default, and the render-validate pipeline SHALL run synchronously on that context at admission. The 30-second `DefaultValidationTimeout` SHALL apply only to the event-driven proposal path (ProposalValidator's `ProcessProposal`), not to admission.
 
 #### Scenario: Server read/write timeout
 
-WHEN an admission request takes longer than 10 seconds to read or the response takes longer than 10 seconds to write
+WHEN an admission request exceeds the read deadline or its response exceeds the validation deadline plus 2 seconds
 THEN the server SHALL terminate the connection.
 
 #### Scenario: Validation timeout
@@ -174,7 +174,7 @@ THEN the context SHALL be cancelled and the validation SHALL fail.
 
 ### Requirement: Cert-Directory Gate
 
-The webhook server SHALL run if and only if a TLS certificate directory is configured (the WEBHOOK_CERT_DIR environment variable or the corresponding flag is non-empty) AND at least one watched resource sets `enableValidationWebhook: true`. The server port SHALL be 9443.
+The webhook server SHALL start when a TLS certificate directory is configured (the WEBHOOK_CERT_DIR environment variable or the corresponding flag is non-empty) and at least one watched resource sets `enableValidationWebhook: true`. Once started, its listener SHALL persist for the process lifetime. The server port SHALL be 9443.
 
 #### Scenario: Empty cert dir disables the webhook
 
@@ -184,7 +184,21 @@ The webhook server SHALL run if and only if a TLS certificate directory is confi
 #### Scenario: No watched-resource rules disables the webhook
 
 - **WHEN** WEBHOOK_CERT_DIR is set and no watched resource enables admission validation
-- **THEN** no webhook validators SHALL be constructed and webhook setup SHALL be skipped.
+- **THEN** no webhook validators SHALL be constructed; an existing process-owned listener SHALL stay bound with an empty fail-closed validator generation, while a listener that has never started SHALL remain disabled.
+
+### Requirement: Validator Generation Ownership
+
+Each iteration SHALL build a complete validator table and install it atomically on the process-owned server. A request SHALL acquire exactly one generation before the server releases its table lock. Replacing or retiring a generation SHALL wait for every request that acquired it, then release that generation's resources exactly once. New requests SHALL use the replacement while the old generation drains.
+
+#### Scenario: Configuration removes a webhook rule
+
+- **WHEN** a new iteration omits a GVK that the previous iteration validated
+- **THEN** the complete replacement table SHALL become visible atomically, and new requests for the removed GVK SHALL receive the fail-closed unregistered response.
+
+#### Scenario: Teardown drains active admission
+
+- **WHEN** iteration teardown replaces a generation while one of its validators is still running
+- **THEN** teardown SHALL wait for that request before closing the generation's pluggable-validator manager or other captured resources.
 
 ### Requirement: Legacy Config Webhook Removal at Upgrade
 
@@ -202,18 +216,18 @@ The internal watched-resource admission deadline (schema bootstrap plus render p
 #### Scenario: Slow validation produces a structured decision
 
 - **WHEN** an admission validation approaches the internal 9-second deadline
-- **THEN** the controller SHALL return a structured response (deny, or admit-with-warning for an incomplete test run) within the API server's 10-second timeout rather than letting the request fail at the transport level.
+- **THEN** the controller SHALL return a structured denial within the API server's 10-second timeout rather than letting the request fail at the transport level.
 
 ### Requirement: Startup Bind Gate
 
-Iteration startup SHALL block for up to 30 seconds on the webhook component's Listening() signal so the controller's readiness does not flip healthy before the TLS listener has bound — otherwise the API server's first AdmissionReview races the listener and bounces with a connection error. If the listener has not bound within 30 seconds, startup SHALL proceed with a warning and the underlying bind error SHALL surface through the component's error group.
+Iteration startup SHALL block on the webhook component's Listening() signal so the controller's readiness does not flip healthy before the TLS listener is bound and the iteration's complete validator generation is installed. A bind or generation-install failure SHALL fail the iteration; startup SHALL never proceed with an unavailable validation gate.
 
 #### Scenario: Readiness waits for the TLS bind
 
 - **WHEN** the webhook component is starting
-- **THEN** iteration setup SHALL NOT advance past the webhook stage until the TLS listener is bound, the iteration is cancelled, or 30 seconds elapse.
+- **THEN** iteration setup SHALL NOT advance past the webhook stage until the TLS listener is bound and its complete validator generation is installed, or the iteration is cancelled.
 
-#### Scenario: Bind timeout does not deadlock startup
+#### Scenario: Bind failure fails startup
 
-- **WHEN** the webhook listener fails to bind within 30 seconds
-- **THEN** startup SHALL proceed and the bind failure SHALL be reported through the error group instead of blocking the iteration forever.
+- **WHEN** the webhook listener fails to bind
+- **THEN** the iteration SHALL fail without setting controller readiness healthy.

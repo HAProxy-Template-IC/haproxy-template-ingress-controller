@@ -17,12 +17,48 @@ package controller
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
+
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
+
+type blockedLeaderComponent struct {
+	ready   chan struct{}
+	started chan struct{}
+	release chan struct{}
+}
+
+func newBlockedLeaderComponent() *blockedLeaderComponent {
+	return &blockedLeaderComponent{
+		ready:   make(chan struct{}),
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (*blockedLeaderComponent) Name() string {
+	return "blocked-leader"
+}
+
+func (c *blockedLeaderComponent) SubscriptionReady() <-chan struct{} {
+	return c.ready
+}
+
+func (c *blockedLeaderComponent) Start(ctx context.Context) error {
+	close(c.started)
+	<-ctx.Done()
+	<-c.release
+	return nil
+}
 
 // TestSuperviseElection covers the three exit shapes of the leader-election
 // loop. The critical case is "lease lost without shutdown": client-go's
@@ -62,3 +98,214 @@ func TestSuperviseElection(t *testing.T) {
 		assert.ErrorIs(t, err, electErr)
 	})
 }
+
+func TestLeaderCallbacksCancelIterationBeforeJoiningAfterLeaseLoss(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	registry := lifecycle.NewRegistry().WithLogger(logger)
+	component := newBlockedLeaderComponent()
+	registry.Register(component, true)
+	iterCtx, iterCancelCause := context.WithCancelCause(t.Context())
+	iterCancel := func() { iterCancelCause(nil) }
+	defer iterCancel()
+	group, _ := errgroup.WithContext(iterCtx)
+	callbacks, _ := makeLeaderCallbacks(leaderCallbackDeps{
+		registry:    registry,
+		logger:      logger,
+		cancel:      iterCancel,
+		cancelCause: iterCancelCause,
+		errGroup:    group,
+	})
+	leaderCtx, loseLeadership := context.WithCancel(iterCtx)
+
+	startedCallbackDone := make(chan struct{})
+	go func() {
+		callbacks.OnStartedLeading(leaderCtx)
+		close(startedCallbackDone)
+	}()
+	<-component.started
+	loseLeadership()
+
+	stoppedCallbackDone := make(chan struct{})
+	go func() {
+		callbacks.OnStoppedLeading()
+		close(stoppedCallbackDone)
+	}()
+	select {
+	case <-iterCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("leadership stop did not cancel the iteration before joining components")
+	}
+	var leadershipLost *leadershipLostError
+	require.ErrorAs(t, context.Cause(iterCtx), &leadershipLost)
+	select {
+	case <-startedCallbackDone:
+	case <-time.After(time.Second):
+		t.Fatal("leader startup remained blocked after authority was canceled")
+	}
+	select {
+	case <-stoppedCallbackDone:
+		t.Fatal("leadership stop returned before the component did")
+	default:
+	}
+
+	close(component.release)
+	select {
+	case <-stoppedCallbackDone:
+	case <-time.After(time.Second):
+		t.Fatal("leadership stop did not join component completion")
+	}
+	require.NoError(t, group.Wait())
+}
+
+func TestLeaderCallbacksRejectDelayedStartAfterStop(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	registry := lifecycle.NewRegistry().WithLogger(logger)
+	component := newBlockedLeaderComponent()
+	registry.Register(component, true)
+	ctx, cancelCause := context.WithCancelCause(t.Context())
+	cancel := func() { cancelCause(nil) }
+	defer cancel()
+	group, _ := errgroup.WithContext(ctx)
+	callbacks, _ := makeLeaderCallbacks(leaderCallbackDeps{
+		registry:    registry,
+		logger:      logger,
+		cancel:      cancel,
+		cancelCause: cancelCause,
+		errGroup:    group,
+	})
+
+	callbacks.OnStoppedLeading()
+	callbacks.OnStartedLeading(ctx)
+	select {
+	case <-component.started:
+		t.Fatal("delayed OnStartedLeading started a retired term")
+	default:
+	}
+	require.NoError(t, group.Wait())
+}
+
+func TestLeaderCallbacksPreserveEarlierIterationFailure(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	iterCtx, cancelCause := context.WithCancelCause(t.Context())
+	cancel := func() { cancelCause(nil) }
+	group, _ := errgroup.WithContext(iterCtx)
+	callbacks, _ := makeLeaderCallbacks(leaderCallbackDeps{
+		registry:    lifecycle.NewRegistry().WithLogger(logger),
+		logger:      logger,
+		cancel:      cancel,
+		cancelCause: cancelCause,
+		errGroup:    group,
+	})
+	failure := errors.New("required component failed")
+	cancelCause(failure)
+
+	callbacks.OnStoppedLeading()
+
+	require.ErrorIs(t, context.Cause(iterCtx), failure)
+	require.NoError(t, group.Wait())
+}
+
+func TestSuperviseElectionPropagatesCallbackLeadershipLoss(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	iterCtx, cancelCause := context.WithCancelCause(t.Context())
+	cancel := func() { cancelCause(nil) }
+	group, _ := errgroup.WithContext(iterCtx)
+	callbacks, _ := makeLeaderCallbacks(leaderCallbackDeps{
+		registry:    lifecycle.NewRegistry().WithLogger(logger),
+		logger:      logger,
+		cancel:      cancel,
+		cancelCause: cancelCause,
+		errGroup:    group,
+	})
+
+	err := superviseElection(iterCtx, func(context.Context) error {
+		callbacks.OnStoppedLeading()
+		return nil
+	}, logger)
+
+	var leadershipLost *leadershipLostError
+	require.ErrorAs(t, err, &leadershipLost)
+	require.ErrorAs(t, context.Cause(iterCtx), &leadershipLost)
+	require.NoError(t, group.Wait())
+}
+
+func TestStandaloneCanceledHandoffDoesNotResumeEventBus(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	bus := busevents.NewEventBus(2)
+	received := bus.Subscribe("receiver", 2)
+	bus.Start()
+	iterCtx, cancelCause := context.WithCancelCause(t.Context())
+	cancel := func() { cancelCause(nil) }
+	group, groupCtx := errgroup.WithContext(iterCtx)
+	setup := &componentSetup{
+		Bus:         bus,
+		Registry:    lifecycle.NewRegistry().WithLogger(logger),
+		IterCtx:     groupCtx,
+		Cancel:      cancel,
+		CancelCause: cancelCause,
+		ErrGroup:    group,
+	}
+	failure := errors.New("required component failed")
+	cancelCause(failure)
+
+	_, err := setupLeaderElection(setup, &coreconfig.Config{}, nil, logger)
+
+	require.ErrorIs(t, err, failure)
+	bus.Publish(deliveryTestEvent{timestamp: time.Now()})
+	select {
+	case event := <-received:
+		t.Fatalf("delivered %T after canceled standalone handoff", event)
+	default:
+	}
+	require.NoError(t, group.Wait())
+}
+
+func TestTeardownCancelsLeaderStartupBeforeWaiting(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	registry := lifecycle.NewRegistry().WithLogger(logger)
+	component := newBlockedLeaderComponent()
+	registry.Register(component, true)
+	iterCtx, cancelCause := context.WithCancelCause(t.Context())
+	cancel := func() { cancelCause(nil) }
+	group, groupCtx := errgroup.WithContext(iterCtx)
+	callbacks, state := makeLeaderCallbacks(leaderCallbackDeps{
+		registry:    registry,
+		logger:      logger,
+		cancel:      cancel,
+		cancelCause: cancelCause,
+		errGroup:    group,
+	})
+	setup := &componentSetup{
+		IterCtx:     groupCtx,
+		Cancel:      cancel,
+		CancelCause: cancelCause,
+		ErrGroup:    group,
+		LeaderState: state,
+	}
+
+	startedCallbackDone := make(chan struct{})
+	go func() {
+		callbacks.OnStartedLeading(groupCtx)
+		close(startedCallbackDone)
+	}()
+	<-component.started
+	teardownDone := make(chan error, 1)
+	go func() {
+		teardownDone <- teardownIteration(setup, logger)
+	}()
+	select {
+	case <-startedCallbackDone:
+	case <-time.After(time.Second):
+		t.Fatal("iteration teardown did not cancel leader startup")
+	}
+	select {
+	case <-teardownDone:
+		t.Fatal("iteration teardown passed an active leader component")
+	default:
+	}
+
+	close(component.release)
+	require.NoError(t, <-teardownDone)
+}
+
+var _ lifecycle.SubscriptionReadySignaler = (*blockedLeaderComponent)(nil)

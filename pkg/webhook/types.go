@@ -43,12 +43,12 @@
 //	})
 //
 //	// Register validator with full context
-//	server.RegisterValidator("networking.k8s.io/v1.Ingress", func(ctx *webhook.ValidationContext) (bool, string, error) {
+//	server.RegisterValidator("networking.k8s.io/v1.Ingress", func(ctx *webhook.ValidationContext) (bool, string, []string, error) {
 //	    // Validation logic with access to operation type and old/new objects
 //	    if ctx.Operation == "UPDATE" && ctx.OldObject != nil {
 //	        // Implement immutability checks
 //	    }
-//	    return true, "", nil
+//	    return true, "", nil, nil
 //	})
 //
 //	// Start server

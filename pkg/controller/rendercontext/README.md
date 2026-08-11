@@ -14,6 +14,7 @@ The builder also produces a `*FileRegistry` (templates can register dynamically 
 import "gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 
 builder := rendercontext.NewBuilder(
+    ctx,
     cfg,
     pathResolver,
     logger,
@@ -28,7 +29,7 @@ res := builder.Build()
 // res.FileRegistry, res.StatusPatchCollector, res.RenderedResourceCollector are also available
 ```
 
-`cfg`, `pathResolver`, and `logger` are required positional arguments; everything else is supplied through functional options. Omitting an option just leaves the corresponding context key unset (templates that try to read it will see `nil`).
+`ctx`, `cfg`, `pathResolver`, and `logger` are required positional arguments. The context cancels API-backed store reads when the render ends. Everything else is supplied through functional options. Omitting an option just leaves the corresponding context key unset (templates that try to read it will see `nil`).
 
 ## Context Keys
 

@@ -46,7 +46,7 @@ The store SHALL keep two content versions per URL: accepted (validated, producti
 
 ### Requirement: Refresh Timers
 
-The HTTPStore adapter SHALL run a refresh timer per registered URL, firing at the URL's configured delay and re-arming after each refresh. The adapter is an all-replica component (every replica keeps its cache warm so a leadership transition does not start cold). Timers SHALL be stopped on shutdown and for evicted URLs; a refresh firing for an already-evicted URL SHALL be skipped. Event handling SHALL recover per event from panics so a single bad validation event cannot kill the adapter loop.
+The HTTPStore adapter SHALL run a refresh timer per registered URL, firing at the URL's configured delay and re-arming after each refresh. The adapter is an all-replica component (every replica keeps its cache warm so a leadership transition does not start cold). Timers SHALL be stopped on shutdown and for evicted URLs; a refresh firing for an already-evicted URL SHALL be skipped. A refresh callback SHALL commit only to the cache entry and accepted-content revision it fetched. A callback retired by timer replacement SHALL discard only the exact pending revision it created and promptly wake the replacement timer. Cache eviction and timer retirement SHALL be atomic with respect to registration of a refetched URL. Event handling SHALL recover per event from panics so a single bad validation event cannot kill the adapter loop.
 
 #### Scenario: Timer re-arms after refresh
 
@@ -58,19 +58,39 @@ The HTTPStore adapter SHALL run a refresh timer per registered URL, firing at th
 - **WHEN** the controller runs multiple replicas
 - **THEN** each replica SHALL run its own refresh timers and maintain its own cache
 
+#### Scenario: Retired refresh cannot overwrite replacement state
+
+- **WHEN** a refresh completes after its timer or cache entry was replaced
+- **THEN** it SHALL NOT commit over the replacement, and any exact pending revision it already created SHALL be discarded before the active timer is re-driven
+
+#### Scenario: Refetch during eviction retains a timer
+
+- **WHEN** a URL is refetched while eviction retires its previous cache entry and timer
+- **THEN** registration SHALL install a timer for the refetched entry after the old timer is retired
+
 ### Requirement: Promote-or-Reject Validation Flow
 
-When a refresh produces changed content, the adapter SHALL publish a ProposalValidationRequestedEvent carrying an HTTP overlay of the pending state (recording the request ID as the pending validation), plus an HTTPResourceUpdatedEvent for observability. On the ProposalValidationCompletedEvent whose request ID matches the pending one — non-matching IDs SHALL be ignored — the adapter SHALL either promote or reject every URL with pending content: on Valid=true, promote pending to accepted, publish an HTTPResourceAcceptedEvent per URL, and publish a coalescible ReconciliationTriggeredEvent with reason "http_content_validated" so the accepted content reaches HAProxy; on Valid=false, discard every pending version while preserving accepted versions, log the validation phase and error, and identify each rejected URL with the rejected and retained checksums. The pending-validation ID SHALL be checked and cleared atomically so a duplicate completion cannot double-process.
+When a refresh produces changed content, the adapter SHALL publish an HTTPResourceUpdatedEvent and validate one active immutable batch of pending URL content, checksums, and revision tokens through ProposalValidationRequestedEvent. A refresh completed while another batch is active SHALL remain pending for a later batch. On the matching ProposalValidationCompletedEvent — non-matching IDs SHALL be ignored — the adapter SHALL finalize only URL versions that belong to that batch: on Valid=true, promote them, publish an HTTPResourceAcceptedEvent per URL, and publish one coalescible ReconciliationTriggeredEvent with reason "http_content_validated"; on Valid=false, discard them while preserving accepted versions and log the validation phase and error. After either verdict, any remaining pending content SHALL start the next validation batch. A replacement of a URL already in the active batch SHALL retire that batch and start a replacement; a late verdict for the retired request SHALL change nothing. The active request ID and batch SHALL be checked and cleared atomically so a duplicate or stale completion cannot finalize another batch.
 
 #### Scenario: Valid content is promoted and reconciled
 
 - **WHEN** the matching ProposalValidationCompletedEvent arrives with Valid=true
-- **THEN** each pending URL SHALL be promoted to accepted, an HTTPResourceAcceptedEvent published per URL, and one coalescible reconciliation triggered
+- **THEN** each URL version in that validation batch SHALL be promoted to accepted, an HTTPResourceAcceptedEvent published per URL, and one coalescible reconciliation triggered
 
 #### Scenario: Invalid content is rejected without touching accepted
 
 - **WHEN** the matching completion arrives with Valid=false
-- **THEN** each pending URL's content SHALL be discarded, the accepted content SHALL remain in use, and rejection diagnostics SHALL identify the URL and the rejected and retained checksums
+- **THEN** each URL version in that validation batch SHALL be discarded, the accepted content SHALL remain in use, and rejection diagnostics SHALL identify the URL and the rejected and retained checksums
+
+#### Scenario: Later refresh waits for its own verdict
+
+- **WHEN** another URL becomes pending after the active validation batch was captured
+- **THEN** the active batch's verdict SHALL NOT finalize that URL, and the adapter SHALL validate it in a later batch
+
+#### Scenario: Lost batch is superseded
+
+- **WHEN** a URL receives a new pending revision after its active validation verdict was lost
+- **THEN** the adapter SHALL retire the old batch, validate the replacement revision, and ignore any late old verdict
 
 #### Scenario: Foreign validation results ignored
 

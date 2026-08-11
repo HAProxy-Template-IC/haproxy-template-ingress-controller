@@ -49,6 +49,11 @@ func defaultCapabilities() dataplane.Capabilities {
 
 func createTestPipeline(t *testing.T, template string) *pipeline.Pipeline {
 	t.Helper()
+	return createTestPipelineWithOutputValidator(t, template, nil)
+}
+
+func createTestPipelineWithOutputValidator(t *testing.T, template string, outputValidator pipeline.RenderedOutputValidator) *pipeline.Pipeline {
+	t.Helper()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -72,9 +77,10 @@ func createTestPipeline(t *testing.T, template string) *pipeline.Pipeline {
 	})
 
 	return pipeline.New(&pipeline.PipelineConfig{
-		Renderer:  renderSvc,
-		Validator: validationSvc,
-		Logger:    slog.Default(),
+		Renderer:        renderSvc,
+		Validator:       validationSvc,
+		OutputValidator: outputValidator,
+		Logger:          slog.Default(),
 	})
 }
 

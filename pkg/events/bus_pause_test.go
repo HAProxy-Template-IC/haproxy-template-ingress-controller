@@ -9,12 +9,26 @@
 package events
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type cancelBetweenStartChecks struct {
+	context.Context
+	checks atomic.Int32
+}
+
+func (c *cancelBetweenStartChecks) Err() error {
+	if c.checks.Add(1) > 1 {
+		return context.Canceled
+	}
+	return nil
+}
 
 // EventBus.Pause is the leadership-transition coordination primitive
 // that swaps the bus back to buffering mode so events published
@@ -136,6 +150,24 @@ func TestEventBus_Pause_PublishStartReplaysBufferedEvents(t *testing.T) {
 				"contract for leadership transitions")
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("expected buffered event to fire after Start, got nothing")
+	}
+}
+
+func TestEventBus_StartContextStopsBeforeReplayWhenAuthorityExpires(t *testing.T) {
+	bus := NewEventBus(1)
+	sub := bus.Subscribe("test-sub", 1)
+	bus.Start()
+	bus.Pause()
+	bus.Publish(testEvent{message: "expired-term"})
+
+	ctx := &cancelBetweenStartChecks{Context: context.Background()}
+	require.False(t, bus.StartContext(ctx))
+	require.False(t, bus.started)
+	require.Len(t, bus.preStartBuffer, 1)
+	select {
+	case event := <-sub:
+		t.Fatalf("expired-term event was replayed: %#v", event)
+	default:
 	}
 }
 

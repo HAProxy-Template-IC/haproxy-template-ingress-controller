@@ -59,49 +59,8 @@ func New(
 		leaseNamespace: config.LeaseNamespace,
 	}
 
-	// Wrap callbacks to publish events for observability
-	wrappedCallbacks := k8sleaderelection.Callbacks{
-		OnStartedLeading: func(ctx context.Context) {
-			// PAUSE - temporarily buffer events during leadership transition
-			// This prevents race conditions where leader-only components miss
-			// events published before they finish subscribing.
-			c.eventBus.Pause()
+	wrappedCallbacks := c.wrapCallbacks(config.Identity, callbacks)
 
-			// Publish event (buffered while paused)
-			c.eventBus.Publish(events.NewBecameLeaderEvent(config.Identity))
-
-			// Execute user callback (starts leader-only components)
-			if callbacks.OnStartedLeading != nil {
-				callbacks.OnStartedLeading(ctx)
-			}
-
-			// RESUME - replay buffered events to all subscribers including
-			// the newly started leader-only components
-			c.eventBus.Start()
-		},
-		OnStoppedLeading: func() {
-			// Publish event BEFORE executing callback
-			// Note: We don't have the reason at this point, so we use a generic message
-			c.eventBus.Publish(events.NewLostLeadershipEvent(config.Identity, "lease_lost"))
-
-			// Execute user callback
-			if callbacks.OnStoppedLeading != nil {
-				callbacks.OnStoppedLeading()
-			}
-		},
-		OnNewLeader: func(identity string) {
-			// Publish event
-			isSelf := identity == config.Identity
-			c.eventBus.Publish(events.NewNewLeaderObservedEvent(identity, isSelf))
-
-			// Execute user callback
-			if callbacks.OnNewLeader != nil {
-				callbacks.OnNewLeader(identity)
-			}
-		},
-	}
-
-	// Create pure elector with wrapped callbacks
 	elector, err := k8sleaderelection.New(config, clientset, wrappedCallbacks, logger)
 	if err != nil {
 		return nil, fmt.Errorf("creating elector: %w", err)
@@ -110,6 +69,47 @@ func New(
 	c.elector = elector
 
 	return c, nil
+}
+
+func (c *Component) wrapCallbacks(identity string, callbacks k8sleaderelection.Callbacks) k8sleaderelection.Callbacks {
+	return k8sleaderelection.Callbacks{
+		OnStartedLeading: func(ctx context.Context) {
+			// PAUSE - temporarily buffer events during leadership transition
+			// This prevents race conditions where leader-only components miss
+			// events published before they finish subscribing.
+			c.eventBus.Pause()
+
+			// Publish event (buffered while paused)
+			c.eventBus.Publish(events.NewBecameLeaderEvent(identity))
+
+			// Execute user callback (starts leader-only components)
+			if callbacks.OnStartedLeading != nil {
+				callbacks.OnStartedLeading(ctx)
+			}
+
+			c.eventBus.StartContext(ctx)
+		},
+		OnStoppedLeading: func() {
+			// Publish event BEFORE executing callback
+			// Note: We don't have the reason at this point, so we use a generic message
+			c.eventBus.Publish(events.NewLostLeadershipEvent(identity, "lease_lost"))
+
+			// Execute user callback
+			if callbacks.OnStoppedLeading != nil {
+				callbacks.OnStoppedLeading()
+			}
+		},
+		OnNewLeader: func(identity string) {
+			// Publish event
+			isSelf := identity == c.identity
+			c.eventBus.Publish(events.NewNewLeaderObservedEvent(identity, isSelf))
+
+			// Execute user callback
+			if callbacks.OnNewLeader != nil {
+				callbacks.OnNewLeader(identity)
+			}
+		},
+	}
 }
 
 // Start starts the leader election loop.

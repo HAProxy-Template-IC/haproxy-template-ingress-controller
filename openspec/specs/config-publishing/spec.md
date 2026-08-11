@@ -31,7 +31,7 @@ A DeployedConfigPublishRequest — carrying inline the exact bytes and content c
 
 ### Requirement: Dual Leading-Edge Throttles
 
-The publisher SHALL gate spec writes and status-subresource writes through two SEPARATE leading-edge throttles, both at the config-publish interval (default 10 seconds; the value 0 disables throttling). Leading-edge semantics: the first write after an idle period fires immediately; writes submitted inside the refractory window are buffered (latest wins per slot for spec writes, per-pod coalescing for status writes) and flushed once when the window expires. Status writes need their own throttle because each status update writes the full object to etcd even though only the status changed. Buffered publishes SHALL be flushed on shutdown, detached from the cancelled lifecycle context so the final write is not aborted.
+The publisher SHALL gate spec writes and status-subresource writes through two SEPARATE leading-edge throttles, both at the config-publish interval (default 10 seconds; the value 0 disables throttling). Leading-edge semantics: the first write after an idle period fires immediately; writes submitted inside the refractory window are buffered (latest wins per slot for spec writes, per-pod coalescing for status writes) and flushed once when the window expires. Status writes need their own throttle because each status update writes the full object to etcd even though only the status changed. On lost leadership or shutdown, buffered work SHALL be discarded and no API write SHALL outlive the cancelled lifecycle context.
 
 #### Scenario: First publish after idle is immediate
 

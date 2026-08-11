@@ -37,7 +37,7 @@ import (
 // reconcile mutates the field, the wrong hash gets recorded as "deployed",
 // and the next reconcile producing that hash incorrectly skips.
 func (s *DeploymentScheduler) scheduleOrQueue(
-	_ context.Context,
+	ctx context.Context,
 	config string,
 	auxFiles *dataplane.AuxiliaryFiles,
 	parsedConfig *parser.StructuredConfig,
@@ -48,37 +48,17 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 	coalescible bool,
 	contentChecksum string,
 ) {
-	// Snapshot the diff baseline (the last-DISPATCHED render) under a short lock.
 	s.schedulerMutex.Lock()
-	prevParsed := s.lastDispatchedParsed
+	if contextCancelled(ctx) {
+		s.schedulerMutex.Unlock()
+		return
+	}
+	s.workRevision++
+	workRevision := s.workRevision
 	s.schedulerMutex.Unlock()
 
-	// Compute the render diff LOCK-FREE — it is O(config), pod-independent, and
-	// the same for every endpoint. The lane is decided from this diff: a render
-	// whose diff vs the last-dispatched config is purely runtime-eligible server
-	// fields takes the runtime-raw lane; anything structural takes the structural
-	// lane.
-	updates, err := dataplane.ComputeRuntimeServerUpdates(prevParsed, parsedConfig)
-
-	s.schedulerMutex.Lock()
-	defer s.schedulerMutex.Unlock()
-
-	// If the baseline advanced while we computed the diff (another dispatch landed
-	// concurrently), recompute against the now-current baseline so the lane
-	// reflects what THIS render actually changes relative to what's in flight.
-	if s.lastDispatchedParsed != prevParsed {
-		prevParsed = s.lastDispatchedParsed
-		updates, err = dataplane.ComputeRuntimeServerUpdates(prevParsed, parsedConfig)
-	}
-
-	// Latest-wins: overwrite the single pending slot with this render and its lane.
-	// The deploy loop grabs the newest pending; the single slot + latest-wins is
-	// the entire mechanism by which the two lanes never coexist — a structural
-	// render supersedes a pending runtime-raw, and while a structural is pending
-	// every later render is structural too (its diff vs the unchanged baseline
-	// still contains the structural op). There is no idle/in-flight branching and
-	// no goroutine spawn here — the ONE runDeployLoop goroutine owns all timing.
-	s.state.pending = &scheduledDeployment{
+	s.installPending(ctx, &scheduledDeployment{
+		workRevision:    workRevision,
 		config:          config,
 		auxFiles:        auxFiles,
 		parsedConfig:    parsedConfig,
@@ -88,13 +68,62 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 		statusPatches:   statusPatches,
 		coalescible:     coalescible,
 		contentChecksum: contentChecksum,
-		lane:            classifyLane(prevParsed, updates, err),
-		runtimeUpdates:  updates,
+	})
+}
+
+func (s *DeploymentScheduler) installPending(ctx context.Context, dep *scheduledDeployment) {
+	s.schedulerMutex.Lock()
+	if !s.pendingRevisionCurrentLocked(ctx, dep) {
+		s.schedulerMutex.Unlock()
+		return
 	}
+	prevParsed := s.lastDispatchedParsed
+	s.schedulerMutex.Unlock()
+
+	updates, err := dataplane.ComputeRuntimeServerUpdates(prevParsed, dep.parsedConfig)
+
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+	if !s.pendingRevisionCurrentLocked(ctx, dep) {
+		return
+	}
+
+	// If the baseline advanced while we computed the diff (another dispatch landed
+	// concurrently), recompute against the now-current baseline so the lane
+	// reflects what THIS render actually changes relative to what's in flight.
+	if s.lastDispatchedParsed != prevParsed {
+		prevParsed = s.lastDispatchedParsed
+		updates, err = dataplane.ComputeRuntimeServerUpdates(prevParsed, dep.parsedConfig)
+		if !s.pendingRevisionCurrentLocked(ctx, dep) {
+			return
+		}
+	}
+
+	// Latest-wins: overwrite the single pending slot with this render and its lane.
+	// The deploy loop grabs the newest pending; the single slot + latest-wins is
+	// the entire mechanism by which the two lanes never coexist — a structural
+	// render supersedes a pending runtime-raw, and while a structural is pending
+	// every later render is structural too (its diff vs the unchanged baseline
+	// still contains the structural op). There is no idle/in-flight branching and
+	// no goroutine spawn here — the ONE runDeployLoop goroutine owns all timing.
+	dep.lane = classifyLane(prevParsed, updates, err)
+	dep.runtimeUpdates = updates
+	s.state.pending = dep
 
 	// Wake the deploy loop to (re)evaluate pending. Signalling under the lock is
 	// fine — signalLoop is a non-blocking cap-1 send.
 	s.signalLoop()
+}
+
+func (s *DeploymentScheduler) pendingRevisionCurrentLocked(ctx context.Context, dep *scheduledDeployment) bool {
+	if contextCancelled(ctx) || dep.workRevision != s.workRevision {
+		return false
+	}
+	return dep.retryGeneration == 0 || (!s.retryStopped && dep.retryGeneration == s.retryGeneration)
+}
+
+func contextCancelled(ctx context.Context) bool {
+	return ctx != nil && ctx.Err() != nil
 }
 
 // classifyLane decides the apply lane for a render given its diff (updates)
@@ -118,9 +147,18 @@ func classifyLane(prevParsed *parser.StructuredConfig, updates *dataplane.Runtim
 // sleeps (and the resulting reload bursts under churn) are structurally
 // impossible. Runs for the whole leadership term; exits on ctx.Done().
 func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
-	defer close(s.loopDone)
+	defer func() {
+		s.schedulerMutex.Lock()
+		s.workRevision++
+		s.state.pending = nil
+		s.schedulerMutex.Unlock()
+		close(s.loopDone)
+	}()
 
 	for {
+		if contextCancelled(ctx) {
+			return
+		}
 		// 1. Wait for pending work.
 		s.schedulerMutex.Lock()
 		hasPending := s.state.pending != nil
@@ -211,7 +249,7 @@ func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 // across pods. Same wire behavior as before (one skip_version push + actions);
 // only the body content differs.
 func (s *DeploymentScheduler) applyRuntimeSubset(ctx context.Context, dep *scheduledDeployment) {
-	if dep == nil || dep.runtimeUpdates.ServerOpCount() == 0 {
+	if contextCancelled(ctx) || dep == nil || dep.runtimeUpdates.ServerOpCount() == 0 {
 		return
 	}
 
@@ -277,6 +315,9 @@ func (s *DeploymentScheduler) applyRuntimeSubset(ctx context.Context, dep *sched
 //
 // Returns false only on ctx cancellation.
 func (s *DeploymentScheduler) waitDeployInterval(ctx context.Context) bool {
+	if contextCancelled(ctx) {
+		return false
+	}
 	s.schedulerMutex.Lock()
 	pending := s.state.pending
 	var wait time.Duration
@@ -295,7 +336,7 @@ func (s *DeploymentScheduler) waitDeployInterval(ctx context.Context) bool {
 	s.applyRuntimeSubset(ctx, pending)
 
 	if wait <= 0 {
-		return true
+		return !contextCancelled(ctx)
 	}
 	s.logger.Debug("Enforcing minimum deployment interval",
 		"sleep_duration_ms", wait.Milliseconds(),
@@ -306,7 +347,7 @@ func (s *DeploymentScheduler) waitDeployInterval(ctx context.Context) bool {
 	for {
 		select {
 		case <-timer.C:
-			return true
+			return !contextCancelled(ctx)
 		case <-s.pendingSignal:
 			// A newer render arrived mid-interval (latest-wins already swapped
 			// state.pending). Apply its runtime subset now so an endpoint change
@@ -334,8 +375,23 @@ func (s *DeploymentScheduler) waitDeployInterval(ctx context.Context) bool {
 // Both lanes write lastDispatchedParsed + lastDispatchedConfig together under
 // schedulerMutex.
 func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *scheduledDeployment) bool {
+	if contextCancelled(ctx) {
+		return false
+	}
+
+	s.schedulerMutex.Lock()
+	current := s.pendingRevisionCurrentLocked(ctx, dep)
+	s.schedulerMutex.Unlock()
+	if !current {
+		return !contextCancelled(ctx)
+	}
+
 	if dep.lane == laneRuntimeRaw {
 		s.schedulerMutex.Lock()
+		if !s.pendingRevisionCurrentLocked(ctx, dep) {
+			s.schedulerMutex.Unlock()
+			return !contextCancelled(ctx)
+		}
 		s.lastDispatchedParsed = dep.parsedConfig
 		s.lastDispatchedConfig = dep.config
 		// This lane reloads nothing: the push body plus its runtime actions ARE
@@ -374,6 +430,10 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 	// awaitCompletion; lastDeploymentEndTime advances only on this lane's
 	// completion (the interval anchor).
 	s.schedulerMutex.Lock()
+	if !s.pendingRevisionCurrentLocked(ctx, dep) {
+		s.schedulerMutex.Unlock()
+		return !contextCancelled(ctx)
+	}
 	s.state.deployInFlight = true
 	s.state.deploymentStartTime = time.Now()
 	s.state.activeCorrelationID = dep.correlationID
@@ -387,11 +447,26 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 	case <-s.completed:
 	default:
 	}
+	if contextCancelled(ctx) {
+		s.clearDispatchedPending(dep)
+		return false
+	}
 
 	// Publish exactly one DeploymentScheduledEvent, then wait for its completion /
 	// timeout (both signal s.completed) / shutdown.
 	s.publishScheduled(dep)
 	return s.awaitCompletion(ctx)
+}
+
+func (s *DeploymentScheduler) clearDispatchedPending(dep *scheduledDeployment) {
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+	if s.state.activeCorrelationID != dep.correlationID {
+		return
+	}
+	s.state.deployInFlight = false
+	s.state.deploymentStartTime = time.Time{}
+	s.state.activeCorrelationID = ""
 }
 
 // awaitCompletion blocks until the in-flight structural deploy completes or times

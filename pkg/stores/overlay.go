@@ -2,6 +2,8 @@
 package stores
 
 import (
+	"context"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ktypes "k8s.io/apimachinery/pkg/types"
@@ -127,7 +129,12 @@ func NewCompositeStore(base Store, overlay *StoreOverlay) *CompositeStore {
 //   - Modifications (replacing base resources with same keys)
 //   - Additions that match the keys
 func (s *CompositeStore) Get(keys ...string) ([]any, error) {
-	baseResults, err := s.base.Get(keys...)
+	return s.GetContext(context.Background(), keys...)
+}
+
+// GetContext returns the overlaid keyed view while propagating cancellation to the base store.
+func (s *CompositeStore) GetContext(ctx context.Context, keys ...string) ([]any, error) {
+	baseResults, err := getWithContext(ctx, s.base, keys...)
 	if err != nil {
 		return nil, err
 	}
@@ -159,13 +166,33 @@ func (s *CompositeStore) Get(keys ...string) ([]any, error) {
 
 // List returns all resources from the merged view.
 func (s *CompositeStore) List() ([]any, error) {
+	return s.ListContext(context.Background())
+}
+
+// ListContext returns the overlaid full view while propagating cancellation to the base store.
+func (s *CompositeStore) ListContext(ctx context.Context) ([]any, error) {
 	// Get all base resources
-	baseResults, err := s.base.List()
+	baseResults, err := listWithContext(ctx, s.base)
 	if err != nil {
 		return nil, err
 	}
+	return s.mergeList(baseResults), nil
+}
 
-	// Filter out deleted and modified resources
+// ListCached returns the overlaid view of any warm base-store entries.
+func (s *CompositeStore) ListCached() ([]any, error) {
+	var baseResults []any
+	if lister, ok := s.base.(interface{ ListCached() ([]any, error) }); ok {
+		var err error
+		baseResults, err = lister.ListCached()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return s.mergeList(baseResults), nil
+}
+
+func (s *CompositeStore) mergeList(baseResults []any) []any {
 	result := make([]any, 0, len(baseResults)+len(s.overlay.Additions))
 	for _, res := range baseResults {
 		if !s.isDeleted(res) && !s.isModified(res) {
@@ -179,7 +206,7 @@ func (s *CompositeStore) List() ([]any, error) {
 	// Add all additions (use pre-converted resources)
 	result = append(result, s.overlay.convertedAdditions...)
 
-	return result, nil
+	return result
 }
 
 // Add is not supported on CompositeStore.

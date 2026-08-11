@@ -16,15 +16,100 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
+
+type eventSourceDelegate struct {
+	mu     sync.RWMutex
+	source debug.EventSource
+}
+
+func (d *eventSourceDelegate) Set(source debug.EventSource) {
+	d.mu.Lock()
+	d.source = source
+	d.mu.Unlock()
+}
+
+func (d *eventSourceDelegate) GetLast(limit int) []debug.Event {
+	d.mu.RLock()
+	source := d.source
+	d.mu.RUnlock()
+	if source == nil {
+		return nil
+	}
+	return source.GetLast(limit)
+}
+
+func (d *eventSourceDelegate) FindByCorrelationID(correlationID string) []debug.Event {
+	d.mu.RLock()
+	source := d.source
+	d.mu.RUnlock()
+	if source == nil {
+		return nil
+	}
+	return source.FindByCorrelationID(correlationID)
+}
+
+func (p *persistentInfra) repointEventSource(source debug.EventSource) *eventSourceDelegate {
+	if p.eventSource == nil {
+		p.eventSource = &eventSourceDelegate{}
+	}
+	p.eventSource.Set(source)
+	return p.eventSource
+}
+
+func (p *persistentInfra) startProcessServer(
+	ctx context.Context,
+	name string,
+	start func(context.Context) error,
+	logger *slog.Logger,
+) *persistentServerRun {
+	run := newPersistentServerRun()
+	go func() {
+		err := start(ctx)
+		unexpected := ctx.Err() == nil
+		if err == nil && unexpected {
+			err = errors.New("server exited without an error")
+		}
+		run.finish(err)
+		if unexpected {
+			logger.Error("Persistent server stopped", "server", name, "error", err)
+			if p.processCancel != nil {
+				p.processCancel()
+			}
+		}
+	}()
+	return run
+}
+
+func waitForPersistentServerBind(
+	ctx context.Context,
+	name string,
+	listening <-chan struct{},
+	run *persistentServerRun,
+) error {
+	select {
+	case <-listening:
+		return nil
+	case <-run.Done():
+		err := run.Wait()
+		if err == nil {
+			err = errors.New("server exited before binding")
+		}
+		return fmt.Errorf("%s server failed before binding: %w", name, err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // createEarlyHealthChecker creates a health checker that reports
 // unhealthy until config is loaded AND the staged startup has finished.
@@ -132,31 +217,39 @@ func startEarlyInfrastructureServers(
 	state *configState,
 	eventBuffer *debug.EventBuffer,
 	logger *slog.Logger,
-) {
+) error {
 	// Copy server reference to setup for later use by other functions
 	setup.IntrospectionServer = infra.IntrospectionServer
+	var eventSource *eventSourceDelegate
+	if infra.IntrospectionServer != nil {
+		eventSource = infra.repointEventSource(eventBuffer)
+	}
 
-	// Set health checker to use this iteration's state
-	infra.IntrospectionServer.SetHealthChecker(createEarlyHealthChecker(state, infra))
-
-	if !infra.serverStarted {
+	if infra.IntrospectionServer != nil && !infra.serverStarted {
 		// First iteration: set up and start the introspection server
 		logger.Info("Starting infrastructure servers (first iteration)")
 
 		// Register /debug/events handler BEFORE Setup()
 		// EventBuffer was created before this function to ensure proper subscription ordering
-		debug.RegisterEventsHandler(infra.IntrospectionServer, eventBuffer)
+		debug.RegisterEventsHandler(infra.IntrospectionServer, eventSource)
+		infra.IntrospectionServer.SetHealthChecker(createEarlyHealthChecker(state, infra))
 
 		// Setup routes (including custom handlers) - must be called before Serve()
 		infra.IntrospectionServer.Setup()
 
 		// Start serving HTTP requests with the main context (not iteration context)
 		// This ensures the server stays running across iterations
-		go func() {
-			if err := infra.IntrospectionServer.Serve(ctx); err != nil {
-				logger.Error("Introspection server failed", "error", err, "port", debugPort)
-			}
-		}()
+		infra.introspectionRun = infra.startProcessServer(
+			ctx, "introspection", infra.IntrospectionServer.Serve, logger,
+		)
+		if err := waitForPersistentServerBind(
+			ctx,
+			"introspection",
+			infra.IntrospectionServer.Listening(),
+			infra.introspectionRun,
+		); err != nil {
+			return err
+		}
 
 		logger.Info("Introspection HTTP server started (early startup)",
 			"port", debugPort,
@@ -164,7 +257,8 @@ func startEarlyInfrastructureServers(
 			"endpoints", "/healthz, /debug/vars, /debug/pprof, /debug/events")
 
 		infra.serverStarted = true
-	} else {
+	} else if infra.IntrospectionServer != nil {
+		infra.IntrospectionServer.SetHealthChecker(createEarlyHealthChecker(state, infra))
 		// Subsequent iterations: health checker already updated above
 		logger.Info("Reusing existing infrastructure servers (reinitialization)")
 	}
@@ -174,11 +268,15 @@ func startEarlyInfrastructureServers(
 		infra.MetricsServer.SetRegistry(setup.MetricsRegistry)
 
 		if !infra.metricsServerStarted {
-			go func() {
-				if err := infra.MetricsServer.Start(ctx); err != nil {
-					logger.Error("Metrics server failed", "error", err)
-				}
-			}()
+			infra.metricsRun = infra.startProcessServer(ctx, "metrics", infra.MetricsServer.Start, logger)
+			if err := waitForPersistentServerBind(
+				ctx,
+				"metrics",
+				infra.MetricsServer.Listening(),
+				infra.metricsRun,
+			); err != nil {
+				return err
+			}
 			logger.Info("Metrics HTTP server started (first iteration)",
 				"addr", infra.MetricsServer.Addr(),
 				"endpoint", "/metrics")
@@ -187,6 +285,7 @@ func startEarlyInfrastructureServers(
 			logger.Info("Metrics registry swapped (reinitialization)")
 		}
 	}
+	return nil
 }
 
 // setupInfrastructureServers registers debug variables after config is loaded.
@@ -213,11 +312,7 @@ func setupInfrastructureServers(
 	logger.Info("Stage 8: Registering debug variables and updating health checker")
 
 	// Start event buffer (created before EventBus.Start() to ensure proper subscription)
-	go func() {
-		if err := eventBuffer.Start(ctx); err != nil {
-			logger.Error("Event buffer failed", "error", err)
-		}
-	}()
+	startNonFatalInErrGroup(setup.ErrGroup, ctx, logger, "Event buffer", eventBuffer.Start)
 
 	// Register debug variables with the shared introspection registry
 	debug.RegisterVariables(setup.IntrospectionRegistry, stateCache, eventBuffer)
@@ -226,7 +321,9 @@ func setupInfrastructureServers(
 	// This replaces the initial simple health checker set in
 	// startEarlyInfrastructureServers. See buildFullHealthChecker for
 	// the readiness contract.
-	setup.IntrospectionServer.SetHealthChecker(buildFullHealthChecker(setup.Registry, state, infra, pluggableMgr))
+	if setup.IntrospectionServer != nil {
+		setup.IntrospectionServer.SetHealthChecker(buildFullHealthChecker(setup.Registry, state, infra, pluggableMgr))
+	}
 
 	logger.Info("Debug variables registered and health checker updated",
 		"endpoints", "/debug/vars, /debug/pprof, /healthz")

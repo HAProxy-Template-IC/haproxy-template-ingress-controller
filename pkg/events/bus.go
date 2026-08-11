@@ -231,22 +231,35 @@ func (b *EventBus) Publish(event Event) int {
 //	// Release buffered events
 //	bus.Start()
 func (b *EventBus) Start() {
+	b.StartContext(context.Background())
+}
+
+// StartContext starts the bus only while ctx remains active.
+func (b *EventBus) StartContext(ctx context.Context) bool {
 	b.startMu.Lock()
 
+	if ctx.Err() != nil {
+		b.startMu.Unlock()
+		return false
+	}
 	// Idempotent - return if already started
 	if b.started {
 		b.startMu.Unlock()
-		return
+		return true
 	}
 
 	// Mark as started (must be done before replaying to avoid recursion)
 	b.started = true
 
 	// Replay buffered events to subscribers
-	drops := b.replayBufferedEvents()
+	drops, completed := b.replayBufferedEvents(ctx)
+	if !completed {
+		b.started = false
+	}
 	b.startMu.Unlock()
 
 	b.reportDrops(drops)
+	return completed
 }
 
 // Pause temporarily suspends event delivery, buffering events for later replay.
@@ -289,24 +302,31 @@ func (b *EventBus) Pause() {
 // replayBufferedEvents sends all buffered events to subscribers and returns the
 // critical drops for the caller to report once startMu is released.
 // Must be called while holding startMu.
-func (b *EventBus) replayBufferedEvents() []DropInfo {
+func (b *EventBus) replayBufferedEvents(ctx context.Context) ([]DropInfo, bool) {
 	if len(b.preStartBuffer) == 0 {
-		return nil
+		return nil, ctx.Err() == nil
 	}
 
 	// fanOut takes b.mu per event, exactly as Publish does. Iterating a snapshot
 	// of the subscriber slices instead would race UnsubscribeTyped, which
 	// removes an entry by overwriting it in place.
 	var drops []DropInfo
-	for _, event := range b.preStartBuffer {
+	var replayed int
+	for replayed < len(b.preStartBuffer) {
+		if ctx.Err() != nil {
+			b.preStartBuffer = b.preStartBuffer[replayed:]
+			return drops, false
+		}
+		event := b.preStartBuffer[replayed]
 		_, eventDrops := b.fanOut(event)
 		drops = append(drops, eventDrops...)
+		replayed++
 	}
 
 	// Clear buffer
 	b.preStartBuffer = nil
 
-	return drops
+	return drops, ctx.Err() == nil
 }
 
 // Request sends a request event and waits for responses using the scatter-gather pattern.

@@ -25,14 +25,20 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
-	"k8s.io/client-go/openapi3"
+	"k8s.io/client-go/rest"
+	"k8s.io/kube-openapi/pkg/handler3"
 	"k8s.io/kube-openapi/pkg/spec3"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
@@ -78,57 +84,62 @@ func (l *apiextensionsCRDLister) ListCRDs(ctx context.Context) ([]apiextensionsv
 	return list.Items, nil
 }
 
-// discoveryOpenAPIV3Provider implements
-// [schemafetcher.OpenAPIV3Provider] by walking the cluster's
-// aggregated OpenAPI v3 endpoint through client-go/openapi3.Root.
 type discoveryOpenAPIV3Provider struct {
-	root openapi3.Root
+	restClient rest.Interface
 }
 
-// newDiscoveryOpenAPIV3Provider builds the discovery-backed
-// provider. The DiscoveryInterface gives us OpenAPIV3() (returning
-// an openapi.Client), and openapi3.NewRoot wraps that in the
-// higher-level GVSpec/GroupVersions API.
-//
-// The Root caches per-GroupVersion specs internally via the
-// underlying openapi.Client. schemafetcher's ClusterFetcher adds
-// its own per-GV cache on top — that's belt-and-braces and keeps
-// the in-process spec object stable across renderer / webhook /
-// status-applier callers, none of which currently share fetchers
-// but might in the future.
 func newDiscoveryOpenAPIV3Provider(d discovery.DiscoveryInterface) schemafetcher.OpenAPIV3Provider {
-	return &discoveryOpenAPIV3Provider{
-		root: openapi3.NewRoot(d.OpenAPIV3()),
-	}
+	return &discoveryOpenAPIV3Provider{restClient: d.RESTClient()}
 }
 
-// GVSpec proxies through to the openapi3.Root. Client-go's
-// openapi3 package issues blocking HTTP calls without context
-// plumbing, so a naive `return p.root.GVSpec(gv)` would ignore
-// ctx entirely — and on a slow apiserver block its caller for
-// however long the cluster took to respond, defeating the
-// bootstrap-level deadline set in [runTypeBootstrap]. Run the
-// blocking call on a goroutine and select on ctx so the caller's
-// timeout / cancellation actually fires.
-//
-// On ctx cancellation the goroutine is left to complete in the
-// background; its result is discarded. That's a one-off heap
-// retention, not a leak — the upstream HTTP client closes the
-// connection when its response is read or the process exits.
 func (p *discoveryOpenAPIV3Provider) GVSpec(ctx context.Context, gv schema.GroupVersion) (*spec3.OpenAPI, error) {
-	type result struct {
-		sp  *spec3.OpenAPI
-		err error
+	if p.restClient == nil {
+		return nil, errors.New("OpenAPI discovery REST client is unavailable")
 	}
-	ch := make(chan result, 1)
-	go func() {
-		sp, err := p.root.GVSpec(gv)
-		ch <- result{sp: sp, err: err}
-	}()
-	select {
-	case r := <-ch:
-		return r.sp, r.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
+
+	discoveryData, err := p.restClient.Get().AbsPath("/openapi/v3").Do(ctx).Raw()
+	if err != nil {
+		return nil, fmt.Errorf("fetching OpenAPI discovery: %w", err)
 	}
+	var document handler3.OpenAPIV3Discovery
+	if err := json.Unmarshal(discoveryData, &document); err != nil {
+		return nil, fmt.Errorf("decoding OpenAPI discovery: %w", err)
+	}
+
+	apiPath := "api/" + gv.Version
+	if gv.Group != "" {
+		apiPath = "apis/" + gv.Group + "/" + gv.Version
+	}
+	item, ok := document.Paths[apiPath]
+	if !ok {
+		return nil, fmt.Errorf("group version %s has no OpenAPI v3 document", gv.String())
+	}
+
+	rootPrefix := strings.TrimSuffix(p.restClient.Get().AbsPath("/").URL().Path, "/")
+	serverRelativeURL := strings.TrimPrefix(item.ServerRelativeURL, rootPrefix)
+	request := p.restClient.Get()
+	if strings.HasPrefix(serverRelativeURL, "/openapi/v3") {
+		locator, err := url.Parse(serverRelativeURL)
+		if err != nil {
+			return nil, fmt.Errorf("parsing OpenAPI document URL: %w", err)
+		}
+		request = request.AbsPath(locator.Path)
+		for name, values := range locator.Query() {
+			for _, value := range values {
+				request.Param(name, value)
+			}
+		}
+	} else {
+		request = request.RequestURI(serverRelativeURL)
+	}
+
+	schemaData, err := request.SetHeader("Accept", runtime.ContentTypeJSON).Do(ctx).Raw()
+	if err != nil {
+		return nil, fmt.Errorf("fetching OpenAPI document for %s: %w", gv.String(), err)
+	}
+	var spec spec3.OpenAPI
+	if err := json.Unmarshal(schemaData, &spec); err != nil {
+		return nil, fmt.Errorf("decoding OpenAPI document for %s: %w", gv.String(), err)
+	}
+	return &spec, nil
 }

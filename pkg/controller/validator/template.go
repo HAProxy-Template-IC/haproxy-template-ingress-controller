@@ -103,7 +103,7 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	// its real schema, because typed Spec/Status access in any
 	// template would silently rebind to a mismatched / fallback
 	// shape downstream.
-	bootstrapCtx, cancel := context.WithTimeout(context.Background(), templateValidatorBootstrapTimeout)
+	bootstrapCtx, cancel := context.WithTimeout(v.LifecycleContext(), templateValidatorBootstrapTimeout)
 	defer cancel()
 	bootstrapResult, bootstrapErr := v.bootstrap(bootstrapCtx, cfg)
 	if bootstrapErr != nil {

@@ -10,10 +10,19 @@ package discovery
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
 )
 
 // Discovery is an all-replica component recreated every controller iteration; a
@@ -47,5 +56,113 @@ func TestStart_StopsRetryTimerOnShutdown(t *testing.T) {
 		t.Fatal("retry timer fired after Start returned — timer leaked past shutdown")
 	case <-time.After(150 * time.Millisecond):
 		// Timer was stopped by Start's defer; no post-teardown fire.
+	}
+}
+
+func TestStopRetryTimerJoinsRunningCallback(t *testing.T) {
+	c := newTestComponentWithoutHAProxy(t)
+
+	c.mu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			c.mu.Unlock()
+		}
+	}()
+	c.retryTimerMu.Lock()
+	c.armRetryTimerLocked(time.Millisecond)
+	c.retryTimerMu.Unlock()
+
+	require.Eventually(t, func() bool {
+		c.retryTimerMu.Lock()
+		defer c.retryTimerMu.Unlock()
+		return c.retryTimer == nil
+	}, testutil.LongTimeout, time.Millisecond)
+
+	stopped := make(chan struct{})
+	go func() {
+		c.stopRetryTimer()
+		close(stopped)
+	}()
+	require.Eventually(t, func() bool {
+		c.retryTimerMu.Lock()
+		defer c.retryTimerMu.Unlock()
+		return c.retryTimerStopped
+	}, testutil.LongTimeout, time.Millisecond)
+	select {
+	case <-stopped:
+		t.Fatal("stop returned while retry callback was running")
+	default:
+	}
+
+	c.mu.Unlock()
+	locked = false
+	select {
+	case <-stopped:
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("stop did not join retry callback")
+	}
+}
+
+func TestStartCancellationCancelsVersionProbe(t *testing.T) {
+	requestStarted := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	releaseRequest := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() { close(releaseRequest) })
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		close(requestStarted)
+		select {
+		case <-request.Context().Done():
+			close(requestCanceled)
+		case <-releaseRequest:
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(release)
+	address := server.Listener.Addr().(*net.TCPAddr)
+
+	bus, _ := testutil.NewTestBusAndLogger()
+	c := createTestComponent(t, bus)
+	podStore := store.NewMemoryStore(2)
+	addPodToStoreWithPort(t, podStore, "haproxy-0", "default", address.IP.String(), int64(address.Port))
+	c.SetPodStore(podStore)
+	c.mu.Lock()
+	c.credentials = &coreconfig.Credentials{}
+	c.hasCredentials = true
+	c.hasDataplanePort = true
+	c.initialDiscoveryDone = true
+	c.discovery = &Discovery{dataplanePort: address.Port, localVersion: c.localVersion}
+	c.mu.Unlock()
+
+	bus.Start()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- c.Start(ctx)
+	}()
+	bus.Publish(events.NewDriftPreventionTriggeredEvent(time.Minute))
+
+	select {
+	case <-requestStarted:
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("version probe did not start")
+	}
+	cancel()
+
+	select {
+	case <-requestCanceled:
+	case <-time.After(testutil.LongTimeout):
+		release()
+		t.Fatal("component cancellation did not cancel the version probe request")
+	}
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("component did not return after its version probe was canceled")
 	}
 }

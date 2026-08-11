@@ -17,6 +17,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"runtime"
 	"strings"
@@ -60,7 +61,7 @@ func initRenderStateCache(
 	logger *slog.Logger,
 ) (*StateCache, func() map[string]string, error) {
 	stateCache := NewStateCache(setup.Bus, resourceWatcher, logger)
-	startBackgroundComponents(setup.IterCtx, stateCache, setup.MetricsComponent, logger)
+	startBackgroundComponents(setup, stateCache, setup.MetricsComponent, logger)
 
 	publishedAux, err := setupPublishedAuxFilesStore(setup, k8sClient, logger)
 	if err != nil {
@@ -73,28 +74,44 @@ func initRenderStateCache(
 // startBackgroundComponents starts the StateCache and metrics component in background goroutines.
 // These components subscribe immediately and wait for events. Errors are logged but non-fatal.
 func startBackgroundComponents(
-	ctx context.Context,
+	setup *componentSetup,
 	stateCache *StateCache,
 	metricsComponent *metrics.Component,
 	logger *slog.Logger,
 ) {
-	go func() {
-		logBackgroundComponentError(ctx, logger, "State cache", stateCache.Start(ctx))
-	}()
+	startNonFatalInErrGroup(setup.ErrGroup, setup.IterCtx, logger, "State cache", stateCache.Start)
+	startNonFatalInErrGroup(setup.ErrGroup, setup.IterCtx, logger, "Metrics component", metricsComponent.Start)
+}
 
-	go func() {
-		logBackgroundComponentError(ctx, logger, "Metrics component", metricsComponent.Start(ctx))
-	}()
+func startNonFatalInErrGroup(
+	errGroup *errgroup.Group,
+	iterCtx context.Context,
+	logger *slog.Logger,
+	componentName string,
+	startFn func(context.Context) error,
+) {
+	errGroup.Go(func() error {
+		err := startFn(iterCtx)
+		if err == nil && iterCtx.Err() == nil {
+			err = errors.New("stopped unexpectedly")
+		}
+		logBackgroundComponentError(iterCtx, logger, componentName, err)
+		return nil
+	})
 }
 
 func logBackgroundComponentError(ctx context.Context, logger *slog.Logger, componentName string, err error) {
 	if err == nil {
 		return
 	}
-	if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+	if isContextTermination(ctx, err) {
 		return
 	}
 	logger.Error(componentName+" failed", "error", err)
+}
+
+func isContextTermination(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && errors.Is(err, ctx.Err())
 }
 
 // startInErrGroup starts a component in the errgroup with consistent error handling.
@@ -109,7 +126,14 @@ func startInErrGroup(
 	startFn func(context.Context) error,
 ) {
 	errGroup.Go(func() error {
-		if err := startFn(iterCtx); err != nil {
+		err := startFn(iterCtx)
+		if err == nil && iterCtx.Err() == nil {
+			err = fmt.Errorf("%s stopped unexpectedly", componentName)
+		}
+		if err != nil {
+			if isContextTermination(iterCtx, err) {
+				return nil
+			}
 			logger.Error(componentName+" failed", "error", err)
 			cancel()
 			return err
@@ -118,9 +142,17 @@ func startInErrGroup(
 	})
 }
 
+type iterationTeardownTimeoutError struct {
+	phase   string
+	timeout time.Duration
+}
+
+func (e *iterationTeardownTimeoutError) Error() string {
+	return fmt.Sprintf("%s did not finish within %s", e.phase, e.timeout)
+}
+
 // waitForGoroutinesToFinish waits for all goroutines in errgroup to finish with a timeout.
-// This is CRITICAL for lease release - elector needs time to call ReleaseOnCancel.
-func waitForGoroutinesToFinish(errGroup *errgroup.Group, logger *slog.Logger, prefix string) {
+func waitForGoroutinesToFinish(errGroup *errgroup.Group, logger *slog.Logger, prefix string, timeout time.Duration) error {
 	logger.Info("Waiting for goroutines to finish",
 		"phase", strings.ToLower(prefix),
 		"goroutine_count", runtime.NumGoroutine())
@@ -135,7 +167,8 @@ func waitForGoroutinesToFinish(errGroup *errgroup.Group, logger *slog.Logger, pr
 	defer ticker.Stop()
 
 	startTime := time.Now()
-	timeoutCh := time.After(ShutdownTimeout)
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
 
 	for {
 		select {
@@ -152,22 +185,22 @@ func waitForGoroutinesToFinish(errGroup *errgroup.Group, logger *slog.Logger, pr
 					"elapsed_ms", elapsed.Milliseconds(),
 					"goroutine_count", runtime.NumGoroutine())
 			}
-			return
+			return err
 
 		case <-ticker.C:
 			elapsed := time.Since(startTime)
 			logger.Info("Still waiting for goroutines",
 				"phase", prefix,
 				"elapsed_s", int(elapsed.Seconds()),
-				"remaining_s", int((ShutdownTimeout - elapsed).Seconds()),
+				"remaining_s", int((timeout - elapsed).Seconds()),
 				"goroutine_count", runtime.NumGoroutine())
 
-		case <-timeoutCh:
+		case <-timeoutTimer.C:
 			logger.Warn("Timeout exceeded - some goroutines may not have finished",
 				"phase", prefix,
-				"timeout_s", int(ShutdownTimeout.Seconds()),
+				"timeout_s", int(timeout.Seconds()),
 				"goroutine_count", runtime.NumGoroutine())
-			return
+			return &iterationTeardownTimeoutError{phase: strings.ToLower(prefix), timeout: timeout}
 		}
 	}
 }

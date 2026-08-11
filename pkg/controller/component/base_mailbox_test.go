@@ -282,3 +282,64 @@ func TestBase_MailboxDoesNotReplayAcrossRestarts(t *testing.T) {
 		}
 	}
 }
+
+func TestBase_MailboxStartWaitsForIntake(t *testing.T) {
+	bus := busevents.NewEventBus(4)
+	h := &blockingRecorder{
+		gate:    make(chan struct{}),
+		started: make(chan struct{}, 1),
+	}
+	base := New(&Config{
+		EventBus:   bus,
+		Logger:     discardLogger(),
+		Name:       "mailbox-intake-join",
+		BufferSize: 4,
+		Handler:    h,
+		EventTypes: []string{events.EventTypeReconciliationTriggered},
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		_ = base.Start(ctx)
+		close(done)
+	}()
+	bus.Start()
+	require.Equal(t, 1, bus.Publish(events.NewReconciliationTriggeredEvent("warmup", true)))
+	select {
+	case <-h.started:
+	case <-time.After(time.Second):
+		t.Fatal("mailbox worker did not start")
+	}
+	h.gate <- struct{}{}
+	require.Eventually(t, func() bool { return len(h.snapshot()) == 1 },
+		time.Second, time.Millisecond, "mailbox worker did not finish its warmup event")
+
+	base.mbMu.Lock()
+	locked := true
+	defer func() {
+		cancel()
+		if locked {
+			base.mbMu.Unlock()
+		}
+	}()
+
+	require.Equal(t, 1, bus.Publish(events.NewReconciliationTriggeredEvent("blocked-intake", true)))
+	require.Eventually(t, func() bool { return len(base.eventChan) == 0 },
+		time.Second, time.Millisecond, "mailbox intake did not receive the event")
+
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("Base.Start returned while its mailbox intake goroutine was still blocked")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	base.mbMu.Unlock()
+	locked = false
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Base.Start did not return after its mailbox intake goroutine exited")
+	}
+}

@@ -11,6 +11,7 @@
 package stores
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -142,6 +143,51 @@ type Store interface {
 	Clear() error
 }
 
+// ContextGetter is the optional cancellation-aware Get extension to Store.
+type ContextGetter interface {
+	GetContext(ctx context.Context, keys ...string) ([]any, error)
+}
+
+// ContextLister is the optional cancellation-aware List extension to Store.
+type ContextLister interface {
+	ListContext(ctx context.Context) ([]any, error)
+}
+
+// ContextStore provides both cancellation-aware read extensions to Store.
+type ContextStore interface {
+	Store
+	ContextGetter
+	ContextLister
+}
+
+func getWithContext(ctx context.Context, store Store, keys ...string) ([]any, error) {
+	if contextual, ok := store.(ContextGetter); ok {
+		return contextual.GetContext(ctx, keys...)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	items, err := store.Get(keys...)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	return items, err
+}
+
+func listWithContext(ctx context.Context, store Store) ([]any, error) {
+	if contextual, ok := store.(ContextLister); ok {
+		return contextual.ListContext(ctx)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	items, err := store.List()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	return items, err
+}
+
 // TypesStoreAdapter wraps any type implementing the Store interface methods.
 //
 // This adapter is needed because k8s/types.Store and stores.Store are identical
@@ -169,7 +215,19 @@ type TypesStoreAdapter struct {
 
 func (a *TypesStoreAdapter) Get(keys ...string) ([]any, error) { return a.Inner.Get(keys...) }
 func (a *TypesStoreAdapter) List() ([]any, error)              { return a.Inner.List() }
-func (a *TypesStoreAdapter) Clear() error                      { return a.Inner.Clear() }
+func (a *TypesStoreAdapter) GetContext(ctx context.Context, keys ...string) ([]any, error) {
+	return getWithContext(ctx, a.Inner, keys...)
+}
+func (a *TypesStoreAdapter) ListContext(ctx context.Context) ([]any, error) {
+	return listWithContext(ctx, a.Inner)
+}
+func (a *TypesStoreAdapter) ListCached() ([]any, error) {
+	if lister, ok := a.Inner.(interface{ ListCached() ([]any, error) }); ok {
+		return lister.ListCached()
+	}
+	return nil, nil
+}
+func (a *TypesStoreAdapter) Clear() error { return a.Inner.Clear() }
 func (a *TypesStoreAdapter) Delete(namespace, name string, keys []string) error {
 	return a.Inner.Delete(namespace, name, keys)
 }
@@ -181,7 +239,10 @@ func (a *TypesStoreAdapter) Update(resource any, keys []string) error {
 }
 
 // Verify TypesStoreAdapter implements Store.
-var _ Store = (*TypesStoreAdapter)(nil)
+var (
+	_ Store        = (*TypesStoreAdapter)(nil)
+	_ ContextStore = (*TypesStoreAdapter)(nil)
+)
 
 // StoreProvider provides access to stores by name.
 //
@@ -241,13 +302,13 @@ type OverlayStoreProvider struct {
 //
 // Parameters:
 //   - base: The underlying store provider
-//   - context: ValidationContext containing K8s and/or HTTP overlays
+//   - validationContext: ValidationContext containing K8s and/or HTTP overlays
 //
-// If context is nil, behaves identically to the base provider.
-func NewOverlayStoreProvider(base StoreProvider, context *ValidationContext) *OverlayStoreProvider {
+// If validationContext is nil, behaves identically to the base provider.
+func NewOverlayStoreProvider(base StoreProvider, validationContext *ValidationContext) *OverlayStoreProvider {
 	return &OverlayStoreProvider{
 		base:    base,
-		context: context,
+		context: validationContext,
 	}
 }
 

@@ -16,6 +16,7 @@ package leaderelection
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,18 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	k8sleaderelection "gitlab.com/haproxy-haptic/haptic/pkg/k8s/leaderelection"
 )
+
+type cancelDuringLeaderReplayContext struct {
+	context.Context
+	checks atomic.Int32
+}
+
+func (c *cancelDuringLeaderReplayContext) Err() error {
+	if c.checks.Add(1) > 1 {
+		return context.Canceled
+	}
+	return nil
+}
 
 func TestNew_NilConfig(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -176,6 +189,29 @@ func TestNew_CallbackWrapping_OnStartedLeading(t *testing.T) {
 	}
 
 	assert.False(t, callbackCalled) // Not called yet - would be called when elected
+}
+
+func TestOnStartedLeadingDoesNotReplayAfterAuthorityExpires(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	eventChan := bus.Subscribe("test-sub", 10)
+	bus.Start()
+
+	component := &Component{
+		eventBus: bus,
+		logger:   logger,
+		identity: "test-pod",
+	}
+	callbacks := component.wrapCallbacks("test-pod", k8sleaderelection.Callbacks{})
+	ctx := &cancelDuringLeaderReplayContext{Context: context.Background()}
+
+	callbacks.OnStartedLeading(ctx)
+
+	require.False(t, bus.StartContext(ctx))
+	select {
+	case event := <-eventChan:
+		t.Fatalf("event from expired leader term was replayed: %#v", event)
+	default:
+	}
 }
 
 func TestNew_CallbackWrapping_OnStoppedLeading(t *testing.T) {

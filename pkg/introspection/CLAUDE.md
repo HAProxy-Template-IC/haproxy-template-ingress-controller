@@ -174,24 +174,20 @@ Uses `k8s.io/client-go/util/jsonpath` (same as kubectl).
 For applications that reinitialize on config changes:
 
 ```go
-func runIteration(ctx context.Context) {
-    // Create NEW registry per iteration
-    registry := introspection.NewRegistry()
+registry := introspection.NewRegistry()
+server := introspection.NewServer(":6060", registry)
+server.Setup()
+go server.Serve(processCtx)
 
-    // Publish iteration-specific variables
+func runIteration() {
+    registry.Clear()
     registry.Publish("config", getCurrentConfig())
-
-    // Start server (or reuse existing server with new registry)
-    server := introspection.NewServer(":6060", registry)
-    server.Setup()
-    go server.Serve(ctx)
-
-    // ... run iteration ...
-
-    // When iteration ends, context cancels, server stops
-    // Registry is garbage collected (no stale references!)
 }
 ```
+
+The process owns the listener and registry. Each iteration clears and
+repopulates the registry, so reinitialization neither rebinds the port nor
+retains stale variables.
 
 ## Integration with Other Packages
 
