@@ -452,3 +452,95 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "(?s)set-var\\(txn\\.host_match\\) var\\(txn\\.host\\),concat\\(:,txn\\.listener_port,\\),map\\(.*?set-var\\(txn\\.host_match\\) var\\(txn\\.host\\),map\\("
+
+  test-httproute-path-only-route-resolved-by-map:
+    requires: [httproutes]
+    description: >-
+      An HTTPRoute whose rules all match on path alone is resolved by the host/path maps
+      plus route-winner/route-backend, so it contributes no per-request http-request line.
+      The chain is evaluated on every request and grows with route count: emitting it for
+      routes that cannot lose to a sibling cost 2.2x throughput at ~500 routes.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: plain-service, namespace: default}
+          spec: *specHttp
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: plain-route, namespace: default}
+          spec:
+            hostnames:
+              - plain.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /shop}
+                backendRefs:
+                  - {name: plain-service, port: 80}
+    assertions:
+      - type: haproxy_valid
+
+      # Routing still resolves, now entirely through maps.
+      - {type: contains, target: map:path-prefix.map, pattern: "plain.example.com/shop/ GW_ROUTE_ID:http"}
+      - {type: contains, target: map:route-winner.map, pattern: "default_plain-route_0 default_plain-route_0"}
+      - {type: contains, target: map:route-backend.map, pattern: "default_plain-route_0 BACKEND:gtw_default_plain-route_plain-service_80"}
+
+      # txn.gw_rule_id is still set, so the access log keeps its resource attribution.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "set-var\\(txn\\.gw_rule_id\\) var\\(req\\.gw_routeId\\),map\\("
+
+      # ...and no per-route matcher line is emitted.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "set-var\\(txn\\.gw_rule_id\\) str\\(default_plain-route_0\\)"
+
+  test-httproute-path-only-fallback-kept-within-route:
+    requires: [httproutes]
+    description: >-
+      A path-only rule must keep its matcher line when ANY rule of the same HTTPRoute
+      matches on more than the path. Its condition is scoped `-m beg "<ns>_<name>_"`, so it
+      rescues a request whose more-specific path selected a DIFFERENT rule of that route
+      whose method/header/query matcher then failed. Scoping the skip per conflict group
+      instead of per HTTPRoute drops that line and sends the request to the default backend
+      (caught by e2e TestHTTPRouteCombined, not by any assertion here before this test).
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: api-service, namespace: default}
+          spec: *specHttp
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: catch-service, namespace: default}
+          spec: *specHttp
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: mixed-route, namespace: default}
+          spec:
+            hostnames:
+              - mixed.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /api}
+                    method: POST
+                backendRefs:
+                  - {name: api-service, port: 80}
+              - matches:
+                  - path: {type: PathPrefix, value: /}
+                backendRefs:
+                  - {name: catch-service, port: 80}
+    assertions:
+      - type: haproxy_valid
+
+      # The advanced rule keeps its method matcher.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "set-var\\(txn\\.gw_rule_id\\) str\\(default_mixed-route_0\\) .*\\{ method POST \\}"
+
+      # The path-only sibling MUST still be emitted: it is the fallback when POST fails.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "set-var\\(txn\\.gw_rule_id\\) str\\(default_mixed-route_1\\)"

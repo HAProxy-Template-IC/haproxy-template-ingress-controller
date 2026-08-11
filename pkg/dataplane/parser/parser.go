@@ -9,13 +9,10 @@
 package parser
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	parser "github.com/haproxytech/client-native/v6/config-parser"
 
@@ -40,178 +37,6 @@ import (
 // variable has a //nolint:gochecknoglobals comment indicating awareness but no fix.
 // Consider checking for updates in newer versions or filing an upstream issue.
 var parserMutex sync.Mutex
-
-// ParsedConfigCacheSize defines the number of parsed configurations to cache.
-// This value balances memory usage with cache hit rate:
-//   - 1 slot for desired config (rendered template)
-//   - 2 slots for current configs (one per HAProxy pod)
-//   - 1 extra slot for rolling update transitions
-//
-// With 4 slots at ~34 MB each, the cache uses ~136 MB instead of ~544 MB with 16 slots.
-// LRU eviction ensures the most recently used configs are retained.
-const ParsedConfigCacheSize = 4
-
-// cacheSlot holds a single cached parsed configuration.
-type cacheSlot struct {
-	hash   string
-	config *StructuredConfig
-}
-
-// parsedConfigCache provides a content-based LRU cache for parsed configurations.
-// This dramatically reduces allocations when the same configuration is parsed
-// multiple times (e.g., when syncing to N endpoints with the same desired config).
-//
-// The cache uses a map for O(1) lookups and a slice for LRU ordering.
-// When the cache is full, the oldest entry (front of slice) is evicted.
-//
-// IMPORTANT: The cached StructuredConfig is already normalized (metadata fields
-// flattened) and MUST NOT be mutated. Callers should not call NormalizeConfigMetadata
-// on cached configs - they are already normalized during caching.
-type parsedConfigCache struct {
-	mu        sync.Mutex
-	entries   map[string]*cacheSlot // Hash -> entry
-	order     []string              // LRU order: oldest first, newest at end
-	maxSize   int
-	hitCount  atomic.Int64
-	missCount atomic.Int64
-
-	// Per-source tallies. The aggregate rate says the cache is missing; only
-	// the breakdown says which call site is responsible, which is what #139
-	// cost two rounds of guessing to establish. Keyed by the caller's source
-	// label, so a new call site shows up here without touching this file.
-	srcMu   sync.Mutex
-	srcHits map[string]int64
-	srcMiss map[string]int64
-}
-
-var configCache = &parsedConfigCache{
-	entries: make(map[string]*cacheSlot, ParsedConfigCacheSize),
-	order:   make([]string, 0, ParsedConfigCacheSize),
-	maxSize: ParsedConfigCacheSize,
-	srcHits: map[string]int64{},
-	srcMiss: map[string]int64{},
-}
-
-// recordHit and recordMiss allocate the per-source maps on first use rather
-// than relying on the constructor: a cache built without them would compile and
-// then panic on the first parse, which is the failure mode a zero-value map
-// always has.
-func (c *parsedConfigCache) recordHit(source string) {
-	c.hitCount.Add(1)
-	c.srcMu.Lock()
-	defer c.srcMu.Unlock()
-	if c.srcHits == nil {
-		c.srcHits = map[string]int64{}
-	}
-	c.srcHits[source]++
-}
-
-func (c *parsedConfigCache) recordMiss(source string) {
-	c.missCount.Add(1)
-	c.srcMu.Lock()
-	defer c.srcMu.Unlock()
-	if c.srcMiss == nil {
-		c.srcMiss = map[string]int64{}
-	}
-	c.srcMiss[source]++
-}
-
-// get returns a cached parsed config if the hash exists, nil otherwise.
-// On cache hit, moves the entry to the end of the LRU order (most recently used).
-func (c *parsedConfigCache) get(hash string) *StructuredConfig {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	entry, ok := c.entries[hash]
-	if !ok || entry.config == nil {
-		return nil
-	}
-
-	// Move to end of order (most recently used). The hit is recorded by the
-	// caller, which knows the source label.
-	c.moveToEnd(hash)
-	return entry.config
-}
-
-// moveToEnd moves the given hash to the end of the LRU order.
-// Must be called with c.mu held.
-func (c *parsedConfigCache) moveToEnd(hash string) {
-	// Find and remove from current position
-	for i, h := range c.order {
-		if h == hash {
-			c.order = append(c.order[:i], c.order[i+1:]...)
-			break
-		}
-	}
-	// Append to end (most recently used)
-	c.order = append(c.order, hash)
-}
-
-// set stores a parsed config in the cache, evicting the least recently used entry if full.
-func (c *parsedConfigCache) set(hash string, config *StructuredConfig) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Check if this hash already exists (update in place)
-	if _, exists := c.entries[hash]; exists {
-		c.entries[hash].config = config
-		c.moveToEnd(hash)
-		return
-	}
-
-	// Evict oldest if full
-	if len(c.entries) >= c.maxSize {
-		oldest := c.order[0]
-		delete(c.entries, oldest)
-		c.order = c.order[1:]
-	}
-
-	// Add new entry
-	c.entries[hash] = &cacheSlot{hash: hash, config: config}
-	c.order = append(c.order, hash)
-}
-
-// Source labels for ParseFromStringFor. Each names a distinct call site so a
-// miss can be attributed without re-deriving the call graph.
-const (
-	SourceUnlabelled       = "unlabelled"
-	SourceDesired          = "desired"          // the rendered config being deployed — the one parse with reuse across replicas
-	SourceReadBack         = "readback"         // post-reload read-back from HAProxy; carries _version, unique per push
-	SourceCurrent          = "current"          // current config read from HAProxy; same, unique per push
-	SourcePostSync         = "postsync"         // post-sync fetch for the caller's cache; same, unique per push
-	SourceCurrentCR        = "currentcr"        // HAProxyCfg CR content, hash-guarded by currentconfigstore
-	SourceValidation       = "validation"       // validationTest fixtures at load; unique per test, never reparsed
-	SourceRenderValidation = "rendervalidation" // pre-deploy validation of the rendered config; warms the desired parse
-)
-
-// CacheStatsBySource returns per-source hit/miss tallies. The aggregate rate
-// cannot tell a too-small cache from one flushed by single-use content; this
-// can.
-func CacheStatsBySource() (hits, misses map[string]int64) {
-	configCache.srcMu.Lock()
-	defer configCache.srcMu.Unlock()
-	hits = make(map[string]int64, len(configCache.srcHits))
-	misses = make(map[string]int64, len(configCache.srcMiss))
-	for k, v := range configCache.srcHits {
-		hits[k] = v
-	}
-	for k, v := range configCache.srcMiss {
-		misses[k] = v
-	}
-	return hits, misses
-}
-
-// CacheStats returns the current cache hit/miss statistics.
-// Useful for debugging and metrics.
-func CacheStats() (hits, misses int64) {
-	return configCache.hitCount.Load(), configCache.missCount.Load()
-}
-
-// hashConfig computes a SHA256 hash of the configuration string.
-func hashConfig(config string) string {
-	hash := sha256.Sum256([]byte(config))
-	return hex.EncodeToString(hash[:])
-}
 
 // Parser wraps client-native's config-parser for parsing HAProxy configurations.
 type Parser struct {
@@ -263,64 +88,18 @@ func New() (*Parser, error) {
 //	p, _ := parser.New()
 //	structured, err := p.ParseFromString(config)
 func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
-	return p.parse(config, SourceUnlabelled, true)
+	return p.parse(config)
 }
 
-// ParseFromStringFor is ParseFromString with a source label, so a miss is
-// attributable to the call site that caused it. Prefer it over
-// ParseFromString: the aggregate hit rate cannot distinguish a cache that is
-// too small from one being flushed by single-use content (#139).
-func (p *Parser) ParseFromStringFor(source, config string) (*StructuredConfig, error) {
-	return p.parse(config, source, true)
-}
-
-// ParseFromStringUncached parses without reading or writing the cache.
-//
-// For content that is unique by construction a lookup can never hit, and the
-// insert evicts an entry that could: a post-reload read-back carries HAProxy's
-// own `_version` header, which changes on every push. Routing those through the
-// cache kept the four slots full of single-use entries and evicted the desired
-// config, the one parse with reuse value (#139).
-func (p *Parser) ParseFromStringUncached(config string) (*StructuredConfig, error) {
-	return p.parse(config, SourceUnlabelled, false)
-}
-
-// ParseFromStringUncachedFor is ParseFromStringUncached with a source label.
-// Uncached parses record nothing — they are neither hits nor misses — but the
-// label keeps call sites uniform and documents the intent at the call site.
-func (p *Parser) ParseFromStringUncachedFor(source, config string) (*StructuredConfig, error) {
-	return p.parse(config, source, false)
-}
-
-func (p *Parser) parse(config, source string, useCache bool) (*StructuredConfig, error) {
+func (p *Parser) parse(config string) (*StructuredConfig, error) {
 	if config == "" {
 		return nil, errors.New("configuration string is empty")
-	}
-
-	// Check cache first (fast path - no mutex needed for cache check)
-	// This dramatically reduces allocations when syncing the same desired config
-	// to multiple endpoints.
-	var hash string
-	if useCache {
-		hash = hashConfig(config)
-		if cached := configCache.get(hash); cached != nil {
-			configCache.recordHit(source)
-			return cached, nil
-		}
 	}
 
 	// Lock to prevent concurrent access to client-native parser
 	// (protects against upstream race condition in DefaultSectionName global variable)
 	parserMutex.Lock()
 	defer parserMutex.Unlock()
-
-	// Double-check cache after acquiring lock (another goroutine may have parsed)
-	if useCache {
-		if cached := configCache.get(hash); cached != nil {
-			configCache.recordHit(source)
-			return cached, nil
-		}
-	}
 
 	// Parse directly from string - NO file I/O
 	// This keeps all config data in memory as required
@@ -351,16 +130,9 @@ func (p *Parser) parse(config, source string, useCache bool) (*StructuredConfig,
 		return nil, fmt.Errorf("extracting configuration: %w", err)
 	}
 
-	// Normalize metadata before caching to ensure cached configs are immutable.
-	// This prevents data races when multiple goroutines retrieve the same cached
-	// config and try to normalize it concurrently.
+	// Callers compare and mutate the returned config, so hand back a
+	// normalized shape rather than the parser's raw metadata encoding.
 	NormalizeConfigMetadata(conf)
-
-	// Cache the result for future requests with the same config
-	if useCache {
-		configCache.set(hash, conf)
-		configCache.recordMiss(source)
-	}
 
 	return conf, nil
 }

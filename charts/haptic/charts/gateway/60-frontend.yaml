@@ -98,6 +98,67 @@ templateSnippets:
       %(gw_route)[var(txn.gw_rule_id)]
       {%- end %}
 
+  util-gateway-match-groups:
+    requires: [gateways, grpcroutes, httproutes]
+    template: |
+      {#- Classifies each conflict group — the candidate set sharing one host+path, which is
+          exactly what field(3) of the path maps puts in req.gw_routeId.
+
+          "advanced" is keyed by HTTPRoute scope ("<ns>_<name>_"), NOT by conflict group,
+          because that is the scope the chain's fallback actually spans: a path-only rule's
+          condition is `{ var(req.gw_routeId) -m beg "<ns>_<name>_" }`, so it can rescue a
+          request whose more-specific path selected a DIFFERENT group of the same HTTPRoute
+          whose method/header/query matcher then failed. Group-level scoping misses that and
+          sends the request to the default backend (caught by TestHTTPRouteCombined).
+
+          So an HTTPRoute needs the ordered chain if ANY of its rules matches on more than
+          the path. When none does, no request data can change which rule wins, the winner
+          is known here at render time, and the two maps below resolve it in two lookups
+          instead of ~4 http-request lines per route on every request.
+
+          "winner" is the first member of each conflict group in precedence order
+          (sortedRoutes), i.e. the rule that would have won first-match-wins.
+
+          After rendering:
+            shared.Get("gatewayMatchGroups") -> {"advanced": map[string]bool,  // by scope
+                                                "winner":   map[string]string} // by group
+      -#}
+      {%- var _, _ = shared.ComputeIfAbsent("gatewayMatchGroups", func() any {
+          var advanced = map[string]bool{}
+          var winner = map[string]string{}
+          var gaVal = shared.Get("gatewayAnalysis")
+          if gaVal == nil {
+            return map[string]any{"advanced": advanced, "winner": winner}
+          }
+          var sorted = gaVal.(map[string]any)["sortedRoutes"] | toSlice()
+          for _, riAny := range sorted {
+            var ri = riAny.(map[string]any)
+            var cg = tostring(ri["conflictGroup"])
+            if _, seen := winner[cg]; !seen {
+              winner[cg] = tostring(ri["routeId"])
+            }
+            var ruleIdx = toint(ri["ruleIdx"])
+            var matchIdx = toint(ri["matchIdx"])
+            switch r := ri["route"].(type) {
+            case *resources.httproutes.T:
+              var scope = r.Metadata.Namespace + "_" + r.Metadata.Name + "_"
+              if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+                var rule = r.Spec.Rules[ruleIdx]
+                if matchIdx >= 0 && matchIdx < len(rule.Matches) {
+                  var m = rule.Matches[matchIdx]
+                  if m.Method != "" || len(m.Headers) > 0 || len(m.QueryParams) > 0 {
+                    advanced[scope] = true
+                  }
+                }
+              }
+            case *resources.grpcroutes.T:
+              // Every GRPCRoute match narrows within the synthesized "/" PathPrefix.
+              advanced[r.Metadata.Namespace + "_" + r.Metadata.Name + "_"] = true
+            }
+          }
+          return map[string]any{"advanced": advanced, "winner": winner}
+      }) %}
+
   frontend-matchers-advanced-010-route-id-setup:
     template: |
       {# txn.path_match qualifier format: GW_ROUTE_ID:<route_type>:<routeIds>, e.g. GW_ROUTE_ID:http:ns1_route1_0__ns2_route2_1 #}
@@ -114,6 +175,8 @@ templateSnippets:
       {{ render "util-gateway-analysis" -}}
       {%- var gatewayAnalysis = shared.Get("gatewayAnalysis").(map[string]any) %}
       {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
+      {{ render "util-gateway-match-groups" -}}
+      {%- var advancedGroups = shared.Get("gatewayMatchGroups").(map[string]any)["advanced"].(map[string]bool) %}
       {%- if len(sortedRoutes) > 0 %}
       # Advanced route matching (method/header/query)
       {%- for _, routeInfo := range sortedRoutes %}
@@ -296,9 +359,14 @@ templateSnippets:
           {%- end %}
           {%- var matcherDesc = "path-only" %}
           {%- if len(descParts) > 0 %}{%- matcherDesc = join(descParts, ", ") %}{%- end %}
+          {#- Map-decidable HTTPRoute: the two route maps resolve it, no per-request rule. -#}
+          {%- if advancedGroups[riNs + "_" + riName + "_"] %}
       # Rule: {{ riKind }} {{ riNs }}/{{ riName }} rule[{{ riRuleIdx }}] - {{ matcherDesc }}
       http-request set-var(txn.gw_rule_id) str({{ riRouteId }}) if {{ join(conditions, " ") }}
-          {%- if debug | fallback(false) %}
+          {%- end %}
+          {#- Same gate as the rule line above: a map-decidable HTTPRoute has no chain for
+              these to annotate, and they are per-route too. -#}
+          {%- if advancedGroups[riNs + "_" + riName + "_"] && (debug | fallback(false) | tostring()) == "true" %}
             {%- var matchTypes = []any{} %}
             {%- if hasMethod && riKind == "HTTPRoute" %}
               {%- matchTypes = append(matchTypes, "method") %}
@@ -330,6 +398,16 @@ templateSnippets:
          form: keeps the blank line before the section marker. #}
       # gateway/frontend-matchers-advanced-900-path-match
       {{ render "util-gateway-analysis" -}}
+      {{ render "util-gateway-match-groups" -}}
+      {%- var matchGroups = shared.Get("gatewayMatchGroups").(map[string]any) %}
+      {%- var advancedGroups = matchGroups["advanced"].(map[string]bool) %}
+      {%- var groupWinner = matchGroups["winner"].(map[string]string) %}
+      {#- One entry per map-decidable group: the candidate set -> its winning routeId, and
+          that routeId -> its path_match value. Two lookups rather than one so txn.gw_rule_id
+          is still set: the access log's resource / gw_route fields derive from it, as do the
+          debug matched_route vars. -#}
+      {%- var routeWinnerEntries = []any{} %}
+      {%- var routeBackendEntries = []any{} %}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
       {%- if gaVal == nil %}{% return %}{% end %}
       {%- var ga = gaVal.(map[string]any) %}
@@ -411,9 +489,30 @@ templateSnippets:
             {%- var routeKey = (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (routeInfo | dig("ruleIdx")) %}
             {%- qualifier = "MULTIBACKEND:" + totalWeight + ":" + routeKey %}
           {%- end %}
+          {%- var riCg = tostring(routeInfo | dig("conflictGroup")) %}
+          {%- var riScope = tostring(routeInfo | dig("route", "metadata", "namespace")) + "_" + tostring(routeInfo | dig("route", "metadata", "name")) + "_" %}
+          {%- if advancedGroups[riScope] %}
       http-request set-var(txn.path_match) str({{ qualifier }}) if { var(txn.gw_rule_id) -m str "{{ routeInfo | dig("routeId") }}" }
+          {%- else if groupWinner[riCg] == tostring(routeInfo | dig("routeId")) %}
+            {#- Only the group's precedence winner contributes; its siblings would have
+                lost the chain's first-match-wins evaluation anyway. -#}
+            {%- routeWinnerEntries = append(routeWinnerEntries, riCg + " " + tostring(routeInfo | dig("routeId"))) %}
+            {%- routeBackendEntries = append(routeBackendEntries, tostring(routeInfo | dig("routeId")) + " " + qualifier) %}
+          {%- end %}
         {% end %}
       {% end %}
+      {%- if len(routeBackendEntries) > 0 %}
+        {%- var routeWinnerPath, _ = fileRegistry.Register("map", "route-winner.map", join(sort_strings(routeWinnerEntries), "\n") + "\n") %}
+        {%- var routeBackendPath, _ = fileRegistry.Register("map", "route-backend.map", join(sort_strings(routeBackendEntries), "\n") + "\n") %}
+      {#- Resolves every group that needed no chain, in two lookups instead of ~4
+          http-request lines per route. Gated on gw_rule_id being unset so a group that DID
+          match through the chain keeps its answer, and on the GW_ROUTE_ID qualifier so a
+          request that never reached the route maps is untouched. Only map-decidable groups
+          have entries, so an advanced group whose matchers all failed still falls through
+          to the default backend exactly as before. #}
+      http-request set-var(txn.gw_rule_id) var(req.gw_routeId),map({{ routeWinnerPath }}) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID } !{ var(txn.gw_rule_id) -m found } { var(req.gw_routeId),map({{ routeWinnerPath }}) -m found }
+      http-request set-var(txn.path_match) var(txn.gw_rule_id),map({{ routeBackendPath }}) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID } { var(txn.gw_rule_id),map({{ routeBackendPath }}) -m found }
+      {%- end %}
       {% end %}
   frontend-filters-450-gateway-cors:
     requires: [gateways, grpcroutes, httproutes, referencegrants]

@@ -493,7 +493,7 @@ func (r *Runner) parseCurrentConfig(testName, raw string) (cfg *parserconfig.Str
 	if err != nil {
 		return nil, fmt.Sprintf("creating parser for currentConfig: %v", err)
 	}
-	cfg, err = p.ParseFromStringUncachedFor(parser.SourceValidation, raw)
+	cfg, err = p.ParseFromString(raw)
 	if err != nil {
 		return nil, fmt.Sprintf("parsing currentConfig: %v", err)
 	}

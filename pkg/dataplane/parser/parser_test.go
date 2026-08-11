@@ -1010,64 +1010,7 @@ log-forward forward2
 }
 
 // TestParseFromString_CacheHit verifies the parsed config cache works.
-func TestParseFromString_CacheHit(t *testing.T) {
-	config := `
-global
-    daemon
-
-defaults
-    mode http
-
-backend web
-    server s1 127.0.0.1:8080
-`
-
-	p1, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	p2, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	// Get initial cache stats
-	hitsBefore, _ := CacheStats()
-
-	// First parse - cache miss
-	conf1, err := p1.ParseFromString(config)
-	if err != nil {
-		t.Fatalf("First ParseFromString() failed: %v", err)
-	}
-
-	// Second parse with different parser - should hit cache
-	conf2, err := p2.ParseFromString(config)
-	if err != nil {
-		t.Fatalf("Second ParseFromString() failed: %v", err)
-	}
-
-	// Get final cache stats
-	hitsAfter, _ := CacheStats()
-
-	// Verify cache hit occurred
-	if hitsAfter <= hitsBefore {
-		t.Errorf("Expected cache hit, but hits didn't increase: before=%d, after=%d", hitsBefore, hitsAfter)
-	}
-
-	// Verify both results are identical (same pointer due to cache)
-	if conf1 != conf2 {
-		t.Error("Expected cached result to return same pointer")
-	}
-
-	// Verify the parsed content is correct
-	if len(conf2.Backends) != 1 {
-		t.Errorf("Expected 1 backend, got: %d", len(conf2.Backends))
-	}
-}
-
-// TestParseFromString_CacheMissOnDifferentConfig verifies cache miss for different configs.
-func TestParseFromString_CacheMissOnDifferentConfig(t *testing.T) {
+func TestParseFromString_DistinctConfigsParseIndependently(t *testing.T) {
 	config1 := `
 global
     daemon
@@ -1091,7 +1034,6 @@ backend web2
 		t.Fatalf("First ParseFromString() failed: %v", err)
 	}
 
-	// Different config - should NOT hit cache
 	conf2, err := p.ParseFromString(config2)
 	if err != nil {
 		t.Fatalf("Second ParseFromString() failed: %v", err)
@@ -1108,84 +1050,6 @@ backend web2
 	}
 }
 
-// TestParseFromString_LRU2Cache verifies LRU(2) cache behavior - both configs stay cached.
-// This is critical for sync operations that alternate between parsing current and desired configs.
-func TestParseFromString_LRU2Cache(t *testing.T) {
-	config1 := `
-global
-    daemon
-
-backend web1
-    server s1 127.0.0.1:8080
-`
-
-	config2 := `
-global
-    daemon
-
-backend web2
-    server s2 127.0.0.1:8081
-`
-
-	p := newTestParser(t)
-
-	// Get initial cache stats
-	hitsBefore, _ := CacheStats()
-
-	// Parse first config (miss)
-	conf1a, err := p.ParseFromString(config1)
-	if err != nil {
-		t.Fatalf("ParseFromString(config1) failed: %v", err)
-	}
-
-	// Parse second config (miss) - with LRU(2), this should NOT evict config1
-	conf2a, err := p.ParseFromString(config2)
-	if err != nil {
-		t.Fatalf("ParseFromString(config2) failed: %v", err)
-	}
-
-	// Get stats after initial parses (should be 2 misses)
-	hitsAfterInitial, _ := CacheStats()
-	initialHits := hitsAfterInitial - hitsBefore
-
-	// Parse first config again - should hit cache (this would fail with single-entry cache)
-	conf1b, err := p.ParseFromString(config1)
-	if err != nil {
-		t.Fatalf("ParseFromString(config1) second time failed: %v", err)
-	}
-
-	// Parse second config again - should also hit cache
-	conf2b, err := p.ParseFromString(config2)
-	if err != nil {
-		t.Fatalf("ParseFromString(config2) second time failed: %v", err)
-	}
-
-	// Get final stats
-	hitsAfterFinal, _ := CacheStats()
-	additionalHits := hitsAfterFinal - hitsAfterInitial
-
-	// Verify cache hits - initial parses should be misses (0 or very low hits)
-	// and subsequent parses should be hits (at least 2)
-	if additionalHits < 2 {
-		t.Errorf("Expected at least 2 cache hits from re-parsing, got %d (initial: %d, final: %d)",
-			additionalHits, initialHits, hitsAfterFinal-hitsBefore)
-	}
-
-	// Verify we got the same pointers back (cache hits return same objects)
-	if conf1a != conf1b {
-		t.Error("Expected config1 re-parse to return cached pointer")
-	}
-	if conf2a != conf2b {
-		t.Error("Expected config2 re-parse to return cached pointer")
-	}
-
-	// Verify the two configs are different from each other
-	if conf1a == conf2a {
-		t.Error("Expected config1 and config2 to be different")
-	}
-}
-
-// TestStructuredConfig_AllFieldsPresent verifies all StructuredConfig fields can be populated.
 func TestStructuredConfig_AllFieldsPresent(t *testing.T) {
 	// Create instance and verify all fields are accessible
 	conf := &StructuredConfig{

@@ -353,30 +353,11 @@ sum by (gvk) (rate(haptic_webhook_validation_total{result="denied"}[5m]))
 histogram_quantile(0.95, rate(haptic_webhook_request_duration_seconds_bucket[5m]))
 ```
 
-### Reconciliation queue & parser cache
+### Reconciliation queue
 
 | Metric | Type | Description |
 |--------|------|-------------|
 | `haptic_reconciliation_queue_wait_seconds` | Histogram | Time a triggered reconciliation waits in the coordinator queue before processing starts; rising values indicate the controller can't keep up with change volume |
-| `haptic_parser_cache_hits_total` | Counter | Parser cache hits — the controller caches parsed HAProxy configs so repeated reconciliations don't re-parse unchanged input |
-| `haptic_parser_cache_misses_total` | Counter | Parser cache misses |
-
-The same hits and misses are also broken down by the call site that asked for the parse. The aggregate ratio can't tell an undersized cache from one being flushed by content that never repeats — the `source` label can:
-
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `haptic_parser_cache_hits_by_source_total` | Counter | `source` | Parser cache hits, by the call site that requested the parse |
-| `haptic_parser_cache_misses_by_source_total` | Counter | `source` | Parser cache misses, by call site. A source that only ever misses parses content that never repeats, and should bypass the cache instead. |
-
-```promql
-# Parser cache hit ratio
-rate(haptic_parser_cache_hits_total[5m]) /
-(rate(haptic_parser_cache_hits_total[5m]) + rate(haptic_parser_cache_misses_total[5m]))
-
-# Sources that never hit the cache
-sum by (source) (rate(haptic_parser_cache_misses_by_source_total[5m]))
-  unless sum by (source) (rate(haptic_parser_cache_hits_by_source_total[5m]) > 0)
-```
 
 ### Event bus backpressure
 

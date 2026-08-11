@@ -164,23 +164,34 @@ type Component struct {
 	endpointAuthorities    map[podAuthorityKey]podAuthority
 	endpointAuthoritiesSet bool
 
-	// deployedPending is every deployed render awaiting publication, in arrival
-	// order and deduplicated by content checksum.
+	// deployedPending is every deployed render still awaiting publication, in
+	// arrival order and deduplicated by content checksum.
 	//
 	// A size-1 channel with latest-wins coalescing was wrong here, unlike for
 	// the validation path: `status.deployedToPods[].checksum` is written by an
 	// independent path, so a dropped deployed checksum leaves the CR
 	// advertising a config that `spec.content` never carried — a checksum no
 	// reader, and no watcher, can resolve. Measured on a real run: 1 checksum
-	// in 31 dropped. Every deployed checksum must therefore reach `spec` at
-	// least transiently, even when a newer one is already queued behind it.
+	// in 31 dropped.
 	//
-	// Bounded in practice: deploys are paced by minDeploymentInterval and
-	// skipIfAlreadyPublished collapses repeats, so this holds a handful of
-	// entries at most. Protected by deployedPendingMu.
+	// What a reader can observe is the bound: a checksum only needs to reach
+	// `spec` while some pod is still reported at it. pruneSupersededDeployed
+	// therefore drops a queued entry once the fleet has demonstrably moved
+	// past it, which caps the queue at the number of distinct checksums live
+	// across the fleet rather than at the deploy rate. Each entry holds a full
+	// rendered config, and the drain is one entry per configPublishInterval,
+	// so without that prune the runtime-raw lane — which skips
+	// minDeploymentInterval by design — grows this without bound under
+	// endpoint churn. Protected by deployedPendingMu.
 	deployedPending   []*publishWorkItem
 	deployedPendingMu sync.Mutex
-	deployedTrigger   chan struct{} // Wakes publishWorker; cap 1, same as statusWorkTrigger
+
+	// deployedChecksumByPod is the checksum each pod last reported running,
+	// fed by ConfigAppliedToPodEvent — the same events that write
+	// status.deployedToPods, so it mirrors exactly what a reader can see.
+	// Protected by deployedPendingMu, which also guards the queue it prunes.
+	deployedChecksumByPod map[podAuthorityKey]string
+	deployedTrigger       chan struct{} // Wakes publishWorker; cap 1, same as statusWorkTrigger
 
 	// lastPublishedChecksum tracks the checksum of the last successfully published config.
 	// Used to skip redundant CRD updates when config content is unchanged.
@@ -261,6 +272,8 @@ func New(
 		invalidSuperseded:    make(chan struct{}),
 		publicationRetryWait: waitForPublicationRetry,
 		endpointAuthorities:  make(map[podAuthorityKey]podAuthority),
+
+		deployedChecksumByPod: make(map[podAuthorityKey]string),
 	}
 
 	for _, opt := range opts {

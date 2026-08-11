@@ -20,13 +20,10 @@ templateSnippets:
           {%- var firstRoute = routes[0].(map[string]any) %}
           {%- var frPath_type = tostring(firstRoute["pathType"]) %}
         {%- if frPath_type == pathType %}
-          {%- var routeIds = []any{} %}
-          {%- for _, r := range routes %}
-            {%- var ri = r.(map[string]any) %}
-            {%- var rid string = ri["routeId"] %}
-            {%- routeIds = append(routeIds, rid) %}
-          {%- end %}
-          {%- var routeIds_str = join(routeIds, "__") -%}
+          {#- The group's conflictGroup IS this join, computed once in AnalyzeRoutes. Rebuilding
+              it here let the two drift: route-winner.map and the advanced chain key on the
+              analysis string, and a group of 2+ routes then never matched at runtime. -#}
+          {%- var routeIds_str = tostring(firstRoute["conflictGroup"]) -%}
           {%- var frHostname = tostring(firstRoute["hostname"]) %}
           {%- var frPath_val = tostring(firstRoute["pathValue"]) %}
           {#- Skip the catch-all `/` entry only for PathPrefix routes —

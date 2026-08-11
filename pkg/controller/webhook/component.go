@@ -430,14 +430,27 @@ func (c *Component) registerValidators() error {
 				rule.APIGroup, rule.APIVersion, rule.Resource, err)
 		}
 
-		gvk := c.buildGVK(rule.APIGroup, rule.APIVersion, kind)
+		// Register the validator under EVERY version the apiserver serves for
+		// this kind, not only the one the config resolved to.
+		//
+		// The chart renders the ValidatingWebhookConfiguration from the watched
+		// resource's full apiVersions candidate list, while the effective config
+		// carries only the single resolved version (effective.go clears the
+		// candidates once one is picked). A version the webhook intercepts but
+		// the table has no entry for is denied outright — failurePolicy is Fail
+		// — so an HTTPRoute written as v1beta1 was rejected permanently on a
+		// default install, with a message telling the operator to wait for an
+		// initialization that had already finished.
+		for _, version := range c.servedVersions(rule.APIGroup, kind, rule.APIVersion) {
+			gvk := c.buildGVK(rule.APIGroup, version, kind)
 
-		c.logger.Debug("Registering validator",
-			"gvk", gvk,
-			"kind", kind,
-			"resource", rule.Resource)
+			c.logger.Debug("Registering validator",
+				"gvk", gvk,
+				"kind", kind,
+				"resource", rule.Resource)
 
-		validators[gvk] = c.createResourceValidator(gvk)
+			validators[gvk] = c.createResourceValidator(gvk)
+		}
 	}
 
 	if err := c.server.ReplaceValidatorGeneration(
@@ -452,6 +465,35 @@ func (c *Component) registerValidators() error {
 }
 
 // buildGVK constructs a GVK string from API group, version, and kind.
+// servedVersions returns every apiVersion the cluster serves for the given
+// kind, so the validator table covers everything the webhook can be handed.
+// resolved is always included and comes first, so a mapper that cannot answer
+// (or a kind it does not know) degrades to exactly the previous behaviour
+// rather than losing the version the config resolved to.
+func (c *Component) servedVersions(apiGroup, kind, resolved string) []string {
+	versions := []string{resolved}
+
+	mappings, err := c.restMapper.RESTMappings(schema.GroupKind{Group: apiGroup, Kind: kind})
+	if err != nil {
+		// Not fatal: the resolved version still gets a validator, which is what
+		// the watch itself uses. Other served versions stay unregistered and
+		// keep being denied, so say so rather than swallowing it.
+		c.logger.Warn("Cannot enumerate served versions; validating only the resolved one",
+			"api_group", apiGroup,
+			"kind", kind,
+			"resolved_version", resolved,
+			"error", err)
+		return versions
+	}
+
+	for _, mapping := range mappings {
+		if v := mapping.GroupVersionKind.Version; v != "" && v != resolved {
+			versions = append(versions, v)
+		}
+	}
+	return versions
+}
+
 func (c *Component) buildGVK(apiGroup, version, kind string) string {
 	if apiGroup == "" {
 		// Core API group

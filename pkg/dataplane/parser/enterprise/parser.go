@@ -75,23 +75,6 @@ type EEBackendData = parserconfig.EEBackendData
 // 1. client-native parser processes CE sections (complete field extraction)
 // 2. EE reader processes EE-specific sections (waf-global, waf-profile, etc.)
 // 3. EE reader captures EE directives within CE sections (filter waf, http-request waf-evaluate).
-// ParseFromStringUncached is ParseFromString: the EE parser holds no cache, so
-// the distinction the CE parser draws does not apply here. Present to satisfy
-// dataplane.ConfigParser.
-// ParseFromStringFor / ParseFromStringUncachedFor ignore the label: the EE
-// parser holds no cache, so there is nothing to attribute. Present to satisfy
-// dataplane.ConfigParser.
-func (p *Parser) ParseFromStringFor(_, config string) (*StructuredConfig, error) {
-	return p.ParseFromString(config)
-}
-
-func (p *Parser) ParseFromStringUncachedFor(_, config string) (*StructuredConfig, error) {
-	return p.ParseFromString(config)
-}
-
-func (p *Parser) ParseFromStringUncached(config string) (*StructuredConfig, error) {
-	return p.ParseFromString(config)
-}
 
 func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	if config == "" {

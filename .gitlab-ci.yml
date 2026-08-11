@@ -592,6 +592,9 @@ validate-helm-libraries:
 .stamp-source-chart:
   script:
     - |
+      # An empty variable stamps `version:` with no value and the grep below
+      # matches that empty line, so the check has to come before the sed.
+      : "${CHART_SNAPSHOT_VERSION:?empty - helm rejects a version-less chart. Add .snapshot-version to the extends of this job.}"
       # version ONLY — the guard compares Chart.Version, and appVersion drives
       # the default image tags (spoa-hub, validators): stamping it points pods
       # at main-<sha> images the kind cluster cannot pull.
@@ -2675,6 +2678,9 @@ gateway-conformance-report:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
+    # Required by the .stamp-source-chart step this job inherits through
+    # test-gateway-conformance's before_script.
+    - .snapshot-version
   # Full suite (~108 tests) unsharded plus the kind+helm bootstrap.
   timeout: 60 minutes
   interruptible: true
