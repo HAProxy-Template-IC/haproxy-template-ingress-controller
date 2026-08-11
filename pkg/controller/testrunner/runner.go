@@ -30,6 +30,7 @@ package testrunner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
@@ -272,7 +273,7 @@ func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan test
 			testEngine := r.engineTemplate
 
 			// Run test with isolated paths and engine
-			result := r.runSingleTest(ctx, entry.name, &entry.test, testEngine, testPaths)
+			result, incomplete := r.runSingleTest(ctx, entry.name, &entry.test, testEngine, testPaths)
 
 			testDuration := time.Since(testStartTime)
 			r.logger.Log(context.Background(), logging.LevelTrace, "Test completed",
@@ -287,7 +288,12 @@ func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan test
 				r.engineTemplate.AppendTraces(testEngine)
 			}
 
-			results <- result
+			if !incomplete || !result.Passed {
+				results <- result
+			}
+			if incomplete {
+				return
+			}
 
 			testNum++
 		}
@@ -330,7 +336,7 @@ func (r *Runner) shouldSkipTest(test *config.ValidationTest) string {
 }
 
 // runSingleTest executes a single validation test using worker-specific engine and validation paths.
-func (r *Runner) runSingleTest(ctx context.Context, testName string, test *config.ValidationTest, engine templating.Engine, validationPaths *dataplane.ValidationPaths) TestResult {
+func (r *Runner) runSingleTest(ctx context.Context, testName string, test *config.ValidationTest, engine templating.Engine, validationPaths *dataplane.ValidationPaths) (TestResult, bool) {
 	startTime := time.Now()
 
 	result := TestResult{
@@ -377,7 +383,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 		result.Passed = false
 		result.RenderError = fmt.Sprintf("creating fixture stores: %v", err)
 		result.Duration = time.Since(startTime)
-		return result
+		return result, false
 	}
 
 	// 3. Create HTTP store from HTTP fixtures
@@ -394,12 +400,16 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 		result.Passed = false
 		result.RenderError = parseErr
 		result.Duration = time.Since(startTime)
-		return result
+		return result, false
 	}
 
 	// 5. Render HAProxy configuration and auxiliary files (using worker-specific engine)
-	rendered, err := r.renderWithStores(engine, fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles, effectiveExtraContext)
+	rendered, err := r.renderWithStores(ctx, engine, fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles, effectiveExtraContext)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+			result.Duration = time.Since(startTime)
+			return result, true
+		}
 		result.RenderError = dataplane.SimplifyRenderingError(err)
 
 		// Add rendering failure as assertion for completeness
@@ -444,7 +454,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 8. Run all assertions (whether rendering succeeded or failed)
-	r.executeAssertions(ctx, &result, test, rendered.HAProxyConfig, rendered.AuxiliaryFiles, rendered.K8sResources, rendered.StatusPatches, rendered.Events, templateContext, validationPaths, renderDeps)
+	incomplete := r.executeAssertions(ctx, &result, test, rendered.HAProxyConfig, rendered.AuxiliaryFiles, rendered.K8sResources, rendered.StatusPatches, rendered.Events, templateContext, validationPaths, renderDeps)
 
 	// Test passes if either:
 	// - Rendering succeeded AND all assertions passed
@@ -454,7 +464,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	result.Duration = time.Since(startTime)
-	return result
+	return result, incomplete
 }
 
 // parseCurrentConfig parses the optional `currentConfig` block from a test

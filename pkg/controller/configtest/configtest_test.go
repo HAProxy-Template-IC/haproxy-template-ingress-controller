@@ -107,3 +107,37 @@ func TestRunValidationTests_IncompleteOnTimeout(t *testing.T) {
 		t.Fatal("an incomplete run must not report Passed")
 	}
 }
+
+func TestRunValidationTests_TimeoutCancelsActiveRender(t *testing.T) {
+	cfg, _ := cfgWithContainsTest(t, "never reached")
+	cfg.HAProxyConfig.Template = `{%%
+  var total = 0
+  for i := 0; i < 2000000000; i++ { total = total + i }
+%%}{{ total }}`
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, nil, helpers.EngineOptions{})
+	if err != nil {
+		t.Fatalf("building engine: %v", err)
+	}
+
+	type outcome struct {
+		result Result
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, runErr := RunValidationTests(context.Background(), cfg, engine, nil, 20*time.Millisecond, discardLogger())
+		done <- outcome{result: result, err: runErr}
+	}()
+
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("unexpected error: %v", got.err)
+		}
+		if !got.result.Incomplete || got.result.Passed || len(got.result.Failures) != 0 {
+			t.Fatalf("expected an incomplete run without a configuration failure, got %+v", got.result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("validation timeout did not cancel the active template render")
+	}
+}

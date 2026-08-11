@@ -117,7 +117,7 @@ type RenderOutput struct {
 // Returns rendered haproxy.cfg, auxiliary files, k8sResources (template name → YAML),
 // status patches (key `<ns>/<name>:<phase>` → JSON-marshalled status content), and
 // include-stats (when profiling) bundled in a RenderOutput, plus the render error.
-func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string, testExtraContext map[string]any) (RenderOutput, error) {
+func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string, testExtraContext map[string]any) (RenderOutput, error) {
 	// Build rendering context with fixture stores
 	renderCtx := r.buildRenderingContext(storeMap, validationPaths, httpStore, currentConfig, currentFiles)
 
@@ -129,16 +129,16 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 	var err error
 
 	if r.profileIncludes {
-		haproxyConfig, includeStats, err = engine.RenderWithProfiling(context.Background(), names.MainTemplateName, renderCtx)
+		haproxyConfig, includeStats, err = engine.RenderWithProfiling(ctx, names.MainTemplateName, renderCtx)
 	} else {
-		haproxyConfig, err = engine.Render(context.Background(), names.MainTemplateName, renderCtx)
+		haproxyConfig, err = engine.Render(ctx, names.MainTemplateName, renderCtx)
 	}
 	if err != nil {
 		return RenderOutput{}, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
 
 	// Render auxiliary files using worker-specific engine (pre-declared files)
-	staticFiles, err := r.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
+	staticFiles, err := r.renderAuxiliaryFiles(ctx, engine, renderCtx, validationPaths)
 	if err != nil {
 		return RenderOutput{}, fmt.Errorf("rendering auxiliary files: %w", err)
 	}
@@ -149,7 +149,7 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 	// them alongside haproxy.cfg / map files.
 	k8sResources := make(map[string]string, len(r.config.K8sResources))
 	for name := range r.config.K8sResources {
-		rendered, err := engine.Render(context.Background(), name, renderCtx)
+		rendered, err := engine.Render(ctx, name, renderCtx)
 		if err != nil {
 			return RenderOutput{}, fmt.Errorf("rendering k8sResources %s: %w", name, err)
 		}
@@ -379,12 +379,12 @@ func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validat
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) using worker-specific engine.
-func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[string]any, validationPaths *dataplane.ValidationPaths) (*dataplane.AuxiliaryFiles, error) {
+func (r *Runner) renderAuxiliaryFiles(ctx context.Context, engine templating.Engine, renderCtx map[string]any, validationPaths *dataplane.ValidationPaths) (*dataplane.AuxiliaryFiles, error) {
 	auxFiles := &dataplane.AuxiliaryFiles{}
 
 	// Render map files using worker-specific engine
 	for name := range r.config.Maps {
-		rendered, err := engine.Render(context.Background(), name, renderCtx)
+		rendered, err := engine.Render(ctx, name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("rendering map file %s: %w", name, err)
 		}
@@ -397,7 +397,7 @@ func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[st
 
 	// Render general files using worker-specific engine
 	for name := range r.config.Files {
-		rendered, err := engine.Render(context.Background(), name, renderCtx)
+		rendered, err := engine.Render(ctx, name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("rendering general file %s: %w", name, err)
 		}
@@ -411,7 +411,7 @@ func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[st
 
 	// Render SSL certificates using worker-specific engine
 	for name := range r.config.SSLCertificates {
-		rendered, err := engine.Render(context.Background(), name, renderCtx)
+		rendered, err := engine.Render(ctx, name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("rendering SSL certificate %s: %w", name, err)
 		}

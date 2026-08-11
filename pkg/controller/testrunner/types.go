@@ -217,4 +217,6 @@ type AssertionResult struct {
 
 	// TargetPreview is a preview of the target content (first 200 chars, only for failed assertions).
 	TargetPreview string `json:"targetPreview,omitempty" yaml:"targetPreview,omitempty"`
+
+	incomplete bool
 }
