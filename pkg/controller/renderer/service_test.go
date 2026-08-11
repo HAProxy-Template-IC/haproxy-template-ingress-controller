@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	controllernames "gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
@@ -41,6 +42,23 @@ type mockStoreProvider struct {
 
 func (m *mockStoreProvider) GetStore(name string) stores.Store {
 	return m.storeMap[name]
+}
+
+func TestHTTPSourceModeForRender(t *testing.T) {
+	tests := []struct {
+		name string
+		mode rendercontext.RenderMode
+		want controllerhttpstore.SourceMode
+	}{
+		{name: "live reconcile", mode: rendercontext.RenderModeReconcile, want: controllerhttpstore.SourceModeAuthoritative},
+		{name: "admission", mode: rendercontext.RenderModeAdmission, want: controllerhttpstore.SourceModeReadOnly},
+		{name: "unknown fails safe", mode: rendercontext.RenderMode("unknown"), want: controllerhttpstore.SourceModeReadOnly},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, httpSourceModeForRender(test.mode))
+		})
+	}
 }
 
 func (m *mockStoreProvider) StoreNames() []string {

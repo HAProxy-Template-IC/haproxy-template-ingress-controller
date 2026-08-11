@@ -63,10 +63,11 @@ func TestHTTPStoreWrapper_GetCachedContent_ValidationModeReturnsContent(t *testi
 	component.GetStore().LoadFixture(url, expectedContent)
 
 	overlay := purehttpstore.NewHTTPOverlay(component.GetStore())
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, overlay)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, overlay, SourceModeReadOnly)
 
-	got, ok := wrapper.getCachedContent(url)
+	got, ok, err := wrapper.getCachedContent(url, "")
 
+	require.NoError(t, err)
 	require.True(t, ok,
 		"validation mode MUST return content when the overlay finds it — "+
 			"a regression that fell through to the production-mode store.Get "+
@@ -88,10 +89,11 @@ func TestHTTPStoreWrapper_GetCachedContent_ProductionModeReturnsAcceptedContent(
 
 	// Production mode: nil overlay. The wrapper MUST consult
 	// store.Get directly (which returns accepted content only).
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil, SourceModeAuthoritative)
 
-	got, ok := wrapper.getCachedContent(url)
+	got, ok, err := wrapper.getCachedContent(url, "")
 
+	require.NoError(t, err)
 	require.True(t, ok,
 		"production mode MUST return accepted content when present in the "+
 			"underlying store — a regression that wrongly required an overlay "+

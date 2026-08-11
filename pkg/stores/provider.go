@@ -37,6 +37,9 @@ type HTTPContentOverlay interface {
 	// Returns pending content if available, otherwise accepted content.
 	GetContent(url string) (string, bool)
 
+	// GetContentForSource returns content only for the matching source authority.
+	GetContentForSource(url, sourceIdentity string) (string, bool)
+
 	// PendingURLs returns the list of URLs with pending content.
 	PendingURLs() []string
 

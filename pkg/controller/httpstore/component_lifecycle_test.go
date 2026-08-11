@@ -38,6 +38,17 @@ func waitForLifecycleSignal(t *testing.T, signal <-chan struct{}, timeoutMessage
 	}
 }
 
+func armSourceRefresher(t *testing.T, c *Component, url string, delay time.Duration) {
+	t.Helper()
+	state, exists := c.store.GetSourceState(url)
+	require.True(t, exists)
+	c.mu.Lock()
+	c.refreshGeneration[url]++
+	c.refreshSourceGeneration[url] = state.Generation
+	c.armRefresherLocked(url, delay, c.refreshGeneration[url])
+	c.mu.Unlock()
+}
+
 func TestStopAllRefreshersJoinsRunningCallback(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	c := New(bus, logger, 0)
@@ -54,16 +65,13 @@ func TestStopAllRefreshersJoinsRunningCallback(t *testing.T) {
 
 	started := make(chan struct{})
 	release := make(chan struct{})
-	c.refreshStoreURL = func(context.Context, string) (*storepkg.PendingVersion, error) {
+	c.refreshStoreURL = func(context.Context, string, uint64) (*storepkg.PendingVersion, error) {
 		close(started)
 		<-release
 		return &storepkg.PendingVersion{}, nil
 	}
 
-	c.mu.Lock()
-	c.refreshGeneration[url]++
-	c.armRefresherLocked(url, time.Millisecond, c.refreshGeneration[url])
-	c.mu.Unlock()
+	armSourceRefresher(t, c, url, time.Millisecond)
 
 	select {
 	case <-started:
@@ -134,9 +142,9 @@ func TestSupersededRefreshDiscardsItsCommitAndPromptsReplacement(t *testing.T) {
 	releaseOldCallback := make(chan struct{})
 	replacementAttempted := make(chan *storepkg.PendingVersion, 1)
 	var refreshes atomic.Int32
-	c.refreshStoreURL = func(ctx context.Context, url string) (*storepkg.PendingVersion, error) {
+	c.refreshStoreURL = func(ctx context.Context, url string, sourceGeneration uint64) (*storepkg.PendingVersion, error) {
 		call := refreshes.Add(1)
-		version, refreshErr := c.store.RefreshURLVersion(ctx, url)
+		version, refreshErr := c.store.RefreshURLVersionForGeneration(ctx, url, sourceGeneration)
 		switch call {
 		case 1:
 			close(oldCommitted)
@@ -146,10 +154,7 @@ func TestSupersededRefreshDiscardsItsCommitAndPromptsReplacement(t *testing.T) {
 		}
 		return version, refreshErr
 	}
-	c.mu.Lock()
-	c.refreshGeneration[server.URL]++
-	c.armRefresherLocked(server.URL, time.Millisecond, c.refreshGeneration[server.URL])
-	c.mu.Unlock()
+	armSourceRefresher(t, c, server.URL, time.Millisecond)
 	waitForLifecycleSignal(t, oldFetchStarted, "old refresh did not start")
 
 	c.StopRefresher(server.URL)
@@ -257,14 +262,17 @@ func TestRefreshBeforeStartRemainsScheduled(t *testing.T) {
 	require.NoError(t, err)
 
 	refreshCalled := false
-	c.refreshStoreURL = func(context.Context, string) (*storepkg.PendingVersion, error) {
+	c.refreshStoreURL = func(context.Context, string, uint64) (*storepkg.PendingVersion, error) {
 		refreshCalled = true
 		return nil, context.Canceled
 	}
 	timer := time.NewTimer(time.Hour)
 	require.True(t, timer.Stop())
+	state, exists := c.store.GetSourceState(server.URL)
+	require.True(t, exists)
 	c.mu.Lock()
 	c.refreshGeneration[server.URL] = 1
+	c.refreshSourceGeneration[server.URL] = state.Generation
 	c.refreshManaged[server.URL] = true
 	c.refreshPending[server.URL] = true
 	c.refreshers[server.URL] = timer

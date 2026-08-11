@@ -1,10 +1,10 @@
 # pkg/httpstore
 
-Pure HTTP resource store with two-version (pending/accepted) caching for safe content updates.
+Pure HTTP resource store with render-local initial admission and two-version (pending/accepted) refresh caching.
 
 ## Overview
 
-`HTTPStore` fetches arbitrary HTTP content (IP blocklists, JSON config, anything templates need from outside the cluster) and caches it under a two-version pattern: refreshed content lands in **pending** until the controller validates it, then it's promoted to **accepted**. Production renders only ever see the accepted version, so an upstream serving garbage can't break the live HAProxy config.
+`HTTPStore` fetches arbitrary HTTP content (IP blocklists, JSON config, anything templates need from outside the cluster). Periodic refreshes use a two-version pattern: changed content lands in **pending** until the controller validates it, then it's promoted to **accepted**. New authoritative sources use render-local candidates instead. The controller accepts the complete candidate set only after the exact rendered output passes every validator, so an upstream serving garbage can't break the live HAProxy config.
 
 This is the **pure** half of the design. Periodic refresh timers, validation event handling, eviction, and the template-callable wrapper all live in `pkg/controller/httpstore`. Reach for the pure store directly only from tests; in production the event adapter is what you want.
 
@@ -15,16 +15,22 @@ import "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 
 store := httpstore.New(logger, 2*time.Minute) // maxAge for eviction; 0 disables
 
-// Initial fetch (synchronous)
-content, err := store.Fetch(ctx, "https://example.com/blocklist.txt",
-    httpstore.FetchOptions{
-        Timeout:  30 * time.Second,
-        Retries:  3,
-        Critical: true, // false → return "" + warn on failure
-        Delay:    5 * time.Minute, // refresh interval (the event adapter drives the timer)
-    },
-    &httpstore.AuthConfig{Type: "bearer", Token: "secret"},
-)
+opts := httpstore.FetchOptions{
+    Timeout:  30 * time.Second,
+    Retries:  3,
+    Critical: true,
+    Delay:    5 * time.Minute,
+}
+source, err := store.ReconcileSource("https://example.com/blocklist.txt", opts,
+    &httpstore.AuthConfig{Type: "bearer", Token: "secret"})
+
+// Fetch without exposing the response through accepted or pending state.
+content, candidate, err := store.PrepareInitial(ctx,
+    "https://example.com/blocklist.txt", source.State)
+
+// The caller validates the complete rendered output, then commits every
+// candidate from that render in one operation.
+err = store.CommitInitialCandidates(ctx, []*httpstore.InitialCandidate{candidate})
 
 // Later: refresh into pending (returns true if content changed)
 changed, err := store.RefreshURL(ctx, "https://example.com/blocklist.txt")
@@ -35,13 +41,15 @@ got, ok := store.Get(url)
 // Validation render reads pending if available, otherwise accepted
 got, ok = store.GetForValidation(url)
 
-// After the validation pipeline returns:
+// After periodic-refresh validation returns:
 store.PromotePending(url) // success → pending becomes accepted
 store.RejectPending(url)  // failure → pending discarded, accepted preserved
 
 // Test fixtures bypass HTTP entirely
 store.LoadFixture(url, "mock content")
 ```
+
+`Fetch` remains a convenience for isolated stores that may accept their first successful response immediately. The controller uses it only for render-local read-only stores; authoritative live renders use `PrepareInitial` and `CommitInitialCandidates` through `pkg/controller/httpstore`.
 
 ## Authentication
 
@@ -54,6 +62,10 @@ Three modes via `AuthConfig.Type`:
 ## Conditional Requests
 
 Refreshes use ETag and Last-Modified automatically; a 304 returns `changed=false` so the existing accepted/pending state is preserved. Repeated refreshes against an unchanged upstream cost one round-trip and zero cache churn.
+
+## Source authority
+
+The URL, effective fetch options, and authentication form one source declaration. An authoritative declaration change invalidates the accepted body and advances the source generation. The generation fences refreshes and render-local candidates that started under the previous declaration. The controller returns the candidate response to its render but accepts it only when the exact full pipeline succeeds; one stale candidate rejects the complete multi-URL commit. Admission and source-map renders fetch a different declaration into a render-local store instead of calling this shared-store transition.
 
 ## Size Limit
 

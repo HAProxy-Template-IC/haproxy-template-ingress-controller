@@ -19,47 +19,62 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
-// HTTPStoreWrapper wraps HTTPStore for template access.
-//
-// It provides the Fetch method callable from templates:
-//
-//	{{ http.Fetch("https://example.com/data.txt", {"interval": "60s"}) }}
-//	{{ http.Fetch("https://api.example.com/data", {"interval": "5m"}, {"type": "bearer", "token": token}) }}
-//
-// The wrapper uses an overlay to determine content retrieval behavior:
-//   - With overlay (validation mode): Returns pending content if available
-//   - Without overlay (production mode): Returns accepted content only
+// SourceMode controls whether a render may replace the shared HTTP source.
+type SourceMode uint8
+
+const (
+	// SourceModeReadOnly keeps source declarations and fetched content local to one render.
+	SourceModeReadOnly SourceMode = iota
+	// SourceModeAuthoritative reconciles accepted sources and their refresh timers.
+	SourceModeAuthoritative
+)
+
+// HTTPStoreWrapper exposes HTTPStore content to one template render.
 type HTTPStoreWrapper struct {
-	component *Component
-	logger    *slog.Logger
-	overlay   stores.HTTPContentOverlay // nil = production, non-nil = validation
-	ctx       context.Context
+	component      *Component
+	logger         *slog.Logger
+	overlay        stores.HTTPContentOverlay
+	ctx            context.Context
+	sourceMode     SourceMode
+	transientStore *httpstore.HTTPStore
+	transaction    *InputTransaction
+	mu             sync.Mutex
+	declared       map[string]string
 }
 
 // NewHTTPStoreWrapper creates a new HTTPStoreWrapper.
-//
-// Parameters:
-//   - ctx: Context for HTTP requests
-//   - component: The httpstore component for store access and URL registration
-//   - logger: Logger for debug messages
-//   - overlay: HTTP overlay for validation mode (nil for production mode)
-//
-// When overlay is provided (validation mode), the wrapper returns pending
-// content if available for URLs in the overlay. When overlay is nil
-// (production mode), only accepted content is returned.
-func NewHTTPStoreWrapper(ctx context.Context, component *Component, logger *slog.Logger, overlay stores.HTTPContentOverlay) *HTTPStoreWrapper {
-	return &HTTPStoreWrapper{
-		component: component,
-		logger:    logger.With("component", "http-wrapper"),
-		overlay:   overlay,
-		ctx:       ctx,
+func NewHTTPStoreWrapper(
+	ctx context.Context,
+	component *Component,
+	logger *slog.Logger,
+	overlay stores.HTTPContentOverlay,
+	sourceMode SourceMode,
+) *HTTPStoreWrapper {
+	wrapper := &HTTPStoreWrapper{
+		component:      component,
+		logger:         logger.With("component", "http-wrapper"),
+		overlay:        overlay,
+		ctx:            ctx,
+		sourceMode:     sourceMode,
+		transientStore: httpstore.New(logger, 0),
+		declared:       make(map[string]string),
 	}
+	if sourceMode == SourceModeAuthoritative {
+		wrapper.transaction = newInputTransaction(component)
+	}
+	return wrapper
+}
+
+// InputTransaction returns the authoritative render's candidate transaction.
+func (w *HTTPStoreWrapper) InputTransaction() *InputTransaction {
+	return w.transaction
 }
 
 // Fetch fetches content from a URL.
@@ -94,25 +109,87 @@ func (w *HTTPStoreWrapper) Fetch(args ...any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	identity, err := httpstore.SourceIdentity(opts, auth)
+	if err != nil {
+		return nil, fmt.Errorf("http.Fetch: %w", err)
+	}
+	if err := w.declare(url, identity); err != nil {
+		return nil, err
+	}
+	if err := w.rejectOverlaySourceConflict(url, identity); err != nil {
+		return nil, err
+	}
 
-	// Try to get cached content first
-	if content, ok := w.getCachedContent(url); ok {
+	if w.sourceMode != SourceModeAuthoritative {
+		return w.fetchReadOnly(url, identity, opts, auth)
+	}
+	return w.fetchAuthoritative(url, opts, auth)
+}
+
+func (w *HTTPStoreWrapper) fetchReadOnly(
+	url string,
+	identity string,
+	opts httpstore.FetchOptions,
+	auth *httpstore.AuthConfig,
+) (any, error) {
+	content, ok, err := w.getCachedContent(url, identity)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		return content, nil
 	}
 
-	// No cached content - perform synchronous fetch
-	store := w.component.GetStore()
-	content, err := store.Fetch(w.ctx, url, opts, auth)
+	content, err = w.transientStore.Fetch(w.ctx, url, opts, auth)
+	if err != nil {
+		return nil, err
+	}
+	return content, nil
+}
+
+func (w *HTTPStoreWrapper) fetchAuthoritative(
+	url string,
+	opts httpstore.FetchOptions,
+	auth *httpstore.AuthConfig,
+) (any, error) {
+	state, err := w.component.ReconcileSource(url, opts, auth)
+	if err != nil {
+		return nil, fmt.Errorf("http.Fetch: %w", err)
+	}
+	content, err := w.transaction.fetch(w.ctx, url, state)
 	if err != nil {
 		return nil, err
 	}
 
-	// Register URL for periodic refresh if delay is configured
-	if opts.Delay > 0 {
-		w.component.RegisterURL(url)
-	}
-
 	return content, nil
+}
+
+func (w *HTTPStoreWrapper) declare(url, identity string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	previous, exists := w.declared[url]
+	if exists && previous != identity {
+		return fmt.Errorf(
+			"http.Fetch: URL %s uses conflicting authentication or options in one render; use one declaration per URL",
+			url,
+		)
+	}
+	w.declared[url] = identity
+	return nil
+}
+
+func (w *HTTPStoreWrapper) rejectOverlaySourceConflict(url, sourceIdentity string) error {
+	if w.overlay == nil || !w.overlay.HasPendingURL(url) {
+		return nil
+	}
+	if _, ok := w.overlay.GetContentForSource(url, sourceIdentity); ok {
+		return nil
+	}
+	return fmt.Errorf(
+		"http.Fetch: URL %s has pending content from different authentication or options; retry after the source change settles",
+		url,
+	)
 }
 
 // parseArgs extracts and validates URL, options, and auth from variadic arguments.
@@ -177,33 +254,33 @@ func parseAuthFromArg(arg any) (*httpstore.AuthConfig, error) {
 	return auth, nil
 }
 
-// getCachedContent returns cached content based on render mode.
-//
-// If an overlay is present (validation mode), it uses the overlay's GetContent
-// which returns pending content if available. Without an overlay (production mode),
-// it returns accepted content only from the underlying store.
-func (w *HTTPStoreWrapper) getCachedContent(url string) (string, bool) {
-	// Validation mode: use overlay for content retrieval
+// getCachedContent returns matching overlay content or accepted shared content.
+func (w *HTTPStoreWrapper) getCachedContent(url, sourceIdentity string) (content string, found bool, err error) {
 	if w.overlay != nil {
-		if content, ok := w.overlay.GetContent(url); ok {
+		if content, ok := w.overlay.GetContentForSource(url, sourceIdentity); ok {
 			w.logger.Debug("Returning content via overlay",
 				"url", url,
 				"size", len(content),
 				"has_pending", w.overlay.HasPendingURL(url))
-			return content, true
+			return content, true, nil
 		}
-		return "", false
+		if w.overlay.HasPendingURL(url) {
+			return "", false, fmt.Errorf(
+				"http.Fetch: URL %s has pending content from different authentication or options; retry after the source change settles",
+				url,
+			)
+		}
+		return "", false, nil
 	}
 
-	// Production mode: only return accepted content
 	store := w.component.GetStore()
-	if content, ok := store.Get(url); ok {
+	if content, ok := store.GetSource(url, sourceIdentity); ok {
 		w.logger.Debug("Returning accepted content",
 			"url", url,
 			"size", len(content))
-		return content, true
+		return content, true, nil
 	}
-	return "", false
+	return "", false, nil
 }
 
 // parseFetchOptions parses a map into FetchOptions.

@@ -34,18 +34,20 @@ func TestNewHTTPStoreWrapper(t *testing.T) {
 
 	// Create overlay for validation mode
 	overlay := purehttpstore.NewHTTPOverlay(component.GetStore())
-	wrapper := NewHTTPStoreWrapper(ctx, component, logger, overlay)
+	wrapper := NewHTTPStoreWrapper(ctx, component, logger, overlay, SourceModeReadOnly)
 
 	require.NotNil(t, wrapper)
 	assert.Equal(t, component, wrapper.component)
 	assert.NotNil(t, wrapper.overlay)
 	assert.Equal(t, ctx, wrapper.ctx)
+	assert.Equal(t, SourceModeReadOnly, wrapper.sourceMode)
+	assert.NotNil(t, wrapper.transientStore)
 }
 
 func TestParseArgs_NoArgs(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil, SourceModeReadOnly)
 
 	_, err := wrapper.Fetch()
 	require.Error(t, err)
@@ -55,7 +57,7 @@ func TestParseArgs_NoArgs(t *testing.T) {
 func TestParseArgs_InvalidURL(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil, SourceModeReadOnly)
 
 	_, err := wrapper.Fetch(12345) // Not a string
 	require.Error(t, err)
@@ -65,7 +67,7 @@ func TestParseArgs_InvalidURL(t *testing.T) {
 func TestParseArgs_InvalidOptions(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil, SourceModeReadOnly)
 
 	_, err := wrapper.Fetch("http://example.com", "not-a-map")
 	require.Error(t, err)
@@ -75,7 +77,7 @@ func TestParseArgs_InvalidOptions(t *testing.T) {
 func TestParseArgs_InvalidAuth(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil, SourceModeReadOnly)
 
 	_, err := wrapper.Fetch("http://example.com", nil, "not-a-map")
 	require.Error(t, err)
@@ -586,10 +588,11 @@ func TestHTTPStoreWrapper_GetCachedContent_Validation(t *testing.T) {
 
 	// Create wrapper in validation mode with overlay
 	overlay := purehttpstore.NewHTTPOverlay(component.GetStore())
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, overlay)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, overlay, SourceModeReadOnly)
 
 	// URL not in cache
-	content, ok := wrapper.getCachedContent("http://example.com")
+	content, ok, err := wrapper.getCachedContent("http://example.com", "")
+	require.NoError(t, err)
 	assert.False(t, ok)
 	assert.Empty(t, content)
 }
@@ -599,10 +602,11 @@ func TestHTTPStoreWrapper_GetCachedContent_Production(t *testing.T) {
 	component := New(bus, logger, 0)
 
 	// Create wrapper in production mode (nil overlay)
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil, SourceModeAuthoritative)
 
 	// URL not in cache
-	content, ok := wrapper.getCachedContent("http://example.com")
+	content, ok, err := wrapper.getCachedContent("http://example.com", "")
+	require.NoError(t, err)
 	assert.False(t, ok)
 	assert.Empty(t, content)
 }

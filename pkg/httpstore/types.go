@@ -158,6 +158,9 @@ func (s ValidationState) String() string {
 // where we must not discard the old blocklist before knowing the new one is valid.
 type CacheEntry struct {
 	mutationRevision uint64
+	sourceIdentity   string
+	sourceGeneration uint64
+	fixture          bool
 
 	// URL is the source URL for this entry.
 	URL string
@@ -191,6 +194,20 @@ type CacheEntry struct {
 	// Configuration for this URL
 	Options FetchOptions
 	Auth    *AuthConfig
+}
+
+// SourceState identifies the current authority and refresh policy for a URL.
+type SourceState struct {
+	Identity    string
+	Generation  uint64
+	Delay       time.Duration
+	HasAccepted bool
+}
+
+// SourceReconcileResult describes an authoritative source transition.
+type SourceReconcileResult struct {
+	State   SourceState
+	Changed bool
 }
 
 // PendingVersion identifies one pending content revision.
