@@ -57,6 +57,7 @@ cached, _ := store.NewCachedStore(&store.CachedStoreConfig{
 - Stores only `resourceRef` tuples (index keys + namespace/name) in memory, plus the same identity-to-bucket reverse map as `MemoryStore`.
 - `Get` cache hits return immediately; cache misses call the dynamic client, cache the result with `CacheTTL`, and return it.
 - The cache is keyed by `namespace/name`, separate from the index composite key — multiple references can share the same index key while each has its own cache entry.
+- Each informer mutation advances a local generation for that namespace/name. Cache-hit TTL renewal and cache-miss commit both require the captured generation to remain current, so a concurrent `Update` or `Delete` can't restore stale data after invalidating it.
 - **`List` forces a fetch for every reference.** Use it only for small collections or debugging; prefer `MemoryStore` for templates that iterate everything.
 - The implementation releases the store lock *before* dispatching API calls so one slow fetch doesn't block other lookups.
 - A stale reference whose API object returns `NotFound` is skipped. Every other API error aborts the read; callers never receive a partial result set.

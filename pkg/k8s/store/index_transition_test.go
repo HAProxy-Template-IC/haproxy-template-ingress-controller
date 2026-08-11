@@ -103,6 +103,23 @@ func TestStoresDeleteAndRecreateResourceWithoutStaleIndex(t *testing.T) {
 	}
 }
 
+func TestStoresRejectDeleteWithoutResourceName(t *testing.T) {
+	for name, resourceStore := range indexTransitionStores(t) {
+		t.Run(name, func(t *testing.T) {
+			resource := indexTransitionResource("target", "A", "old")
+			require.NoError(t, resourceStore.Add(resource, []string{"A"}))
+
+			err := resourceStore.Delete("default", "", []string{"A"})
+			require.ErrorIs(t, err, errResourceNameRequired)
+
+			bucket, getErr := resourceStore.Get("A")
+			require.NoError(t, getErr)
+			require.Len(t, bucket, 1)
+			require.Equal(t, "target", resourceName(t, bucket[0]))
+		})
+	}
+}
+
 func resourceName(t *testing.T, resource any) string {
 	t.Helper()
 	namespace, name := extractNamespaceName(resource)

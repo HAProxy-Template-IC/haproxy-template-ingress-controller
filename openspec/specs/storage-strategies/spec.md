@@ -76,7 +76,7 @@ THEN a StoreError SHALL be returned indicating the key count mismatch.
 
 ### Requirement: CachedStore
 
-CachedStore SHALL store only resource references (namespace, name, index keys) and a reverse namespace/name-to-composite-key map in memory, and fetch full resources from the Kubernetes API on access. Fetched resources SHALL be cached using an LRU cache with a configurable TTL (default 2m10s). The maximum cache size SHALL default to 256 entries. Cache entries that are accessed SHALL have their TTL reset. API fetches SHALL use a 10-second timeout derived from the caller context. Fetched resources SHALL be processed through the indexer (field filtering, float-to-int conversion) before caching. The legacy Get and List methods SHALL remain available, while GetContext and ListContext SHALL cancel in-flight fetches and stop before fetching another matching reference.
+CachedStore SHALL store only resource references (namespace, name, index keys) and a reverse namespace/name-to-composite-key map in memory, and fetch full resources from the Kubernetes API on access. Fetched resources SHALL be cached using an LRU cache with a configurable TTL (default 2m10s). The maximum cache size SHALL default to 256 entries. Cache entries that are accessed SHALL have their TTL reset. Each informer mutation SHALL advance a local generation for the affected resource identity, and every reference and cache entry SHALL carry the generation that authorized it. API fetches SHALL use a 10-second timeout derived from the caller context. Fetched resources SHALL be processed through the indexer (field filtering, float-to-int conversion) before caching. The legacy Get and List methods SHALL remain available, while GetContext and ListContext SHALL cancel in-flight fetches and stop before fetching another matching reference.
 
 #### Scenario: Reference moves to a changed index key
 
@@ -103,10 +103,25 @@ THEN the least recently used entry SHALL be evicted.
 WHEN a cached resource is accessed via Get before its TTL expires
 THEN the cache entry's expiration time SHALL be reset to now plus the configured TTL.
 
-#### Scenario: API fetch failure skips resource silently
+#### Scenario: Cache hit renewal races an informer mutation
 
-WHEN a resource cannot be fetched from the API (e.g., it has been deleted)
-THEN the resource SHALL be omitted from the Get results without returning an error.
+WHEN a read captures a cache entry and an informer Update or Delete advances or removes that resource's generation before TTL renewal
+THEN the stale read SHALL NOT renew or replace the cache entry created by the informer mutation.
+
+#### Scenario: Cache miss completion races an informer mutation
+
+WHEN an API fetch starts for one resource generation and an informer Update or Delete changes that generation before the fetch completes
+THEN the fetched body SHALL be returned to the in-flight caller but SHALL NOT be committed to the cache.
+
+#### Scenario: Deleted reference disappears during API fetch
+
+WHEN a referenced resource returns Kubernetes NotFound during Get or List
+THEN that resource SHALL be omitted from the results without failing the read.
+
+#### Scenario: API fetch failure fails the read
+
+WHEN a referenced resource fetch fails for any reason other than Kubernetes NotFound
+THEN Get or List SHALL return that error and SHALL NOT return partial results.
 
 #### Scenario: Context cancellation stops sequential cache misses
 

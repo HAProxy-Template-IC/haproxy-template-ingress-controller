@@ -52,15 +52,12 @@ func TestCachedStore_ListCached_ReturnsOnlyWarmEntries(t *testing.T) {
 	assert.Empty(t, cached,
 		"ListCached on an empty store must return [] — NOT call out to the API")
 
-	// Prime the cache directly via cacheResource (the internal hook
-	// the watcher uses on Add). Avoids running Get() against the
-	// empty fake client.
-	store.cacheResource("default", "warm", resource)
+	require.NoError(t, store.Add(resource, []string{"default", "warm"}))
 
 	cached, err = store.ListCached()
 	require.NoError(t, err)
 	require.Len(t, cached, 1,
-		"ListCached must surface entries cached via cacheResource")
+		"ListCached must surface entries cached by Add")
 	assert.Equal(t, "warm", cached[0].(*unstructured.Unstructured).GetName())
 }
 
@@ -83,7 +80,7 @@ func TestCachedStore_ListCached_SkipsExpiredEntries(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	store.cacheResource("default", "expired", resource)
+	require.NoError(t, store.Add(resource, []string{"default", "expired"}))
 
 	// Fresh entry is visible.
 	cached, _ := store.ListCached()

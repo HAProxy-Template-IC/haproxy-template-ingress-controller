@@ -110,6 +110,7 @@ type Store interface {
 	// index shape for validation and compatibility.
 	//
 	// Deleting a resource that is not present is a no-op returning nil.
+	// An empty resource name is rejected.
 	//
 	// Parameters:
 	//   - namespace: Namespace of the resource to delete ("" for cluster-scoped)

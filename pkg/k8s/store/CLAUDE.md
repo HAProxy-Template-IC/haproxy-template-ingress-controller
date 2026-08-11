@@ -130,23 +130,26 @@ memoized".
 
 ```go
 type resourceRef struct {
-    namespace string   // For API fetching
-    name      string   // For API fetching
-    indexKeys []string // For key matching
+    namespace  string   // For API fetching
+    name       string   // For API fetching
+    indexKeys  []string // For key matching
+    generation uint64   // Informer mutation captured by a read
 }
 
 type CachedStore struct {
-    mu        sync.RWMutex
-    refs      map[string][]resourceRef            // Composite key -> references
-    locations map[resourceIdentity]string         // Resource identity -> composite key
-    cache     *lru.Cache[string, *cacheEntry]     // LRU cache: "ns/name" -> cached resource
-    numKeys   int
-    cacheTTL  time.Duration
-    client    dynamic.Interface
-    gvr       schema.GroupVersionResource
-    namespace string
-    indexer   *indexer.Indexer
-    logger    *slog.Logger
+    mu             sync.RWMutex
+    refs           map[string][]resourceRef
+    locations      map[resourceIdentity]string
+    cache          *lru.Cache[string, *cacheEntry]
+    refGenerations map[string]uint64
+    nextGeneration uint64
+    numKeys        int
+    cacheTTL       time.Duration
+    client         dynamic.Interface
+    gvr            schema.GroupVersionResource
+    namespace      string
+    indexer        *indexer.Indexer
+    logger         *slog.Logger
 }
 ```
 
@@ -159,6 +162,9 @@ type CachedStore struct {
 - `cache` is an actual `lru.Cache`, not a plain map — entries beyond
   `MaxCacheSize` (default `DefaultMaxCacheSize = 256`) are evicted LRU. TTL
   (`cfg.CacheTTL`, default `2m10s`) is checked on read.
+- `refGenerations` binds every cached body to the informer mutation that
+  authorized it. A stale read can finish, but it cannot renew or repopulate the
+  cache after an `Update`, `Delete`, or delete-and-recreate.
 - `dynamic.Interface`: fetches any resource type without compiled-in schemas.
 
 **Cache key vs Index key:**
@@ -268,50 +274,31 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 ### CachedStore Fetch Pattern
 
 ```go
-func (s *CachedStore) Get(keys ...string) ([]any, error) {
-    // 1. Find matching references (under read lock)
-    s.mu.RLock()
-    keyStr := makeKeyString(keys)
-    refs := s.refs[keyStr]
-    s.mu.RUnlock()
-
-    var results []any
+func (s *CachedStore) fetchRefs(ctx context.Context, refs []resourceRef) ([]any, error) {
+    results := make([]any, 0, len(refs))
     for _, ref := range refs {
-        cacheKey := ref.namespace + "/" + ref.name
-
-        // 2. Check cache via LRU API (Peek doesn't bump recency; Get does)
-        if entry, ok := s.cache.Peek(cacheKey); ok && time.Now().Before(entry.expiresAt) {
-            results = append(results, entry.resource)
-            continue
+        if err := ctx.Err(); err != nil {
+            return nil, err
         }
-
-        // 3. Fetch from API (no lock held — fetchResource does its own
-        //    locking around s.cache.Add).
-        resource, err := s.fetchResourceByRef(ref)
+        resource, err := s.fetchResourceByRef(ctx, ref)
         if err != nil {
-            s.logger.Warn("failed to fetch resource", "ref", ref, "error", err)
-            continue
+            if isNotFound(err) {
+                continue
+            }
+            return nil, err
         }
-
-        // 4. Cache (LRU's Add evicts the oldest entry if over MaxCacheSize)
-        s.cache.Add(cacheKey, &cacheEntry{
-            resource:  resource,
-            expiresAt: time.Now().Add(s.cacheTTL),
-        })
-
         results = append(results, resource)
     }
-
-    return results, nil
+    return results, ctx.Err()
 }
 ```
 
 **Key points:**
 
 - Lock is not held during API calls (prevents blocking)
-- Multiple lock/unlock cycles (fine-grained locking)
-- TTL check before using cached entry
-- Silent failures on fetch errors (logged as warnings)
+- Cache-hit validation and renewal are one atomic critical section
+- API results commit only while the captured informer generation is current
+- In-flight reads may complete after a mutation, but cannot change future reads
 
 ### Resource Identity
 
@@ -321,6 +308,10 @@ composite key in `locations`. UID is **not** consulted, so a deleted-and-
 recreated resource replaces its predecessor. Update and delete remove only that
 identity under the store's write lock, preserving siblings in a non-unique
 bucket.
+
+The local generation is a cache-authority epoch, not part of resource identity.
+Every informer mutation advances it even though matching still uses only
+namespace and name.
 
 ```go
 nsA, nameA := extractNamespaceName(a)
