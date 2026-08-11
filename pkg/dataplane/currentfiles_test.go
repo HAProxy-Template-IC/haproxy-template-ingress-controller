@@ -43,7 +43,7 @@ func TestAuxiliaryFiles_CurrentFiles(t *testing.T) {
 	assert.Len(t, got, 3)
 }
 
-// A nil receiver returns nil (webhook dry-run / no prior render), never panics.
+// A nil receiver returns nil without panicking.
 func TestAuxiliaryFiles_CurrentFiles_Nil(t *testing.T) {
 	var af *AuxiliaryFiles
 	assert.Nil(t, af.CurrentFiles())

@@ -15,9 +15,13 @@
 package controller
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"path"
+	"slices"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -25,65 +29,267 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
 )
 
-// publishedAuxCRD describes one of HAPTIC's published auxiliary-file CRD kinds
-// that feeds `currentFiles`. All three carry `spec.path` and `spec.compressed`;
-// only the content field name differs, so a single generic extractor handles
-// them keyed uniformly by base filename.
+const (
+	secretKind      = "Secret"
+	secretDataField = "data"
+)
+
+// publishedAuxCRD describes one child kind committed by HAProxyCfg status.
 type publishedAuxCRD struct {
-	gvr          schema.GroupVersionResource
-	contentField string // spec field holding the file content
+	gvr            schema.GroupVersionResource
+	kind           string
+	referenceField string
+	contentField   string
 }
 
-// publishedAuxCRDList lists the CRD-backed aux files exposed via `currentFiles`.
-// SSL certificates (published as Secrets, content includes private keys) and CA
-// files are deliberately excluded — see currentAuxFilesProvider.
 func publishedAuxCRDList() []publishedAuxCRD {
 	return []publishedAuxCRD{
-		{haproxyMapFileGVR, "entries"},
-		{haproxyGeneralFileGVR, "content"},
-		{haproxyCRTListFileGVR, "entries"},
+		{haproxyMapFileGVR, "HAProxyMapFile", "mapFiles", "entries"},
+		{secretGVR, secretKind, "sslCertificates", ""},
+		{haproxyGeneralFileGVR, "HAProxyGeneralFile", "generalFiles", "content"},
+		{haproxyCRTListFileGVR, "HAProxyCRTListFile", "crtListFiles", "entries"},
 	}
 }
 
-// publishedAuxFiles is a thread-safe snapshot of the controller's published
-// auxiliary-file CRDs (base filename → decompressed content), merged across the
-// aux CRD kinds. Each kind's watcher owns its own slot so refreshing one kind
-// never clobbers another. It is the aux-file analogue of currentconfigstore.Store:
-// watchers keep it in sync so the `currentFiles` render input survives a
-// controller restart or config reload, and stays current for a follower later
-// promoted to leader.
+type publishedAuxFile struct {
+	path            string
+	content         string
+	setID           string
+	checksum        string
+	resourceVersion string
+}
+
+type publishedAuxRef struct {
+	name      string
+	namespace string
+}
+
+type publishedAuxCommit struct {
+	setID string
+	refs  map[string][]publishedAuxRef
+}
+
+type publishedStoreSyncer interface {
+	WaitForSync(context.Context) (int, error)
+	Store() types.Store
+}
+
+// publishedAuxFiles advances only when one complete parent reference set resolves.
 type publishedAuxFiles struct {
-	mu    sync.RWMutex
-	byGVR map[string]map[string]string
+	mu sync.RWMutex
+
+	namespace      string
+	commit         *publishedAuxCommit
+	byGVR          map[string]map[string]publishedAuxFile
+	current        map[string]string
+	ready          bool
+	legacy         bool
+	modernAccepted bool
+	lastErr        error
+	unavailable    error
 }
 
-func newPublishedAuxFiles() *publishedAuxFiles {
-	return &publishedAuxFiles{byGVR: map[string]map[string]string{}}
+func newPublishedAuxFiles(namespace string) *publishedAuxFiles {
+	return &publishedAuxFiles{
+		namespace: namespace,
+		byGVR:     map[string]map[string]publishedAuxFile{},
+		current:   map[string]string{},
+	}
 }
 
-// get returns the merged snapshot across all aux kinds. Base-filename collisions
-// across kinds (rare — extensions differ) resolve in publishedAuxCRDList order.
-func (p *publishedAuxFiles) get() map[string]string {
+func (p *publishedAuxFiles) get() (map[string]string, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-
-	merged := map[string]string{}
-	for _, kind := range publishedAuxCRDList() {
-		for name, content := range p.byGVR[kind.gvr.String()] {
-			merged[name] = content
-		}
+	if p.unavailable != nil {
+		return nil, p.unavailable
 	}
-	return merged
+	return maps.Clone(p.current), nil
 }
 
-func (p *publishedAuxFiles) setForGVR(gvr string, files map[string]string) {
+func (p *publishedAuxFiles) availabilityError() error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.unavailable
+}
+
+func (p *publishedAuxFiles) setForGVR(gvr string, files map[string]publishedAuxFile) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	legacyChanged := p.legacy && p.legacyReferencesChanged(gvr, files)
 	p.byGVR[gvr] = files
-	p.mu.Unlock()
+	if legacyChanged && (p.commit == nil || p.commit.setID == "") {
+		p.markLegacyUnavailable()
+		return
+	}
+	p.advanceLocked()
+}
+
+func (p *publishedAuxFiles) setCommit(commit *publishedAuxCommit) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	legacyChanged := p.legacy && !publishedAuxCommitsEqual(p.commit, commit)
+	p.commit = commit
+	if p.modernAccepted && (commit == nil || commit.setID == "") {
+		p.legacy = false
+		p.markModernDowngradeUnavailable()
+		return
+	}
+	if legacyChanged && (commit == nil || commit.setID == "") {
+		p.markLegacyUnavailable()
+		return
+	}
+	p.advanceLocked()
+}
+
+func (p *publishedAuxFiles) setError(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lastErr = err
+	if p.legacy {
+		p.markLegacyUnavailable()
+	}
+}
+
+func (p *publishedAuxFiles) markLegacyUnavailable() {
+	p.unavailable = errors.New("legacy auxiliary publication changed without a set ID; currentFiles is unavailable until a new set is committed")
+}
+
+func (p *publishedAuxFiles) markModernDowngradeUnavailable() {
+	p.unavailable = errors.New("auxiliary publication lost its set ID; currentFiles is unavailable until a new set is committed")
+}
+
+func (p *publishedAuxFiles) legacyReferencesChanged(gvr string, files map[string]publishedAuxFile) bool {
+	if p.commit == nil {
+		return false
+	}
+	previous := p.byGVR[gvr]
+	for _, ref := range p.commit.refs[gvr] {
+		before, beforeExists := previous[ref.name]
+		after, afterExists := files[ref.name]
+		if beforeExists != afterExists || before != after {
+			return true
+		}
+	}
+	return false
+}
+
+func publishedAuxCommitsEqual(a, b *publishedAuxCommit) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.setID != b.setID {
+		return false
+	}
+	for _, kind := range publishedAuxCRDList() {
+		gvr := kind.gvr.String()
+		if !slices.Equal(a.refs[gvr], b.refs[gvr]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *publishedAuxFiles) advanceLocked() {
+	if p.commit == nil {
+		if p.unavailable != nil {
+			return
+		}
+		p.current = map[string]string{}
+		p.ready = true
+		p.legacy = false
+		p.lastErr = nil
+		return
+	}
+	if p.commit.setID == "" && p.unavailable != nil {
+		return
+	}
+
+	next, err := p.resolveCommitLocked()
+	if err != nil {
+		p.lastErr = err
+		return
+	}
+	p.current = next
+	p.ready = true
+	p.legacy = p.commit.setID == ""
+	p.lastErr = nil
+	if !p.legacy {
+		p.modernAccepted = true
+		p.unavailable = nil
+	}
+}
+
+func (p *publishedAuxFiles) resolveCommitLocked() (map[string]string, error) {
+	next := map[string]string{}
+	var legacySetID *string
+	kinds := publishedAuxCRDList()
+	for i := range kinds {
+		kind := &kinds[i]
+		for _, ref := range p.commit.refs[kind.gvr.String()] {
+			file, err := p.resolvePublishedFile(kind, ref)
+			if err != nil {
+				return nil, err
+			}
+			if err := validatePublishedSetID(p.commit.setID, &legacySetID, file.setID); err != nil {
+				return nil, fmt.Errorf("committed %s %s/%s: %w", kind.kind, p.namespace, ref.name, err)
+			}
+			if kind.contentField != "" {
+				next[path.Base(file.path)] = file.content
+			}
+		}
+	}
+	return next, nil
+}
+
+func (p *publishedAuxFiles) resolvePublishedFile(kind *publishedAuxCRD, ref publishedAuxRef) (publishedAuxFile, error) {
+	if ref.namespace != "" && ref.namespace != p.namespace {
+		return publishedAuxFile{}, fmt.Errorf("committed %s %s/%s is outside namespace %s", kind.kind, ref.namespace, ref.name, p.namespace)
+	}
+	file, ok := p.byGVR[kind.gvr.String()][ref.name]
+	if !ok {
+		return publishedAuxFile{}, fmt.Errorf("committed %s %s/%s is unavailable", kind.kind, p.namespace, ref.name)
+	}
+	return file, nil
+}
+
+func validatePublishedSetID(want string, legacy **string, got string) error {
+	if want != "" {
+		if got != want {
+			return fmt.Errorf("belongs to auxiliary set %q, want %q", got, want)
+		}
+		return nil
+	}
+	if *legacy == nil {
+		legacySetID := got
+		*legacy = &legacySetID
+		return nil
+	}
+	if **legacy != got {
+		return errors.New("legacy references span multiple auxiliary sets")
+	}
+	return nil
+}
+
+func (p *publishedAuxFiles) readinessError() error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.lastErr != nil {
+		return p.lastErr
+	}
+	if p.unavailable != nil {
+		return p.unavailable
+	}
+	if p.ready {
+		return nil
+	}
+	return fmt.Errorf("committed auxiliary snapshot is unavailable")
 }
 
 // setupPublishedAuxFilesStore starts a silent watcher over each aux-file CRD kind
@@ -96,75 +302,263 @@ func (p *publishedAuxFiles) setForGVR(gvr string, files map[string]string) {
 func setupPublishedAuxFilesStore(
 	setup *componentSetup,
 	k8sClient *client.Client,
+	crdName string,
 	logger *slog.Logger,
 ) (*publishedAuxFiles, error) {
-	store := newPublishedAuxFiles()
+	store := newPublishedAuxFiles(k8sClient.Namespace())
+	runtimeConfigName := configpublisher.GenerateRuntimeConfigName(crdName)
 
-	for _, kind := range publishedAuxCRDList() {
+	kinds := publishedAuxCRDList()
+	for i := range kinds {
+		kind := &kinds[i]
 		gvrKey := kind.gvr.String()
 		refresh := func(s types.Store, _ types.ChangeStats) {
-			store.setForGVR(gvrKey, auxFilesFromStore(s, kind.contentField, logger))
+			files, err := publishedAuxFilesFromStore(s, kind)
+			if err != nil {
+				logger.Warn("Reading published auxiliary files failed", "kind", kind.kind, "error", err)
+				store.setError(err)
+				return
+			}
+			store.setForGVR(gvrKey, files)
 		}
 
-		w, err := watcher.New(types.WatcherConfig{
-			GVR:       kind.gvr,
-			Namespace: k8sClient.Namespace(),
-			IndexBy:   []string{"metadata.name"},
-			StoreType: types.StoreTypeMemory,
-			OnChange:  refresh,
+		watcherConfig := types.WatcherConfig{
+			GVR:           kind.gvr,
+			Namespace:     k8sClient.Namespace(),
+			IndexBy:       []string{metadataNameIndex},
+			StoreType:     types.StoreTypeMemory,
+			LabelSelector: configpublisher.RuntimeConfigLabelSelector(runtimeConfigName),
+			OnChange:      refresh,
 			OnSyncComplete: func(s types.Store, _ int) {
-				store.setForGVR(gvrKey, auxFilesFromStore(s, kind.contentField, logger))
+				refresh(s, types.ChangeStats{})
 			},
-		}, k8sClient, logger)
+		}
+		if kind.contentField == "" {
+			watcherConfig.IgnoreFields = []string{secretDataField, "stringData", "type", "immutable", "metadata.managedFields"}
+		}
+		w, err := watcher.New(watcherConfig, k8sClient, logger)
 		if err != nil {
 			return nil, fmt.Errorf("creating %s watcher: %w", kind.gvr.Resource, err)
 		}
 
 		startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, kind.gvr.Resource+" watcher", w.Start)
-		if _, err := w.WaitForSync(setup.IterCtx); err != nil {
+		if err := syncAndRefreshPublishedStore(setup.IterCtx, w, refresh); err != nil {
 			return nil, fmt.Errorf("%s watcher sync failed: %w", kind.gvr.Resource, err)
 		}
+	}
+
+	refreshCommit := func(s types.Store, _ types.ChangeStats) {
+		commit, found, err := publishedAuxCommitFromStore(s, runtimeConfigName)
+		if err != nil {
+			logger.Warn("Reading committed auxiliary references failed", "error", err)
+			store.setError(err)
+			return
+		}
+		if !found {
+			commit = nil
+		}
+		store.setCommit(commit)
+	}
+	runtimeConfigWatcher, err := watcher.New(types.WatcherConfig{
+		GVR:       haproxyCfgGVR,
+		Namespace: k8sClient.Namespace(),
+		IndexBy:   []string{metadataNameIndex},
+		StoreType: types.StoreTypeMemory,
+		OnChange:  refreshCommit,
+		OnSyncComplete: func(s types.Store, _ int) {
+			refreshCommit(s, types.ChangeStats{})
+		},
+	}, k8sClient, logger)
+	if err != nil {
+		return nil, fmt.Errorf("creating %s watcher: %w", haproxyCfgGVR.Resource, err)
+	}
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, haproxyCfgGVR.Resource+" currentFiles watcher", runtimeConfigWatcher.Start)
+	if err := syncAndRefreshPublishedStore(setup.IterCtx, runtimeConfigWatcher, refreshCommit); err != nil {
+		return nil, fmt.Errorf("%s currentFiles watcher sync failed: %w", haproxyCfgGVR.Resource, err)
+	}
+	if err := store.readinessError(); err != nil {
+		return nil, fmt.Errorf("loading committed auxiliary snapshot: %w", err)
 	}
 
 	return store, nil
 }
 
-// auxFilesFromStore flattens one aux CRD kind's stored objects into
-// base-filename → content, reading content from the kind's contentField and
-// decompressing any zstd+base64 value. An object that can't be read or decoded
-// is skipped (logged), never surfaced as an empty or garbled value.
-func auxFilesFromStore(s types.Store, contentField string, logger *slog.Logger) map[string]string {
+func syncAndRefreshPublishedStore(
+	ctx context.Context,
+	w publishedStoreSyncer,
+	refresh func(types.Store, types.ChangeStats),
+) error {
+	if _, err := w.WaitForSync(ctx); err != nil {
+		return err
+	}
+	refresh(w.Store(), types.ChangeStats{})
+	return nil
+}
+
+func publishedAuxFilesFromStore(s types.Store, kind *publishedAuxCRD) (map[string]publishedAuxFile, error) {
 	items, err := s.List()
 	if err != nil {
-		logger.Warn("Listing published aux files failed; currentFiles fallback may be stale",
-			"field", contentField, "error", err)
-		return map[string]string{}
+		return nil, fmt.Errorf("listing resources: %w", err)
 	}
 
-	files := make(map[string]string, len(items))
+	files := make(map[string]publishedAuxFile, len(items))
 	for _, item := range items {
 		obj, ok := unstructuredMap(item)
 		if !ok {
 			continue
 		}
-		filePath, _, _ := unstructured.NestedString(obj, "spec", "path")
-		if filePath == "" {
+		name, file, found, err := publishedAuxFileFromObject(obj, kind)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
 			continue
 		}
-		content, _, _ := unstructured.NestedString(obj, "spec", contentField)
-		compressed, _, _ := unstructured.NestedBool(obj, "spec", "compressed")
-		if compressed {
-			decoded, derr := compression.Decompress(content)
-			if derr != nil {
-				logger.Warn("Skipping compressed aux file that failed to decompress",
-					"file", filePath, "error", derr)
-				continue
-			}
-			content = decoded
-		}
-		files[path.Base(filePath)] = content
+		files[name] = file
 	}
-	return files
+	return files, nil
+}
+
+func publishedAuxFileFromObject(obj map[string]any, kind *publishedAuxCRD) (name string, file publishedAuxFile, found bool, err error) {
+	name, _, err = unstructured.NestedString(obj, "metadata", "name")
+	if err != nil {
+		return "", publishedAuxFile{}, false, fmt.Errorf("reading resource name: %w", err)
+	}
+	if name == "" {
+		return "", publishedAuxFile{}, false, nil
+	}
+	setID, _, err := unstructured.NestedString(obj, "metadata", "annotations", configpublisher.AuxiliarySetIDAnnotationKey)
+	if err != nil {
+		return "", publishedAuxFile{}, false, fmt.Errorf("reading %s auxiliary set ID: %w", name, err)
+	}
+	if kind.contentField == "" {
+		checksum, _, err := unstructured.NestedString(obj, "metadata", "annotations", configpublisher.AuxiliaryChecksumAnnotationKey)
+		if err != nil {
+			return "", publishedAuxFile{}, false, fmt.Errorf("reading %s checksum: %w", name, err)
+		}
+		resourceVersion, _, err := unstructured.NestedString(obj, "metadata", "resourceVersion")
+		if err != nil {
+			return "", publishedAuxFile{}, false, fmt.Errorf("reading %s resource version: %w", name, err)
+		}
+		return name, publishedAuxFile{
+			setID:           setID,
+			checksum:        checksum,
+			resourceVersion: resourceVersion,
+		}, true, nil
+	}
+	filePath, _, err := unstructured.NestedString(obj, "spec", "path")
+	if err != nil {
+		return "", publishedAuxFile{}, false, fmt.Errorf("reading %s path: %w", name, err)
+	}
+	if filePath == "" {
+		return "", publishedAuxFile{}, false, nil
+	}
+	content, found, err := unstructured.NestedString(obj, "spec", kind.contentField)
+	if err != nil {
+		return "", publishedAuxFile{}, false, fmt.Errorf("reading %s content field %s: %w", name, kind.contentField, err)
+	}
+	if !found {
+		return "", publishedAuxFile{}, false, fmt.Errorf("%s has no content field %s", name, kind.contentField)
+	}
+	compressed, _, err := unstructured.NestedBool(obj, "spec", "compressed")
+	if err != nil {
+		return "", publishedAuxFile{}, false, fmt.Errorf("reading %s compression flag: %w", name, err)
+	}
+	if compressed {
+		content, err = compression.Decompress(content)
+		if err != nil {
+			return "", publishedAuxFile{}, false, fmt.Errorf("decompressing %s: %w", filePath, err)
+		}
+	}
+	return name, publishedAuxFile{path: filePath, content: content, setID: setID}, true, nil
+}
+
+func publishedAuxCommitFromStore(s types.Store, runtimeConfigName string) (*publishedAuxCommit, bool, error) {
+	items, err := s.List()
+	if err != nil {
+		return nil, false, fmt.Errorf("listing runtime configs: %w", err)
+	}
+
+	for _, item := range items {
+		obj, ok := unstructuredMap(item)
+		if !ok {
+			continue
+		}
+		name, _, err := unstructured.NestedString(obj, "metadata", "name")
+		if err != nil {
+			return nil, false, fmt.Errorf("reading runtime config name: %w", err)
+		}
+		if name != runtimeConfigName {
+			continue
+		}
+		commit, err := publishedAuxCommitFromObject(obj, runtimeConfigName)
+		return commit, true, err
+	}
+
+	return nil, false, nil
+}
+
+func publishedAuxCommitFromObject(obj map[string]any, runtimeConfigName string) (*publishedAuxCommit, error) {
+	aux, found, err := unstructured.NestedMap(obj, "status", "auxiliaryFiles")
+	if err != nil {
+		return nil, fmt.Errorf("reading %s status: %w", runtimeConfigName, err)
+	}
+	if !found {
+		return &publishedAuxCommit{refs: map[string][]publishedAuxRef{}}, nil
+	}
+
+	commit := &publishedAuxCommit{refs: map[string][]publishedAuxRef{}}
+	commit.setID, _, err = unstructured.NestedString(aux, "setID")
+	if err != nil {
+		return nil, fmt.Errorf("reading committed auxiliary set ID: %w", err)
+	}
+	for _, kind := range publishedAuxCRDList() {
+		refs, err := publishedAuxRefs(aux, &kind)
+		if err != nil {
+			return nil, err
+		}
+		commit.refs[kind.gvr.String()] = refs
+	}
+	return commit, nil
+}
+
+func publishedAuxRefs(aux map[string]any, kind *publishedAuxCRD) ([]publishedAuxRef, error) {
+	rawRefs, _, err := unstructured.NestedSlice(aux, kind.referenceField)
+	if err != nil {
+		return nil, fmt.Errorf("reading committed %s references: %w", kind.kind, err)
+	}
+	refs := make([]publishedAuxRef, 0, len(rawRefs))
+	for _, raw := range rawRefs {
+		ref, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("committed %s reference is malformed", kind.kind)
+		}
+		parsed, err := publishedAuxRefFromObject(ref, kind)
+		if err != nil {
+			return nil, err
+		}
+		refs = append(refs, parsed)
+	}
+	return refs, nil
+}
+
+func publishedAuxRefFromObject(ref map[string]any, kind *publishedAuxCRD) (publishedAuxRef, error) {
+	refKind, _, err := unstructured.NestedString(ref, "kind")
+	if err != nil {
+		return publishedAuxRef{}, fmt.Errorf("reading committed %s reference kind: %w", kind.kind, err)
+	}
+	refName, _, err := unstructured.NestedString(ref, "name")
+	if err != nil {
+		return publishedAuxRef{}, fmt.Errorf("reading committed %s reference name: %w", kind.kind, err)
+	}
+	refNamespace, _, err := unstructured.NestedString(ref, "namespace")
+	if err != nil {
+		return publishedAuxRef{}, fmt.Errorf("reading committed %s reference namespace: %w", kind.kind, err)
+	}
+	if refKind != kind.kind || refName == "" {
+		return publishedAuxRef{}, fmt.Errorf("committed %s reference has kind %q and name %q", kind.kind, refKind, refName)
+	}
+	return publishedAuxRef{name: refName, namespace: refNamespace}, nil
 }
 
 // unstructuredMap returns the underlying object map for a stored resource,

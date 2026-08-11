@@ -301,15 +301,15 @@ func TestComponent_RetriesIncompletePublicationWithoutCompletingEarly(t *testing
 	assert.Zero(t, countConfigPublishedEvents(eventChan), "publication emitted duplicate completion")
 	assert.Equal(t, []string{"example.com backend1\n", "example.com backend1\n"}, failure.attemptedContents())
 
-	mapFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
-		Get(ctx, "haproxy-map-host", metav1.GetOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, "example.com backend1\n", mapFile.Spec.Entries)
 	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
 		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
 	require.NoError(t, err)
 	require.NotNil(t, runtimeConfig.Status.AuxiliaryFiles)
 	require.Len(t, runtimeConfig.Status.AuxiliaryFiles.MapFiles, 1)
+	mapFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, runtimeConfig.Status.AuxiliaryFiles.MapFiles[0].Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "example.com backend1\n", mapFile.Spec.Entries)
 	assert.Equal(t, mapFile.Name, runtimeConfig.Status.AuxiliaryFiles.MapFiles[0].Name)
 	assert.Equal(t, "checksum-v1", runtimeConfig.Spec.Checksum)
 

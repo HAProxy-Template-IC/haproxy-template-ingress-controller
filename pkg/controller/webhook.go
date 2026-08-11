@@ -293,7 +293,7 @@ func createDryRunValidator(
 		GeneralDir:        dirConfig.GeneralDir,
 	})
 
-	return buildDryRunValidator(bus, renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, cfg.WatchedResources, logger)
+	return buildDryRunValidator(bus, renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, cfg.WatchedResources, wiring.publishedCurrentFiles.get, logger)
 }
 
 // buildDryRunValidator constructs the watched-resource admission validator.
@@ -310,6 +310,7 @@ func buildDryRunValidator(
 	outputValidator pipeline.RenderedOutputValidator,
 	gvrMapper meta.RESTMapper,
 	watchedResources map[string]coreconfig.WatchedResource,
+	currentFilesProvider func() (map[string]string, error),
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, error) {
 	pipelineInstance := pipeline.New(&pipeline.PipelineConfig{
@@ -324,11 +325,12 @@ func buildDryRunValidator(
 	// ProposalValidator in createReconciliationComponents handles async
 	// HTTP content validation events.
 	proposalValidatorInstance := proposalvalidator.New(&proposalvalidator.ComponentConfig{
-		EventBus:          bus,
-		Pipeline:          pipelineInstance,
-		BaseStoreProvider: baseStoreProvider,
-		Logger:            logger,
-		SyncOnly:          true,
+		EventBus:             bus,
+		Pipeline:             pipelineInstance,
+		BaseStoreProvider:    baseStoreProvider,
+		CurrentFilesProvider: currentFilesProvider,
+		Logger:               logger,
+		SyncOnly:             true,
 	})
 
 	// The admission webhook only validates the *submitted* resource
@@ -364,12 +366,12 @@ func setupReconciliation(
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
-	currentAuxFiles func() map[string]string,
+	currentFiles *currentFilesAuthority,
 	storeProvider stores.StoreProvider,
 	outputValidator pipeline.RenderedOutputValidator,
 	logger *slog.Logger,
 ) (*reconciliationWiring, error) {
-	wiring, err := createReconciliationComponents(setup, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, currentAuxFiles, storeProvider, outputValidator, logger)
+	wiring, err := createReconciliationComponents(setup, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, currentFiles, storeProvider, outputValidator, logger)
 	if err != nil {
 		return nil, err
 	}

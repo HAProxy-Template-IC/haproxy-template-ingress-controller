@@ -17,6 +17,7 @@ import (
 )
 
 func TestBuildAuxiliaryFileReferences(t *testing.T) {
+	const setID = "sha256:test-set"
 	tests := []struct {
 		name      string
 		namespace string
@@ -28,6 +29,7 @@ func TestBuildAuxiliaryFileReferences(t *testing.T) {
 			namespace: "haptic",
 			result:    &PublishResult{},
 			want: &haproxyv1alpha1.AuxiliaryFileReferences{
+				SetID:           setID,
 				MapFiles:        nil,
 				SSLCertificates: nil,
 				GeneralFiles:    nil,
@@ -41,6 +43,7 @@ func TestBuildAuxiliaryFileReferences(t *testing.T) {
 				MapFileNames: []string{"hosts.map", "paths.map"},
 			},
 			want: &haproxyv1alpha1.AuxiliaryFileReferences{
+				SetID: setID,
 				MapFiles: []haproxyv1alpha1.ResourceReference{
 					{Kind: "HAProxyMapFile", Name: "hosts.map", Namespace: "haptic"},
 					{Kind: "HAProxyMapFile", Name: "paths.map", Namespace: "haptic"},
@@ -54,6 +57,7 @@ func TestBuildAuxiliaryFileReferences(t *testing.T) {
 				SecretNames: []string{"tls-cert"},
 			},
 			want: &haproxyv1alpha1.AuxiliaryFileReferences{
+				SetID: setID,
 				SSLCertificates: []haproxyv1alpha1.ResourceReference{
 					{Kind: "Secret", Name: "tls-cert", Namespace: "haptic"},
 				},
@@ -66,6 +70,7 @@ func TestBuildAuxiliaryFileReferences(t *testing.T) {
 				GeneralFileNames: []string{"500.http"},
 			},
 			want: &haproxyv1alpha1.AuxiliaryFileReferences{
+				SetID: setID,
 				GeneralFiles: []haproxyv1alpha1.ResourceReference{
 					{Kind: "HAProxyGeneralFile", Name: "500.http", Namespace: "haptic"},
 				},
@@ -78,6 +83,7 @@ func TestBuildAuxiliaryFileReferences(t *testing.T) {
 				CRTListFileNames: []string{"crt-list.txt"},
 			},
 			want: &haproxyv1alpha1.AuxiliaryFileReferences{
+				SetID: setID,
 				CRTListFiles: []haproxyv1alpha1.ResourceReference{
 					{Kind: "HAProxyCRTListFile", Name: "crt-list.txt", Namespace: "haptic"},
 				},
@@ -93,6 +99,7 @@ func TestBuildAuxiliaryFileReferences(t *testing.T) {
 				CRTListFileNames: []string{"crt-list"},
 			},
 			want: &haproxyv1alpha1.AuxiliaryFileReferences{
+				SetID: setID,
 				MapFiles: []haproxyv1alpha1.ResourceReference{
 					{Kind: "HAProxyMapFile", Name: "a.map", Namespace: "edge"},
 					{Kind: "HAProxyMapFile", Name: "b.map", Namespace: "edge"},
@@ -112,7 +119,7 @@ func TestBuildAuxiliaryFileReferences(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildAuxiliaryFileReferences(tt.namespace, tt.result)
+			got := buildAuxiliaryFileReferences(tt.namespace, tt.result, setID)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -191,6 +198,12 @@ func TestAuxiliaryRefsEqual(t *testing.T) {
 				MapFiles:        []haproxyv1alpha1.ResourceReference{mapFile("hosts.map")},
 				SSLCertificates: []haproxyv1alpha1.ResourceReference{secret("tls")},
 			},
+			want: false,
+		},
+		{
+			name: "different auxiliary set is not equal",
+			a:    &haproxyv1alpha1.AuxiliaryFileReferences{SetID: "sha256:a"},
+			b:    &haproxyv1alpha1.AuxiliaryFileReferences{SetID: "sha256:b"},
 			want: false,
 		},
 	}

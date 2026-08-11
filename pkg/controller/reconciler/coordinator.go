@@ -25,6 +25,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -34,6 +35,14 @@ import (
 // This allows mocking in tests.
 type PipelineExecutor interface {
 	Execute(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*pipeline.PipelineResult, error)
+}
+
+// CurrentFilesAuthority binds accepted auxiliary output to a leader term.
+type CurrentFilesAuthority interface {
+	BeginTerm() uint64
+	EndTerm(generation uint64)
+	Snapshot(generation uint64) (map[string]string, error)
+	Accept(generation uint64, auxiliaryFiles *dataplane.AuxiliaryFiles)
 }
 
 const (
@@ -73,6 +82,7 @@ type Coordinator struct {
 	eventChan     <-chan busevents.Event
 	pipeline      PipelineExecutor
 	storeProvider stores.StoreProvider
+	currentFiles  CurrentFilesAuthority
 	logger        *slog.Logger
 
 	// lastStatusPatches caches the most recent successful render's status patches.
@@ -92,6 +102,9 @@ type CoordinatorConfig struct {
 
 	// StoreProvider provides access to resource stores.
 	StoreProvider stores.StoreProvider
+
+	// CurrentFiles owns the last accepted auxiliary output for each leader term.
+	CurrentFiles CurrentFilesAuthority
 
 	// Logger is the structured logger.
 	Logger *slog.Logger
@@ -120,6 +133,7 @@ func NewCoordinator(cfg *CoordinatorConfig) *Coordinator {
 		eventBus:      cfg.EventBus,
 		pipeline:      cfg.Pipeline,
 		storeProvider: cfg.StoreProvider,
+		currentFiles:  cfg.CurrentFiles,
 		logger:        logger.With("component", CoordinatorComponentName),
 	}
 }
@@ -140,6 +154,12 @@ func (c *Coordinator) Name() string {
 // follower replicas fill the buffer and log critical drops continuously.
 // Subscribing here, on leadership, keeps followers unsubscribed entirely.
 func (c *Coordinator) Start(ctx context.Context) error {
+	var generation uint64
+	if c.currentFiles != nil {
+		generation = c.currentFiles.BeginTerm()
+		defer c.currentFiles.EndTerm(generation)
+	}
+
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
 	// All-replica components replay their cached state on BecameLeaderEvent.
@@ -163,7 +183,7 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		case event := <-c.eventChan:
 			if triggered, ok := event.(*events.ReconciliationTriggeredEvent); ok {
 				triggered = c.coalesceQueuedTriggers(triggered)
-				c.handleReconciliationTriggered(ctx, triggered)
+				c.handleReconciliationTriggered(ctx, triggered, generation)
 			}
 
 		case <-ctx.Done():
@@ -226,7 +246,7 @@ func (c *Coordinator) coalesceQueuedTriggers(first *events.ReconciliationTrigger
 }
 
 // handleReconciliationTriggered orchestrates a reconciliation cycle.
-func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *events.ReconciliationTriggeredEvent) {
+func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *events.ReconciliationTriggeredEvent, generation uint64) {
 	if context.Cause(ctx) != nil {
 		return
 	}
@@ -241,7 +261,16 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 	// downstream components (e.g. metrics) can correlate it with the trigger.
 	c.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason, events.PropagateCorrelation(event)))
 
-	result, err := c.pipeline.Execute(ctx, c.storeProvider, rendercontext.RenderModeReconcile)
+	var renderOpts []rendercontext.Option
+	if c.currentFiles != nil {
+		currentFiles, err := c.currentFiles.Snapshot(generation)
+		if err != nil {
+			c.handlePipelineFailure(ctx, &pipeline.PipelineError{Phase: pipeline.PhaseRender, Cause: err}, event, startTime)
+			return
+		}
+		renderOpts = append(renderOpts, rendercontext.WithCurrentAuxFiles(currentFiles))
+	}
+	result, err := c.pipeline.Execute(ctx, c.storeProvider, rendercontext.RenderModeReconcile, renderOpts...)
 	if cause := context.Cause(ctx); cause != nil {
 		c.logger.Debug("Discarding reconciliation result after authority expired",
 			"cause", cause,
@@ -251,6 +280,9 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 	if err != nil {
 		c.handlePipelineFailure(ctx, err, event, startTime)
 		return
+	}
+	if c.currentFiles != nil {
+		c.currentFiles.Accept(generation, result.AuxiliaryFiles)
 	}
 
 	// Pipeline succeeded - publish events for downstream components

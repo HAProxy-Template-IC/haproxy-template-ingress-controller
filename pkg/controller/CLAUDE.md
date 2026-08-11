@@ -423,22 +423,35 @@ type Coordinator struct {
     eventChan     <-chan busevents.Event  // Subscribed in Start() (leader-only pattern)
     pipeline      PipelineExecutor
     storeProvider stores.StoreProvider
+    currentFiles  CurrentFilesAuthority
     logger        *slog.Logger
 }
 
-func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *events.ReconciliationTriggeredEvent) {
+func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *events.ReconciliationTriggeredEvent, generation uint64) {
+    if context.Cause(ctx) != nil {
+        return
+    }
     // Publish reconciliation started
     c.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason))
 
     // Execute pipeline directly (synchronous call)
-    result, err := c.pipeline.Execute(ctx, c.storeProvider)
+    currentFiles, err := c.currentFiles.Snapshot(generation)
     if err != nil {
-        c.handlePipelineFailure(err, event, startTime)
+        c.handlePipelineFailure(ctx, err, event, startTime)
+        return
+    }
+    result, err := c.pipeline.Execute(ctx, c.storeProvider, rendercontext.RenderModeReconcile,
+        rendercontext.WithCurrentAuxFiles(currentFiles))
+    if context.Cause(ctx) != nil {
+        return
+    }
+    if err != nil {
+        c.handlePipelineFailure(ctx, err, event, startTime)
         return
     }
 
-    // Publish success events for downstream components
-    c.handlePipelineSuccess(result, event, startTime)
+    c.currentFiles.Accept(generation, result.AuxiliaryFiles)
+    c.handlePipelineSuccess(ctx, result, event, startTime)
 }
 ```
 
@@ -446,6 +459,8 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 
 - Subscribes to ReconciliationTriggeredEvent in Start() (leader-only pattern)
 - Calls Pipeline.Execute() synchronously (no event-driven render/validate flow)
+- Advances `currentFiles` synchronously after validation, scoped to the active leader term
+- Bootstraps all-replica `currentFiles` only from a completely resolved `HAProxyCfg` auxiliary reference set, including certificate Secret metadata, and fails closed on ambiguous legacy changes or a post-modern set-ID loss
 - Publishes TemplateRenderedEvent + ValidationCompletedEvent for downstream components
 - Publishes ReconciliationCompletedEvent or ReconciliationFailedEvent based on outcome
 - Uses structured PipelineError for phase detection via errors.As()

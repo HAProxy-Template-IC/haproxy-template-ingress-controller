@@ -139,10 +139,8 @@ type RenderServiceConfig struct {
 	// CurrentConfigStore is the store for current deployed config (optional).
 	CurrentConfigStore *currentconfigstore.Store
 
-	// CurrentAuxFilesProvider returns the currently-deployed general aux files
-	// (filename → content), exposed to templates as `currentFiles`. Optional;
-	// nil (e.g. webhook dry-run) yields an empty map. Lets a template read its
-	// own prior output — the basis for self-rotating TLS session-ticket keys.
+	// CurrentAuxFilesProvider returns the default auxiliary baseline. The
+	// Coordinator overrides it with a leader-term snapshot for reconciliation.
 	CurrentAuxFilesProvider func() map[string]string
 
 	// TypedResourceTypes carries the generated Go types produced
@@ -356,7 +354,6 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		rendercontext.WithTypedResources(s.typedResourceTypes),
 		rendercontext.WithRenderMode(mode),
 	}
-	opts = append(opts, extraOpts...)
 
 	// Add current config if available (for slot preservation). Passing a nil
 	// *StructuredConfig is fine — the Builder omits the key (Scriggo panics on
@@ -365,9 +362,7 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		opts = append(opts, rendercontext.WithCurrentConfig(s.currentConfigStore.Get()))
 	}
 
-	// Add currently-deployed general aux files (for templates that read their
-	// own prior output, e.g. self-rotating TLS session-ticket keys). nil
-	// provider (webhook dry-run) → WithCurrentAuxFiles unset → empty map.
+	// Add the default auxiliary baseline for self-referential templates.
 	if s.currentAuxFilesProvider != nil {
 		opts = append(opts, rendercontext.WithCurrentAuxFiles(s.currentAuxFilesProvider()))
 	}
@@ -383,6 +378,10 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		httpFetcher := httpstore.NewHTTPStoreWrapper(ctx, s.httpStoreComponent, s.logger, httpOverlay)
 		opts = append(opts, rendercontext.WithHTTPFetcher(httpFetcher))
 	}
+
+	// Call-specific options override service defaults. The Coordinator uses this
+	// to pin currentFiles to its leader-term snapshot for the whole render.
+	opts = append(opts, extraOpts...)
 
 	return rendercontext.NewBuilder(ctx, s.config, s.pathResolver, s.logger, opts...).Build()
 }

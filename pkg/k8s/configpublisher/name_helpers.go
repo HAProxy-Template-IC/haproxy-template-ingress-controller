@@ -82,6 +82,14 @@ func runtimeConfigLabelValue(runtimeConfigName string) string {
 	return fmt.Sprintf("haptic-%x", hash[:8])
 }
 
+func auxiliaryResourceSuffix(setID, suffix string) string {
+	setID = strings.TrimPrefix(setID, "sha256:")
+	if setID == "" {
+		return suffix
+	}
+	return "-" + setID + suffix
+}
+
 // sanitizeResourceName strips a file extension from source and applies the
 // supplied character replacements (each pair is old, new), then prepends prefix.
 // The result is a Kubernetes-safe resource name segment.

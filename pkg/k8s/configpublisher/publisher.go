@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"log/slog"
 	"path"
 
@@ -172,9 +173,21 @@ func canonicalizePublishRequest(req *PublishRequest) (*PublishRequest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("serializing auxiliary set: %w", err)
 	}
-	hash := sha256.Sum256(serialized)
-	canonical.auxiliarySetID = fmt.Sprintf("sha256:%x", hash)
+	h := sha256.New()
+	_, _ = h.Write(serialized)
+	hashAuxiliaryContents(h, canonical.AuxiliaryFiles.MapFiles)
+	hashAuxiliaryContents(h, canonical.AuxiliaryFiles.SSLCertificates)
+	hashAuxiliaryContents(h, canonical.AuxiliaryFiles.SSLCaFiles)
+	hashAuxiliaryContents(h, canonical.AuxiliaryFiles.GeneralFiles)
+	hashAuxiliaryContents(h, canonical.AuxiliaryFiles.CRTListFiles)
+	canonical.auxiliarySetID = fmt.Sprintf("sha256:%x", h.Sum(nil))
 	return &canonical, nil
+}
+
+func hashAuxiliaryContents[T auxiliaryfiles.FileItem](h hash.Hash, files []T) {
+	for _, file := range files {
+		_, _ = h.Write([]byte(calculateChecksum(file.GetContent())))
+	}
 }
 
 // publishAuxiliaryFiles creates or updates all auxiliary file resources.
@@ -202,9 +215,10 @@ func (p *Publisher) publishAuxiliaryFiles(
 	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
 	result *PublishResult,
 ) error {
+	resourceSuffix := auxiliaryResourceSuffix(req.auxiliarySetID, req.NameSuffix)
 	mapFileNames := resolveAuxiliaryResourceNames(
 		req.AuxiliaryFiles.MapFiles,
-		req.NameSuffix,
+		resourceSuffix,
 		func(file auxiliaryfiles.MapFile) string { return p.generateMapFileName(path.Base(file.Path)) },
 		func(file auxiliaryfiles.MapFile) string { return file.Path },
 	)
@@ -212,7 +226,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for i, mapFile := range req.AuxiliaryFiles.MapFiles {
 		baseName := p.generateMapFileName(path.Base(mapFile.Path))
 		mapFileName, name, err := publishAuxiliaryResource(
-			mapFileNames[i], baseName, req.NameSuffix, mapFile.Path, runtimeConfig.Name,
+			mapFileNames[i], baseName, resourceSuffix, mapFile.Path, runtimeConfig.Name,
 			func(name string) (string, error) {
 				return p.createOrUpdateMapFile(ctx, req, runtimeConfig, mapFile, name)
 			},
@@ -232,7 +246,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 
 	secretNames := resolveAuxiliaryResourceNames(
 		req.AuxiliaryFiles.SSLCertificates,
-		req.NameSuffix,
+		resourceSuffix,
 		func(file auxiliaryfiles.SSLCertificate) string { return p.generateSecretName(path.Base(file.Path)) },
 		func(file auxiliaryfiles.SSLCertificate) string { return file.Path },
 	)
@@ -240,7 +254,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for i, cert := range req.AuxiliaryFiles.SSLCertificates {
 		baseName := p.generateSecretName(path.Base(cert.Path))
 		secretName, name, err := publishAuxiliaryResource(
-			secretNames[i], baseName, req.NameSuffix, cert.Path, runtimeConfig.Name,
+			secretNames[i], baseName, resourceSuffix, cert.Path, runtimeConfig.Name,
 			func(name string) (string, error) {
 				return p.createOrUpdateSSLSecret(ctx, req, runtimeConfig, cert, name)
 			},
@@ -260,7 +274,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 
 	generalFileNames := resolveAuxiliaryResourceNames(
 		req.AuxiliaryFiles.GeneralFiles,
-		req.NameSuffix,
+		resourceSuffix,
 		func(file auxiliaryfiles.GeneralFile) string { return p.generateGeneralFileName(file.Filename) },
 		func(file auxiliaryfiles.GeneralFile) string { return file.Filename },
 	)
@@ -268,7 +282,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for i, generalFile := range req.AuxiliaryFiles.GeneralFiles {
 		baseName := p.generateGeneralFileName(generalFile.Filename)
 		generalFileName, name, err := publishAuxiliaryResource(
-			generalFileNames[i], baseName, req.NameSuffix, generalFile.Filename, runtimeConfig.Name,
+			generalFileNames[i], baseName, resourceSuffix, generalFile.Filename, runtimeConfig.Name,
 			func(name string) (string, error) {
 				return p.createOrUpdateGeneralFile(ctx, req, runtimeConfig, generalFile, name)
 			},
@@ -288,7 +302,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 
 	crtListFileNames := resolveAuxiliaryResourceNames(
 		req.AuxiliaryFiles.CRTListFiles,
-		req.NameSuffix,
+		resourceSuffix,
 		func(file auxiliaryfiles.CRTListFile) string { return p.generateCRTListFileName(file.Path) },
 		func(file auxiliaryfiles.CRTListFile) string { return file.Path },
 	)
@@ -296,7 +310,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for i, crtListFile := range req.AuxiliaryFiles.CRTListFiles {
 		baseName := p.generateCRTListFileName(crtListFile.Path)
 		crtListFileName, name, err := publishAuxiliaryResource(
-			crtListFileNames[i], baseName, req.NameSuffix, crtListFile.Path, runtimeConfig.Name,
+			crtListFileNames[i], baseName, resourceSuffix, crtListFile.Path, runtimeConfig.Name,
 			func(name string) (string, error) {
 				return p.createOrUpdateCRTListFile(ctx, req, runtimeConfig, crtListFile, name)
 			},

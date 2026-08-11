@@ -314,12 +314,18 @@ func TestValidationPublishRepairsSameChecksumDesiredState(t *testing.T) {
 
 	component.executePublish(ctx, makeWork("initial"))
 	waitForConfigPublished(t, ctx, publishedEvents)
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, runtimeConfig.Status.AuxiliaryFiles)
+	require.Len(t, runtimeConfig.Status.AuxiliaryFiles.MapFiles, 1)
+	mapFileName := runtimeConfig.Status.AuxiliaryFiles.MapFiles[0].Name
 	require.NoError(t, crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
-		Delete(ctx, "haproxy-map-host", metav1.DeleteOptions{}))
+		Delete(ctx, mapFileName, metav1.DeleteOptions{}))
 
 	component.processPublishWork(ctx, makeWork("repair"))
 	mapFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
-		Get(ctx, "haproxy-map-host", metav1.GetOptions{})
+		Get(ctx, mapFileName, metav1.GetOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "example.com backend\n", mapFile.Spec.Entries)
 	assert.Zero(t, countConfigPublishedEvents(publishedEvents))

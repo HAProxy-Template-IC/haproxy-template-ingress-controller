@@ -40,6 +40,7 @@ const (
 
 	// EventBufferSize is the buffer size for event channel.
 	EventBufferSize = busevents.StandardSubscriberBuffer
+	renderPhase     = "render"
 )
 
 // Component validates hypothetical configuration changes without deploying.
@@ -57,8 +58,9 @@ type Component struct {
 	// Start() must not be called.
 	*component.Base
 
-	pipeline  *pipeline.Pipeline
-	baseStore stores.StoreProvider
+	pipeline             *pipeline.Pipeline
+	baseStore            stores.StoreProvider
+	currentFilesProvider func() (map[string]string, error)
 
 	// logger is kept alongside Base's (it carries the same component
 	// annotation) because the sync-only path (ValidateSync from the
@@ -86,6 +88,10 @@ type ComponentConfig struct {
 	// BaseStoreProvider is the provider for actual (non-overlaid) stores.
 	BaseStoreProvider stores.StoreProvider
 
+	// CurrentFilesProvider returns the published auxiliary baseline. One
+	// snapshot is shared by every render in a proposal-validation decision.
+	CurrentFilesProvider func() (map[string]string, error)
+
 	// Logger is the structured logger for logging.
 	Logger *slog.Logger
 
@@ -110,9 +116,10 @@ func New(cfg *ComponentConfig) *Component {
 	}
 
 	c := &Component{
-		pipeline:  cfg.Pipeline,
-		baseStore: cfg.BaseStoreProvider,
-		logger:    logger.With("component", ComponentName),
+		pipeline:             cfg.Pipeline,
+		baseStore:            cfg.BaseStoreProvider,
+		currentFilesProvider: cfg.CurrentFilesProvider,
+		logger:               logger.With("component", ComponentName),
 	}
 	if !cfg.SyncOnly && cfg.EventBus != nil {
 		// The Base subscribes only to ProposalValidationRequestedEvent during
@@ -211,7 +218,18 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 
 	ctx, cancel := context.WithTimeout(c.LifecycleContext(), validation.DefaultValidationTimeout)
 	defer cancel()
-	_, validationResult, err := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission, admissionSubjectOpts(req.Overlays)...)
+	opts, err := c.withCurrentFilesSnapshot(admissionSubjectOpts(req.Overlays))
+	if err != nil {
+		c.logger.Warn("Proposal validation failed: currentFiles unavailable", "request_id", req.ID, "error", err)
+		c.EventBus().Publish(events.NewProposalValidationFailedEvent(
+			req.ID,
+			renderPhase,
+			err,
+			time.Since(startTime).Milliseconds(),
+		))
+		return
+	}
+	_, validationResult, err := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission, opts...)
 	if err != nil {
 		phase := pipelineFailurePhase(err)
 		c.logger.Warn("Proposal validation failed: pipeline error",
@@ -339,6 +357,15 @@ func (c *Component) validateSync(ctx context.Context, overlays map[string]*store
 		}
 	}
 
+	opts, err := c.withCurrentFilesSnapshot(opts)
+	if err != nil {
+		return nil, &validation.ValidationResult{
+			Valid:      false,
+			Phase:      renderPhase,
+			Error:      err,
+			DurationMs: time.Since(startTime).Milliseconds(),
+		}
+	}
 	outcome := c.runWithBaselineCheck(ctx, overlayProvider, opts...)
 	if outcome.Admit {
 		return outcome.PipelineResult, &validation.ValidationResult{
@@ -354,6 +381,17 @@ func (c *Component) validateSync(ctx context.Context, overlays map[string]*store
 		DurationMs: time.Since(startTime).Milliseconds(),
 		Warnings:   outcome.Warnings,
 	}
+}
+
+func (c *Component) withCurrentFilesSnapshot(opts []rendercontext.Option) ([]rendercontext.Option, error) {
+	if c.currentFilesProvider == nil {
+		return opts, nil
+	}
+	currentFiles, err := c.currentFilesProvider()
+	if err != nil {
+		return nil, err
+	}
+	return append(opts, rendercontext.WithCurrentAuxFiles(currentFiles)), nil
 }
 
 // validationOutcome is the decision the baseline-aware pipeline driver returns

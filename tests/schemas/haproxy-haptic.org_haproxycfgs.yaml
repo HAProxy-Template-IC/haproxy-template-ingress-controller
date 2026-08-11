@@ -166,6 +166,10 @@ spec:
                       - name
                       type: object
                     type: array
+                  setID:
+                    description: SetID identifies the auxiliary publication committed
+                      with these references.
+                    type: string
                   sslCertificates:
                     description: SSLCertificates lists the Secret resources containing
                       SSL certificates.

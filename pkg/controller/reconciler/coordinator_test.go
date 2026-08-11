@@ -28,6 +28,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -122,6 +123,74 @@ func TestCoordinator_HandleReconciliationTriggered_Success(t *testing.T) {
 	// Verify ReconciliationCompletedEvent
 	completedEvent := testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.True(t, completedEvent.DurationMs >= 0)
+}
+
+func TestCoordinatorCurrentFilesAdvancesBeforeEventDelivery(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	authority := &recordingCurrentFilesAuthority{files: map[string]string{"ticket.keys": "published"}}
+	pipelineExecutor := &mockPipeline{result: &pipeline.PipelineResult{
+		HAProxyConfig: "global\n",
+		AuxiliaryFiles: &dataplane.AuxiliaryFiles{
+			GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "general/ticket.keys", Content: "accepted"}},
+		},
+	}}
+	coordinator := NewCoordinator(&CoordinatorConfig{
+		EventBus:      bus,
+		Pipeline:      pipelineExecutor,
+		StoreProvider: stores.NewRealStoreProvider(nil),
+		CurrentFiles:  authority,
+		Logger:        logger,
+	})
+	generation := authority.BeginTerm()
+
+	coordinator.handleReconciliationTriggered(context.Background(), events.NewReconciliationTriggeredEvent("first", true), generation)
+	coordinator.handleReconciliationTriggered(context.Background(), events.NewReconciliationTriggeredEvent("second", true), generation)
+
+	require.Equal(t, []map[string]string{
+		{"ticket.keys": "published"},
+		{"ticket.keys": "accepted"},
+	}, authority.snapshots)
+	assert.Equal(t, []int{1, 1}, pipelineExecutor.optionCounts)
+}
+
+func TestCoordinatorCurrentFilesDoesNotAdvanceOnPipelineFailure(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	authority := &recordingCurrentFilesAuthority{files: map[string]string{"ticket.keys": "accepted"}}
+	coordinator := NewCoordinator(&CoordinatorConfig{
+		EventBus: bus,
+		Pipeline: &mockPipeline{err: &pipeline.PipelineError{
+			Phase: pipeline.PhaseValidation,
+			Cause: errors.New("invalid output"),
+		}},
+		StoreProvider: stores.NewRealStoreProvider(nil),
+		CurrentFiles:  authority,
+		Logger:        logger,
+	})
+	generation := authority.BeginTerm()
+
+	coordinator.handleReconciliationTriggered(context.Background(), events.NewReconciliationTriggeredEvent("failed", true), generation)
+
+	assert.Zero(t, authority.accepted)
+	assert.Equal(t, "accepted", authority.files["ticket.keys"])
+}
+
+func TestCoordinatorDoesNotRenderWhenCurrentFilesUnavailable(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	authority := &recordingCurrentFilesAuthority{snapshotErr: errors.New("published currentFiles unavailable")}
+	pipelineExecutor := &mockPipeline{}
+	coordinator := NewCoordinator(&CoordinatorConfig{
+		EventBus:      bus,
+		Pipeline:      pipelineExecutor,
+		StoreProvider: stores.NewRealStoreProvider(nil),
+		CurrentFiles:  authority,
+		Logger:        logger,
+	})
+	generation := authority.BeginTerm()
+
+	coordinator.handleReconciliationTriggered(context.Background(), events.NewReconciliationTriggeredEvent("blocked", true), generation)
+
+	assert.Empty(t, pipelineExecutor.optionCounts)
+	assert.Zero(t, authority.accepted)
 }
 
 func TestCoordinator_HandleReconciliationTriggered_RenderFailure(t *testing.T) {
@@ -350,6 +419,8 @@ func TestCoordinator_DiscardsPipelineResultsAfterCancellation(t *testing.T) {
 			bus.Start()
 			authorityErr := errors.New("leader term ended")
 			ctx, cancel := context.WithCancelCause(context.Background())
+			authority := &recordingCurrentFilesAuthority{files: map[string]string{"ticket.keys": "published"}}
+			generation := authority.BeginTerm()
 			coordinator := NewCoordinator(&CoordinatorConfig{
 				EventBus: bus,
 				Pipeline: &cancelingPipeline{
@@ -359,13 +430,16 @@ func TestCoordinator_DiscardsPipelineResultsAfterCancellation(t *testing.T) {
 					err:    tt.err,
 				},
 				StoreProvider: stores.NewRealStoreProvider(nil),
+				CurrentFiles:  authority,
 				Logger:        logger,
 			})
 
 			coordinator.handleReconciliationTriggered(
 				ctx,
 				events.NewReconciliationTriggeredEvent("test", true),
+				generation,
 			)
+			assert.Zero(t, authority.accepted)
 
 			started := false
 			for {
@@ -393,8 +467,9 @@ func TestCoordinator_DiscardsPipelineResultsAfterCancellation(t *testing.T) {
 
 // mockPipeline implements PipelineExecutor interface for testing.
 type mockPipeline struct {
-	result *pipeline.PipelineResult
-	err    error
+	result       *pipeline.PipelineResult
+	err          error
+	optionCounts []int
 }
 
 type cancelingPipeline struct {
@@ -409,11 +484,41 @@ func (p *cancelingPipeline) Execute(_ context.Context, _ stores.StoreProvider, _
 	return p.result, p.err
 }
 
-func (m *mockPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode, _ ...rendercontext.Option) (*pipeline.PipelineResult, error) {
+func (m *mockPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode, opts ...rendercontext.Option) (*pipeline.PipelineResult, error) {
+	m.optionCounts = append(m.optionCounts, len(opts))
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.result, nil
+}
+
+type recordingCurrentFilesAuthority struct {
+	generation  uint64
+	files       map[string]string
+	snapshotErr error
+	snapshots   []map[string]string
+	accepted    int
+}
+
+func (a *recordingCurrentFilesAuthority) BeginTerm() uint64 {
+	a.generation++
+	return a.generation
+}
+
+func (a *recordingCurrentFilesAuthority) EndTerm(uint64) {}
+
+func (a *recordingCurrentFilesAuthority) Snapshot(uint64) (map[string]string, error) {
+	snapshot := make(map[string]string, len(a.files))
+	for name, content := range a.files {
+		snapshot[name] = content
+	}
+	a.snapshots = append(a.snapshots, snapshot)
+	return snapshot, a.snapshotErr
+}
+
+func (a *recordingCurrentFilesAuthority) Accept(_ uint64, auxiliaryFiles *dataplane.AuxiliaryFiles) {
+	a.accepted++
+	a.files = auxiliaryFiles.CurrentFiles()
 }
 
 // flipFlopPipeline returns success once, then failure thereafter. Used to

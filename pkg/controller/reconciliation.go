@@ -61,11 +61,12 @@ import (
 // again after construction is deliberately NOT carried here.
 //
 // Consumers:
-//   - httpStore/capabilities/engineWiring/gvrMapper: read by
+//   - httpStore/capabilities/engineWiring/gvrMapper/publishedCurrentFiles: read by
 //     createDryRunValidator when the webhook validators are wired up.
 type reconciliationWiring struct {
-	httpStore    *httpstore.Component   // HTTP resource fetcher for dynamic content
-	capabilities dataplane.Capabilities // HAProxy/DataPlane API capabilities
+	httpStore             *httpstore.Component   // HTTP resource fetcher for dynamic content
+	capabilities          dataplane.Capabilities // HAProxy/DataPlane API capabilities
+	publishedCurrentFiles *publishedAuxFiles
 
 	// engineWiring carries the type-bootstrap output shared between
 	// the reconciliation engine (the coordinator path constructed here) and
@@ -97,7 +98,7 @@ func createReconciliationComponents(
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
-	currentAuxFiles func() map[string]string,
+	currentFiles *currentFilesAuthority,
 	storeProvider stores.StoreProvider,
 	outputValidator pipeline.RenderedOutputValidator,
 	logger *slog.Logger,
@@ -148,15 +149,14 @@ func createReconciliationComponents(
 	// snapshot into the *[]*<generated-struct> shape Scriggo's typed globals
 	// are declared against.
 	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
-		Engine:                  engine,
-		Config:                  cfg,
-		Logger:                  logger,
-		Capabilities:            capabilities,
-		HAProxyPodStore:         haproxyPodStore,
-		HTTPStoreComponent:      httpStoreComponent,
-		CurrentConfigStore:      currentConfigStore,
-		CurrentAuxFilesProvider: currentAuxFiles,
-		TypedResourceTypes:      wiring.TypedResourceTypes,
+		Engine:             engine,
+		Config:             cfg,
+		Logger:             logger,
+		Capabilities:       capabilities,
+		HAProxyPodStore:    haproxyPodStore,
+		HTTPStoreComponent: httpStoreComponent,
+		CurrentConfigStore: currentConfigStore,
+		TypedResourceTypes: wiring.TypedResourceTypes,
 	})
 
 	validationPipeline := buildValidationPipeline(cfg, localVersion, renderService, outputValidator, logger)
@@ -166,15 +166,17 @@ func createReconciliationComponents(
 		EventBus:      setup.Bus,
 		Pipeline:      validationPipeline,
 		StoreProvider: storeProvider,
+		CurrentFiles:  currentFiles,
 		Logger:        logger,
 	})
 
 	// ProposalValidator: admission webhook + HTTP-store content promotion.
 	proposalValidatorComponent := proposalvalidator.New(&proposalvalidator.ComponentConfig{
-		EventBus:          setup.Bus,
-		Pipeline:          validationPipeline,
-		BaseStoreProvider: storeProvider,
-		Logger:            logger,
+		EventBus:             setup.Bus,
+		Pipeline:             validationPipeline,
+		BaseStoreProvider:    storeProvider,
+		CurrentFilesProvider: currentFiles.publishedSnapshot,
+		Logger:               logger,
 	})
 
 	// One constructor, wired inside the deployer package: the connections
@@ -274,10 +276,11 @@ func createReconciliationComponents(
 	)
 
 	return &reconciliationWiring{
-		httpStore:    httpStoreComponent,
-		capabilities: capabilities,
-		engineWiring: wiring,
-		gvrMapper:    gvrMapper,
+		httpStore:             httpStoreComponent,
+		capabilities:          capabilities,
+		publishedCurrentFiles: currentFiles.published,
+		engineWiring:          wiring,
+		gvrMapper:             gvrMapper,
 	}, nil
 }
 
