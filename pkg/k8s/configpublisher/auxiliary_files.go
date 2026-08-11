@@ -24,12 +24,16 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 )
 
-const runtimeConfigLabelKey = "haproxy-haptic.org/runtime-config"
+const (
+	runtimeConfigLabelKey       = "haproxy-haptic.org/runtime-config"
+	auxiliarySetIDAnnotationKey = "haproxy-haptic.org/auxiliary-set-id"
+)
 
 // runtimeConfigOwnerRefs builds the OwnerReferences slice that ties an
 // auxiliary-file CRD (or Secret) to its parent HAProxyCfg. All four
@@ -37,8 +41,8 @@ const runtimeConfigLabelKey = "haproxy-haptic.org/runtime-config"
 func runtimeConfigOwnerRefs(owner *haproxyv1alpha1.HAProxyCfg) []metav1.OwnerReference {
 	return []metav1.OwnerReference{
 		{
-			APIVersion:         "haproxy-haptic.org/v1alpha1",
-			Kind:               "HAProxyCfg",
+			APIVersion:         apiVersionV1Alpha1,
+			Kind:               runtimeConfigKind,
 			Name:               owner.Name,
 			UID:                owner.UID,
 			Controller:         new(true),
@@ -51,8 +55,24 @@ func runtimeConfigOwnerRefs(owner *haproxyv1alpha1.HAProxyCfg) []metav1.OwnerRef
 // resource to its parent HAProxyCfg via the runtime-config label.
 func runtimeConfigLabels(owner *haproxyv1alpha1.HAProxyCfg) map[string]string {
 	return map[string]string{
-		runtimeConfigLabelKey: owner.Name,
+		runtimeConfigLabelKey: runtimeConfigLabelValue(owner.Name),
 	}
+}
+
+func runtimeConfigAnnotations(owner *haproxyv1alpha1.HAProxyCfg) map[string]string {
+	return map[string]string{
+		auxiliarySetIDAnnotationKey: owner.Annotations[auxiliarySetIDAnnotationKey],
+	}
+}
+
+func auxiliaryMetadataEqual(
+	existing metav1.Object,
+	labels, annotations map[string]string,
+	ownerReferences []metav1.OwnerReference,
+) bool {
+	return apiequality.Semantic.DeepEqual(existing.GetLabels(), labels) &&
+		apiequality.Semantic.DeepEqual(existing.GetAnnotations(), annotations) &&
+		apiequality.Semantic.DeepEqual(existing.GetOwnerReferences(), ownerReferences)
 }
 
 // retriableWrite reports whether a create/update error is a transient write
@@ -81,16 +101,28 @@ type auxResourceOps[T interface{ GetName() string }] struct {
 	// create builds and creates the new object.
 	create func(ctx context.Context) (T, error)
 	// upToDate reports whether the existing object already carries the
-	// desired content (checksum unchanged), in which case no write happens.
+	// desired content and ownership metadata.
 	upToDate func(existing T) bool
+	// managedByOwner reports whether an existing name belongs to this
+	// HAProxyCfg and may be updated.
+	managedByOwner func(existing T) bool
 	// update mutates the freshly fetched object with the desired state and
 	// writes it back.
 	update func(ctx context.Context, existing T) (T, error)
 }
 
+type auxiliaryResourceOwnershipError struct {
+	kind string
+	name string
+}
+
+func (e *auxiliaryResourceOwnershipError) Error() string {
+	return fmt.Sprintf("%s %q is managed by another HAProxyCfg", e.kind, e.name)
+}
+
 // createOrUpdateAuxResource runs the shared create-or-update workflow for an
 // auxiliary resource: get → create when absent (retrying a lost create race
-// into the update branch) → skip when the checksum is unchanged → update.
+// into the update branch) → skip when the desired state is unchanged → update.
 // Returns the name of the resource that ends up holding the desired state.
 func createOrUpdateAuxResource[T interface{ GetName() string }](ctx context.Context, ops auxResourceOps[T]) (string, error) {
 	var resultName string
@@ -113,8 +145,11 @@ func createOrUpdateAuxResource[T interface{ GetName() string }](ctx context.Cont
 			resultName = created.GetName()
 			return nil
 		}
+		if !ops.managedByOwner(existing) {
+			return &auxiliaryResourceOwnershipError{kind: ops.kind, name: existing.GetName()}
+		}
 
-		// Skip update if checksum hasn't changed
+		// Skip update if the desired state hasn't changed.
 		if ops.upToDate(existing) {
 			resultName = existing.GetName()
 			return nil
@@ -135,8 +170,7 @@ func createOrUpdateAuxResource[T interface{ GetName() string }](ctx context.Cont
 }
 
 // createOrUpdateMapFile creates or updates a HAProxyMapFile resource.
-func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, mapFile auxiliaryfiles.MapFile) (string, error) {
-	name := p.generateMapFileName(path.Base(mapFile.Path))
+func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, mapFile auxiliaryfiles.MapFile, name string) (string, error) {
 	checksum := calculateChecksum(mapFile.Content) // Checksum of original content
 
 	// Compress if content exceeds threshold
@@ -150,6 +184,8 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 		Compressed: result.compressed,
 	}
 	labels := runtimeConfigLabels(owner)
+	annotations := runtimeConfigAnnotations(owner)
+	ownerReferences := runtimeConfigOwnerRefs(owner)
 	client := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(req.TemplateConfigNamespace)
 
 	return createOrUpdateAuxResource(ctx, auxResourceOps[*haproxyv1alpha1.HAProxyMapFile]{
@@ -163,25 +199,31 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 					Name:            name,
 					Namespace:       req.TemplateConfigNamespace,
 					Labels:          labels,
-					OwnerReferences: runtimeConfigOwnerRefs(owner),
+					Annotations:     annotations,
+					OwnerReferences: ownerReferences,
 				},
 				Spec: spec,
 			}, metav1.CreateOptions{})
 		},
 		upToDate: func(existing *haproxyv1alpha1.HAProxyMapFile) bool {
-			return existing.Spec.Checksum == spec.Checksum
+			return apiequality.Semantic.DeepEqual(existing.Spec, spec) &&
+				auxiliaryMetadataEqual(existing, labels, annotations, ownerReferences)
+		},
+		managedByOwner: func(existing *haproxyv1alpha1.HAProxyMapFile) bool {
+			return managedByRuntimeConfig(existing, owner.Name)
 		},
 		update: func(ctx context.Context, existing *haproxyv1alpha1.HAProxyMapFile) (*haproxyv1alpha1.HAProxyMapFile, error) {
 			existing.Spec = spec
 			existing.Labels = labels
+			existing.Annotations = annotations
+			existing.OwnerReferences = ownerReferences
 			return client.Update(ctx, existing, metav1.UpdateOptions{})
 		},
 	})
 }
 
 // createOrUpdateSSLSecret creates or updates a Secret for SSL certificates.
-func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, cert auxiliaryfiles.SSLCertificate) (string, error) {
-	name := p.generateSecretName(path.Base(cert.Path))
+func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, cert auxiliaryfiles.SSLCertificate, name string) (string, error) {
 	checksum := calculateChecksum(cert.Content) // Checksum of original content
 
 	// Compress if content exceeds threshold
@@ -189,10 +231,10 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 
 	labels := runtimeConfigLabels(owner)
 	labels["haproxy-haptic.org/type"] = "ssl-certificate"
-	annotations := map[string]string{
-		"haproxy-haptic.org/compressed": strconv.FormatBool(result.compressed),
-		"haproxy-haptic.org/checksum":   checksum,
-	}
+	ownerReferences := runtimeConfigOwnerRefs(owner)
+	annotations := runtimeConfigAnnotations(owner)
+	annotations["haproxy-haptic.org/compressed"] = strconv.FormatBool(result.compressed)
+	annotations["haproxy-haptic.org/checksum"] = checksum
 	data := map[string][]byte{
 		"certificate": []byte(result.content),
 		"path":        []byte(cert.Path),
@@ -211,27 +253,33 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 					Namespace:       req.TemplateConfigNamespace,
 					Labels:          labels,
 					Annotations:     annotations,
-					OwnerReferences: runtimeConfigOwnerRefs(owner),
+					OwnerReferences: ownerReferences,
 				},
 				Type: corev1.SecretTypeOpaque,
 				Data: data,
 			}, metav1.CreateOptions{})
 		},
 		upToDate: func(existing *corev1.Secret) bool {
-			return existing.Annotations != nil && existing.Annotations["haproxy-haptic.org/checksum"] == checksum
+			return existing.Type == corev1.SecretTypeOpaque &&
+				apiequality.Semantic.DeepEqual(existing.Data, data) &&
+				auxiliaryMetadataEqual(existing, labels, annotations, ownerReferences)
+		},
+		managedByOwner: func(existing *corev1.Secret) bool {
+			return managedByRuntimeConfig(existing, owner.Name)
 		},
 		update: func(ctx context.Context, existing *corev1.Secret) (*corev1.Secret, error) {
 			existing.Data = data
 			existing.Labels = labels
 			existing.Annotations = annotations
+			existing.OwnerReferences = ownerReferences
+			existing.Type = corev1.SecretTypeOpaque
 			return client.Update(ctx, existing, metav1.UpdateOptions{})
 		},
 	})
 }
 
 // createOrUpdateGeneralFile creates or updates a HAProxyGeneralFile resource.
-func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, generalFile auxiliaryfiles.GeneralFile) (string, error) {
-	name := p.generateGeneralFileName(generalFile.Filename)
+func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, generalFile auxiliaryfiles.GeneralFile, name string) (string, error) {
 	checksum := calculateChecksum(generalFile.Content) // Checksum of original content
 
 	// Compress if content exceeds threshold
@@ -245,6 +293,8 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 		Compressed: result.compressed,
 	}
 	labels := runtimeConfigLabels(owner)
+	annotations := runtimeConfigAnnotations(owner)
+	ownerReferences := runtimeConfigOwnerRefs(owner)
 	client := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(req.TemplateConfigNamespace)
 
 	return createOrUpdateAuxResource(ctx, auxResourceOps[*haproxyv1alpha1.HAProxyGeneralFile]{
@@ -258,25 +308,31 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 					Name:            name,
 					Namespace:       req.TemplateConfigNamespace,
 					Labels:          labels,
-					OwnerReferences: runtimeConfigOwnerRefs(owner),
+					Annotations:     annotations,
+					OwnerReferences: ownerReferences,
 				},
 				Spec: spec,
 			}, metav1.CreateOptions{})
 		},
 		upToDate: func(existing *haproxyv1alpha1.HAProxyGeneralFile) bool {
-			return existing.Spec.Checksum == spec.Checksum
+			return apiequality.Semantic.DeepEqual(existing.Spec, spec) &&
+				auxiliaryMetadataEqual(existing, labels, annotations, ownerReferences)
+		},
+		managedByOwner: func(existing *haproxyv1alpha1.HAProxyGeneralFile) bool {
+			return managedByRuntimeConfig(existing, owner.Name)
 		},
 		update: func(ctx context.Context, existing *haproxyv1alpha1.HAProxyGeneralFile) (*haproxyv1alpha1.HAProxyGeneralFile, error) {
 			existing.Spec = spec
 			existing.Labels = labels
+			existing.Annotations = annotations
+			existing.OwnerReferences = ownerReferences
 			return client.Update(ctx, existing, metav1.UpdateOptions{})
 		},
 	})
 }
 
 // createOrUpdateCRTListFile creates or updates a HAProxyCRTListFile resource.
-func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, crtListFile auxiliaryfiles.CRTListFile) (string, error) {
-	name := p.generateCRTListFileName(crtListFile.Path)
+func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, crtListFile auxiliaryfiles.CRTListFile, name string) (string, error) {
 	checksum := calculateChecksum(crtListFile.Content) // Checksum of original content
 
 	// Compress if content exceeds threshold
@@ -290,6 +346,8 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 		Compressed: result.compressed,
 	}
 	labels := runtimeConfigLabels(owner)
+	annotations := runtimeConfigAnnotations(owner)
+	ownerReferences := runtimeConfigOwnerRefs(owner)
 	client := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(req.TemplateConfigNamespace)
 
 	return createOrUpdateAuxResource(ctx, auxResourceOps[*haproxyv1alpha1.HAProxyCRTListFile]{
@@ -303,17 +361,24 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 					Name:            name,
 					Namespace:       req.TemplateConfigNamespace,
 					Labels:          labels,
-					OwnerReferences: runtimeConfigOwnerRefs(owner),
+					Annotations:     annotations,
+					OwnerReferences: ownerReferences,
 				},
 				Spec: spec,
 			}, metav1.CreateOptions{})
 		},
 		upToDate: func(existing *haproxyv1alpha1.HAProxyCRTListFile) bool {
-			return existing.Spec.Checksum == spec.Checksum
+			return apiequality.Semantic.DeepEqual(existing.Spec, spec) &&
+				auxiliaryMetadataEqual(existing, labels, annotations, ownerReferences)
+		},
+		managedByOwner: func(existing *haproxyv1alpha1.HAProxyCRTListFile) bool {
+			return managedByRuntimeConfig(existing, owner.Name)
 		},
 		update: func(ctx context.Context, existing *haproxyv1alpha1.HAProxyCRTListFile) (*haproxyv1alpha1.HAProxyCRTListFile, error) {
 			existing.Spec = spec
 			existing.Labels = labels
+			existing.Annotations = annotations
+			existing.OwnerReferences = ownerReferences
 			return client.Update(ctx, existing, metav1.UpdateOptions{})
 		},
 	})

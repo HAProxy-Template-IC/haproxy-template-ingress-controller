@@ -37,6 +37,11 @@ import (
 // to checksum-equality consumers.
 var ErrRuntimeConfigNotPublished = errors.New("HAProxyCfg not published yet")
 
+const (
+	statusSubresource = "status"
+	runtimeConfigKind = "HAProxyCfg"
+)
+
 // apiVersionV1Alpha1 is the CRD API version used in SSA payloads. Hard-coded
 // rather than derived because v1alpha1 is the only version we serve and a
 // future bump is a deliberate operation that should update this constant too.
@@ -195,7 +200,7 @@ var errAuxFilesNotPublishedYet = fmt.Errorf("HAProxyCfg not yet published")
 // HAProxyCfg. Field manager is per-pod (`haptic-pod-status-<podName>`) so
 // concurrent writes for different pods merge cleanly via listType=map.
 func (p *Publisher) applyPodStatusToRuntimeConfig(ctx context.Context, update *DeploymentStatusUpdate, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
-	ssaBytes, err := buildPodStatusSSAPayload("HAProxyCfg", update.RuntimeConfigName, update.RuntimeConfigNamespace, podStatus)
+	ssaBytes, err := buildPodStatusSSAPayload(runtimeConfigKind, update.RuntimeConfigName, update.RuntimeConfigNamespace, podStatus)
 	if err != nil {
 		return err
 	}
@@ -203,7 +208,7 @@ func (p *Publisher) applyPodStatusToRuntimeConfig(ctx context.Context, update *D
 		HAProxyCfgs(update.RuntimeConfigNamespace).
 		Patch(ctx, update.RuntimeConfigName, types.ApplyPatchType, ssaBytes,
 			metav1.PatchOptions{FieldManager: podStatusFieldManager(update.PodName), Force: new(true)},
-			"status",
+			statusSubresource,
 		)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -245,7 +250,7 @@ func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles
 		p.applyAuxiliaryFilePodStatus("HAProxyMapFile", ref.Namespace, ref.Name, &entry, fieldManager,
 			func(name string, data []byte, opts metav1.PatchOptions) error {
 				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(ref.Namespace).
-					Patch(ctx, name, types.ApplyPatchType, data, opts, "status")
+					Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
 				return err
 			})
 	}
@@ -258,7 +263,7 @@ func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles
 		p.applyAuxiliaryFilePodStatus("HAProxyGeneralFile", ref.Namespace, ref.Name, &entry, fieldManager,
 			func(name string, data []byte, opts metav1.PatchOptions) error {
 				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(ref.Namespace).
-					Patch(ctx, name, types.ApplyPatchType, data, opts, "status")
+					Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
 				return err
 			})
 	}
@@ -271,7 +276,7 @@ func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles
 		p.applyAuxiliaryFilePodStatus("HAProxyCRTListFile", ref.Namespace, ref.Name, &entry, fieldManager,
 			func(name string, data []byte, opts metav1.PatchOptions) error {
 				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(ref.Namespace).
-					Patch(ctx, name, types.ApplyPatchType, data, opts, "status")
+					Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
 				return err
 			})
 	}
@@ -368,7 +373,7 @@ func buildPodStatusSSAPayload(kind, name, namespace string, podStatus *haproxyv1
 		"apiVersion": apiVersionV1Alpha1,
 		"kind":       kind,
 		"metadata":   metadata,
-		"status": map[string]any{
+		statusSubresource: map[string]any{
 			"deployedToPods": []any{entry},
 		},
 	}

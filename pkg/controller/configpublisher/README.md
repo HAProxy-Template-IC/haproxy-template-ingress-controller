@@ -61,6 +61,8 @@ contract drives the start, not an event handler.
 
 Each worker is a single goroutine. The publish worker enforces the leading-edge refractory throttle (when `WithPublishInterval` is set); the status worker reuses the same interval to throttle the (also expensive) status subresource writes.
 
+An incomplete publication stays on its worker and retries transient failures with bounded exponential backoff. The retry uses the immutable request snapshot captured at enqueue time. A newer validation generation interrupts and supersedes an older validation retry, while deploy-driven work retains arrival order without superseding validation work. Permanent API rejections release the worker for later items. Only a complete, still-authoritative publication advances content deduplication or emits `ConfigPublishedEvent`. Validation-driven repeats reconcile same-checksum resources idempotently, so deletion or metadata drift heals without duplicate completion events. Each leadership term owns fresh queues, throttles, retry scheduling, and subscription-readiness state.
+
 ## See Also
 
 - [`pkg/k8s/configpublisher`](../../k8s/configpublisher/) — the underlying `Publisher` that does the actual CRD writes

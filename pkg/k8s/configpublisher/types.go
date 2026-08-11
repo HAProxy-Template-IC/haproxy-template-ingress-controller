@@ -87,6 +87,8 @@ type PublishRequest struct {
 	// Set to 0 or negative to disable compression.
 	// Set to a positive value (e.g., 1048576 for 1 MiB) to enable compression.
 	CompressionThreshold int64
+
+	auxiliarySetID string
 }
 
 // PublishResult contains the result of publishing configuration resources.

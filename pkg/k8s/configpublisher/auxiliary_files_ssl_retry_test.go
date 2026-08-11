@@ -60,14 +60,15 @@ func TestCreateOrUpdateSSLSecret_RetriesOnConflict(t *testing.T) {
 
 	// First publish creates the secret (Update reactor not hit on create).
 	cert.Content = "v1-content"
-	name, err := publisher.createOrUpdateSSLSecret(ctx, req, owner, cert)
+	name := publisher.generateSecretName(path.Base(cert.Path))
+	name, err := publisher.createOrUpdateSSLSecret(ctx, req, owner, cert, name)
 	require.NoError(t, err)
 	require.NotEmpty(t, name)
 
 	// Second publish changes content → goes through the Update path, whose first
 	// attempt is rejected with a Conflict. The retry must recover and succeed.
 	cert.Content = "v2-content"
-	_, err = publisher.createOrUpdateSSLSecret(ctx, req, owner, cert)
+	_, err = publisher.createOrUpdateSSLSecret(ctx, req, owner, cert, name)
 	require.NoError(t, err, "conflict on first Update must be retried, not surfaced")
 	assert.GreaterOrEqual(t, updateCalls, 2, "the rejected Update must have been retried")
 
@@ -103,9 +104,11 @@ func TestCreateOrUpdateSSLSecret_RetriesOnAlreadyExistsCreate(t *testing.T) {
 			// content), so OUR create loses with AlreadyExists.
 			racing := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:        name,
-					Namespace:   "default",
-					Annotations: map[string]string{"haproxy-haptic.org/checksum": "from-racing-writer"},
+					Name:            name,
+					Namespace:       "default",
+					Labels:          runtimeConfigLabels(owner),
+					Annotations:     map[string]string{"haproxy-haptic.org/checksum": "from-racing-writer"},
+					OwnerReferences: runtimeConfigOwnerRefs(owner),
 				},
 				Data: map[string][]byte{"certificate": []byte("racing-cert"), "path": []byte(cert.Path)},
 			}
@@ -115,7 +118,7 @@ func TestCreateOrUpdateSSLSecret_RetriesOnAlreadyExistsCreate(t *testing.T) {
 		return false, nil, nil
 	})
 
-	gotName, err := publisher.createOrUpdateSSLSecret(ctx, req, owner, cert)
+	gotName, err := publisher.createOrUpdateSSLSecret(ctx, req, owner, cert, name)
 	require.NoError(t, err, "AlreadyExists on create must be retried into the update path, not surfaced")
 	require.Equal(t, name, gotName)
 	assert.Equal(t, 1, createCalls, "create attempted once; the retry takes the update path since the object now exists")

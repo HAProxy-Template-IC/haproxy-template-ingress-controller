@@ -8,7 +8,7 @@ Defines how the controller makes rendered HAProxy configuration observable insid
 
 ### Requirement: Post-Validation Publishing
 
-The leader-only ConfigPublisher SHALL publish the rendered configuration and its auxiliary files as output CRDs only after successful validation. Rendered configs SHALL be cached keyed by correlation ID so each ValidationCompletedEvent is matched to exactly the TemplateRenderedEvent of its own reconciliation cycle, even when events from multiple cycles interleave; an event whose correlation ID has no cached render (or arriving before the template config is cached) SHALL be skipped with a warning. Kubernetes API work SHALL run on async workers so the event loop never blocks on the API: publish operations under a 30-second timeout, per-pod status operations under a 10-second timeout. A successful publish SHALL record the published checksum, drop the consumed render cache entry, and emit a ConfigPublishedEvent carrying the runtime config name and namespace. The HAProxyCfg resource name SHALL be derived deterministically from the template-config name (suffix "-haproxycfg").
+The leader-only ConfigPublisher SHALL publish the rendered configuration and its auxiliary files as output CRDs only after successful validation. Rendered configs SHALL be cached keyed by correlation ID so each ValidationCompletedEvent is matched to exactly the TemplateRenderedEvent of its own reconciliation cycle, even when events from multiple cycles interleave; an event whose correlation ID has no cached render (or arriving before the template config is cached) SHALL be skipped with a warning. Kubernetes API work SHALL run on async workers so the event loop never blocks on the API: publish operations under a 30-second timeout, per-pod status operations under a 10-second timeout. Before its first API mutation, the pure publisher SHALL canonicalize identical auxiliary definitions and reject conflicting definitions of one Dataplane API storage identity. A publication is successful only after the HAProxyCfg, every required auxiliary resource, the HAProxyCfg's complete auxiliary-reference status, and removal of obsolete owned auxiliary resources have succeeded. Cleanup SHALL begin only after the complete desired set and its references exist. The parent and every desired child SHALL carry the same auxiliary-set identity; cleanup SHALL recheck both that identity and the committed auxiliary references before each deletion and use object-version preconditions, so a late cleanup from a retired desired set cannot delete a replacement publication. An existing auxiliary name managed by another HAProxyCfg SHALL never be taken over; the publisher SHALL use a stable owner-scoped name instead. An incomplete publication SHALL retry its immutable request with bounded exponential backoff until it completes, its validation generation is superseded, or its leader lifecycle context is cancelled. Superseding a generation SHALL interrupt its pending backoff immediately. A permanent API rejection SHALL terminate only that work item so later publications can proceed. After a successful API call, the publisher SHALL recheck the validation generation and leader term before atomically recording the checksum and emitting ConfigPublishedEvent; a retired call SHALL do neither. The HAProxyCfg resource name SHALL be derived deterministically from the template-config name (suffix "-haproxycfg") and SHALL remain a valid Kubernetes name for every valid template-config name.
 
 #### Scenario: Interleaved cycles publish the matching render
 
@@ -20,18 +20,58 @@ The leader-only ConfigPublisher SHALL publish the rendered configuration and its
 - **WHEN** a ValidationCompletedEvent arrives whose correlation ID has no cached rendered config
 - **THEN** the publisher SHALL log a warning and publish nothing
 
+#### Scenario: Auxiliary write fails transiently
+
+- **WHEN** the HAProxyCfg write succeeds but one required auxiliary write fails
+- **THEN** the publisher SHALL emit no ConfigPublishedEvent and SHALL retry the same generation until the child and its status reference exist
+
+#### Scenario: Ambiguous auxiliary set reaches the pure publisher
+
+- **WHEN** two requested files collapse to one Dataplane API storage identity with conflicting definitions
+- **THEN** the publisher SHALL reject the request without creating or updating the HAProxyCfg
+
+#### Scenario: Auxiliary resource leaves the desired set
+
+- **WHEN** a complete desired set and its references no longer include a child owned by the HAProxyCfg
+- **THEN** the publisher SHALL delete that child before reporting publication success
+
+#### Scenario: Retired cleanup reaches a newer desired set
+
+- **WHEN** a late cleanup observes that the HAProxyCfg now carries a different auxiliary-set identity
+- **THEN** it SHALL delete nothing and SHALL NOT report the retired publication as complete
+
+#### Scenario: Another runtime config owns the readable child name
+
+- **WHEN** an auxiliary resource's readable name already belongs to a different HAProxyCfg
+- **THEN** the publisher SHALL retain the existing resource and publish its own child under a stable owner-scoped name
+
+#### Scenario: New generation supersedes an incomplete validation publish
+
+- **WHEN** validation generation B arrives while generation A waits to retry an incomplete publication
+- **THEN** generation A SHALL stop retrying and generation B SHALL publish from its own immutable snapshot
+
+#### Scenario: Successful API call returns after authority expires
+
+- **WHEN** a publish API call succeeds after its validation generation is superseded or its leader context is cancelled
+- **THEN** it SHALL NOT advance content deduplication or emit ConfigPublishedEvent
+
+#### Scenario: Permanent rejection does not starve the queue
+
+- **WHEN** one publication receives a permanent Kubernetes API rejection
+- **THEN** that item SHALL stop without success and the next queued publication SHALL run
+
 ### Requirement: Deploy-Driven Publishing
 
-A DeployedConfigPublishRequest — carrying inline the exact bytes and content checksum a deployment just applied — SHALL be processed through a dedicated work channel and a dedicated pending-throttle slot, separate from validation-driven publishes, so a validation publish can never coalesce away a deployed checksum. When the throttle window expires with both a deploy-driven and a validation-driven publish buffered, the deploy-driven item SHALL be flushed FIRST (the spec should reflect what is actually deployed); content deduplication then collapses the second to a no-op when both carry the same content. This guarantees every checksum stamped into per-pod status is observable as a published spec checksum even when the validation-driven publish for that render was throttled or coalesced away. Buffered deploy-driven publishes SHALL be dropped on lost leadership.
+A DeployedConfigPublishRequest — carrying inline the exact bytes and content checksum a deployment just applied — SHALL be processed through a dedicated ordered queue and a dedicated pending-throttle path, separate from validation-driven publishes, so a validation publish can never coalesce away a deployed checksum. A deploy-driven item SHALL NOT supersede a validation generation. Each throttle window SHALL publish at most one item, and the complete deployed queue SHALL be flushed in arrival order before the latest buffered validation publish. This guarantees every checksum stamped into per-pod status is observable as a published spec checksum even when the validation-driven publish for that render was throttled or coalesced away. Buffered deploy-driven publishes SHALL be dropped on lost leadership.
 
 #### Scenario: Deployed checksum survives coalescing
 
 - **WHEN** a deploy-driven publish and a newer validation-driven publish are both buffered inside a throttle window
-- **THEN** the deploy-driven item SHALL be flushed first when the window expires
+- **THEN** all queued deploy-driven items SHALL be flushed one per window before the validation-driven item
 
 ### Requirement: Dual Leading-Edge Throttles
 
-The publisher SHALL gate spec writes and status-subresource writes through two SEPARATE leading-edge throttles, both at the config-publish interval (default 10 seconds; the value 0 disables throttling). Leading-edge semantics: the first write after an idle period fires immediately; writes submitted inside the refractory window are buffered (latest wins per slot for spec writes, per-pod coalescing for status writes) and flushed once when the window expires. Status writes need their own throttle because each status update writes the full object to etcd even though only the status changed. On lost leadership or shutdown, buffered work SHALL be discarded and no API write SHALL outlive the cancelled lifecycle context.
+The publisher SHALL gate spec writes and status-subresource writes through two SEPARATE leading-edge throttles, both at the config-publish interval (default 10 seconds; the value 0 disables throttling). Leading-edge semantics: the first write after an idle period fires immediately; writes submitted inside the refractory window are buffered (latest wins per slot for spec writes, per-pod coalescing for status writes) and flushed once when the window expires. Status writes need their own throttle because each status update writes the full object to etcd even though only the status changed. On lost leadership or shutdown, buffered work SHALL be discarded and no API write SHALL outlive the cancelled lifecycle context. A later leadership term SHALL use fresh queues, throttles, retry scheduling, and readiness signalling.
 
 #### Scenario: First publish after idle is immediate
 
@@ -43,18 +83,28 @@ The publisher SHALL gate spec writes and status-subresource writes through two S
 - **WHEN** five renders publish within one 10 s window
 - **THEN** the first SHALL fire immediately and the remaining four SHALL collapse to a single flush of the latest when the window expires
 
+#### Scenario: Leadership is reacquired
+
+- **WHEN** the component starts again after a completed leader term
+- **THEN** it SHALL signal readiness for the new subscription and publish through fresh worker timing state
+
 ### Requirement: Content Deduplication
 
-The publisher SHALL skip a spec publish when the work item's content checksum equals the checksum of the last successfully published config, dropping the consumed render cache entry. An empty checksum SHALL never match. The check SHALL run both before throttle buffering and again at flush time (the content may have been published by the other path in between). The last-published checksum SHALL be cleared on lost leadership.
+The publisher SHALL fast-skip a deploy-driven publish when its content checksum equals the checksum of the last completely published config, dropping the consumed render cache entry. A validation-driven repeat SHALL reconcile the complete desired resource set so a deleted or drifted output heals even when its content checksum is unchanged; an already-correct set SHALL produce no Kubernetes write or duplicate ConfigPublishedEvent. A partial parent or child write SHALL NOT advance the checksum. An empty checksum SHALL never match. The deploy-driven check SHALL run both before throttle buffering and again at flush time. The last-published checksum SHALL be cleared on lost leadership.
 
 #### Scenario: Identical content is not republished
 
-- **WHEN** a publish work item carries the same content checksum as the last successful publish
+- **WHEN** a deploy-driven publish carries the same content checksum as the last successful publish
 - **THEN** no Kubernetes API write SHALL occur
+
+#### Scenario: Same-checksum output is incomplete
+
+- **WHEN** a validation-driven repeat finds a required output resource missing or drifted
+- **THEN** it SHALL repair the desired state without emitting a duplicate completion event
 
 ### Requirement: Invalid-Config Publishing
 
-When validation fails, the publisher SHALL publish the failed render as a separate HAProxyCfg under the runtime config name plus an "-invalid" suffix, with the status ValidationError field set to a summary of the validation errors (first error plus a count of the rest). Invalid configs SHALL never be deployed; the -invalid resource exists so operators can inspect exactly what was rejected and why.
+When validation fails, the publisher SHALL publish the failed render as a separate HAProxyCfg under the runtime config name plus an "-invalid" suffix, with the status ValidationError field set to a summary of the validation errors (first error plus a count of the rest). Its auxiliary resources SHALL use the same suffix so an invalid render cannot overwrite the last valid render's resources. Distinct auxiliary file identities that produce the same readable Kubernetes name SHALL receive stable disambiguated names rather than overwrite one another. Invalid configs SHALL never be deployed; the -invalid resource exists so operators can inspect exactly what was rejected and why.
 
 #### Scenario: Failed render observable under -invalid name
 

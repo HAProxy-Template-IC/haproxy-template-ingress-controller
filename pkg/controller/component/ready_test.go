@@ -50,3 +50,24 @@ func TestReadySignal_MarkReadyIdempotent(t *testing.T) {
 	assert.NotPanics(t, r.MarkReady)
 	assert.NotPanics(t, r.MarkReady)
 }
+
+func TestReadySignal_RearmCreatesNextLifecycleSignal(t *testing.T) {
+	r := NewReadySignal()
+	r.MarkReady()
+	first := r.SubscriptionReady()
+	r.Rearm()
+	second := r.SubscriptionReady()
+
+	assert.NotEqual(t, first, second)
+	select {
+	case <-second:
+		t.Fatal("rearmed channel closed before the next MarkReady")
+	default:
+	}
+	r.MarkReady()
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		t.Fatal("rearmed channel not closed after MarkReady")
+	}
+}

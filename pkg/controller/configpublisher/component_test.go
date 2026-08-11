@@ -17,6 +17,7 @@ package configpublisher
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,12 +27,17 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	crdclientfake "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // This test verifies the full event flow:
@@ -49,6 +55,97 @@ type testEnv struct {
 	bus       *busevents.EventBus
 	publisher *configpublisher.Publisher
 	start     func()
+}
+
+type mapPublicationFailureOnce struct {
+	mu           sync.Mutex
+	contents     []string
+	firstFailure chan struct{}
+}
+
+func newMapPublicationFailureOnce() *mapPublicationFailureOnce {
+	return &mapPublicationFailureOnce{firstFailure: make(chan struct{})}
+}
+
+func (f *mapPublicationFailureOnce) react(action k8stesting.Action) (bool, runtime.Object, error) {
+	mapFile := action.(k8stesting.CreateAction).GetObject().(*v1alpha1.HAProxyMapFile)
+	f.mu.Lock()
+	f.contents = append(f.contents, mapFile.Spec.Entries)
+	attempt := len(f.contents)
+	f.mu.Unlock()
+	if attempt == 1 {
+		close(f.firstFailure)
+		return true, nil, apierrors.NewServiceUnavailable("map storage unavailable")
+	}
+	return false, nil, nil
+}
+
+func (f *mapPublicationFailureOnce) attemptedContents() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.contents...)
+}
+
+type publicationRetryGate struct {
+	waiting chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newPublicationRetryGate() *publicationRetryGate {
+	return &publicationRetryGate{
+		waiting: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (g *publicationRetryGate) wait(ctx context.Context, _ time.Duration, superseded <-chan struct{}) bool {
+	g.once.Do(func() { close(g.waiting) })
+	select {
+	case <-g.release:
+		return true
+	case <-superseded:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func waitForTestSignal(t *testing.T, ctx context.Context, signal <-chan struct{}, failure string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-ctx.Done():
+		t.Fatal(failure)
+	}
+}
+
+func countConfigPublishedEvents(eventChan <-chan busevents.Event) int {
+	count := 0
+	for {
+		select {
+		case event := <-eventChan:
+			if _, ok := event.(*events.ConfigPublishedEvent); ok {
+				count++
+			}
+		default:
+			return count
+		}
+	}
+}
+
+func waitForConfigPublished(t *testing.T, ctx context.Context, eventChan <-chan busevents.Event) {
+	t.Helper()
+	for {
+		select {
+		case event := <-eventChan:
+			if _, ok := event.(*events.ConfigPublishedEvent); ok {
+				return
+			}
+		case <-ctx.Done():
+			t.Fatal("complete retry did not emit ConfigPublishedEvent")
+		}
+	}
 }
 
 func newTestComponent(t *testing.T) testEnv {
@@ -151,6 +248,78 @@ eventLoop:
 	require.NoError(t, err)
 	assert.Equal(t, "test-config-haproxycfg", runtimeConfig.Name)
 	assert.Contains(t, runtimeConfig.Spec.Content, "global")
+}
+
+func TestComponent_RetriesIncompletePublicationWithoutCompletingEarly(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
+	failure := newMapPublicationFailureOnce()
+	crdClient.PrependReactor("create", "haproxymapfiles", failure.react)
+
+	bus := busevents.NewEventBus(100)
+	publisher := configpublisher.NewWithListers(
+		k8sfake.NewClientset(), crdClient, nil, testutil.NewTestLogger())
+	retryGate := newPublicationRetryGate()
+	component := New(publisher, bus, testutil.NewTestLogger(), withPublicationRetryWait(retryGate.wait))
+	eventChan := bus.Subscribe("publication-retry-test", 50)
+	startDone := make(chan error, 1)
+	go func() { startDone <- component.Start(ctx) }()
+	waitForTestSignal(t, ctx, component.SubscriptionReady(), "config publisher did not subscribe")
+	bus.Start()
+
+	templateConfig := &v1alpha1.HAProxyTemplateConfig{ObjectMeta: metav1.ObjectMeta{
+		Name: "test-config", Namespace: "default", UID: "test-uid",
+	}}
+	auxFiles := &dataplane.AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
+		Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n",
+	}}}
+	correlationID := t.Name()
+	bus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
+	bus.Publish(events.NewTemplateRenderedEvent(
+		"global\n  daemon\n", auxFiles, nil, nil, 1, 1, "", "checksum-v1", true,
+		events.WithCorrelation(correlationID, ""),
+	))
+	bus.Publish(events.NewValidationCompletedEvent(
+		nil, 1, "", nil, true, events.WithCorrelation(correlationID, ""),
+	))
+
+	waitForTestSignal(t, ctx, failure.firstFailure, "map-file publication did not fail")
+	waitForTestSignal(t, ctx, retryGate.waiting, "publication retry was not scheduled")
+
+	component.mu.RLock()
+	assert.Empty(t, component.lastPublishedChecksum)
+	component.mu.RUnlock()
+
+	assert.Zero(t, countConfigPublishedEvents(eventChan), "incomplete publication emitted ConfigPublishedEvent")
+
+	auxFiles.MapFiles[0].Content = "mutated after enqueue\n"
+	close(retryGate.release)
+	waitForConfigPublished(t, ctx, eventChan)
+	assert.Zero(t, countConfigPublishedEvents(eventChan), "publication emitted duplicate completion")
+	assert.Equal(t, []string{"example.com backend1\n", "example.com backend1\n"}, failure.attemptedContents())
+
+	mapFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, "haproxy-map-host", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "example.com backend1\n", mapFile.Spec.Entries)
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, runtimeConfig.Status.AuxiliaryFiles)
+	require.Len(t, runtimeConfig.Status.AuxiliaryFiles.MapFiles, 1)
+	assert.Equal(t, mapFile.Name, runtimeConfig.Status.AuxiliaryFiles.MapFiles[0].Name)
+	assert.Equal(t, "checksum-v1", runtimeConfig.Spec.Checksum)
+
+	cancel()
+	select {
+	case err := <-startDone:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("config publisher did not stop")
+	}
 }
 
 // TestComponent_DeployedConfigPublishRequest verifies the CR self-consistency

@@ -22,6 +22,10 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
+	crdclientfake "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
+	k8spublisher "gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
 // syncBuffer is an io.Writer safe for the worker goroutine to write while the
@@ -58,13 +62,15 @@ func (s *syncBuffer) String() string {
 func TestPublishWorker_DrainsDeployedWorkFirst(t *testing.T) {
 	logBuf := &syncBuffer{}
 
-	// Every item carries the same content checksum as lastPublishedChecksum, so
-	// skipIfAlreadyPublished short-circuits each one *after* processPublishWork
-	// logs "Processing publish work" — the worker loop is exercised end to end
-	// while the (nil) publisher is never reached. The log order is therefore the
-	// order the worker took items off the channels.
+	// The deployed item is deduplicated while validation work reconciles through
+	// fake clients. The processing log therefore records the queue-drain order.
 	const published = "same-content"
+	publisher := k8spublisher.NewWithListers(
+		k8sfake.NewClientset(), crdclientfake.NewSimpleClientset(), nil,
+		slog.New(slog.NewTextHandler(logBuf, nil)),
+	)
 	c := &Component{
+		publisher: publisher,
 		logger: slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{
 			Level: slog.LevelDebug,
 		})),

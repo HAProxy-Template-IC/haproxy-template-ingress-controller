@@ -274,7 +274,10 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 
 	// Merge static and dynamic (FileRegistry) auxiliary files
 	dynamicFiles := fileRegistry.GetFiles()
-	auxiliaryFiles := rendercontext.MergeAuxiliaryFiles(staticFiles, dynamicFiles)
+	auxiliaryFiles, err := rendercontext.MergeAuxiliaryFiles(staticFiles, dynamicFiles)
+	if err != nil {
+		return nil, fmt.Errorf("merging auxiliary files: %w", err)
+	}
 
 	// Defensive consistency check: fail the render if the config references
 	// map files the renderer did not register. Without this, a chart-side

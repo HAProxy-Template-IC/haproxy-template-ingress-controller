@@ -65,9 +65,12 @@ type renderedConfigEntry struct {
 // publishWorkItem represents a config publish task for the async worker.
 type publishWorkItem struct {
 	correlationID  string
-	event          *events.ValidationCompletedEvent
 	templateConfig *v1alpha1.HAProxyTemplateConfig
 	entry          *renderedConfigEntry
+	request        *configpublisher.PublishRequest
+	generation     uint64
+	term           uint64
+	superseded     <-chan struct{}
 	// deployDriven marks an item that carries the bytes the deployer just
 	// applied (from a DeployedConfigPublishRequest), as opposed to the
 	// validation-driven publish. Deploy-driven items use their own pending slot
@@ -78,10 +81,14 @@ type publishWorkItem struct {
 
 // validationFailedWorkItem represents a failed config publish task for the async worker.
 type validationFailedWorkItem struct {
-	correlationID  string
-	event          *events.ValidationFailedEvent
-	templateConfig *v1alpha1.HAProxyTemplateConfig
-	entry          *renderedConfigEntry
+	correlationID   string
+	templateConfig  *v1alpha1.HAProxyTemplateConfig
+	entry           *renderedConfigEntry
+	request         *configpublisher.PublishRequest
+	validationError string
+	generation      uint64
+	term            uint64
+	superseded      <-chan struct{}
 }
 
 // statusWorkItem represents a pod status update task for the async worker.
@@ -164,7 +171,16 @@ type Component struct {
 	// lastPublishedChecksum tracks the checksum of the last successfully published config.
 	// Used to skip redundant CRD updates when config content is unchanged.
 	// Protected by mu.
-	lastPublishedChecksum string
+	lastPublishedChecksum   string
+	publicationTerm         uint64
+	nextPublishGeneration   uint64
+	latestPublishGeneration uint64
+	nextInvalidGeneration   uint64
+	latestInvalidGeneration uint64
+	publishSuperseded       chan struct{}
+	invalidSuperseded       chan struct{}
+	publicationRetryWait    func(context.Context, time.Duration, <-chan struct{}) bool
+	publicationCallMu       sync.Mutex
 
 	// publishInterval configures the leading-edge refractory period for both
 	// publish and status throttles. Decouples CRD writes from reconciliation
@@ -227,6 +243,9 @@ func New(
 		statusWorkPending:    make(map[string]*statusWorkItem),
 		statusWorkTrigger:    make(chan struct{}, statusWorkTriggerSize),
 		statusRetrySignals:   newDelayedSignals(),
+		publishSuperseded:    make(chan struct{}),
+		invalidSuperseded:    make(chan struct{}),
+		publicationRetryWait: waitForPublicationRetry,
 	}
 
 	for _, opt := range opts {
@@ -259,6 +278,9 @@ func (c *Component) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (c *Component) Start(ctx context.Context) error {
+	c.preparePublicationTerm()
+	defer c.Rearm()
+
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
 	// All-replica components replay their cached state on BecameLeaderEvent.
@@ -307,6 +329,41 @@ func (c *Component) Start(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+}
+
+func (c *Component) preparePublicationTerm() {
+	c.mu.Lock()
+	c.publicationTerm++
+	c.templateConfig = nil
+	c.hasTemplateConfig = false
+	c.renderedConfigs = make(map[string]*renderedConfigEntry)
+	c.lastPublishedChecksum = ""
+	c.latestPublishGeneration = 0
+	c.latestInvalidGeneration = 0
+	c.publishSuperseded = supersedePublication(c.publishSuperseded)
+	c.invalidSuperseded = supersedePublication(c.invalidSuperseded)
+	c.mu.Unlock()
+
+	c.publishWork = make(chan *publishWorkItem, publishWorkChannelSize)
+	c.validationFailedWork = make(chan *validationFailedWorkItem, publishWorkChannelSize)
+
+	c.deployedPendingMu.Lock()
+	c.deployedPending = nil
+	c.deployedTrigger = make(chan struct{}, statusWorkTriggerSize)
+	c.deployedPendingMu.Unlock()
+
+	c.pendingMu.Lock()
+	c.pendingPublish = nil
+	c.pendingMu.Unlock()
+
+	c.statusWorkPendingMu.Lock()
+	c.statusWorkPending = make(map[string]*statusWorkItem)
+	c.statusWorkTrigger = make(chan struct{}, statusWorkTriggerSize)
+	c.statusWorkPendingMu.Unlock()
+
+	c.statusRetrySignals = newDelayedSignals()
+	c.publishThrottle = throttle.New(c.publishInterval)
+	c.statusThrottle = throttle.New(c.publishInterval)
 }
 
 // handleEvent processes events from the event bus. ctx is the component's

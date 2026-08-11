@@ -21,6 +21,7 @@ import (
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
@@ -28,7 +29,7 @@ import (
 
 // createOrUpdateRuntimeConfig creates or updates the HAProxyCfg resource.
 func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *PublishRequest) (*haproxyv1alpha1.HAProxyCfg, error) {
-	name := GenerateRuntimeConfigName(req.TemplateConfigName) + req.NameSuffix
+	name := runtimeConfigResourceName(req.TemplateConfigName, req.NameSuffix)
 	runtimeConfig := p.buildRuntimeConfig(name, req)
 
 	var result *haproxyv1alpha1.HAProxyCfg
@@ -71,18 +72,21 @@ func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *Publis
 // buildRuntimeConfig constructs a HAProxyCfg resource from the request.
 func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haproxyv1alpha1.HAProxyCfg {
 	// Compress if content exceeds threshold
-	result := p.compressIfNeeded(req.Config, req.CompressionThreshold, "HAProxyCfg")
+	result := p.compressIfNeeded(req.Config, req.CompressionThreshold, runtimeConfigKind)
 
 	runtimeConfig := &haproxyv1alpha1.HAProxyCfg{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: req.TemplateConfigNamespace,
+			Annotations: map[string]string{
+				auxiliarySetIDAnnotationKey: req.auxiliarySetID,
+			},
 			Labels: map[string]string{
 				"haproxy-haptic.org/template-config": req.TemplateConfigName,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "haproxy-haptic.org/v1alpha1",
+					APIVersion:         apiVersionV1Alpha1,
 					Kind:               "HAProxyTemplateConfig",
 					Name:               req.TemplateConfigName,
 					UID:                req.TemplateConfigUID,
@@ -113,7 +117,9 @@ func (p *Publisher) createRuntimeConfig(ctx context.Context, req *PublishRequest
 
 	// Set validation error status if this is an invalid config
 	if req.ValidationError != "" {
-		p.updateValidationErrorStatus(ctx, created, req.ValidationError)
+		if err := p.updateValidationErrorStatus(ctx, created, req.ValidationError); err != nil {
+			return nil, err
+		}
 	}
 
 	return created, nil
@@ -121,51 +127,49 @@ func (p *Publisher) createRuntimeConfig(ctx context.Context, req *PublishRequest
 
 // updateValidationErrorStatus sets or clears the ValidationError on a HAProxyCfg status.
 // Called only on validation error state transitions (ok→error or error→ok).
-func (p *Publisher) updateValidationErrorStatus(ctx context.Context, cfg *haproxyv1alpha1.HAProxyCfg, validationError string) {
+func (p *Publisher) updateValidationErrorStatus(ctx context.Context, cfg *haproxyv1alpha1.HAProxyCfg, validationError string) error {
 	cfg.Status.ValidationError = validationError
 
 	_, err := p.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs(cfg.Namespace).
 		UpdateStatus(ctx, cfg, metav1.UpdateOptions{})
 	if err != nil {
-		p.logger.Debug("Status update conflict (will retry on next reconciliation)",
-			"type", "runtime_config_status",
-			"name", cfg.Name,
-			"error", err,
-		)
+		return fmt.Errorf("updating validation error status: %w", err)
 	}
+	return nil
 }
 
 // updateRuntimeConfig updates an existing HAProxyCfg resource.
-// Skips the update if the checksum is unchanged to avoid unnecessary API calls.
+// Skips the update when the desired spec and ownership metadata are unchanged.
 func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest, existing, runtimeConfig *haproxyv1alpha1.HAProxyCfg) (*haproxyv1alpha1.HAProxyCfg, error) {
-	// Skip update if checksum hasn't changed (content is identical)
-	if existing.Spec.Checksum == runtimeConfig.Spec.Checksum {
-		p.logger.Debug("Skipping HAProxyCfg spec update, checksum unchanged",
+	updated := existing
+	if apiequality.Semantic.DeepEqual(existing.Spec, runtimeConfig.Spec) &&
+		apiequality.Semantic.DeepEqual(existing.Annotations, runtimeConfig.Annotations) &&
+		apiequality.Semantic.DeepEqual(existing.Labels, runtimeConfig.Labels) &&
+		apiequality.Semantic.DeepEqual(existing.OwnerReferences, runtimeConfig.OwnerReferences) {
+		p.logger.Debug("Skipping HAProxyCfg update, desired state unchanged",
 			"name", existing.Name,
 			"checksum", existing.Spec.Checksum,
 		)
-		return existing, nil
+	} else {
+		existing.Spec = runtimeConfig.Spec
+		existing.Annotations = runtimeConfig.Annotations
+		existing.Labels = runtimeConfig.Labels
+		existing.OwnerReferences = runtimeConfig.OwnerReferences
+
+		var err error
+		updated, err = p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCfgs(req.TemplateConfigNamespace).
+			Update(ctx, existing, metav1.UpdateOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("updating runtime config: %w", err)
+		}
 	}
 
-	// Check for validation error state transition before spec update
-	previousValidationError := existing.Status.ValidationError
-
-	// Update existing resource
-	existing.Spec = runtimeConfig.Spec
-	existing.Labels = runtimeConfig.Labels
-
-	updated, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs(req.TemplateConfigNamespace).
-		Update(ctx, existing, metav1.UpdateOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("updating runtime config: %w", err)
-	}
-
-	// Only update status on validation error state transitions (ok→error or error→ok).
-	// Each UpdateStatus writes the full ~509 KB object to etcd.
-	if previousValidationError != req.ValidationError {
-		p.updateValidationErrorStatus(ctx, updated, req.ValidationError)
+	if updated.Status.ValidationError != req.ValidationError {
+		if err := p.updateValidationErrorStatus(ctx, updated, req.ValidationError); err != nil {
+			return nil, err
+		}
 	}
 	return updated, nil
 }

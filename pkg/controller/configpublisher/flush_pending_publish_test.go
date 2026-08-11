@@ -31,13 +31,8 @@ import (
 //     the timer's scheduling and its firing). Without this guard
 //     the function would nil-deref reading work.entry / work.correlationID.
 //
-//  2. content checksum already published → early return AND drop
-//     the cached entry. The whole reason flushPendingPublish does
-//     a SECOND skipIfAlreadyPublished check is that something else
-//     (e.g. a non-throttled path on the same content) may have
-//     published the content while this one was buffered. Without
-//     this re-check, the throttle timer would write an identical
-//     duplicate to etcd — undermining the throttle's whole purpose.
+//  2. deployed content already published → early return and drop
+//     the cached entry. Validation work still runs to heal output drift.
 
 // flushTestComponent constructs a Component with the minimum fields
 // flushPendingPublish needs for the early-return paths: pendingMu,
@@ -76,8 +71,8 @@ func TestFlushPendingPublish_NilPendingIsNoOp(t *testing.T) {
 			"in-flight work for other correlation IDs")
 }
 
-func TestFlushPendingPublish_DedupHitSkipsAndDropsCache(t *testing.T) {
-	// Set up: pendingPublish carries a work item whose checksum
+func TestFlushPendingPublish_DeployDedupHitSkipsAndDropsCache(t *testing.T) {
+	// Set up: pendingPublish carries a deploy-driven work item whose checksum
 	// MATCHES lastPublishedChecksum. The second skipIfAlreadyPublished
 	// must fire, the publisher MUST NOT be called (it's nil — would
 	// panic), and the cached entry for this correlation ID MUST be
@@ -96,13 +91,14 @@ func TestFlushPendingPublish_DedupHitSkipsAndDropsCache(t *testing.T) {
 		correlationID:  corrID,
 		entry:          cachedEntry,
 		templateConfig: &v1alpha1.HAProxyTemplateConfig{},
+		deployDriven:   true,
 	}
 
 	c.pendingMu.Lock()
 	c.pendingPublish = work
 	c.pendingMu.Unlock()
 
-	// lastPublishedChecksum matches the work's checksum → dedup MUST
+	// lastPublishedChecksum matches the deployed work's checksum → dedup MUST
 	// fire and skip the publish.
 	c.mu.Lock()
 	c.lastPublishedChecksum = dupChecksum

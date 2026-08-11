@@ -51,9 +51,7 @@ Every child carries `metadata.ownerReferences` pointing at the parent `HAProxyCf
 
 ## Failure Mode
 
-`PublishConfig` is best-effort for child resources — a single map file failing to update logs at debug level and continues with the rest. The next reconciliation re-publishes everything, so transient API errors heal automatically.
-
-The top-level `HAProxyCfg` upsert is the only operation that returns an error; child operations log and skip. Status updates also log and skip on conflict (the next reconciliation cycle will retry).
+`PublishConfig` succeeds only after the `HAProxyCfg`, every desired child, the complete child-reference status, and removal of obsolete owned children have succeeded. A required write or cleanup failure returns an `IncompletePublicationError` identifying the failed stage and resource. Repeating the same request is safe: resources already in the desired state are skipped, and incomplete work resumes. The publisher canonicalizes identical file definitions and rejects conflicting Dataplane storage identities before its first API write. Auxiliary-set annotations, committed parent references, and object-version preconditions fence cleanup, preventing a retired publication from deleting newer output. Invalid publications suffix their child names with `-invalid`, keeping the last valid artifact set intact. Long, colliding, or foreign-owned names receive stable identity hashes, so every resource name stays valid and one runtime config never takes over another's child.
 
 ## See Also
 

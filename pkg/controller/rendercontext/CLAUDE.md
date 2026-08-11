@@ -94,7 +94,7 @@ This package contains:
 - **Builder**: Constructs template rendering contexts with functional options pattern
 - **StoreWrapper**: Wraps types.Store to provide template-friendly methods (List, Fetch, GetSingle)
 - **FileRegistry**: Enables dynamic auxiliary file registration during template rendering
-- **MergeAuxiliaryFiles**: Utility to combine static and dynamic auxiliary files
+- **MergeAuxiliaryFiles**: Canonicalizes static and dynamic auxiliary files, deduplicating identical definitions and rejecting storage-identity conflicts
 - **SortSnippetNames**: Helper to sort template snippet names alphabetically
 
 ## Dependencies
