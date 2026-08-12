@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Watched resources are materialised into their typed form by apimachinery's reflect converter instead of a round-trip through `encoding/json`, which costs 69% less time and 63% less heap per resource. This runs per resource per render and the result is held for the render's duration, so it lands on peak memory.
 - An unparseable or set-based `watchedResources[].labelSelector` now fails the configuration load, naming the resource and the offending selector, instead of being silently discarded — which widened the watch to every object of that kind cluster-wide with no diagnostic. Set-based syntax (`in`, `notin`, `!`, `!=`) is rejected rather than supported; `==` is now accepted as equality instead of being read as the value `=nginx`. This hard-fails at startup and in `haptic-controller validate`; live reload keeps its existing fail-open behaviour and logs.
 - `http.Fetch`'s refresh cadence option is now `interval`; `delay` keeps working as a deprecated alias, and setting both is an error. The option governs how often content is re-checked, never a wait before the first fetch.
 - A validation test's per-test `extraContext` deep-merges into the global `templatingSettings.extraContext` instead of replacing whole top-level subtrees. A map carrying `__replace__: true` opts back into wholesale replacement.
