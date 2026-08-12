@@ -73,7 +73,6 @@ func TestNew(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, store)
-	assert.NotNil(t, store.parser)
 	assert.NotNil(t, store.logger)
 	assert.Nil(t, store.currentConfig, "initial config should be nil")
 }

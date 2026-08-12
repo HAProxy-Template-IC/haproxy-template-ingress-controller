@@ -28,20 +28,14 @@ type Store struct {
 	// whether a re-parse is needed. spec.checksum covers the auxiliary files too, so
 	// it changes on map-file churn that leaves the config byte-identical.
 	contentHash    string
-	lastChecksum   string         // Last seen spec.checksum, to skip decompression on an exact repeat
-	lastGeneration int64          // Last seen metadata.generation for fast spec-change detection
-	parser         *parser.Parser // Reused parser instance (DRY)
+	lastChecksum   string // Last seen spec.checksum, to skip decompression on an exact repeat
+	lastGeneration int64  // Last seen metadata.generation for fast spec-change detection
 	logger         *slog.Logger
 }
 
 // New creates a new CurrentConfigStore.
 func New(logger *slog.Logger) (*Store, error) {
-	p, err := parser.New()
-	if err != nil {
-		return nil, fmt.Errorf("creating parser: %w", err)
-	}
 	return &Store{
-		parser: p,
 		logger: logger.With("component", "currentconfigstore"),
 	}, nil
 }
@@ -98,45 +92,16 @@ func (s *Store) Update(resource any) {
 
 // updateWithContent handles the content parsing and caching logic.
 func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) {
-	// Fast path: Check metadata.generation before decompressing or hashing.
-	// The HAProxyCfg CRD has status subresource enabled, so metadata.generation
-	// only increments on spec changes. Status-only updates (which are frequent)
-	// can be skipped entirely if generation hasn't changed.
 	generation := u.GetGeneration()
-	if generation > 0 {
-		s.mu.RLock()
-		lastGen := s.lastGeneration
-		hasConfig := s.currentConfig != nil
-		s.mu.RUnlock()
-
-		if generation == lastGen && hasConfig {
-			s.logger.Debug("Current config unchanged (generation match), skipping parse",
-				"generation", generation)
-			return
-		}
+	if s.skipByGeneration(generation) {
+		return
 	}
 
-	// Fast path: an unchanged spec.checksum proves the config AND its auxiliary files are
-	// unchanged, so nothing below can differ. The converse does not hold — see the content
-	// hash below — so a mismatch here must fall through rather than decide anything.
 	specChecksum, _, _ := unstructured.NestedString(u.Object, "spec", "checksum")
-	if specChecksum != "" {
-		s.mu.RLock()
-		checksumMatch := s.lastChecksum == specChecksum && s.currentConfig != nil
-		s.mu.RUnlock()
-
-		if checksumMatch {
-			// Content unchanged — update generation without decompressing or parsing
-			s.mu.Lock()
-			s.lastGeneration = generation
-			s.mu.Unlock()
-			s.logger.Debug("Current config unchanged (spec.checksum match), skipping decompression",
-				"generation", generation)
-			return
-		}
+	if s.skipByChecksum(specChecksum, generation) {
+		return
 	}
 
-	// Decompress if needed
 	isCompressed, _, _ := unstructured.NestedBool(u.Object, "spec", "compressed")
 	if isCompressed {
 		decompressed, err := compression.Decompress(content)
@@ -153,22 +118,21 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 	// unchanged config costs tens of MB of retained heap at a few hundred routes.
 	hash := sha256.Sum256([]byte(content))
 	hashStr := hex.EncodeToString(hash[:])
-
-	s.mu.RLock()
-	unchanged := s.contentHash == hashStr && s.currentConfig != nil
-	s.mu.RUnlock()
-
-	if unchanged {
-		s.mu.Lock()
-		s.lastChecksum = specChecksum
-		s.lastGeneration = generation
-		s.mu.Unlock()
-		s.logger.Debug("Current config unchanged (content hash match), skipping parse",
-			"generation", generation)
+	if s.skipByContentHash(hashStr, specChecksum, generation) {
 		return
 	}
 
-	parsed, err := s.parser.ParseFromString(content)
+	// Constructed per parse and discarded. A reused parser keeps client-native's
+	// internal maps and slices sized for the largest configuration it ever saw —
+	// ~200 MB resident here after one 1000-route churn, against a live
+	// configuration of 70 KiB — because neither shrinks. Construction is 89µs
+	// against a 44ms parse.
+	p, err := parser.New()
+	if err != nil {
+		s.logger.Warn("Failed to create parser for current config", "error", err)
+		return
+	}
+	parsed, err := p.ParseFromString(content)
 	if err != nil {
 		s.logger.Warn("Failed to parse current config", "error", err)
 		return
@@ -181,4 +145,61 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 	s.lastGeneration = generation
 	s.mu.Unlock()
 	s.logger.Debug("Current config updated", "backends", len(parsed.Backends), "generation", generation)
+}
+
+// skipByGeneration reports whether the spec is unchanged. The HAProxyCfg CRD has a status
+// subresource, so metadata.generation only moves on spec writes; frequent status-only
+// updates are discarded here before decompressing or hashing.
+func (s *Store) skipByGeneration(generation int64) bool {
+	if generation <= 0 {
+		return false
+	}
+	s.mu.RLock()
+	match := generation == s.lastGeneration && s.currentConfig != nil
+	s.mu.RUnlock()
+	if match {
+		s.logger.Debug("Current config unchanged (generation match), skipping parse",
+			"generation", generation)
+	}
+	return match
+}
+
+// skipByChecksum reports whether spec.checksum proves nothing changed. It covers the
+// configuration AND its auxiliary files, so a match rules out any difference below. The
+// converse does not hold, so a mismatch falls through to the content hash instead of
+// deciding anything.
+func (s *Store) skipByChecksum(specChecksum string, generation int64) bool {
+	if specChecksum == "" {
+		return false
+	}
+	s.mu.RLock()
+	match := s.lastChecksum == specChecksum && s.currentConfig != nil
+	s.mu.RUnlock()
+	if !match {
+		return false
+	}
+	s.mu.Lock()
+	s.lastGeneration = generation
+	s.mu.Unlock()
+	s.logger.Debug("Current config unchanged (spec.checksum match), skipping decompression",
+		"generation", generation)
+	return true
+}
+
+// skipByContentHash reports whether the configuration text is byte-identical to the parsed
+// one, recording the new checksum and generation so later repeats hit the cheaper gates.
+func (s *Store) skipByContentHash(hashStr, specChecksum string, generation int64) bool {
+	s.mu.RLock()
+	match := s.contentHash == hashStr && s.currentConfig != nil
+	s.mu.RUnlock()
+	if !match {
+		return false
+	}
+	s.mu.Lock()
+	s.lastChecksum = specChecksum
+	s.lastGeneration = generation
+	s.mu.Unlock()
+	s.logger.Debug("Current config unchanged (content hash match), skipping parse",
+		"generation", generation)
+	return true
 }

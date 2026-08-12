@@ -22,16 +22,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/validators"
 )
 
-// syntaxParser is a package-level singleton parser for syntax validation.
-// Uses sync.Once to ensure it's only created once and reused across all calls
-// to validateSyntax(). The parser is already protected by parserMutex in the
-// parser package, so sharing is thread-safe.
-var (
-	syntaxParser     *parser.Parser
-	syntaxParserOnce sync.Once
-	syntaxParserErr  error
-)
-
 // cachedValidatorSlot lazily constructs a CachedValidator for one
 // (major, minor) HAProxy version on first use and reuses it thereafter.
 type cachedValidatorSlot struct {
@@ -61,23 +51,20 @@ var (
 
 // validateSyntax performs syntax validation using client-native parser.
 // Returns the parsed configuration for use in Phase 1.5 (API schema validation).
-// Uses a package-level singleton parser to avoid re-initializing parser internals
-// on every call.
+//
+// The parser is constructed per call and discarded. Reusing one kept
+// client-native's internal maps and slices sized for the largest configuration
+// ever parsed — measured at ~200 MB resident on a controller whose live
+// configuration was 70 KiB — because neither shrinks. Construction is 89µs
+// against a 44ms parse, so the retention bought 0.2%.
 func validateSyntax(config string) (*parser.StructuredConfig, error) {
-	// Get or create singleton parser
-	syntaxParserOnce.Do(func() {
-		syntaxParser, syntaxParserErr = parser.New()
-	})
-	if syntaxParserErr != nil {
-		return nil, fmt.Errorf("creating parser: %w", syntaxParserErr)
+	syntaxParser, err := parser.New()
+	if err != nil {
+		return nil, fmt.Errorf("creating parser: %w", err)
 	}
 
 	// Parse configuration - this validates syntax
-	var (
-		parsed *parser.StructuredConfig
-		err    error
-	)
-	parsed, err = syntaxParser.ParseFromString(config)
+	parsed, err := syntaxParser.ParseFromString(config)
 	if err != nil {
 		return nil, fmt.Errorf("syntax error: %w", err)
 	}

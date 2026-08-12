@@ -28,9 +28,10 @@ cfg := store.Get() // *parserconfig.StructuredConfig (nil if not yet populated)
 `Update` is called every time the `HAProxyCfg` CRD changes, including no-op status updates. Two short-circuits keep the parsing cost bounded:
 
 1. **Generation check** — if `metadata.generation` matches the last-seen value, the spec hasn't changed and the cached config is returned without re-parsing.
-2. **Content hash** — if the generation moved, a `spec.checksum` field (set by the config-publisher) is compared against the cached hash; if it matches, parsing is skipped without even decompressing. If no `spec.checksum` is present the content is decompressed and SHA-256'd, and parsing is skipped if the hash matches.
+2. **Checksum match** — if the generation moved, `spec.checksum` (set by the config-publisher) is compared against the last-seen one; an exact match proves the configuration *and* its auxiliary files are unchanged, so parsing and decompression are both skipped.
+3. **Content hash** — otherwise the content is decompressed and SHA-256'd, and parsing is skipped if that hash matches. This step is required because `spec.checksum` covers the auxiliary files as well as the configuration, so endpoint churn rewriting a map file moves it while the configuration text stays byte-identical.
 
-A single `*parser.Parser` is reused across calls to avoid the per-call `parser.New()` overhead.
+The `*parser.Parser` is constructed per parse and discarded, never reused. Reusing one keeps `client-native`'s internal maps and slices sized for the largest configuration ever parsed — neither shrinks — which measured ~200 MB resident on a controller whose live configuration was 70 KiB. Construction costs 89µs against a 44ms parse.
 
 ## See Also
 
