@@ -65,6 +65,7 @@ graph TB
 - HTTP handlers for `/debug/vars` endpoints
 - JSONPath field selection support (kubectl-style syntax)
 - Go profiling integration (`/debug/pprof`)
+- Heap dump for retainer analysis (`/debug/heapdump`) — the object graph `pprof` omits
 - Graceful shutdown with context
 
 **pkg/events/ringbuffer** - Event history storage:

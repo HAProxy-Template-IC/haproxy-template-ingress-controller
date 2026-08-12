@@ -84,6 +84,9 @@ func TestAllAcceptanceParallel(t *testing.T) {
 
 		// Compression tests
 		buildCompressionFeature(),
+
+		// Debug endpoint tests
+		buildHeapDumpFeature(),
 	}
 
 	// Calculate parallelism limit: GOMAXPROCS / 2 (minimum 1)

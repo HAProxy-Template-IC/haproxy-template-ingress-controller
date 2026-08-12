@@ -110,6 +110,12 @@ func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error
 }
 
 // GetConfig retrieves the current controller configuration from the debug server.
+// GetHeapDump fetches a runtime/debug heap dump. It is heap-sized, so callers
+// should not hold several at once.
+func (dc *DebugClient) GetHeapDump(ctx context.Context) ([]byte, error) {
+	return dc.proxyGet(ctx, "/debug/heapdump")
+}
+
 func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]any, error) {
 	return dc.getJSON(ctx, DebugPathConfig)
 }
