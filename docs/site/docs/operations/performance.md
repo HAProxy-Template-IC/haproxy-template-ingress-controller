@@ -564,6 +564,51 @@ A non-zero `haptic_events_dropped_total` rate means a critical subscriber was to
     curl http://localhost:8080/debug/pprof/goroutine?debug=1
     ```
 
+??? note "Finding what retains memory (`/debug/heapdump`)"
+
+    `pprof` reports where memory was allocated, not what still holds it. When a
+    heap profile shows a large block whose allocation site is not the problem —
+    memory that survives a forced GC and never comes back — take a heap dump
+    instead. It contains every object, the pointer edges between them, and the
+    roots, so a reader can walk the retainer chain back to whatever is holding
+    the memory.
+
+    ```bash
+    curl http://localhost:8080/debug/heapdump > heap.dump
+    ```
+
+    Read it with a heap-dump reader such as
+    [heapspurs](https://github.com/adamroach/heapspurs): `--owners` prints the
+    chain of objects keeping a given address alive, and `--anchors` names the
+    root — a global, a stack frame, or a finalizer — that the chain ends at.
+
+    The heap is collected before the dump is written. Without that the dump is
+    dominated by unreachable objects, and an unreachable object has no retainer
+    to report, so `--anchors` correctly returns nothing for most of it.
+
+    Writing the dump **stops the world** for its duration — seconds on a
+    multi-gigabyte heap — so treat it as a deliberate diagnostic on one replica,
+    never as something to poll. While the world is stopped the controller answers
+    neither health checks nor admission requests, and with `failurePolicy: Fail`
+    the latter rejects writes to watched resources cluster-wide. A second request
+    while one is running is refused with `409`.
+
+    The endpoint answers on loopback only, like `/debug/pprof`, so reach it with
+    `kubectl port-forward`.
+
+    The dump is written to a temporary file first — `WriteHeapDump` forbids a pipe
+    whose reader is in the same process — and is roughly heap-sized. That file
+    lands in `$TMPDIR`, normally the container's writable layer, which counts
+    against the pod's `ephemeral-storage` limit. The endpoint refuses with `507`
+    rather than filling the filesystem when there is not enough room; set
+    `HAPTIC_HEAPDUMP_DIR` to a mounted volume for heaps larger than that
+    allowance.
+
+    Both the estimate that drives that refusal and the completeness of the
+    written file are checked, because the Go runtime ignores write errors while
+    dumping — a filesystem that fills mid-dump would otherwise hand you a
+    truncated object graph with a `200`. A short dump is reported as `507` too.
+
 Controller images ship built with Profile-Guided Optimization (PGO), which typically yields 2-7% CPU improvement on hot paths — contributors updating the committed profile should see [Deployment — Build Optimizations](../development/design/deployment.md#build-optimizations-contributors).
 
 ### Common performance issues
