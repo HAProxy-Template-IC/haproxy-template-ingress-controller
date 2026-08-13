@@ -1,7 +1,7 @@
 .PHONY: help version lint lint-fix lint-chart lint-chart-ci audit check-all \
         test test-integration test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance test-ingress-conformance test-helm-defaults build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined bench \
-        build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
+        build check-source-hash docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check \
         tidy vendor verify verify-generate generate clean fmt vet install-tools dev \
         release goreleaser-snapshot \
@@ -526,7 +526,7 @@ test-ingress-conformance: ## Run upstream Kubernetes Ingress conformance suite a
 		-test.v -test.timeout=$(CONFORMANCE_TIMEOUT) \
 		$(if $(TEST_RUN_PATTERN),-test.run "$(TEST_RUN_PATTERN)")
 
-test-e2e: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e tests (self-contained — kind + helm install + fixtures)
+test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e tests (self-contained — kind + helm install + fixtures)
 	@echo "Running e2e tests..."
 	@# The chart composes its image tag as "<image.tag>-haproxy<haproxyVersion>".
 	@# docker-build-test produces "haptic:test" (with HAProxy $(HAPROXY_VERSION)
@@ -534,7 +534,7 @@ test-e2e: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e te
 	@# for so the chart's auto-matching contract holds end-to-end.
 	@# CI sets SKIP_DOCKER_BUILD=1 and pre-tags from the registry-pulled image,
 	@# so this re-tag is a no-op there.
-	docker tag haptic:test haptic:test-haproxy$(HAPROXY_VERSION) 2>/dev/null || true
+	docker tag haptic:test haptic:test-haproxy$(HAPROXY_VERSION)
 	@if { [ "$(HAPTIC_E2E_PROFILE)" = "rate-limit" ] || [ "$(HAPTIC_E2E_PROFILE)" = "api-gateway" ]; } && [ -z "$(SPOA_TAG)" ]; then \
 		echo "$(HAPTIC_E2E_PROFILE) e2e profile without SPOA_TAG: building local spoa-hub:dev image"; \
 		$(MAKE) spoa-hub-image; \
@@ -550,11 +550,13 @@ test-e2e: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e te
 	@echo "                        i.e. nproc), which auto-scales to the host. Verified stable"
 	@echo "                        from 4 up through 16 on a 16-core box. Override with"
 	@echo "                        PARALLEL=N for constrained environments"
-ifdef TEST_RUN_PATTERN
-	HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -count=1 -mod=mod -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) -run "$(TEST_RUN_PATTERN)" ./tests/e2e/...
-else
-	HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -count=1 -mod=mod -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) ./tests/e2e/...
-endif
+	@controller_rollout_id="$$(docker image inspect --format '{{.Id}}' haptic:test-haproxy$(HAPROXY_VERSION))"; \
+	controller_binary_sha256="$$(docker run --rm --entrypoint sha256sum haptic:test-haproxy$(HAPROXY_VERSION) /usr/local/bin/haptic-controller | awk '{print $$1}')"; \
+	controller_source_hash="$$(docker run --rm --entrypoint /usr/local/bin/haptic-controller haptic:test-haproxy$(HAPROXY_VERSION) version | awk '$$1 == "Source" && $$2 == "Hash:" {print $$3}')"; \
+	if ! printf '%s\n' "$$controller_rollout_id" | grep -Eq '^sha256:[0-9a-f]{64}$$'; then echo "Controller image haptic:test-haproxy$(HAPROXY_VERSION) has invalid ID '$$controller_rollout_id'; rebuild it with make docker-build-test."; exit 1; fi; \
+	if ! printf '%s\n' "$$controller_binary_sha256" | grep -Eq '^[0-9a-f]{64}$$'; then echo "Controller binary digest '$$controller_binary_sha256' is invalid; rebuild haptic:test-haproxy$(HAPROXY_VERSION)."; exit 1; fi; \
+	if [ "$$controller_source_hash" != "$(SOURCE_HASH)" ]; then echo "Controller image source hash '$$controller_source_hash' does not match local source hash '$(SOURCE_HASH)'; rebuild it with make docker-build-test."; exit 1; fi; \
+	HAPTIC_EXPECTED_CONTROLLER_ROLLOUT_ID="$$controller_rollout_id" HAPTIC_EXPECTED_CONTROLLER_BINARY_SHA256="$$controller_binary_sha256" HAPTIC_EXPECTED_SOURCE_HASH=$(SOURCE_HASH) HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -count=1 -mod=readonly -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) $(if $(TEST_RUN_PATTERN),-run "$(TEST_RUN_PATTERN)") ./tests/e2e/...
 
 test-helm-defaults: $(if $(HELM_DEFAULTS_IMAGE),,docker-build-test) ## Install the default chart in kind and run its deployment smoke tests
 	@# Local runs must test this worktree's controller against this worktree's
@@ -690,24 +692,27 @@ validate-helm-libraries: build ## Render the chart and run `controller validate`
 
 ## Build targets
 
-build: ## Build the controller binary for local development (with PGO if profile exists)
+build: check-source-hash ## Build the controller binary for local development (with PGO if profile exists)
 	@echo "Building controller..."
 	@echo "  Version: $(VERSION)"
 	@echo "  Git commit: $(GIT_COMMIT)"
 	@if [ -f cmd/controller/default.pgo ]; then echo "  PGO: enabled (using cmd/controller/default.pgo)"; else echo "  PGO: disabled (no profile found)"; fi
 	@mkdir -p bin
 	$(GO) build \
+		-mod=readonly \
 		-pgo=auto \
 		-ldflags="-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) -X main.sourceHash=$(SOURCE_HASH)" \
 		-o bin/haptic-controller \
 		./cmd/controller
 
-build-for-docker: ## Build binary in platform-structured path for Docker builds with --build-context
+build-for-docker: check-source-hash ## Build binary in platform-structured path for Docker builds with --build-context
 	@echo "Building controller for Docker..."
 	@echo "  Version: $(VERSION)"
 	@echo "  Platform: linux/amd64"
 	@mkdir -p dist/linux/amd64
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build \
+		-mod=readonly \
+		-pgo=auto \
 		-trimpath \
 		-buildvcs=false \
 		-ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.sourceHash=$(SOURCE_HASH)" \
@@ -718,14 +723,19 @@ build-for-docker: ## Build binary in platform-structured path for Docker builds 
 
 ## Docker targets
 
-docker-build: ## Build Docker image
+check-source-hash:
+	@SOURCE_HASH="$(SOURCE_HASH)" ./scripts/verify-source-hash.sh
+
+docker-build: check-source-hash ## Build Docker image
 	@echo "Building Docker image: $(FULL_IMAGE)"
 	@echo "  Git commit:      $(GIT_COMMIT)"
 	@echo "  Git tag:         $(GIT_TAG)"
+	@echo "  Source hash:     $(SOURCE_HASH)"
 	@echo "  HAProxy version: $(HAPROXY_VERSION) (from versions.env)"
 	DOCKER_BUILDKIT=1 docker build \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_TAG=$(GIT_TAG) \
+		--build-arg SOURCE_HASH=$(SOURCE_HASH) \
 		--build-arg HAPROXY_VERSION=$(HAPROXY_VERSION) \
 		-t $(FULL_IMAGE) \
 		.
@@ -734,21 +744,23 @@ docker-build: ## Build Docker image
 docker-build-test: ## Build Docker image with test tag for acceptance tests
 	IMAGE_TAG=test $(MAKE) docker-build
 
-docker-build-multiarch: ## Build multi-platform Docker image for local testing (linux/amd64 only)
+docker-build-multiarch: check-source-hash ## Build multi-platform Docker image for local testing (linux/amd64 only)
 	@echo "Building multi-platform Docker image: $(FULL_IMAGE)"
 	@echo "  Platform: linux/amd64 (single platform for local load)"
 	@echo "  Git commit: $(GIT_COMMIT)"
 	@echo "  Git tag: $(GIT_TAG)"
+	@echo "  Source hash: $(SOURCE_HASH)"
 	DOCKER_BUILDKIT=1 docker buildx build \
 		--platform linux/amd64 \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_TAG=$(GIT_TAG) \
+		--build-arg SOURCE_HASH=$(SOURCE_HASH) \
 		--load \
 		-t $(FULL_IMAGE) \
 		.
 	@echo "✓ Multi-platform image built and loaded: $(FULL_IMAGE)"
 
-docker-build-multiarch-push: ## Build and push multi-platform Docker image (linux/amd64,linux/arm64)
+docker-build-multiarch-push: check-source-hash ## Build and push multi-platform Docker image (linux/amd64,linux/arm64)
 	@if [ -z "$(REGISTRY)" ]; then \
 		echo "Error: REGISTRY variable must be set for multi-arch push"; \
 		echo "Example: make docker-build-multiarch-push REGISTRY=registry.gitlab.com/myorg"; \
@@ -758,10 +770,12 @@ docker-build-multiarch-push: ## Build and push multi-platform Docker image (linu
 	@echo "  Platforms: linux/amd64,linux/arm64"
 	@echo "  Git commit: $(GIT_COMMIT)"
 	@echo "  Git tag: $(GIT_TAG)"
+	@echo "  Source hash: $(SOURCE_HASH)"
 	DOCKER_BUILDKIT=1 docker buildx build \
 		--platform linux/amd64,linux/arm64 \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_TAG=$(GIT_TAG) \
+		--build-arg SOURCE_HASH=$(SOURCE_HASH) \
 		--push \
 		-t $(FULL_IMAGE) \
 		.
@@ -949,8 +963,8 @@ release: ## Prepare a release of controller + chart (usage: make release RELEASE
 	fi
 	@./scripts/release.sh $(RELEASE_VERSION)
 
-goreleaser-snapshot: ## Test GoReleaser locally (no push)
-	goreleaser release --snapshot --clean
+goreleaser-snapshot: check-source-hash ## Test GoReleaser locally (no push)
+	CI_PIPELINE_ID=$${CI_PIPELINE_ID:-local} SOURCE_HASH=$(SOURCE_HASH) goreleaser release --snapshot --clean --skip=sign
 
 ## PGO (Profile-Guided Optimization) targets
 

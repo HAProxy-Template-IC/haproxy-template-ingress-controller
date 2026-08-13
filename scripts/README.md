@@ -9,7 +9,8 @@ Shell helpers used by developers and by `Makefile` targets. Everything here is m
 | [`test-helm-defaults.sh`](#test-helm-defaultssh) | Validate the chart with default values | developers, CI |
 | [`test-benchmark.sh`](#test-benchmarksh) | Go benchmark runner with consistent flags | developers |
 | [`generate-dev-ssl-cert.sh`](#generate-dev-ssl-certsh) | Self-signed SSL cert used by the dev environment | `start-dev-env.sh` |
-| [`source-hash.sh`](#source-hashsh) | Hash of `pkg/**/*.go` + `cmd/**/*.go` (dev-env sync check) | `start-dev-env.sh status` |
+| [`source-hash.sh`](#source-hashsh) | Hash of controller build inputs (dev-env sync check) | `start-dev-env.sh status` |
+| `verify-source-hash.sh` | Reject a stale or missing controller source identity | Controller build paths |
 | [`extract-dataplane-spec.sh`](#extract-dataplane-specsh) | Download Dataplane API OpenAPI spec for a given HAProxy version | code generation |
 | [`fetch-k8s-openapi-schemas.sh`](#fetch-k8s-openapi-schemassh) | Fetch K8s built-in resource schemas (Namespace, Service, Secret, EndpointSlice, Ingress) from a running cluster's OpenAPI v3 endpoint and emit CRD-wrapped YAML under `tests/schemas/` | developers, schema refresh |
 | [`release.sh`](#releasesh) | Release automation (controller + chart, one version) | `make release` |
@@ -66,7 +67,7 @@ Generates a self-signed SSL certificate plus matching key for the dev environmen
 
 ## source-hash.sh
 
-Emits a short hash of all `*.go` files under `pkg/` and `cmd/`. `start-dev-env.sh status` uses it to decide whether the controller running in the dev cluster matches local source. Deterministic — same tree produces the same hash across runs.
+Emits a short hash of the controller's Go source, module files, and profile-guided optimization profile. `start-dev-env.sh status` uses it to decide whether the controller running in the dev cluster matches the local source inputs. Deterministic — the same inputs produce the same hash across runs.
 
 ## extract-dataplane-spec.sh
 

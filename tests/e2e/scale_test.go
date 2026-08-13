@@ -191,6 +191,13 @@ func TestScale(t *testing.T) {
 	sink.set("budget_seed_seconds", budgetSeed.Seconds())
 	sink.set("budget_change_p95_seconds", budgetChangeP95.Seconds())
 	sink.set("budget_rss_bytes", budgetRSS)
+	identity, err := expectedControllerIdentity()
+	if err != nil {
+		t.Fatalf("controller identity: %v", err)
+	}
+	sink.set("controller_source_hash", identity.sourceHash)
+	sink.set("controller_rollout_id", identity.rolloutID)
+	sink.set("controller_binary_sha256", identity.binarySHA256)
 	t.Cleanup(func() {
 		path, wrote, err := sink.flush()
 		switch {
@@ -220,7 +227,9 @@ func TestScale(t *testing.T) {
 		sampleIngressHosts []string
 		sampleGateways     []string
 
-		reloadsBefore map[string]float64
+		reloadsBefore  map[string]float64
+		cpuBefore      map[string]controllerCPUCounter
+		cpuWindowStart time.Time
 
 		seedDuration    time.Duration
 		markerDurations []time.Duration
@@ -279,9 +288,10 @@ func TestScale(t *testing.T) {
 			}
 			waitAllEchoBackendsReady(ctx, t, client, append(append([]string{}, ingressNamespaces...), gatewayNS))
 
-			// Reload-counter baseline BEFORE any load, so the reported delta
-			// covers the whole run (seed + latency probes).
+			// Snapshot before seed so both seed and latency probes contribute.
 			reloadsBefore = snapshotReloadCounters(ctx, t, cs)
+			_, _, cpuBefore = controllerResourceUsage(ctx, t, cs)
+			cpuWindowStart = time.Now()
 			return ctx
 		}).
 		Assess("seed to full convergence within budget-bounded wait", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -490,17 +500,22 @@ func TestScale(t *testing.T) {
 			threshold := compressionThreshold(ctx, t, hc)
 			sink.set("compression_threshold_bytes", threshold)
 
-			// Controller container memory: kubelet stats summary. workingSet
-			// is the number kubectl top and the OOM killer act on — that is
-			// the budgeted value; plain RSS is recorded alongside.
-			workingSet, procRSS := maxControllerMemory(ctx, t, cs)
+			// Keep the established working-set budget and record kubelet RSS separately.
+			workingSet, rss, cpuAfter := controllerResourceUsage(ctx, t, cs)
+			cpuWindowEnd := time.Now()
 			sink.set("controller_rss_bytes", workingSet)
-			sink.set("controller_memory_rss_proc_bytes", procRSS)
+			sink.set("controller_memory_rss_bytes", rss)
 
 			// Reload + duration counters from the controller's /metrics.
 			reloadsAfter := snapshotReloadCounters(ctx, t, cs)
 			reloadDelta := reloadCounterDelta(reloadsBefore, reloadsAfter)
 			sink.set("haproxy_reloads_total_delta", reloadDelta)
+			cpuDelta, err := controllerCPUSecondsDelta(cpuBefore, cpuAfter)
+			if err != nil {
+				t.Fatalf("measure controller CPU: %v", err)
+			}
+			sink.set("controller_container_cpu_seconds_delta", round2(cpuDelta))
+			sink.set("controller_cpu_sampling_window_seconds", round2(cpuWindowEnd.Sub(cpuWindowStart).Seconds()))
 			for key, metric := range map[string]string{
 				"reconciliation_duration_seconds_avg":  "haptic_reconciliation_duration_seconds",
 				"deployment_duration_seconds_avg":      "haptic_deployment_duration_seconds",
@@ -510,6 +525,10 @@ func TestScale(t *testing.T) {
 					sink.set(key, round2(avg))
 				}
 			}
+			if err := verifyControllerBinary(ctx, cs, controllerRuntimeIdentities(cpuAfter)); err != nil {
+				t.Fatalf("verify measured controller binary: %v", err)
+			}
+			sink.set("controller_identity_verified", true)
 
 			path, _, err := sink.flush()
 			if err != nil {
@@ -700,19 +719,50 @@ func compressionThreshold(ctx context.Context, t *testing.T, hc hapticclient.Int
 	return coreconfig.DefaultCompressionThreshold
 }
 
-// maxControllerMemory returns the maximum controller-container workingSet
-// and RSS across all controller replicas, read from the kubelet stats
-// summary API through the apiserver's node proxy. Headless: no metrics-
-// server, no exec into the (shell-less) controller image.
-func maxControllerMemory(ctx context.Context, t *testing.T, cs kubernetes.Interface) (workingSet, rss uint64) {
+// controllerResourceUsage reads memory and cumulative CPU from the kubelet
+// stats summary API through the apiserver's node proxy. It needs neither
+// metrics-server nor exec access to the shell-less controller image.
+type controllerPodRuntime struct {
+	nodeName     string
+	podUID       string
+	containerID  string
+	restartCount int32
+}
+
+type controllerCPUCounter struct {
+	seconds      float64
+	podUID       string
+	containerID  string
+	restartCount int32
+}
+
+func controllerResourceUsage(
+	ctx context.Context,
+	t *testing.T,
+	cs kubernetes.Interface,
+) (workingSet, rss uint64, cpuCounters map[string]controllerCPUCounter) {
 	t.Helper()
-	pods := controllerPodNames(ctx, t, cs)
-	nodes, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		t.Fatalf("list nodes: %v", err)
+	runtimes := controllerPodRuntimes(ctx, t, cs)
+	pods := make(map[string]bool, len(runtimes))
+	// Synthetic scale nodes have no kubelet; proxy only real controller hosts.
+	nodeSet := map[string]bool{}
+	for pod, runtime := range runtimes {
+		pods[pod] = true
+		nodeSet[runtime.nodeName] = true
 	}
+	nodes := make([]string, 0, len(nodeSet))
+	for node := range nodeSet {
+		nodes = append(nodes, node)
+	}
+	sort.Strings(nodes)
+	cpuSeconds := map[string]float64{}
+	workingSets := map[string]uint64{}
+	rssValues := map[string]uint64{}
 	type containerStats struct {
-		Name   string `json:"name"`
+		Name string `json:"name"`
+		CPU  struct {
+			UsageCoreNanoSeconds *uint64 `json:"usageCoreNanoSeconds"`
+		} `json:"cpu"`
 		Memory struct {
 			WorkingSetBytes *uint64 `json:"workingSetBytes"`
 			RSSBytes        *uint64 `json:"rssBytes"`
@@ -725,19 +775,19 @@ func maxControllerMemory(ctx context.Context, t *testing.T, cs kubernetes.Interf
 		} `json:"podRef"`
 		Containers []containerStats `json:"containers"`
 	}
-	for _, node := range nodes.Items {
+	for _, node := range nodes {
 		raw, err := cs.CoreV1().RESTClient().Get().
-			Resource("nodes").Name(node.Name).
+			Resource("nodes").Name(node).
 			SubResource("proxy").Suffix("stats/summary").
 			DoRaw(ctx)
 		if err != nil {
-			t.Fatalf("kubelet stats summary for node %s: %v", node.Name, err)
+			t.Fatalf("kubelet stats summary for node %s: %v", node, err)
 		}
 		var summary struct {
 			Pods []podStats `json:"pods"`
 		}
 		if err := json.Unmarshal(raw, &summary); err != nil {
-			t.Fatalf("decode stats summary for node %s: %v", node.Name, err)
+			t.Fatalf("decode stats summary for node %s: %v", node, err)
 		}
 		for _, p := range summary.Pods {
 			if p.PodRef.Namespace != ControllerNamespace || !pods[p.PodRef.Name] {
@@ -747,23 +797,61 @@ func maxControllerMemory(ctx context.Context, t *testing.T, cs kubernetes.Interf
 				if c.Name != "controller" {
 					continue
 				}
-				if c.Memory.WorkingSetBytes != nil && *c.Memory.WorkingSetBytes > workingSet {
-					workingSet = *c.Memory.WorkingSetBytes
+				if c.Memory.WorkingSetBytes != nil {
+					workingSets[p.PodRef.Name] = *c.Memory.WorkingSetBytes
+					if *c.Memory.WorkingSetBytes > workingSet {
+						workingSet = *c.Memory.WorkingSetBytes
+					}
 				}
-				if c.Memory.RSSBytes != nil && *c.Memory.RSSBytes > rss {
-					rss = *c.Memory.RSSBytes
+				if c.Memory.RSSBytes != nil {
+					rssValues[p.PodRef.Name] = *c.Memory.RSSBytes
+					if *c.Memory.RSSBytes > rss {
+						rss = *c.Memory.RSSBytes
+					}
+				}
+				if c.CPU.UsageCoreNanoSeconds != nil {
+					cpuSeconds[p.PodRef.Name] = float64(*c.CPU.UsageCoreNanoSeconds) / float64(time.Second)
 				}
 			}
 		}
 	}
-	if workingSet == 0 {
-		t.Fatalf("kubelet stats summary carried no controller-container memory data for pods %v", podNamesSorted(pods))
+	if len(workingSets) != len(pods) {
+		t.Fatalf("kubelet stats summary carried working-set data for %d of %d controller pods", len(workingSets), len(pods))
 	}
-	return workingSet, rss
+	if len(rssValues) != len(pods) {
+		t.Fatalf("kubelet stats summary carried RSS data for %d of %d controller pods", len(rssValues), len(pods))
+	}
+	if len(cpuSeconds) != len(pods) {
+		t.Fatalf("kubelet stats summary carried CPU data for %d of %d controller pods", len(cpuSeconds), len(pods))
+	}
+	currentRuntimes := controllerPodRuntimes(ctx, t, cs)
+	if err := controllerPodRuntimesEqual(runtimes, currentRuntimes); err != nil {
+		t.Fatalf("controller runtime changed during kubelet stats snapshot: %v", err)
+	}
+	cpuCounters = make(map[string]controllerCPUCounter, len(cpuSeconds))
+	for pod, seconds := range cpuSeconds {
+		runtime := runtimes[pod]
+		cpuCounters[pod] = controllerCPUCounter{
+			seconds:      seconds,
+			podUID:       runtime.podUID,
+			containerID:  runtime.containerID,
+			restartCount: runtime.restartCount,
+		}
+	}
+	return workingSet, rss, cpuCounters
 }
 
 // controllerPodNames returns the current controller pod names as a set.
 func controllerPodNames(ctx context.Context, t *testing.T, cs kubernetes.Interface) map[string]bool {
+	runtimes := controllerPodRuntimes(ctx, t, cs)
+	names := make(map[string]bool, len(runtimes))
+	for pod := range runtimes {
+		names[pod] = true
+	}
+	return names
+}
+
+func controllerPodRuntimes(ctx context.Context, t *testing.T, cs kubernetes.Interface) map[string]controllerPodRuntime {
 	t.Helper()
 	list, err := cs.CoreV1().Pods(ControllerNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: LabelSelectorController,
@@ -774,20 +862,51 @@ func controllerPodNames(ctx context.Context, t *testing.T, cs kubernetes.Interfa
 	if len(list.Items) == 0 {
 		t.Fatalf("no controller pods match %q", LabelSelectorController)
 	}
-	names := map[string]bool{}
+	runtimes := map[string]controllerPodRuntime{}
 	for i := range list.Items {
-		names[list.Items[i].Name] = true
+		pod := &list.Items[i]
+		if pod.Spec.NodeName == "" {
+			t.Fatalf("controller pod %s is not scheduled", pod.Name)
+		}
+		var runtime *controllerPodRuntime
+		for _, status := range pod.Status.ContainerStatuses {
+			if status.Name != "controller" {
+				continue
+			}
+			if status.ContainerID == "" {
+				t.Fatalf("controller pod %s has no container ID", pod.Name)
+			}
+			value := controllerPodRuntime{
+				nodeName:     pod.Spec.NodeName,
+				podUID:       string(pod.UID),
+				containerID:  status.ContainerID,
+				restartCount: status.RestartCount,
+			}
+			runtime = &value
+			break
+		}
+		if runtime == nil {
+			t.Fatalf("controller pod %s has no controller container status", pod.Name)
+		}
+		runtimes[pod.Name] = *runtime
 	}
-	return names
+	return runtimes
 }
 
-func podNamesSorted(pods map[string]bool) []string {
-	names := make([]string, 0, len(pods))
-	for n := range pods {
-		names = append(names, n)
+func controllerPodRuntimesEqual(before, after map[string]controllerPodRuntime) error {
+	if len(before) != len(after) {
+		return fmt.Errorf("pod count changed: %d before, %d after", len(before), len(after))
 	}
-	sort.Strings(names)
-	return names
+	for pod, want := range before {
+		got, ok := after[pod]
+		if !ok {
+			return fmt.Errorf("pod %s was replaced", pod)
+		}
+		if got != want {
+			return fmt.Errorf("pod %s runtime changed", pod)
+		}
+	}
+	return nil
 }
 
 // scrapeControllerMetrics fetches one controller pod's /metrics (port 9090
@@ -840,16 +959,8 @@ func snapshotReloadCounters(ctx context.Context, t *testing.T, cs kubernetes.Int
 	return snapshot
 }
 
-// reloadCounterDelta folds two per-pod counter snapshots into the total
-// reload count over the interval: sum(after) - sum(before), clamped at >= 0.
-//
-// This is deliberately a SOFT metric: a controller pod rename between the
-// snapshots (replica restart) drops the old pod's accumulated count from the
-// `after` sum and undercounts the interval, and an iteration restart resets
-// a pod's registry with the same effect. That is acceptable — the value
-// feeds the nightly-scale job's WARN-only trend corridor, never a hard
-// budget, and the clamp keeps a mid-run reset from reporting a negative
-// delta.
+// reloadCounterDelta is soft evidence: a pod replacement or registry reset
+// can undercount, so the trend metric is clamped and never gates the run.
 func reloadCounterDelta(before, after map[string]float64) float64 {
 	var sumBefore, sumAfter float64
 	for _, v := range before {
@@ -862,6 +973,92 @@ func reloadCounterDelta(before, after map[string]float64) float64 {
 		return delta
 	}
 	return 0
+}
+
+func controllerCPUSecondsDelta(before, after map[string]controllerCPUCounter) (float64, error) {
+	if len(before) != len(after) {
+		return 0, fmt.Errorf("pod count changed: %d before, %d after", len(before), len(after))
+	}
+	var delta float64
+	for pod, start := range before {
+		end, ok := after[pod]
+		if !ok {
+			return 0, fmt.Errorf("pod %s was replaced", pod)
+		}
+		if end.podUID != start.podUID {
+			return 0, fmt.Errorf("pod %s UID changed", pod)
+		}
+		if end.containerID != start.containerID {
+			return 0, fmt.Errorf("pod %s container changed", pod)
+		}
+		if end.restartCount != start.restartCount {
+			return 0, fmt.Errorf("pod %s restart count changed", pod)
+		}
+		if end.seconds < start.seconds {
+			return 0, fmt.Errorf("pod %s CPU counter reset", pod)
+		}
+		delta += end.seconds - start.seconds
+	}
+	return delta, nil
+}
+
+func stableCPUCounters(seconds map[string]float64) map[string]controllerCPUCounter {
+	counters := make(map[string]controllerCPUCounter, len(seconds))
+	for pod, value := range seconds {
+		counters[pod] = controllerCPUCounter{
+			seconds:     value,
+			podUID:      "pod-" + pod,
+			containerID: "container-" + pod,
+		}
+	}
+	return counters
+}
+
+func controllerRuntimeIdentities(counters map[string]controllerCPUCounter) map[string]controllerRuntimeIdentity {
+	runtimes := make(map[string]controllerRuntimeIdentity, len(counters))
+	for pod, counter := range counters {
+		runtimes[pod] = controllerRuntimeIdentity{
+			podUID:       counter.podUID,
+			containerID:  counter.containerID,
+			restartCount: counter.restartCount,
+		}
+	}
+	return runtimes
+}
+
+func TestControllerCPUSecondsDelta(t *testing.T) {
+	tests := []struct {
+		name       string
+		before     map[string]controllerCPUCounter
+		after      map[string]controllerCPUCounter
+		want       float64
+		wantErrSub string
+	}{
+		{name: "sum replicas", before: stableCPUCounters(map[string]float64{"a": 1, "b": 2}), after: stableCPUCounters(map[string]float64{"a": 1.5, "b": 3.5}), want: 2},
+		{name: "pod count changed", before: stableCPUCounters(map[string]float64{"a": 1}), after: stableCPUCounters(map[string]float64{"a": 2, "b": 1}), wantErrSub: "pod count changed"},
+		{name: "pod replaced", before: stableCPUCounters(map[string]float64{"a": 1}), after: stableCPUCounters(map[string]float64{"b": 2}), wantErrSub: "pod a was replaced"},
+		{name: "pod UID changed", before: stableCPUCounters(map[string]float64{"a": 1}), after: map[string]controllerCPUCounter{"a": {seconds: 2, podUID: "other", containerID: "container-a"}}, wantErrSub: "UID changed"},
+		{name: "container changed", before: stableCPUCounters(map[string]float64{"a": 1}), after: map[string]controllerCPUCounter{"a": {seconds: 2, podUID: "pod-a", containerID: "other"}}, wantErrSub: "container changed"},
+		{name: "restart count changed", before: stableCPUCounters(map[string]float64{"a": 1}), after: map[string]controllerCPUCounter{"a": {seconds: 2, podUID: "pod-a", containerID: "container-a", restartCount: 1}}, wantErrSub: "restart count changed"},
+		{name: "counter reset", before: stableCPUCounters(map[string]float64{"a": 2}), after: stableCPUCounters(map[string]float64{"a": 1}), wantErrSub: "CPU counter reset"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := controllerCPUSecondsDelta(tt.before, tt.after)
+			if tt.wantErrSub != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErrSub) {
+					t.Fatalf("controllerCPUSecondsDelta() error = %v, want substring %q", err, tt.wantErrSub)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("controllerCPUSecondsDelta() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("controllerCPUSecondsDelta() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
 // controllerHistogramAvg returns sum/count of the named histogram from the

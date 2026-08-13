@@ -82,6 +82,7 @@ variables:
   rules:
     - changes:
         - "**/*.go"
+        - "**/*.pgo"
         # **/ so nested module bumps (e.g. tools/linters/*/go.mod from
         # renovate) match too — a bare `go.mod` only matches repo-root.
         - "**/go.mod"
@@ -114,6 +115,7 @@ variables:
   rules:
     - changes:
         - "**/*.go"
+        - "**/*.pgo"
         - "**/go.mod"
         - "**/go.sum"
         - "**/testdata/**"
@@ -524,6 +526,7 @@ test:
       when: never
     - changes:
         - "**/*.go"
+        - "**/*.pgo"
         - go.mod
         - go.sum
         - charts/**/*
@@ -633,13 +636,15 @@ validate-helm-libraries:
       mkdir -p binary-context/linux/amd64
       # Source hash embedded as main.sourceHash so snapshot/release images report a
       # real hash instead of "unknown" (the dev script does the same via Dockerfile).
-      export SOURCE_HASH=$(./scripts/source-hash.sh)
+      SOURCE_HASH=$(./scripts/source-hash.sh)
+      [[ "${SOURCE_HASH}" =~ ^[0-9a-f]{12}$ ]] || { echo "Invalid source hash: ${SOURCE_HASH}"; exit 1; }
+      export SOURCE_HASH
       echo "Source hash: ${SOURCE_HASH}"
       if [ "${PLATFORMS}" = "linux/amd64" ]; then
         echo "CI snapshot: building amd64 binary directly with go build"
         BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-          -trimpath -buildvcs=false -pgo=auto \
+          -mod=readonly -trimpath -buildvcs=false -pgo=auto \
           -ldflags="-s -w -X main.version=${SNAPSHOT_TAG} -X main.commit=${CI_COMMIT_SHORT_SHA} -X main.date=${BUILD_DATE} -X main.sourceHash=${SOURCE_HASH}" \
           -o binary-context/linux/amd64/haptic-controller \
           ./cmd/controller
@@ -780,6 +785,7 @@ build-ingress-conformance-image:
         # changes, so GitLab refused the pipeline with
         # "build-spoa-image-snapshot does not exist".
         - "**/*.go"
+        - "**/*.pgo"
         - go.mod
         - go.sum
         - scripts/**/*
@@ -952,13 +958,14 @@ build-playground-wasm:
         - Dockerfile.ingress-conformance-test
         - tests/conformance/patches/**
         # Go-source paths. `test-e2e` triggers on these (its own
-        # `changes:` lists **/*.go, go.mod, go.sum) and `needs:`
+        # `changes:` lists **/*.go, **/*.pgo, go.mod, go.sum) and `needs:`
         # `build-spoa-image-snapshot` non-optionally — so the build
         # job MUST trigger on the same paths or GitLab refuses to
         # create the pipeline ("does not exist in the pipeline ...
         # use needs:optional"). MR !859 (a go.mod-only renovate bump)
         # was rejected at creation for exactly this reason.
         - "**/*.go"
+        - "**/*.pgo"
         - go.mod
         - go.sum
         # Makefile: `test-ingress-conformance` lists Makefile in its own
@@ -1676,6 +1683,7 @@ test-acceptance:
       when: never
     - changes:
         - "**/*.go"
+        - "**/*.pgo"
         - go.mod
         - go.sum
         - scripts/**/*
@@ -1906,6 +1914,7 @@ test-e2e-extra-versions:
       when: never
     - changes:
         - "**/*.go"
+        - "**/*.pgo"
         - go.mod
         - go.sum
         - scripts/**/*
@@ -2160,6 +2169,7 @@ test-gateway-conformance:
       when: never
     - changes:
         - "**/*.go"
+        - "**/*.pgo"
         - go.mod
         - go.sum
         - scripts/**/*
@@ -2443,6 +2453,7 @@ test-gateway-conformance-smoke:
       when: never
     - changes:
         - "**/*.go"
+        - "**/*.pgo"
         - go.mod
         - go.sum
         - scripts/**/*
@@ -2604,6 +2615,7 @@ nightly-scale:
       SOFT = {
           "change_convergence_seconds_median": 0.20,
           "seed_to_converged_seconds": 0.20,
+          "controller_container_cpu_seconds_delta": 0.20,
           "haproxy_reloads_total_delta": 0.20,
           "config_lines": 0.20,
       }
@@ -2827,6 +2839,7 @@ test-ingress-conformance:
         # 2550972533 quietly skipped the test job because the patch
         # commit matched none of the original paths).
         - "**/*.go"
+        - "**/*.pgo"
         - go.mod
         - go.sum
         - scripts/**/*
@@ -3036,6 +3049,7 @@ test-ingress-conformance-smoke:
       when: never
     - changes:
         - "**/*.go"
+        - "**/*.pgo"
         - go.mod
         - go.sum
         - scripts/**/*
@@ -3192,6 +3206,11 @@ release-controller:
     - source versions.env
   script:
     - export VERSION=${CI_COMMIT_TAG}
+    - |
+      SOURCE_HASH=$(./scripts/source-hash.sh)
+      [[ "${SOURCE_HASH}" =~ ^[0-9a-f]{12}$ ]] || { echo "Invalid source hash: ${SOURCE_HASH}"; exit 1; }
+      export SOURCE_HASH
+      echo "Source hash ${SOURCE_HASH}"
     # Extract release notes from CHANGELOG.md
     - |
       awk -v ver="${VERSION#v}" '/^## \[/ { if (found) exit; if (index($0, "[" ver "]")) found=1 } found { print }' CHANGELOG.md > /tmp/release-notes.md

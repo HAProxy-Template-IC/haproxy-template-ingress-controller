@@ -35,7 +35,7 @@ var (
 	// Set via -ldflags "-X main.date=...".
 	date = "unknown"
 
-	// sourceHash is a hash of the source files used to build the binary.
+	// sourceHash identifies the controller source, module selection, and PGO profile.
 	// Used to verify dev environment is running current code.
 	// Set via -ldflags "-X main.sourceHash=...".
 	sourceHash = "unknown"

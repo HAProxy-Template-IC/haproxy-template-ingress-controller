@@ -28,12 +28,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
@@ -72,10 +76,14 @@ func init() {
 //     provider call entirely. Set by the CI runner when helm/kind-action
 //     pre-creates the cluster.
 //
-// Image expectations: haptic:test must exist in the local docker daemon
+// Image expectations: haptic:test-haproxyX.Y must exist in the local Docker daemon
 // before running. The Makefile target `test-e2e` depends on
 // `docker-build-test` to build it.
 func TestMain(m *testing.M) {
+	if _, err := expectedControllerIdentity(); err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
+		os.Exit(1)
+	}
 	testEnv = env.NewParallel()
 
 	// SAFETY: Isolate kubeconfig.
@@ -177,12 +185,37 @@ func TestMain(m *testing.M) {
 			})
 			return ctx, g.Wait()
 		}),
+		phase("verify-controller-rollout", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			client, err := cfg.NewClient()
+			if err != nil {
+				return ctx, fmt.Errorf("new client: %w", err)
+			}
+			clientset, err := newClientsetForE2E(client.RESTConfig())
+			if err != nil {
+				return ctx, fmt.Errorf("new clientset: %w", err)
+			}
+			return ctx, verifyControllerRollout(ctx, clientset)
+		}),
 		phase("wait-environment-ready", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			client, err := cfg.NewClient()
 			if err != nil {
 				return ctx, fmt.Errorf("new client: %w", err)
 			}
 			return ctx, WaitForE2EEnvironmentReady(ctx, client)
+		}),
+		phase("verify-controller-binary", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			if os.Getenv(scaleEnableEnv) == "1" {
+				return ctx, nil
+			}
+			client, err := cfg.NewClient()
+			if err != nil {
+				return ctx, fmt.Errorf("new client: %w", err)
+			}
+			clientset, err := newClientsetForE2E(client.RESTConfig())
+			if err != nil {
+				return ctx, fmt.Errorf("new clientset: %w", err)
+			}
+			return ctx, verifyControllerBinary(ctx, clientset, nil)
 		}),
 		phase("tests-running", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return ctx, nil
@@ -315,7 +348,7 @@ func installMetricsServerBestEffort(ctx context.Context) {
 	fmt.Fprintln(os.Stderr, "e2e: metrics-server applied (best-effort; kubectl top available once it scrapes)")
 }
 
-// loadControllerImage loads haptic:test into the kind cluster so the helm
+// loadControllerImage loads haptic:test-haproxyX.Y into the kind cluster so Helm
 // install can find it (the chart sets imagePullPolicy: Never via dev-values).
 // Skipped when SKIP_CLUSTER_CREATE=true (CI does its own load).
 //
@@ -619,7 +652,7 @@ func preInstallParallel(ctx context.Context) (string, error) {
 
 // helmInstallChart installs the chart from charts/haptic with dev-values.yaml
 // as the base, layering a controller.image.tag=test override to point at the local
-// haptic:test image. Idempotent: if the release already exists (e.g.,
+// haptic:test-haproxyX.Y image. Idempotent: if the release already exists (e.g.,
 // from a previous run with KEEP_CLUSTER=true), this becomes a `helm upgrade`.
 //
 // Implementation note: this uses the `helm` CLI rather than the helm Go
@@ -703,6 +736,14 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		"--set", "haproxy.service.type=LoadBalancer",
 		"--timeout", DefaultHelmInstallTimeout.String(),
 	}
+	identity, err := expectedControllerIdentity()
+	if err != nil {
+		return ctx, err
+	}
+	args = append(args,
+		"--set-string", "controller.podSpec.podAnnotations.haproxy-haptic\\.org/source-hash="+identity.sourceHash,
+		"--set-string", "controller.podSpec.podAnnotations.haproxy-haptic\\.org/e2e-rollout-id="+identity.rolloutID,
+		"--set-string", "controller.podSpec.podAnnotations.haproxy-haptic\\.org/controller-binary-sha256="+identity.binarySHA256)
 	// All three vendor annotation libraries are enabled by the core values
 	// (e2e-values.yaml), so every vendor test runs in the default profile and
 	// there are no per-vendor shards. That became possible with the per-object
@@ -902,6 +943,281 @@ func kubectlGetSecretData(ctx context.Context, namespace, name string) (map[stri
 		return nil, fmt.Errorf("decode secret %s/%s: %w", namespace, name, err)
 	}
 	return secret.Data, nil
+}
+
+type controllerIdentity struct {
+	sourceHash   string
+	rolloutID    string
+	binarySHA256 string
+}
+
+type controllerRuntimeIdentity struct {
+	podUID       string
+	containerID  string
+	restartCount int32
+}
+
+func expectedControllerIdentity() (controllerIdentity, error) {
+	identity := controllerIdentity{
+		sourceHash:   os.Getenv("HAPTIC_EXPECTED_SOURCE_HASH"),
+		rolloutID:    os.Getenv("HAPTIC_EXPECTED_CONTROLLER_ROLLOUT_ID"),
+		binarySHA256: os.Getenv("HAPTIC_EXPECTED_CONTROLLER_BINARY_SHA256"),
+	}
+	if identity == (controllerIdentity{}) {
+		return controllerIdentity{}, fmt.Errorf("controller identity is missing; run the e2e suite with make test-e2e")
+	}
+	if !isLowerHex(identity.sourceHash, 12) {
+		return controllerIdentity{}, fmt.Errorf("HAPTIC_EXPECTED_SOURCE_HASH must be 12 lowercase hex characters, got %q", identity.sourceHash)
+	}
+	if !strings.HasPrefix(identity.rolloutID, "sha256:") || !isLowerHex(strings.TrimPrefix(identity.rolloutID, "sha256:"), 64) {
+		return controllerIdentity{}, fmt.Errorf("HAPTIC_EXPECTED_CONTROLLER_ROLLOUT_ID must be a sha256 digest, got %q", identity.rolloutID)
+	}
+	if !isLowerHex(identity.binarySHA256, 64) {
+		return controllerIdentity{}, fmt.Errorf("HAPTIC_EXPECTED_CONTROLLER_BINARY_SHA256 must be 64 lowercase hex characters, got %q", identity.binarySHA256)
+	}
+	return identity, nil
+}
+
+func isLowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func verifyControllerRollout(ctx context.Context, clientset kubernetes.Interface) error {
+	expected, err := expectedControllerIdentity()
+	if err != nil {
+		return err
+	}
+	deployment, err := clientset.AppsV1().Deployments(ControllerNamespace).Get(ctx, ControllerDeploymentName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("read controller deployment: %w", err)
+	}
+	if err := verifyIdentityAnnotations("controller deployment", deployment.Spec.Template.Annotations, expected); err != nil {
+		return err
+	}
+	rollout := exec.CommandContext(ctx, "kubectl", "rollout", "status",
+		"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+		"deployment/"+ControllerDeploymentName, "--timeout=5m")
+	if out, err := rollout.CombinedOutput(); err != nil {
+		return fmt.Errorf("wait for controller rollout: %w (output: %s)", err, out)
+	}
+
+	desiredReplicas := int32(1)
+	if deployment.Spec.Replicas != nil {
+		desiredReplicas = *deployment.Spec.Replicas
+	}
+	if desiredReplicas < 1 {
+		return fmt.Errorf("controller deployment has %d desired replicas; set at least one replica for e2e", desiredReplicas)
+	}
+	pods, err := waitForControllerIdentityPods(ctx, clientset, expected, desiredReplicas)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "e2e: verified source annotation %s on %d controller pods (rollout %s)\n",
+		expected.sourceHash, len(pods), expected.rolloutID)
+	return nil
+}
+
+func verifyControllerBinary(
+	ctx context.Context,
+	clientset kubernetes.Interface,
+	measuredRuntimes map[string]controllerRuntimeIdentity,
+) error {
+	expected, err := expectedControllerIdentity()
+	if err != nil {
+		return err
+	}
+	deployment, err := clientset.AppsV1().Deployments(ControllerNamespace).Get(ctx, ControllerDeploymentName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("read controller deployment: %w", err)
+	}
+	desiredReplicas := int32(1)
+	if deployment.Spec.Replicas != nil {
+		desiredReplicas = *deployment.Spec.Replicas
+	}
+	var pods []string
+	if measuredRuntimes == nil {
+		pods, err = waitForControllerIdentityPods(ctx, clientset, expected, desiredReplicas)
+		if err != nil {
+			return err
+		}
+	} else {
+		current, err := readControllerRuntimeIdentities(ctx, clientset)
+		if err != nil {
+			return err
+		}
+		if err := controllerRuntimeIdentitiesEqual(measuredRuntimes, current); err != nil {
+			return fmt.Errorf("measured controller changed before binary verification: %w", err)
+		}
+		pods = make([]string, 0, len(measuredRuntimes))
+		for pod := range measuredRuntimes {
+			pods = append(pods, pod)
+		}
+		slices.Sort(pods)
+	}
+	for _, pod := range pods {
+		checksum := exec.CommandContext(ctx, "kubectl", "exec",
+			"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			pod, "-c", "controller", "--", "sha256sum", "/usr/local/bin/haptic-controller")
+		checksumOut, err := checksum.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("hash controller binary in pod %s: %w (output: %s)", pod, err, checksumOut)
+		}
+		if fields := strings.Fields(string(checksumOut)); len(fields) != 2 || fields[0] != expected.binarySHA256 {
+			return fmt.Errorf("controller pod %s binary digest is %q, expected %q", pod, strings.TrimSpace(string(checksumOut)), expected.binarySHA256)
+		}
+	}
+	if measuredRuntimes != nil {
+		current, err := readControllerRuntimeIdentities(ctx, clientset)
+		if err != nil {
+			return err
+		}
+		if err := controllerRuntimeIdentitiesEqual(measuredRuntimes, current); err != nil {
+			return fmt.Errorf("measured controller changed during binary verification: %w", err)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "e2e: verified binary %s on %d controller pods\n", expected.binarySHA256, len(pods))
+	return nil
+}
+
+func verifyIdentityAnnotations(owner string, annotations map[string]string, expected controllerIdentity) error {
+	for key, want := range map[string]string{
+		"haproxy-haptic.org/source-hash":              expected.sourceHash,
+		"haproxy-haptic.org/e2e-rollout-id":           expected.rolloutID,
+		"haproxy-haptic.org/controller-binary-sha256": expected.binarySHA256,
+	} {
+		if got := annotations[key]; got != want {
+			return fmt.Errorf("%s annotation %s is %q, expected %q", owner, key, got, want)
+		}
+	}
+	return nil
+}
+
+func readControllerRuntimeIdentities(
+	ctx context.Context,
+	clientset kubernetes.Interface,
+) (map[string]controllerRuntimeIdentity, error) {
+	podList, err := clientset.CoreV1().Pods(ControllerNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: LabelSelectorController,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list controller pods: %w", err)
+	}
+	runtimes := make(map[string]controllerRuntimeIdentity, len(podList.Items))
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if pod.DeletionTimestamp != nil {
+			return nil, fmt.Errorf("controller pod %s is terminating", pod.Name)
+		}
+		found := false
+		for _, status := range pod.Status.ContainerStatuses {
+			if status.Name != "controller" {
+				continue
+			}
+			if status.ContainerID == "" {
+				return nil, fmt.Errorf("controller pod %s has no container ID", pod.Name)
+			}
+			runtimes[pod.Name] = controllerRuntimeIdentity{
+				podUID:       string(pod.UID),
+				containerID:  status.ContainerID,
+				restartCount: status.RestartCount,
+			}
+			found = true
+			break
+		}
+		if !found {
+			return nil, fmt.Errorf("controller pod %s has no controller container status", pod.Name)
+		}
+	}
+	return runtimes, nil
+}
+
+func controllerRuntimeIdentitiesEqual(before, after map[string]controllerRuntimeIdentity) error {
+	if len(before) != len(after) {
+		return fmt.Errorf("pod count changed: %d before, %d after", len(before), len(after))
+	}
+	for pod, want := range before {
+		got, ok := after[pod]
+		if !ok {
+			return fmt.Errorf("pod %s was replaced", pod)
+		}
+		if got.podUID != want.podUID {
+			return fmt.Errorf("pod %s UID changed", pod)
+		}
+		if got.containerID != want.containerID {
+			return fmt.Errorf("pod %s container changed", pod)
+		}
+		if got.restartCount != want.restartCount {
+			return fmt.Errorf("pod %s restart count changed", pod)
+		}
+	}
+	return nil
+}
+
+func waitForControllerIdentityPods(
+	ctx context.Context,
+	clientset kubernetes.Interface,
+	expected controllerIdentity,
+	desiredReplicas int32,
+) ([]string, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	var lastMismatch error
+	for {
+		podList, err := clientset.CoreV1().Pods(ControllerNamespace).List(waitCtx, metav1.ListOptions{
+			LabelSelector: LabelSelectorController,
+		})
+		if err != nil {
+			lastMismatch = fmt.Errorf("list controller pods: %w", err)
+		} else {
+			lastMismatch = nil
+			pods := make([]string, 0, len(podList.Items))
+			if len(podList.Items) != int(desiredReplicas) {
+				lastMismatch = fmt.Errorf("%d controller pods found, expected %d", len(podList.Items), desiredReplicas)
+			}
+			for i := range podList.Items {
+				pod := &podList.Items[i]
+				if pod.DeletionTimestamp != nil {
+					lastMismatch = fmt.Errorf("old controller pod %s is still terminating", pod.Name)
+					break
+				}
+				if pod.Status.Phase != corev1.PodRunning || !podConditionsReady(pod.Status.Conditions) {
+					lastMismatch = fmt.Errorf("controller pod %s is phase %s and not Ready", pod.Name, pod.Status.Phase)
+					break
+				}
+				if err := verifyIdentityAnnotations("controller pod "+pod.Name, pod.Annotations, expected); err != nil {
+					lastMismatch = err
+					break
+				}
+				pods = append(pods, pod.Name)
+			}
+			if lastMismatch == nil {
+				return pods, nil
+			}
+		}
+
+		select {
+		case <-waitCtx.Done():
+			return nil, fmt.Errorf("wait for controller pod replacement: %w (last state: %v)", waitCtx.Err(), lastMismatch)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func podConditionsReady(conditions []corev1.PodCondition) bool {
+	for _, condition := range conditions {
+		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
 
 // chartPath returns the absolute path to charts/haptic, walking up from the
