@@ -78,10 +78,10 @@ func BenchmarkEngine_Compile(b *testing.B) {
 func benchmarkRenderSimple(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
-		"simple": "Hello {{ .name }}! Welcome to {{ .location }}.",
+		"simple": "Hello {{ name }}! Welcome to {{ location }}.",
 	}
 
-	engine, err := New(templates, &Options{EntryPoints: []string{"simple"}})
+	engine, err := New(templates, &Options{Declarations: map[string]any{"name": (*string)(nil), "location": (*string)(nil)}, EntryPoints: []string{"simple"}})
 	if err != nil {
 		b.Fatalf("creating engine: %v", err)
 	}
@@ -105,14 +105,14 @@ func benchmarkRenderSimple(b *testing.B) {
 func benchmarkRenderMedium(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
-		"medium": `{% for _, server := range .servers -%}
+		"medium": `{% for _, server := range servers -%}
 server {{ server["name"] }} {{ server["address"] }}:{{ server["port"] }}
 {%- if server["weight"] %} weight {{ server["weight"] }}{% end %}
 {%- if server["check"] %} check{% end %}
 {% end %}`,
 	}
 
-	engine, err := New(templates, &Options{EntryPoints: []string{"medium"}})
+	engine, err := New(templates, &Options{Declarations: map[string]any{"servers": (*[]map[string]any)(nil)}, EntryPoints: []string{"medium"}})
 	if err != nil {
 		b.Fatalf("creating engine: %v", err)
 	}
@@ -142,49 +142,49 @@ func benchmarkRenderLarge(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
 		"large": `
-{%- include "globals" %}
-{%- include "defaults" %}
-{%- for _, frontend := range .frontends %}
-{%- include "frontend" %}
+{{ render "globals" }}
+{{ render "defaults" }}
+{%- for _, frontend := range frontends %}
+{{ render "frontend" }}
 {%- end %}
-{%- for _, backend := range .backends %}
-{%- include "backend" %}
+{%- for _, backend := range backends %}
+{{ render "backend" }}
 {%- end %}
 `,
 		"globals": `
 global
-    maxconn {{ fallback(.global.maxconn, 4096) }}
+    maxconn {{ fallback(global.maxconn, 4096) }}
     log stdout format raw local0
 `,
 		"defaults": `
 defaults
     mode http
-    timeout connect {{ fallback(.defaults.connect_timeout, "5s") }}
-    timeout client {{ fallback(.defaults.client_timeout, "50s") }}
-    timeout server {{ fallback(.defaults.server_timeout, "50s") }}
+    timeout connect {{ fallback(defaults.connect_timeout, "5s") }}
+    timeout client {{ fallback(defaults.client_timeout, "50s") }}
+    timeout server {{ fallback(defaults.server_timeout, "50s") }}
 `,
 		"frontend": `
-frontend {{ .frontend.name }}
-    bind *:{{ .frontend.port }}
-{%- for _, acl := range .frontend.acls %}
-    acl {{ acl.name }} {{ acl.condition }}
+frontend {{ frontend["name"] }}
+    bind *:{{ frontend["port"] }}
+{%- for _, acl := range frontend["acls"] %}
+    acl {{ acl["name"] }} {{ acl["condition"] }}
 {%- end %}
-{%- for _, rule := range .frontend.rules %}
-    use_backend {{ rule.backend }} if {{ rule.condition }}
+{%- for _, rule := range frontend["rules"] %}
+    use_backend {{ rule["backend"] }} if {{ rule["condition"] }}
 {%- end %}
-    default_backend {{ .frontend.default_backend }}
+    default_backend {{ frontend["default_backend"] }}
 `,
 		"backend": `
-backend {{ .backend.name }}
-    balance {{ fallback(.backend.balance, "roundrobin") }}
-{%- for _, server := range .backend.servers %}
-    server {{ server.name }} {{ server.address }}:{{ server.port }}{% if server.weight %} weight {{ server.weight }}{% end %}{% if server.check %} check{% end %}
+backend {{ backend["name"] }}
+    balance {{ fallback(backend["balance"], "roundrobin") }}
+{%- for _, server := range backend["servers"] %}
+    server {{ server["name"] }} {{ server["address"] }}:{{ server["port"] }}{% if server["weight"] %} weight {{ server["weight"] }}{% end %}{% if server["check"] %} check{% end %}
 
 {%- end %}
 `,
 	}
 
-	engine, err := New(templates, nil)
+	engine, err := New(templates, &Options{Declarations: map[string]any{"global": (*map[string]any)(nil), "defaults": (*map[string]any)(nil), "frontends": (*[]map[string]any)(nil), "backends": (*[]map[string]any)(nil), "frontend": (*map[string]any)(nil), "backend": (*map[string]any)(nil)}})
 	if err != nil {
 		b.Fatalf("creating engine: %v", err)
 	}
@@ -272,14 +272,14 @@ func benchmarkFilterSortBy(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
 		"sort": `
-{%- var sorted = sort_by(.items, []string{"$.priority:desc", "$.name"}) %}
+{%- var sorted, _ = sort_by(items, []string{"$.priority:desc", "$.name"}) %}
 {%- for _, item := range sorted %}
-{{ item.(map[string]any)["name"] }}: {{ item.(map[string]any)["priority"] }}
+{{ item["name"] }}: {{ item["priority"] }}
 {%- end %}
 `,
 	}
 
-	engine, err := New(templates, nil)
+	engine, err := New(templates, &Options{Declarations: map[string]any{"items": (*[]map[string]any)(nil)}})
 	if err != nil {
 		b.Fatalf("creating engine: %v", err)
 	}
@@ -312,13 +312,13 @@ func benchmarkRenderScale(b *testing.B, itemCount int) {
 	b.Helper()
 	templates := map[string]string{
 		"scale": `
-{%- for _, server := range .servers %}
-server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address"] }}:{{ server.(map[string]any)["port"] }} check
+{%- for _, server := range servers %}
+server {{ server["name"] }} {{ server["address"] }}:{{ server["port"] }} check
 {%- end %}
 `,
 	}
 
-	engine, err := New(templates, nil)
+	engine, err := New(templates, &Options{Declarations: map[string]any{"servers": (*[]map[string]any)(nil)}})
 	if err != nil {
 		b.Fatalf("creating engine: %v", err)
 	}
@@ -351,7 +351,7 @@ server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address
 func benchmarkCompileSmall(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
-		"small": "Hello {{ .name }}!",
+		"small": "Hello {{ name }}!",
 	}
 
 	b.ResetTimer()
@@ -360,7 +360,7 @@ func benchmarkCompileSmall(b *testing.B) {
 	var engine Engine
 	var err error
 	for b.Loop() {
-		engine, err = New(templates, nil)
+		engine, err = New(templates, &Options{Declarations: map[string]any{"name": (*string)(nil)}})
 		if err != nil {
 			b.Fatalf("creating engine: %v", err)
 		}
@@ -374,10 +374,10 @@ func benchmarkCompileMedium(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
 		"medium": `
-{%- for _, server := range .servers %}
-server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address"] }}:{{ server.(map[string]any)["port"] }}
-{%- if server.(map[string]any)["weight"] %} weight {{ server.(map[string]any)["weight"] }}{% end %}
-{%- if server.(map[string]any)["check"] %} check{% end %}
+{%- for _, server := range servers %}
+server {{ server["name"] }} {{ server["address"] }}:{{ server["port"] }}
+{%- if server["weight"] %} weight {{ server["weight"] }}{% end %}
+{%- if server["check"] %} check{% end %}
 {%- end %}
 `,
 	}
@@ -388,7 +388,7 @@ server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address
 	var engine Engine
 	var err error
 	for b.Loop() {
-		engine, err = New(templates, nil)
+		engine, err = New(templates, &Options{Declarations: map[string]any{"servers": (*[]map[string]any)(nil)}})
 		if err != nil {
 			b.Fatalf("creating engine: %v", err)
 		}
@@ -402,34 +402,34 @@ func benchmarkCompileLarge(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
 		"main": `
-{%- include "globals" %}
-{%- include "defaults" %}
-{%- for _, frontend := range .frontends %}
-{%- include "frontend" %}
+{{ render "globals" }}
+{{ render "defaults" }}
+{%- for _, frontend := range frontends %}
+{{ render "frontend" }}
 {%- end %}
 `,
 		"globals": `
 global
-    maxconn {{ fallback(.global.maxconn, 4096) }}
+    maxconn {{ fallback(global.maxconn, 4096) }}
     log stdout format raw local0
 `,
 		"defaults": `
 defaults
     mode http
-    timeout connect {{ fallback(.defaults.connect_timeout, "5s") }}
-    timeout client {{ fallback(.defaults.client_timeout, "50s") }}
-    timeout server {{ fallback(.defaults.server_timeout, "50s") }}
+    timeout connect {{ fallback(defaults.connect_timeout, "5s") }}
+    timeout client {{ fallback(defaults.client_timeout, "50s") }}
+    timeout server {{ fallback(defaults.server_timeout, "50s") }}
 `,
 		"frontend": `
-frontend {{ .frontend.name }}
-    bind *:{{ .frontend.port }}
-{%- for _, acl := range .frontend.acls %}
-    acl {{ acl.name }} {{ acl.condition }}
+frontend {{ frontend["name"] }}
+    bind *:{{ frontend["port"] }}
+{%- for _, acl := range frontend["acls"] %}
+    acl {{ acl["name"] }} {{ acl["condition"] }}
 {%- end %}
-{%- for _, rule := range .frontend.rules %}
-    use_backend {{ rule.backend }} if {{ rule.condition }}
+{%- for _, rule := range frontend["rules"] %}
+    use_backend {{ rule["backend"] }} if {{ rule["condition"] }}
 {%- end %}
-    default_backend {{ .frontend.default_backend }}
+    default_backend {{ frontend["default_backend"] }}
 `,
 	}
 
@@ -439,7 +439,12 @@ frontend {{ .frontend.name }}
 	var engine Engine
 	var err error
 	for b.Loop() {
-		engine, err = New(templates, nil)
+		engine, err = New(templates, &Options{Declarations: map[string]any{
+			"global":    (*map[string]any)(nil),
+			"defaults":  (*map[string]any)(nil),
+			"frontends": (*[]map[string]any)(nil),
+			"frontend":  (*map[string]any)(nil),
+		}})
 		if err != nil {
 			b.Fatalf("creating engine: %v", err)
 		}
