@@ -30,7 +30,12 @@ WORKDIR /build
 # Note: We intentionally avoid --mount=type=cache here so that downloaded
 # modules become part of the layer and can be cached in CI registry caching.
 COPY go.mod go.sum ./
-RUN go mod download
+# go mod download may populate go.sum even when the later build is read-only.
+RUN cp go.mod /tmp/go.mod.before && \
+    cp go.sum /tmp/go.sum.before && \
+    go mod download && \
+    cmp go.mod /tmp/go.mod.before && \
+    cmp go.sum /tmp/go.sum.before
 
 # Copy only source directories needed for compilation
 # (explicit copies avoid cache invalidation from README, docs, tests, etc.)
@@ -60,6 +65,7 @@ RUN CGO_ENABLED=0 \
     GOOS=${TARGETOS} \
     GOARCH=${TARGETARCH} \
     go build \
+    -mod=readonly \
     -trimpath \
     -buildvcs=false \
     -pgo=auto \
@@ -88,10 +94,7 @@ ARG TARGETPLATFORM
 
 # Copy the controller binary from the 'binary' stage
 # When using --build-context binary=<path>, this copies from the external context
-COPY --from=binary /${TARGETPLATFORM}/haptic-controller /usr/local/bin/haptic-controller
-
-# Ensure binary is executable
-RUN chmod +x /usr/local/bin/haptic-controller
+COPY --chmod=0755 --from=binary /${TARGETPLATFORM}/haptic-controller /usr/local/bin/haptic-controller
 
 # Bundle the Helm chart so `haptic-controller migrate-check` can render the
 # config in-process with the image's own chart — no cluster or mounted
@@ -100,16 +103,15 @@ RUN chmod +x /usr/local/bin/haptic-controller
 # YAML (~3 MB); it adds one layer and no runtime cost for `run`.
 COPY charts/haptic /usr/share/haptic/chart
 
-# Create validation directories for HAProxy configuration validation
-# These directories must be writable by the haproxy user
-RUN mkdir -p /usr/local/etc/haproxy/maps \
-             /usr/local/etc/haproxy/certs \
-             /usr/local/etc/haproxy/general && \
-    chown -R haproxy:haproxy /usr/local/etc/haproxy
-
 # Switch to haproxy user for security
 # The haproxy user is pre-created by the haproxytech base image
 USER haproxy
+
+# WORKDIR creates the validation directories with ownership from USER.
+WORKDIR /usr/local/etc/haproxy/maps
+WORKDIR /usr/local/etc/haproxy/certs
+WORKDIR /usr/local/etc/haproxy/general
+WORKDIR /
 
 # Override STOPSIGNAL from base image (SIGUSR1) to SIGTERM
 # The haproxy base image uses SIGUSR1 for HAProxy's graceful shutdown,

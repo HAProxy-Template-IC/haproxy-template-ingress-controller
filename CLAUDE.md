@@ -706,7 +706,7 @@ The dev environment uses source file hashing to verify the running code matches 
 # ✔ IN SYNC - dev environment is running current code
 ```
 
-The source hash is calculated from all `.go` files in `pkg/` and `cmd/`. It changes whenever any source file is modified (committed or not).
+The source hash covers all `.go` files in `pkg/` and `cmd/`, `go.mod`, `go.sum`, and the controller's PGO profile. It changes whenever one of those inputs changes, committed or not.
 
 **Always run `status` before debugging** to confirm you're testing the right code. If OUT OF SYNC, run `./scripts/start-dev-env.sh restart`.
 

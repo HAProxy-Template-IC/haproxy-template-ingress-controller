@@ -12,16 +12,19 @@ chart, the template libraries, the SPOA hub and modules, external services
 
 The suite owns its dependencies. `make test-e2e` will:
 
-1. Build the controller image as `haptic:test` (via `docker-build-test`).
-2. Create kind cluster `haptic-e2e` if it doesn't exist (or reuse it).
-3. `kind load docker-image haptic:test`.
-4. Apply CRDs.
-5. Helm-install the chart from `charts/haptic` (via the helm Go SDK) with
+1. Build the controller image as `haptic:test` via `docker-build-test`.
+2. Tag it as `haptic:test-haproxyX.Y` and verify its source hash and binary digest.
+3. Create kind cluster `haptic-e2e` if it doesn't exist (or reuse it).
+4. Load `haptic:test-haproxyX.Y` into kind.
+5. Apply CRDs.
+6. Helm-install the chart from `charts/haptic` via the Helm CLI with
    values pointing at the local image.
-6. Apply embedded backend fixtures (auth-server, blocklist-server,
+7. Apply embedded backend fixtures (auth-server, blocklist-server,
    echo-server, haproxy-demo-backend, haproxy-test-backend).
-7. Wait for the controller pipeline to reach `deployment.status=succeeded`.
-8. Run the tests.
+8. Verify that every controller pod belongs to the expected rollout.
+9. Wait for the controller pipeline to reach `deployment.status=succeeded`.
+10. Verify every controller pod's binary checksum, then run the tests. The scale
+    test defers this checksum until after its memory and CPU samples.
 
 Nothing outside the suite is required. `scripts/start-dev-env.sh` is the
 **developer's interactive dev loop** and is not invoked by the test suite.
@@ -36,7 +39,7 @@ Nothing outside the suite is required. `scripts/start-dev-env.sh` is the
 
 ## Conventions
 
-- Build tag: `e2e`. Run with `make test-e2e` or `go test -tags=e2e ./tests/e2e/...`.
+- Build tag: `e2e`. Run with `make test-e2e`; the target stamps and verifies the exact controller image and binary.
 - **Per-test namespace.** Each test creates its own namespace and applies its own
   routing fixtures (Ingress, HTTPRoute, Secret, etc.); cleaned up via `t.Cleanup`.
   Stateless backends (echo-server, auth-server, blocklist-server) stay shared

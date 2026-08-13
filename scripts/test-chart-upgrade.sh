@@ -378,7 +378,10 @@ info "legacy config-webhook entries stripped by the upgrade, as required"
 # the removed webhook there is no enforcement window to synchronise on — but
 # the gate must demonstrably be wired into the release, or the negative case
 # below proves nothing.
-helm --kube-context "$CTX" -n "$NS" get hooks "$RELEASE" | grep -q "pre-rollout" \
+RELEASE_HOOKS="$WORK/release-hooks.yaml"
+helm --kube-context "$CTX" -n "$NS" get hooks "$RELEASE" > "$RELEASE_HOOKS" \
+  || fail "could not read the release hooks; the pre-rollout validation check could not run"
+grep -q "pre-rollout" "$RELEASE_HOOKS" \
   || fail "the release carries no pre-rollout validation hook; the negative case below would prove nothing"
 
 # The broken artifact is the chart AND the image: they ship together, the

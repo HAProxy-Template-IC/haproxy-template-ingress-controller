@@ -11,6 +11,7 @@ before:
   hooks:
     - go mod tidy
     - go generate ./...
+    - ./scripts/verify-source-hash.sh
 
 builds:
   - id: controller
@@ -18,11 +19,11 @@ builds:
     binary: haptic-controller
     env:
       - CGO_ENABLED=0
-      # Source hash for dev/snapshot/release parity; defaults to "unknown" when CI
-      # doesn't export SOURCE_HASH (e.g. local `goreleaser build`).
+      # The pre-build hook rejects a missing or stale source hash.
       - SOURCE_HASH={{ if index .Env "SOURCE_HASH" }}{{ .Env.SOURCE_HASH }}{{ else }}unknown{{ end }}
     # Reproducible build flags
     flags:
+      - -mod=readonly
       - -trimpath
       - -buildvcs=false
       - -pgo=auto
@@ -73,6 +74,7 @@ dockers_v2:
   - id: haproxy30
     ids: [controller]
     dockerfile: Dockerfile
+    extra_files: [charts/haptic]
     images:
       - "registry.gitlab.com/haproxy-haptic/haptic"
     tags:
@@ -91,6 +93,7 @@ dockers_v2:
   - id: haproxy31
     ids: [controller]
     dockerfile: Dockerfile
+    extra_files: [charts/haptic]
     images:
       - "registry.gitlab.com/haproxy-haptic/haptic"
     tags:
@@ -109,6 +112,7 @@ dockers_v2:
   - id: haproxy32
     ids: [controller]
     dockerfile: Dockerfile
+    extra_files: [charts/haptic]
     images:
       - "registry.gitlab.com/haproxy-haptic/haptic"
     tags:
@@ -127,6 +131,7 @@ dockers_v2:
   - id: haproxy33
     ids: [controller]
     dockerfile: Dockerfile
+    extra_files: [charts/haptic]
     images:
       - "registry.gitlab.com/haproxy-haptic/haptic"
     tags:
@@ -145,6 +150,7 @@ dockers_v2:
   - id: haproxy34
     ids: [controller]
     dockerfile: Dockerfile
+    extra_files: [charts/haptic]
     images:
       - "registry.gitlab.com/haproxy-haptic/haptic"
     tags:
