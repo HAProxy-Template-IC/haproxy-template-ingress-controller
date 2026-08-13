@@ -8,7 +8,6 @@ require (
 	github.com/arch-go/arch-go/v2 v2.1.2
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/golangci/golangci-lint/v2 v2.12.2
-	github.com/haproxytech/client-native/v5 v5.1.28
 	github.com/haproxytech/client-native/v6 v6.4.1
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/klauspost/compress v1.19.2
@@ -178,6 +177,7 @@ require (
 	github.com/gostaticanalysis/comment v1.5.0 // indirect
 	github.com/gostaticanalysis/forcetypeassert v0.2.0 // indirect
 	github.com/gostaticanalysis/nilerr v0.1.2 // indirect
+	github.com/haproxytech/client-native/v5 v5.1.28 // indirect
 	github.com/haproxytech/go-logger v1.1.0 // indirect
 	github.com/haproxytech/go-method-gen v0.1.4 // indirect
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0 // indirect
