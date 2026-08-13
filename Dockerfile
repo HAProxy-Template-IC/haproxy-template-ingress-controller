@@ -18,6 +18,9 @@ ARG SOURCE_HASH=unknown
 # -----------------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS builder
 
+# go.mod can advance before the matching Docker patch image is published.
+ENV GOTOOLCHAIN=auto
+
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
