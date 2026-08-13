@@ -30,7 +30,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
@@ -61,7 +60,7 @@ type WebhookAdmissionTimeouts struct {
 //
 // This function:
 //  1. Extracts webhook rules from configuration
-//  2. Creates template engine for dry-run validation
+//  2. Uses the iteration's compiled template engine for dry-run validation
 //  3. Starts DryRunValidator component
 //  4. Creates and starts webhook component with mounted certificates
 //
@@ -234,20 +233,8 @@ func createDryRunValidator(
 
 	logger.Debug("Creating webhook validators", "watched_resource_rules", len(rules))
 
-	// Create template engine using helper (handles template extraction, filters, engine type parsing)
-	// Note: DryRunValidator does NOT use currentConfig at runtime - it validates hypothetical future state.
-	// However, the templates still need the type declaration to compile successfully.
-	//
-	// wiring.engineWiring.Declarations carries the typed-resource globals
-	// from typebootstrap (and the currentConfig declaration). It's
-	// the SAME wiring the reconciliation engine was built with, so
-	// chart templates compile identically against either render
-	// path. Without this, admission would reject every resource the
-	// moment a chart template references a typed global — exactly
-	// the failure mode Phase 11.5 CI surfaced.
-	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, wiring.engineWiring.Declarations, helpers.EngineOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("creating template engine for dry-run validation: %w", err)
+	if wiring.engine == nil {
+		return nil, errors.New("dry-run validation requires the reconciliation template engine")
 	}
 
 	// Admission wrappers reuse matching HTTP content and stage other sources per render.
@@ -256,7 +243,7 @@ func createDryRunValidator(
 	// the webhook validates hypothetical future state, not what's
 	// currently deployed.
 	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
-		Engine:             engine,
+		Engine:             wiring.engine,
 		Config:             cfg,
 		Logger:             logger,
 		Capabilities:       wiring.capabilities,
@@ -268,19 +255,20 @@ func createDryRunValidator(
 		// would fall back to the untyped map shape and chart code that
 		// reaches typed access (`resources.<name>.List()` etc.) would
 		// compile-fail under the typed engine declaration.
-		TypedResourceTypes: wiring.engineWiring.TypedResourceTypes,
+		TypedResourceTypes: wiring.typedResourceTypes,
 	})
 
 	// Create ValidationService (pure service for validation)
 	// Use strict DNS validation for webhook (catch DNS issues before admission)
 	dirConfig := extractValidationDirConfig(&cfg.Dataplane)
 	validationService := validation.NewValidationService(&validation.ValidationServiceConfig{
-		Logger:            logger,
-		SkipDNSValidation: false, // Strict mode for webhook validation
-		BaseDir:           dirConfig.BaseDir,
-		MapsDir:           dirConfig.MapsDir,
-		SSLCertsDir:       dirConfig.SSLCertsDir,
-		GeneralDir:        dirConfig.GeneralDir,
+		Logger:              logger,
+		SkipDNSValidation:   false, // Strict mode for webhook validation
+		BaseDir:             dirConfig.BaseDir,
+		MapsDir:             dirConfig.MapsDir,
+		SSLCertsDir:         dirConfig.SSLCertsDir,
+		GeneralDir:          dirConfig.GeneralDir,
+		DiscardParsedConfig: true,
 	})
 
 	return buildDryRunValidator(bus, renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, cfg.WatchedResources, wiring.publishedCurrentFiles.get, logger)

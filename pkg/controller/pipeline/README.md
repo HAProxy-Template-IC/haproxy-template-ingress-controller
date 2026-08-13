@@ -65,7 +65,7 @@ that wraps the cancellation cause; a partial validation result is never valid.
 
 ## Pre-Parsed Config Optimisation
 
-`PipelineResult.ParsedConfig` carries the `*parser.StructuredConfig` produced during syntax validation. Downstream sync operations (`pkg/dataplane.Client.Sync`) accept it as input to skip a redundant parse. When the validation cache hits, this field is nil — the cached entry doesn't carry the parsed structure.
+`PipelineResult.ParsedConfig` carries the `*parser.StructuredConfig` produced during syntax validation. Downstream sync operations (`pkg/dataplane.Client.Sync`) accept it as input to skip a redundant parse. The reconciliation validation service caches this pointer for identical renders; the admission service discards it because no admission consumer reads it.
 
 ## See Also
 

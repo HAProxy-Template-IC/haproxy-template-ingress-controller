@@ -10,7 +10,7 @@ Three-phase HAProxy configuration validator with per-instance result caching.
 2. **OpenAPI schema** — version-specific Dataplane API schema check via `pkg/generated`.
 3. **Semantic** — actual `haproxy -c` invocation. Each call writes auxiliary files into its own per-call `os.MkdirTemp` and rewrites the rendered config's `default-path origin` to point at it, so callers don't contend on shared paths. A cancellable gate serialises the binary invocation because concurrent runs interfere even with isolated temp directories.
 
-The result of a successful validation is cached per-instance keyed by a content checksum of the config + auxiliary files. Identical content (the common case during drift-prevention cycles) skips all three phases and returns the cached `*parser.StructuredConfig` immediately. Cancellation terminates a running or queued binary check and is never cached as success.
+The result of a successful validation is cached per-instance keyed by a content checksum of the config + auxiliary files. Identical content (the common case during drift-prevention cycles) skips all three phases. By default the cache returns its `*parser.StructuredConfig`; `DiscardParsedConfig` keeps only the verdict for callers that don't consume the parsed form. Cancellation terminates a running or queued binary check and is never cached as success.
 
 The service is consumed by `pkg/controller/pipeline.Pipeline.Execute`, which is in turn driven by both the leader-side reconciler (`pkg/controller/reconciler.Coordinator`) and the webhook-side proposal validator (`pkg/controller/proposalvalidator`). Per-instance caching keeps the webhook from evicting the main pipeline's cache.
 
@@ -31,14 +31,13 @@ svc := validation.NewValidationService(&validation.ValidationServiceConfig{
     MapsDir:           "maps",                                 // relative names match RenderService
     SSLCertsDir:       "ssl",
     GeneralDir:        "general",
+    DiscardParsedConfig: false,                                // true caches only the verdict
 })
 
-// One-shot: hashes content internally and returns *ValidationResult
-result := svc.Validate(ctx, haproxyConfig, auxFiles)
-
-// Pipeline-friendly: pass the checksum the renderer already computed,
-// so we don't hash the same config twice per reconciliation.
-result = svc.ValidateWithChecksum(ctx, haproxyConfig, auxFiles, checksum)
+// Pass the checksum the renderer already computed, so validation doesn't hash
+// the same config twice per reconciliation.
+checksum := dataplane.ComputeContentChecksum(haproxyConfig, auxFiles)
+result := svc.ValidateWithChecksum(ctx, haproxyConfig, auxFiles, checksum)
 // result.Valid, result.Phase, result.Error, result.ParsedConfig (for downstream Sync)
 ```
 
@@ -48,11 +47,11 @@ result = svc.ValidateWithChecksum(ctx, haproxyConfig, auxFiles, checksum)
 
 | Call | Behaviour |
 |------|-----------|
-| First call, or content checksum changes | Run all three phases; cache `ParsedConfig` if successful |
-| Repeat call with the same checksum | Return cached `ParsedConfig` immediately, skip all phases |
+| First call, or content checksum changes | Run all three phases; cache success and, by default, `ParsedConfig` |
+| Repeat call with the same checksum | Return the cached result immediately, skip all phases |
 | Failure (any phase) | Return error, leave cache untouched (next call retries) |
 
-The cache lives on the `*ValidationService` instance. Constructing a new service (e.g. between iterations) clears it implicitly.
+The cache lives on the `*ValidationService` instance. Constructing a new service (e.g. between iterations) clears it implicitly. With `DiscardParsedConfig: true`, successful results keep `ParsedConfig` nil without removing syntax or schema validation.
 
 ## See Also
 

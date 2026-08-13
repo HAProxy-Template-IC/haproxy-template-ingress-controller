@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -53,6 +54,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // reconciliationWiring carries the few construction outputs later startup
@@ -61,29 +63,15 @@ import (
 // again after construction is deliberately NOT carried here.
 //
 // Consumers:
-//   - httpStore/capabilities/engineWiring/gvrMapper/publishedCurrentFiles: read by
-//     createDryRunValidator when the webhook validators are wired up.
+//   - httpStore/capabilities/engine/typedResourceTypes/gvrMapper/publishedCurrentFiles:
+//     read by createDryRunValidator when the webhook validators are wired up.
 type reconciliationWiring struct {
 	httpStore             *httpstore.Component   // HTTP resource fetcher for dynamic content
 	capabilities          dataplane.Capabilities // HAProxy/DataPlane API capabilities
 	publishedCurrentFiles *publishedAuxFiles
-
-	// engineWiring carries the type-bootstrap output shared between
-	// the reconciliation engine (the coordinator path constructed here) and
-	// the dry-run validator engine constructed later in iteration
-	// startup. Both engines need the SAME typed-global declarations
-	// so chart templates compile identically against either render
-	// path — without this sharing, the webhook engine would see the
-	// typed globals as undefined and admission would reject every
-	// resource.
-	engineWiring typedRendererWiring
-
-	// gvrMapper is the cluster RESTMapper shared by every component that
-	// resolves apiVersion+kind → GroupVersionResource (status/resource
-	// appliers here, and the dry-run validator constructed later in iteration
-	// startup). Sharing one deferred mapper avoids duplicate discovery caches
-	// and keeps GVR resolution resource-agnostic (RULE #1).
-	gvrMapper meta.RESTMapper
+	engine                templating.Engine
+	typedResourceTypes    map[string]reflect.Type
+	gvrMapper             meta.RESTMapper
 }
 
 // createReconciliationComponents creates all reconciliation components and
@@ -279,7 +267,8 @@ func createReconciliationComponents(
 		httpStore:             httpStoreComponent,
 		capabilities:          capabilities,
 		publishedCurrentFiles: currentFiles.published,
-		engineWiring:          wiring,
+		engine:                engine,
+		typedResourceTypes:    wiring.TypedResourceTypes,
 		gvrMapper:             gvrMapper,
 	}, nil
 }
@@ -295,8 +284,8 @@ func registerLifecycleComponents(reg *lifecycle.Registry, allReplica, leaderOnly
 	}
 }
 
-// buildValidationPipeline creates the shared full-validation pipeline used by
-// reconciliation, admission, and HTTP content promotion. DNS lookup remains
+// buildValidationPipeline creates the full-validation pipeline used by
+// reconciliation and HTTP content promotion. DNS lookup remains
 // flaky and recovers at runtime (HAProxy starts the server DOWN and brings
 // it up when the next health check resolves).
 func buildValidationPipeline(

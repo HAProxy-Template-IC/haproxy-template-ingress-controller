@@ -33,9 +33,7 @@ Creates a template engine from configuration with all standard filters and the
 **Used by:**
 
 - `pkg/controller/reconciliation.go` - Engine creation for the reconciliation pipeline
-- `pkg/controller/webhook.go` - Engine creation for the webhook validation pipeline
-- `pkg/controller/validator/template.go` - Template syntax validation
-- `pkg/controller/webhook/configvalidator.go` - CRD admission webhook engine
+- `pkg/controller/validator/validationtests.go` - Validation-test rendering
 - `cmd/controller/validate.go` - CLI validation command
 - `cmd/controller/benchmark_render.go` - Benchmark rendering
 

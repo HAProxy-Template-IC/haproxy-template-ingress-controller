@@ -69,7 +69,7 @@ type ValidationResult struct {
 	DurationMs int64
 
 	// ParsedConfig is the pre-parsed configuration from syntax validation.
-	// May be nil if validation failed or validation cache was used.
+	// May be nil if validation failed or the service discards parsed results.
 	// When non-nil, can be passed to downstream sync operations to avoid re-parsing.
 	ParsedConfig *parser.StructuredConfig
 
@@ -96,7 +96,7 @@ func (r *ValidationResult) ErrorMessage() string {
 //
 // The service caches the last successful validation result keyed by a content
 // checksum of the config and auxiliary files. When called with unchanged content,
-// it returns the cached ParsedConfig immediately, skipping all validation phases.
+// it returns the cached verdict and optional ParsedConfig immediately, skipping all validation phases.
 // Only successful validations are cached; failures always trigger a full retry.
 //
 // The service can be called concurrently from multiple goroutines.
@@ -128,6 +128,8 @@ type ValidationService struct {
 	mapsDir     string
 	sslCertsDir string
 	generalDir  string
+
+	discardParsedConfig bool
 
 	// Validation result cache - skips all validation phases when content unchanged.
 	// Per-instance cache prevents webhook validation from evicting main pipeline cache.
@@ -172,6 +174,10 @@ type ValidationServiceConfig struct {
 	// GeneralDir is the relative directory name for general files (e.g., "general").
 	// Should match the basename of the dataplane GeneralStorageDir config.
 	GeneralDir string
+
+	// DiscardParsedConfig caches only successful verdicts and omits ParsedConfig from results.
+	// Syntax and schema validation still parse the complete configuration.
+	DiscardParsedConfig bool
 }
 
 // NewValidationService creates a new ValidationService.
@@ -208,6 +214,7 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 		mapsDir:                mapsDir,
 		sslCertsDir:            sslCertsDir,
 		generalDir:             generalDir,
+		discardParsedConfig:    cfg.DiscardParsedConfig,
 	}
 }
 
@@ -221,12 +228,11 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 // 4. Writes the config and auxiliary files
 // 5. Runs semantic validation with haproxy -c using the MODIFIED config
 // 6. Cleans up the temp directory
-// 7. Returns the original ParsedConfig (with production paths)
+// 7. Returns the original ParsedConfig when the caller retains parsed results
 //
-// The key insight is that syntax/schema validation doesn't need actual files or temp paths -
-// it just parses the config string. Only semantic validation (haproxy -c) needs temp paths
-// for file I/O. By parsing the original config first, we ensure the returned ParsedConfig
-// contains production paths that downstream components can use.
+// Syntax/schema validation doesn't need actual files or temp paths; only semantic
+// validation does. Parsing the original config keeps any returned ParsedConfig on
+// production paths.
 //
 // Parameters:
 //   - ctx: Context for cancellation
@@ -235,7 +241,7 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 //   - checksum: Pre-computed content checksum (see dataplane.ComputeContentChecksum)
 //
 // Returns:
-//   - ValidationResult with success/failure status, timing, and ParsedConfig with production paths
+//   - ValidationResult with status, timing, and an optional ParsedConfig on production paths
 func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles, checksum string) *ValidationResult {
 	startTime := time.Now()
 
@@ -245,7 +251,7 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 	}
 
 	// Check validation cache - skip all phases if content unchanged
-	if cachedConfig := s.getCachedResult(checksum); cachedConfig != nil {
+	if cachedConfig, ok := s.getCachedResult(checksum); ok {
 		if err := validationCancellationError(ctx); err != nil {
 			return failedResult(err, "setup", startTime)
 		}
@@ -282,7 +288,7 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 		return &ValidationResult{
 			Valid:        true,
 			DurationMs:   time.Since(startTime).Milliseconds(),
-			ParsedConfig: parsedConfig,
+			ParsedConfig: s.resultParsedConfig(parsedConfig),
 		}
 	}
 
@@ -342,7 +348,7 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 	return &ValidationResult{
 		Valid:        true,
 		DurationMs:   time.Since(startTime).Milliseconds(),
-		ParsedConfig: parsedConfig,
+		ParsedConfig: s.resultParsedConfig(parsedConfig),
 	}
 }
 
@@ -375,13 +381,13 @@ func validationCancellationError(ctx context.Context) error {
 	return nil
 }
 
-func (s *ValidationService) getCachedResult(checksum string) *parser.StructuredConfig {
+func (s *ValidationService) getCachedResult(checksum string) (*parser.StructuredConfig, bool) {
 	s.cacheMu.RLock()
 	defer s.cacheMu.RUnlock()
 	if s.cachedChecksum != "" && s.cachedChecksum == checksum {
-		return s.cachedParsedConfig
+		return s.cachedParsedConfig, true
 	}
-	return nil
+	return nil, false
 }
 
 func (s *ValidationService) cacheResult(ctx context.Context, checksum string, parsedConfig *parser.StructuredConfig) error {
@@ -391,6 +397,13 @@ func (s *ValidationService) cacheResult(ctx context.Context, checksum string, pa
 		return err
 	}
 	s.cachedChecksum = checksum
-	s.cachedParsedConfig = parsedConfig
+	s.cachedParsedConfig = s.resultParsedConfig(parsedConfig)
 	return nil
+}
+
+func (s *ValidationService) resultParsedConfig(parsedConfig *parser.StructuredConfig) *parser.StructuredConfig {
+	if s.discardParsedConfig {
+		return nil
+	}
+	return parsedConfig
 }

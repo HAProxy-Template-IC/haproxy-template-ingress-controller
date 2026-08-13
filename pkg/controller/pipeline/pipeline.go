@@ -114,7 +114,7 @@ type PipelineResult struct {
 	ValidationPhase string
 
 	// ParsedConfig is the pre-parsed desired configuration from syntax validation.
-	// May be nil if validation cache was used.
+	// May be nil when validation fails or the validation service discards parsed results.
 	// When non-nil, can be passed to downstream sync operations to avoid re-parsing.
 	ParsedConfig *parser.StructuredConfig
 
