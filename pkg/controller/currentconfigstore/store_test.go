@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 
+	parserconfig "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -514,4 +516,58 @@ func TestStore_ReparsesWhenConfigTextChanges(t *testing.T) {
 
 	assert.NotSame(t, first, second, "a changed config must be re-parsed")
 	assert.Greater(t, len(second.Backends), len(first.Backends), "the new backend must be visible")
+}
+
+// The controller writes the HAProxyCfg this store watches, so it has usually
+// already parsed those exact bytes by the time the watch delivers them. An
+// offered parse must be adopted rather than the content parsed a second time.
+func TestOfferedParseIsAdoptedForIdenticalContent(t *testing.T) {
+	store, err := New(newTestLogger())
+	require.NoError(t, err)
+
+	// A parse the caller "already has" — recognisable by identity.
+	offered := parserconfig.NewStructuredConfig()
+	store.Offer(validHAProxyConfig, offered)
+
+	store.Update(newHAProxyCfgResource(validHAProxyConfig))
+
+	require.Same(t, offered, store.Get(),
+		"the store must adopt the offered parse instead of parsing the same bytes again")
+}
+
+// The offer is keyed by the config text, so content that differs by a single
+// byte must fall through to a real parse rather than serve a stale structure.
+func TestOfferedParseIsRejectedForDifferentContent(t *testing.T) {
+	store, err := New(newTestLogger())
+	require.NoError(t, err)
+
+	offered := parserconfig.NewStructuredConfig()
+	store.Offer(validHAProxyConfig, offered)
+
+	store.Update(newHAProxyCfgResource(validHAProxyConfig + "\n# one byte different\n"))
+
+	got := store.Get()
+	require.NotNil(t, got)
+	require.NotSame(t, offered, got,
+		"content that does not match the offer must be parsed, never served from it")
+}
+
+// An offer is single-use: holding it after adoption would pin the previous
+// generation's parse alongside the current one, which is the duplication this
+// hand-off exists to remove.
+func TestOfferedParseIsNotReusedForALaterUpdate(t *testing.T) {
+	store, err := New(newTestLogger())
+	require.NoError(t, err)
+
+	offered := parserconfig.NewStructuredConfig()
+	store.Offer(validHAProxyConfig, offered)
+
+	store.Update(newHAProxyCfgResource(validHAProxyConfig))
+	require.Same(t, offered, store.Get())
+
+	// Same bytes again, with no fresh offer: must be parsed, not re-served.
+	store.Update(newHAProxyCfgResource(validHAProxyConfig + "\n# changed\n"))
+	store.Update(newHAProxyCfgResource(validHAProxyConfig))
+	require.NotSame(t, offered, store.Get(),
+		"a consumed offer must not satisfy a later update")
 }

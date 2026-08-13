@@ -21,6 +21,8 @@ import (
 	"slices"
 	"time"
 
+	parserconfig "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
@@ -76,6 +78,8 @@ const (
 // The DeploymentScheduler still operates event-driven, receiving TemplateRenderedEvent
 // and ValidationCompletedEvent to schedule deployments.
 type Coordinator struct {
+	parsedConfigSink ParsedConfigSink
+
 	*component.ReadySignal
 
 	eventBus      *busevents.EventBus
@@ -106,8 +110,19 @@ type CoordinatorConfig struct {
 	// CurrentFiles owns the last accepted auxiliary output for each leader term.
 	CurrentFiles CurrentFilesAuthority
 
+	// ParsedConfigSink receives the parse of a config this controller is about
+	// to publish, so the watch event for those same bytes does not re-parse
+	// them. Optional; nil disables the hand-off.
+	ParsedConfigSink ParsedConfigSink
+
 	// Logger is the structured logger.
 	Logger *slog.Logger
+}
+
+// ParsedConfigSink accepts a parse of configuration text keyed by that text, so
+// a later consumer of the identical bytes can skip parsing them again.
+type ParsedConfigSink interface {
+	Offer(configText string, parsed *parserconfig.StructuredConfig)
 }
 
 // NewCoordinator creates a new ReconciliationCoordinator.
@@ -129,12 +144,13 @@ func NewCoordinator(cfg *CoordinatorConfig) *Coordinator {
 	}
 
 	return &Coordinator{
-		ReadySignal:   component.NewReadySignal(),
-		eventBus:      cfg.EventBus,
-		pipeline:      cfg.Pipeline,
-		storeProvider: cfg.StoreProvider,
-		currentFiles:  cfg.CurrentFiles,
-		logger:        logger.With("component", CoordinatorComponentName),
+		parsedConfigSink: cfg.ParsedConfigSink,
+		ReadySignal:      component.NewReadySignal(),
+		eventBus:         cfg.EventBus,
+		pipeline:         cfg.Pipeline,
+		storeProvider:    cfg.StoreProvider,
+		currentFiles:     cfg.CurrentFiles,
+		logger:           logger.With("component", CoordinatorComponentName),
 	}
 }
 
@@ -324,6 +340,14 @@ func (c *Coordinator) handlePipelineSuccess(
 		return
 	}
 	c.eventBus.Publish(templateEvent)
+
+	// This controller writes the HAProxyCfg that currentconfigstore watches, so
+	// by the time the watch delivers it the pipeline has already parsed exactly
+	// these bytes. Hand that parse over rather than have it parsed a second
+	// time — measured at 100% of the store's parses on the scale tier.
+	if c.parsedConfigSink != nil && result.ParsedConfig != nil {
+		c.parsedConfigSink.Offer(result.HAProxyConfig, result.ParsedConfig)
+	}
 
 	// Publish ValidationCompletedEvent to trigger deployment scheduling
 	// Pass ParsedConfig from pipeline result to enable downstream sync optimization

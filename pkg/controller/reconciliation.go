@@ -163,11 +163,12 @@ func createReconciliationComponents(
 
 	// Coordinator: leader-side render + validate + deploy.
 	coordinatorComponent := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
-		EventBus:      setup.Bus,
-		Pipeline:      validationPipeline,
-		StoreProvider: storeProvider,
-		CurrentFiles:  currentFiles,
-		Logger:        logger,
+		EventBus:         setup.Bus,
+		Pipeline:         validationPipeline,
+		StoreProvider:    storeProvider,
+		CurrentFiles:     currentFiles,
+		Logger:           logger,
+		ParsedConfigSink: currentConfigStore,
 	})
 
 	// ProposalValidator: admission webhook + HTTP-store content promotion.

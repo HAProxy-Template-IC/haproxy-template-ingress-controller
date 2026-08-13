@@ -32,6 +32,47 @@ type Store struct {
 	lastGeneration int64          // Last seen metadata.generation for fast spec-change detection
 	parser         *parser.Parser // Reused parser instance (DRY)
 	logger         *slog.Logger
+
+	// offered holds a parse the controller already performed for the exact
+	// bytes it published, keyed by their SHA-256. The HAProxyCfg this store
+	// watches is written by this controller, so by the time the watch delivers
+	// it, the pipeline has usually parsed those bytes already — re-parsing them
+	// costs a second full pass and a second retained copy of the same
+	// configuration. Keyed by content hash so it can only ever satisfy
+	// byte-identical content; anything else falls through to a real parse.
+	offeredHash   string
+	offeredConfig *parserconfig.StructuredConfig
+}
+
+// Offer hands the store a parse of config text the controller is publishing, so
+// the watch event for those same bytes does not have to parse them again.
+//
+// The hash is of the configuration text alone, matching the identity the store
+// uses internally. Offering is advisory: a mismatch, or an offer that never
+// arrives, simply leaves the normal parse path in place.
+func (s *Store) Offer(configText string, parsed *parserconfig.StructuredConfig) {
+	if parsed == nil || configText == "" {
+		return
+	}
+	sum := sha256.Sum256([]byte(configText))
+	s.mu.Lock()
+	s.offeredHash = hex.EncodeToString(sum[:])
+	s.offeredConfig = parsed
+	s.mu.Unlock()
+}
+
+// takeOffered returns a previously offered parse for these exact bytes, if any.
+func (s *Store) takeOffered(hash string) *parserconfig.StructuredConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.offeredHash != hash || s.offeredConfig == nil {
+		return nil
+	}
+	parsed := s.offeredConfig
+	// Release the reference: the store is about to hold it as currentConfig,
+	// and keeping a second pointer would pin the previous generation too.
+	s.offeredHash, s.offeredConfig = "", nil
+	return parsed
 }
 
 // New creates a new CurrentConfigStore.
@@ -97,6 +138,22 @@ func (s *Store) Update(resource any) {
 }
 
 // updateWithContent handles the content parsing and caching logic.
+// parseOrAdopt returns the parse for content, preferring one the controller
+// already performed for these exact bytes. Returns nil when parsing fails, in
+// which case the store keeps its previous configuration.
+func (s *Store) parseOrAdopt(hashStr, content string) *parserconfig.StructuredConfig {
+	if parsed := s.takeOffered(hashStr); parsed != nil {
+		s.logger.Debug("Adopted an already-parsed current config", "bytes", len(content))
+		return parsed
+	}
+	parsed, err := s.parser.ParseFromString(content)
+	if err != nil {
+		s.logger.Warn("Failed to parse current config", "error", err)
+		return nil
+	}
+	return parsed
+}
+
 func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) {
 	// Fast path: Check metadata.generation before decompressing or hashing.
 	// The HAProxyCfg CRD has status subresource enabled, so metadata.generation
@@ -168,9 +225,8 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 		return
 	}
 
-	parsed, err := s.parser.ParseFromString(content)
-	if err != nil {
-		s.logger.Warn("Failed to parse current config", "error", err)
+	parsed := s.parseOrAdopt(hashStr, content)
+	if parsed == nil {
 		return
 	}
 
