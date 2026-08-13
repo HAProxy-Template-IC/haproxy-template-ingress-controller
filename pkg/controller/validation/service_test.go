@@ -369,6 +369,36 @@ func TestValidationService_CacheHit(t *testing.T) {
 		"cache hit should return the same ParsedConfig instance")
 }
 
+func TestValidationService_DiscardParsedConfigKeepsVerdictCache(t *testing.T) {
+	checks := 0
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheck(
+		func(string, []string) ([]byte, error) {
+			checks++
+			return nil, nil
+		},
+	)))
+
+	svc := NewValidationService(&ValidationServiceConfig{
+		Logger:              slog.Default(),
+		SkipDNSValidation:   true,
+		DiscardParsedConfig: true,
+	})
+
+	result1 := validate(svc, context.Background(), validConfig, nil)
+	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
+	assert.Nil(t, result1.ParsedConfig)
+
+	result2 := validate(svc, context.Background(), validConfig, nil)
+	require.True(t, result2.Valid)
+	assert.Nil(t, result2.ParsedConfig)
+	assert.Equal(t, 1, checks, "cache hit should skip semantic validation")
+
+	svc.cacheMu.RLock()
+	defer svc.cacheMu.RUnlock()
+	assert.NotEmpty(t, svc.cachedChecksum)
+	assert.Nil(t, svc.cachedParsedConfig)
+}
+
 func TestValidationService_CacheMiss_ConfigChange(t *testing.T) {
 	svc := NewValidationService(&ValidationServiceConfig{
 		Logger:            slog.Default(),

@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -35,6 +37,7 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 func TestAdmissionCurrentFilesUsesPublishedSnapshotOnEveryReplica(t *testing.T) {
@@ -85,13 +88,15 @@ backend http_back
 				Types:  map[string]reflect.Type{},
 				Errors: map[string]error{},
 			}
+			declarations := helpers.BuildAdditionalDeclarations(cfg, bootstrapResult)
+			engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, declarations, helpers.EngineOptions{})
+			require.NoError(t, err)
+			countingEngine := &renderCountingEngine{Engine: engine}
 			wiring := &reconciliationWiring{
 				publishedCurrentFiles: published,
-				engineWiring: typedRendererWiring{
-					Declarations:       helpers.BuildAdditionalDeclarations(cfg, bootstrapResult),
-					TypedResourceTypes: map[string]reflect.Type{},
-				},
-				gvrMapper: ingressRESTMapper(),
+				engine:                countingEngine,
+				typedResourceTypes:    map[string]reflect.Type{},
+				gvrMapper:             ingressRESTMapper(),
 			}
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 			validator, err := createDryRunValidator(
@@ -115,6 +120,7 @@ backend http_back
 			)
 
 			assert.Equal(t, test.wantAllow, allowed)
+			assert.Positive(t, countingEngine.renderCalls.Load())
 			if test.wantAllow {
 				assert.Empty(t, reason)
 			} else {
@@ -122,6 +128,28 @@ backend http_back
 			}
 		})
 	}
+}
+
+type renderCountingEngine struct {
+	templating.Engine
+	renderCalls atomic.Int64
+}
+
+func (e *renderCountingEngine) RenderWithProfiling(ctx context.Context, templateName string, templateContext map[string]any) (string, []templating.IncludeStats, error) {
+	e.renderCalls.Add(1)
+	return e.Engine.RenderWithProfiling(ctx, templateName, templateContext)
+}
+
+func TestCreateDryRunValidatorRequiresReconciliationEngine(t *testing.T) {
+	_, err := createDryRunValidator(
+		currentFilesAdmissionConfig(testutil.MinimalHAProxyConfig),
+		busevents.NewEventBus(10),
+		stores.NewRealStoreProvider(nil),
+		&reconciliationWiring{},
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	require.EqualError(t, err, "dry-run validation requires the reconciliation template engine")
 }
 
 func currentFilesAdmissionConfig(template string) *coreconfig.Config {
