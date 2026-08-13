@@ -40,19 +40,24 @@ type effectiveResolution struct {
 	StrippedTests    []string          `json:"StrippedTests"`
 }
 
-// healthzSettled reports whether /healthz is 200 WITHOUT any entry riding
-// the reinit grace period (applyReinitGrace annotates tolerated entries with
-// "reinitializing (grace period)"). During a reinit the endpoint already
-// reports 200 — by design, so kubelet doesn't kill the pod — so tests that
-// must sequence AFTER a reinit completes need this stronger signal.
+// healthzSettled checks each pod directly so one settled replica cannot hide
+// another replica that is still using the reinitialization grace period.
 func (dc *debugClient) healthzSettled(ctx context.Context) bool {
-	body, err := dc.clientset.CoreV1().Services(dc.namespace).ProxyGet(
-		"http", dc.serviceName, dc.port, HealthzPath, nil,
-	).DoRaw(ctx)
-	if err != nil {
+	pods, err := dc.clientset.CoreV1().Pods(dc.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: LabelSelectorController,
+	})
+	if err != nil || len(pods.Items) == 0 {
 		return false
 	}
-	return !bytes.Contains(body, []byte("reinitializing (grace period)"))
+	for i := range pods.Items {
+		body, err := dc.clientset.CoreV1().Pods(dc.namespace).ProxyGet(
+			"http", pods.Items[i].Name, dc.port, HealthzPath, nil,
+		).DoRaw(ctx)
+		if err != nil || bytes.Contains(body, []byte("reinitializing (grace period)")) {
+			return false
+		}
+	}
+	return true
 }
 
 func (dc *debugClient) getEffectiveResolution(ctx context.Context) (*effectiveResolution, error) {
