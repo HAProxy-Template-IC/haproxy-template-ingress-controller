@@ -1472,3 +1472,88 @@ validationTests:
                     - {path: /, pathType: Prefix, backend: {service: {name: mbp-svc, port: {number: 80}}}}
     assertions:
       - {type: contains, target: rendering_error, pattern: "Port must be 1-65535"}
+
+  # ==========================================================================
+  # Config-injection guards (issue #157). Char-class rejection itself is proven
+  # by base's ConfigInjectionKind / Escape* utility tests; these are per-site
+  # wiring checks that each guard is actually called at its emission point.
+  # ==========================================================================
+  # One hostile Ingress at once exercises the routing/presentation guards that
+  # warn-and-skip: server-alias (host.map key), canary match value (single-quoted
+  # ACL operand), custom-request-headers value (frontend directive) and
+  # session-cookie-name (backend cookie token). A dropped guard would surface its
+  # marker; a valid config still renders (admission denial is base-tested).
+  test-nginx-ingress-warn-guards-skip-injection:
+    description: A single Ingress with injection payloads in server-alias, canary, custom-request-headers and session-cookie-name renders clean — every guarded value is skipped, no smuggled marker survives.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hostile
+            annotations:
+              nginx.ingress.kubernetes.io/server-alias: "ok.example.com,inj\nALIASWN.example.com"
+              nginx.ingress.kubernetes.io/affinity: "cookie"
+              nginx.ingress.kubernetes.io/session-cookie-name: "SID COOKIEWN"
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-by-header: "X-Canary"
+              nginx.ingress.kubernetes.io/canary-by-header-value: "v1' } { CANARYWN"
+              nginx.ingress.kubernetes.io/custom-request-headers: "X-Foo: v1\nHEADERWN"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: hostile.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:host.map, pattern: "ok\\.example\\.com hostile\\.example\\.com"}
+      - {type: not_contains, target: map:host.map, pattern: "ALIASWN"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "COOKIEWN"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "CANARYWN"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "HEADERWN"}
+
+  # Load-bearing special case: a custom-request-headers value is double-quoted and
+  # log-format escaped, so a literal `%` is doubled and can't read request state.
+  test-nginx-ingress-custom-request-header-value-log-format-escaped:
+    description: A literal percent in a custom-request-headers value is doubled so HAProxy can't interpret it as a log-format fetch.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hdr-escape
+            annotations:
+              nginx.ingress.kubernetes.io/custom-request-headers: "X-Discount: 50%off"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: hdr.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-Discount "50%%off"'}
+
+  # A malformed rate-limit threshold reaches an unquoted ACL operand and must fail
+  # closed rather than silently ship without the limit (rpm/connections share the
+  # same guard). Wiring check that the guard is called.
+  test-nginx-ingress-limit-rps-injection-fails:
+    description: A space in limit-rps fails the render — the rate limit is never silently dropped.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rps-attacker
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rps: "10 } { sc_conn_cur(0) gt 0"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rps.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "break the rate-limit ACL"}

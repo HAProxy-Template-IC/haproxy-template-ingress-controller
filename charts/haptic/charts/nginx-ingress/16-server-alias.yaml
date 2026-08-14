@@ -28,6 +28,8 @@ templateSnippets:
           <alias-key> <rule-host-key>
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var aliasAnn = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/server-alias"] -%}
         {%- if aliasAnn != "" -%}
@@ -48,6 +50,11 @@ templateSnippets:
             {%- for _, rawAlias := range split(aliasAnn, ",") -%}
               {%- var alias = trimSpace(rawAlias) -%}
               {%- if alias != "" -%}
+                {%- var aliasInj = ConfigInjectionKind(alias, "mapkey") -%}
+                {%- if aliasInj != "" -%}
+                  {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/server-alias' value contains " + aliasInj + ", which would inject an entry into the host routing map; the alias is not applied. Remove whitespace and control characters from the value.") -}}
+                  {%- continue -%}
+                {%- end -%}
                 {%- var aliasKey = MapKeyForHost(alias) -%}
       {{ aliasKey }} {{ ruleHostKey }}{{ "\n" }}
               {%- end -%}

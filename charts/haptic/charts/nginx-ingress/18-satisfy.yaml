@@ -83,6 +83,8 @@ templateSnippets:
       #}
       {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
       {%- if ingress != nil %}
         {%- if SatisfyAnyMode(ingress) != "" %}
           {%- var ns = ingress.Metadata.Namespace %}
@@ -91,11 +93,9 @@ templateSnippets:
           {%- var whitelist = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/whitelist-source-range"] %}
           {%- var authRealm = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-realm"] %}
           {%- if authRealm == "" %}{%- authRealm = "Restricted" %}{%- end %}
-          {#- Config-injection guard: the realm is interpolated into a quoted
-              HAProxy string, so a value containing a double-quote or newline
-              could break out and smuggle directives. Reject those characters. -#}
-          {%- if !regex_search(authRealm, "^[^\"\\r\\n]*$") %}
-            {{- fail("Invalid auth-realm '" + authRealm + "' on Ingress '" + key + "': must not contain double-quotes or newlines.") -}}
+          {%- var realmInj = ConfigInjectionKind(authRealm, "line") %}
+          {%- if realmInj != "" %}
+            {{- fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/auth-realm' on Ingress '" + key + "': contains " + realmInj + ", which would break the auth realm directive. Remove control characters from the value.") -}}
           {%- end %}
           {%- var authSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-secret"] %}
           {%- var secretNs = ns %}
@@ -110,6 +110,6 @@ templateSnippets:
       # nginx-ingress/satisfy-any ({{ key }})
       acl {{ aclName }} src {{ ValidateCidrList(whitelist, "nginx.ingress.kubernetes.io/whitelist-source-range", key) }}
       http-request set-var(txn.denied_by) str(basic_auth) if !{{ aclName }} !{ http_auth({{ userlistName }}) }
-      http-request auth realm "{{ authRealm }}" if !{{ aclName }} !{ http_auth({{ userlistName }}) }
+      http-request auth realm "{{ EscapeDquoteValue(authRealm) }}" if !{{ aclName }} !{ http_auth({{ userlistName }}) }
         {%- end %}
       {%- end -%}

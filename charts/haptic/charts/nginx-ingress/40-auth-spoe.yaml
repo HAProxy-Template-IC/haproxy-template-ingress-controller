@@ -29,11 +29,18 @@ templateSnippets:
   #     auth-headers-request)
   map-auth-url-500-nginx-ingress:
     template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authUrl = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-url"] -%}
         {%- if authUrl != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
           {%- var name = ingress.Metadata.Name -%}
+          {%- var inj = ConfigInjectionKind(authUrl, "line") -%}
+          {%- if inj != "" -%}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/auth-url' value contains " + inj + ", which would inject an entry into the auth routing map; external auth is not applied. Remove control characters from the value.") -}}
+            {%- continue -%}
+          {%- end -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ authUrl }}
         {%- end -%}
       {%- end -%}
@@ -54,11 +61,18 @@ templateSnippets:
   # oauth2-proxy that handles it server-side).
   map-auth-signin-500-nginx-ingress:
     template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authSignin = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-signin"] -%}
         {%- if authSignin != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
           {%- var name = ingress.Metadata.Name -%}
+          {%- var inj = ConfigInjectionKind(authSignin, "line") -%}
+          {%- if inj != "" -%}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/auth-signin' value contains " + inj + ", which would inject an entry into the auth sign-in map; the sign-in redirect is not applied. Remove control characters from the value.") -}}
+            {%- continue -%}
+          {%- end -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ authSignin }}
         {%- end -%}
       {%- end -%}
@@ -79,11 +93,18 @@ templateSnippets:
   # body — the plugin does not forward the original request payload.
   map-auth-method-500-nginx-ingress:
     template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authMethod = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-method"] -%}
         {%- if authMethod != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
           {%- var name = ingress.Metadata.Name -%}
+          {%- var inj = ConfigInjectionKind(authMethod, "line") -%}
+          {%- if inj != "" -%}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/auth-method' value contains " + inj + ", which would inject an entry into the auth method map; the method override is not applied. Remove control characters from the value.") -}}
+            {%- continue -%}
+          {%- end -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ authMethod }}
         {%- end -%}
       {%- end -%}
@@ -106,13 +127,22 @@ templateSnippets:
   # `txn.hub.external_auth.<name>` (lower-cased, dashes → underscores).
   # The set-header directives are gated on `allowed -m bool` so they
   # only fire on auth success.
+  # passHeaders is a comma-space list of header names written raw into this map
+  # value. Guarded locally in line context (not mapkey): the ", " separator is
+  # legitimate, and a control character is the real injection (a newline would
+  # start a second map entry). Auth = security, so fail closed.
   map-auth-extract-headers-500-nginx-ingress:
     template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var passHeaders = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-response-headers"] -%}
         {%- if passHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
           {%- var name = ingress.Metadata.Name -%}
+          {%- var inj = ConfigInjectionKind(passHeaders, "line") -%}
+          {%- if inj != "" -%}
+            {{- fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/auth-response-headers' on Ingress '" + ns + "/" + name + "': contains " + inj + ", which would inject an entry into the auth response-headers map. Remove control characters from the value.") -}}
+          {%- end -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ passHeaders }}
         {%- end -%}
       {%- end -%}
@@ -174,6 +204,8 @@ templateSnippets:
   backend-directives-760-nginx-ingress-auth:
     template: |
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
       {#-
         Nginx Ingress Basic Auth Backend Directive
 
@@ -203,6 +235,10 @@ templateSnippets:
           {%- if authSecret != "" %}
             {%- var authRealm = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-realm"] %}
             {%- if authRealm == "" %}{%- authRealm = "Restricted" %}{%- end %}
+            {%- var realmInj = ConfigInjectionKind(authRealm, "line") %}
+            {%- if realmInj != "" %}
+              {{- fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/auth-realm' on Ingress '" + key + "': contains " + realmInj + ", which would break the auth realm directive. Remove control characters from the value.") -}}
+            {%- end %}
             {%- var secretNs = ns %}
             {%- var secretName = authSecret %}
             {%- if strings_contains(authSecret, "/") %}
@@ -248,7 +284,7 @@ templateSnippets:
             {%- else if SatisfyAnyMode(ingress) == "" %}
       # nginx-ingress/backend-directives-auth ({{ key }})
       http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ userlistName }}) }
-      http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
+      http-request auth realm "{{ EscapeDquoteValue(authRealm) }}" unless { http_auth({{ userlistName }}) }
             {%- end %}
           {%- end %}
         {%- end %}
