@@ -216,8 +216,26 @@ templateSnippets:
     template: |
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
 
       {% macro PathMapEntryIngressShard(ingresses []*resources.ingresses.T, pathTypes []string, suffix string) string %}
+        {#- Map keys are whitespace-delimited: a space/tab/newline in a path splits
+            the line and smuggles a second entry (cross-tenant route hijack, #153).
+            Reject the whole Ingress up front and skip it in BOTH the owner dedup
+            and the emit loop, so a hostile value never claims a route nor emits. -#}
+        {%- var rejected = map[string]bool{} -%}
+        {%- for _, ring := range resources.ingresses.List() -%}
+          {%- var rid = ring.Metadata.Namespace + "/" + ring.Metadata.Name -%}
+          {%- for _, rrule := range ring.Spec.Rules -%}
+            {%- for _, rpath := range rrule.Http.Paths -%}
+              {%- if rpath.Path != "" && !rejected[rid] && (regex_search(rpath.Path, "[[:cntrl:]]") || strings_contains(rpath.Path, " ")) -%}
+                {%- rejected[rid] = true -%}
+                {{- WebhookRejectOrWarn(ring, "InvalidPath", "Ingress '" + rid + "' has a path containing whitespace or control characters, which cannot be written to the routing map; the route is not applied. Remove spaces, tabs and newlines from spec.rules[].http.paths[].path.") -}}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
         {#- HAProxy maps hold one entry per key, so colliding host+path+slot claims
             resolve to one owner. gf["coLocatedIngresses"] is filled by the preceding
             haproxy.cfg render. Recomputed per shard: each needs the global view. -#}
@@ -229,6 +247,9 @@ templateSnippets:
           var coLocated = gf["coLocatedIngresses"]
           for _, ing := range resources.ingresses.List() {
             var oid = ing.Metadata.Namespace + "/" + ing.Metadata.Name
+            if rejected[oid] {
+              continue
+            }
             var isCanary = false
             if coLocated != nil {
               var _, present = coLocated.(map[string]any)[oid]
@@ -274,6 +295,7 @@ templateSnippets:
         %%}
         {%- for _, ingress := range ingresses -%}
           {%- var id = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- if rejected[id] -%}{%- continue -%}{%- end -%}
           {%- var matchCount = 0 -%}
           {%- for _, rule := range ingress.Spec.Rules -%}
             {%- for _, path := range rule.Http.Paths -%}
@@ -322,7 +344,7 @@ templateSnippets:
                       {%- var epath = path.Path -%}
                       {%- if eslot != "Exact" && len(epath) > 1 && hasSuffix(epath, "/") -%}{%- epath = epath[:len(epath)-1] -%}{%- end -%}
                       {%- if owner[eslot + "|" + MapKeyForHost(rule.Host) + epath] != id -%}{%- continue -%}{%- end -%}
-                      {%- var pathStr = path.Path -%}
+                      {%- var pathStr = ValidateConfigValue(path.Path, "spec.rules[].http.paths[].path", id, false) -%}
                       {%- if suffix == "" && pathStr == "/" -%}{%- continue -%}{%- end -%}
                       {%- var actualSuffix = suffix -%}
                       {%- if suffix == "/" && hasSuffix(pathStr, "/") -%}{%- actualSuffix = "" -%}{%- end -%}
@@ -1780,3 +1802,113 @@ validationTests:
         target: map:path-prefix.map
         pattern: "(?m)^example\\.com/ BACKEND:"
         expected: "1"
+
+  # Cross-tenant map-injection guard (#153). A whitespace-delimited map key means a
+  # newline OR a space in spec.rules[].http.paths[].path smuggles a second entry
+  # that hijacks another tenant's host+path. The path is guarded before it reaches
+  # the owner-dedup key or the emitted line: denied at admission, warned-and-skipped
+  # on reconcile so one hostile Ingress can't brick the fleet.
+  test-ingress-path-newline-injection-admission-rejected:
+    description: A newline in an Ingress path is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: tenant-a, name: attacker}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: attacker.example.com
+                http:
+                  paths:
+                    - path: "/a\nvictim.example.com/secret BACKEND:tenant-a_evil_svc_web_80"
+                      pathType: Exact
+                      backend: {service: {name: web, port: {number: 80}}}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "has a path containing whitespace or control characters"
+
+  test-ingress-path-space-injection-admission-rejected:
+    description: A space in an Ingress path is denied by the admission webhook (a space truncates a whitespace-delimited map key).
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: tenant-a, name: attacker}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: attacker.example.com
+                http:
+                  paths:
+                    - path: "/a victim.example.com/secret"
+                      pathType: Exact
+                      backend: {service: {name: web, port: {number: 80}}}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "has a path containing whitespace or control characters"
+
+  test-ingress-path-injection-reconcile-warns-and-skips:
+    description: On reconcile, a whitespace/newline path warns (Event) and the Ingress is skipped; the injected map line never appears while valid routes still render.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web, namespace: tenant-a}
+          spec:
+            ports:
+              - {name: http, port: 80, targetPort: 8080}
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: good, namespace: tenant-b}
+          spec:
+            ports:
+              - {name: http, port: 80, targetPort: 8080}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: tenant-a, name: attacker}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: attacker.example.com
+                http:
+                  paths:
+                    - path: "/a\nvictim.example.com/secret BACKEND:tenant-a_evil_svc_web_80"
+                      pathType: Exact
+                      backend: {service: {name: web, port: {number: 80}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: tenant-b, name: legit}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: good.example.com
+                http:
+                  paths:
+                    - path: /ok
+                      pathType: Exact
+                      backend: {service: {name: good, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:path-exact.map
+        pattern: "(?m)^good\\.example\\.com/ok BACKEND:tenant-b_legit_svc_good_http$"
+        description: "the valid route renders — scopes the absence assertions to a populated map"
+      - type: not_contains
+        target: map:path-exact.map
+        pattern: "victim\\.example\\.com/secret"
+        description: "the smuggled second line never appears in the routing map"
+      - type: not_contains
+        target: map:path-exact.map
+        pattern: "attacker\\.example\\.com/a"
+        description: "the hostile Ingress's own route is skipped too (the whole Ingress is rejected)"
+      - type: contains
+        target: events
+        pattern: 'Warning InvalidPath networking\.k8s\.io/v1 Ingress tenant-a/attacker: .*whitespace or control characters'
+        description: "the skipped Ingress gets an InvalidPath Warning naming it"

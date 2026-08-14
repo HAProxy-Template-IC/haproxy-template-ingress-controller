@@ -380,6 +380,79 @@ validationTests:
 
       - {type: not_contains, target: map:path-prefix.map, pattern: "api.example.com/.*users"}
 
+  # Cross-tenant map-injection guard (#153). Map keys are whitespace-delimited, so a
+  # newline or space in an HTTPRoute path value smuggles a second entry that hijacks
+  # another tenant's host+path. The path is guarded before it is written to the map:
+  # denied at admission, warned-and-skipped on reconcile.
+  test-httproute-regex-path-injection-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: A newline in an HTTPRoute RegularExpression path is skipped; the smuggled regex-map line never appears while valid routes render.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web, namespace: default}
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: regex-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - path: {type: RegularExpression, value: "^/a$\nvictim.example.com/secret gtw_default_evil_web_80\n#"}
+                backendRefs:
+                  - {name: web, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: regex-good, namespace: default}
+          spec:
+            hostnames:
+              - good.example.com
+            rules:
+              - matches:
+                  - path: {type: RegularExpression, value: "^/ok$"}
+                backendRefs:
+                  - {name: web, port: 80}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:path-regex.map, pattern: "good\\.example\\.com\\^/ok\\$ gtw_default_regex-good_web_80"}
+      - {type: not_contains, target: map:path-regex.map, pattern: "victim\\.example\\.com/secret"}
+
+  test-httproute-path-injection-admission-rejected:
+    requires: [httproutes]
+    description: A space in an HTTPRoute Exact path is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web, namespace: default}
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - path: {type: Exact, value: "/a victim.example.com/secret"}
+                backendRefs:
+                  - {name: web, port: 80}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "contains whitespace or control characters"
+
   test-httproute-listener-port-matching:
     requires: [gatewayclasses, gateways, httproutes]
     description: Routes attached to listeners on different ports get port-suffixed host map entries
