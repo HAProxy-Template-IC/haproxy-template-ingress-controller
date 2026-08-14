@@ -20,26 +20,14 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
-// The activation proof and the version cache have different lifetimes, so
-// updating one must not silently drop the other.
-//
-// A dropped proof is not a cache miss that costs a fetch — it makes the next
-// sync force a reload against a config it just verified, on every sync.
-func TestConfigVersionCache_ActivationProofOutlivesAVersionUpdate(t *testing.T) {
+func TestConfigVersionCache_CommitCarriesActivationProof(t *testing.T) {
 	c := newConfigVersionCache()
 	ep := cacheEndpoint("http://10.0.0.1:5555/v3")
 
-	c.setActivated(ep, "proof-1")
-	require.Equal(t, "proof-1", c.activated(ep))
-
-	// A normal post-sync version-cache update must leave the proof alone.
-	c.set(ep, 7, &parserconfig.StructuredConfig{}, "content-abc")
-	assert.Equal(t, "proof-1", c.activated(ep),
-		"a version-cache update must not drop the activation proof")
-
-	version, _, checksum := c.get(ep)
-	assert.Equal(t, int64(7), version)
-	assert.Equal(t, "content-abc", checksum)
+	snapshot := commitTestObservation(t, c, ep, 7, &parserconfig.StructuredConfig{}, "proof-1", "content-abc", "proof-1")
+	assert.Equal(t, "proof-1", snapshot.activatedChecksum)
+	assert.Equal(t, int64(7), snapshot.version)
+	assert.Equal(t, "content-abc", snapshot.contentChecksum)
 }
 
 // Clearing the proof is the half of the fix that matters on the error path: a
@@ -51,35 +39,34 @@ func TestConfigVersionCache_EmptyProofClearsActivation(t *testing.T) {
 	c := newConfigVersionCache()
 	ep := cacheEndpoint("http://10.0.0.1:5555/v3")
 
-	c.setActivated(ep, "proof-1")
-	c.setActivated(ep, "")
-	assert.Empty(t, c.activated(ep), "an empty proof must clear, not be ignored")
+	commitTestObservation(t, c, ep, 7, &parserconfig.StructuredConfig{}, "proof-1", "content-abc", "proof-1")
+	generation, ok := c.beginRuntimeMutation(ep)
+	require.True(t, ok)
+	require.True(t, c.finishRuntimeMutation(ep, generation, ""))
+	assert.Empty(t, c.snapshot(ep).activatedChecksum, "an empty proof must clear, not be ignored")
 
 	// Clearing an endpoint that was never recorded must not fabricate an entry.
 	unknown := cacheEndpoint("http://10.0.0.2:5555/v3")
-	c.setActivated(unknown, "")
-	assert.Empty(t, c.activated(unknown))
+	generation, ok = c.beginRuntimeMutation(unknown)
+	require.True(t, ok)
+	require.True(t, c.finishRuntimeMutation(unknown, generation, ""))
+	assert.Empty(t, c.snapshot(unknown).activatedChecksum)
 }
 
-// invalidate() drops the proof with the rest of the entry. After a failed sync
-// nothing about the pod's running state is provable — the push may have reached
-// disk regardless of the error.
-func TestConfigVersionCache_InvalidateDropsActivation(t *testing.T) {
+func TestConfigVersionCache_AbortDropsActivation(t *testing.T) {
 	c := newConfigVersionCache()
 	ep := cacheEndpoint("http://10.0.0.1:5555/v3")
 
-	c.set(ep, 7, &parserconfig.StructuredConfig{}, "content-abc")
-	c.setActivated(ep, "proof-1")
-
-	c.invalidate(ep)
-	assert.Empty(t, c.activated(ep), "a failed sync must leave nothing provable behind")
+	commitTestObservation(t, c, ep, 7, &parserconfig.StructuredConfig{}, "proof-1", "content-abc", "proof-1")
+	require.True(t, c.abortSync(ep, c.snapshot(ep).generation))
+	assert.Empty(t, c.snapshot(ep).activatedChecksum, "a failed sync must leave nothing provable behind")
 }
 
 // An unknown endpoint has no proof, which the orchestrator reads as "force a
 // reload before trusting an empty diff" — the safe default.
 func TestConfigVersionCache_UnknownEndpointHasNoProof(t *testing.T) {
 	c := newConfigVersionCache()
-	assert.Empty(t, c.activated(cacheEndpoint("http://nobody:5555/v3")))
+	assert.Empty(t, c.snapshot(cacheEndpoint("http://nobody:5555/v3")).activatedChecksum)
 }
 
 // A failed bypass apply must CLEAR the endpoint's activation proof.
@@ -92,20 +79,17 @@ func TestConfigVersionCache_UnknownEndpointHasNoProof(t *testing.T) {
 // desired-vs-disk to empty, short-circuit on the stale proof, and report success
 // over parked content — the exact stall the provenance guard exists to close.
 func TestRuntimeBypass_FailedApplyClearsActivationProof(t *testing.T) {
-	recorded := map[string]string{}
 	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
 		return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
 			return nil, errors.New("cannot execute SetServerState: connection refused")
 		}}, nil
 	})
-	b.recordActivation = func(endpoint *dataplane.Endpoint, proof string) { recorded[endpoint.URL] = proof }
+	endpoint := dataplane.Endpoint{URL: "http://a"}
 
-	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}),
+	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{endpoint}),
 		bypassPush{body: "config"})
 
-	proof, ok := recorded["http://a"]
-	require.True(t, ok, "a failed apply must report the endpoint, not stay silent")
-	assert.Empty(t, proof,
+	assert.Empty(t, b.configCache.snapshot(&endpoint).activatedChecksum,
 		"a failed apply must clear the proof — its body may still have reached disk")
 }
 
@@ -113,31 +97,16 @@ func TestRuntimeBypass_FailedApplyClearsActivationProof(t *testing.T) {
 // reload-free: the bypass legitimately changes the on-disk bytes, and without a
 // fresh proof the next sync would force a reload against them.
 func TestRuntimeBypass_SuccessfulApplyRecordsActivationProof(t *testing.T) {
-	recorded := map[string]string{}
 	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
 		return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
 			return &dataplane.SyncResult{Success: true, ActivatedConfigChecksum: "proof-after-apply"}, nil
 		}}, nil
 	})
-	b.recordActivation = func(endpoint *dataplane.Endpoint, proof string) { recorded[endpoint.URL] = proof }
+	endpoint := dataplane.Endpoint{URL: "http://a"}
 
-	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}),
+	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{endpoint}),
 		bypassPush{body: "config"})
 
-	assert.Equal(t, "proof-after-apply", recorded["http://a"],
+	assert.Equal(t, "proof-after-apply", b.configCache.snapshot(&endpoint).activatedChecksum,
 		"a successful apply must record its proof, or every bypass costs the next sync a reload")
-}
-
-// A nil recorder must be safe — the bypass is constructed without one in tests
-// and in any wiring that does not share the deployer's cache.
-func TestRuntimeBypass_NilActivationRecorderIsSafe(t *testing.T) {
-	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
-		return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
-			return nil, errors.New("boom")
-		}}, nil
-	})
-	require.NotPanics(t, func() {
-		b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}),
-			bypassPush{body: "config"})
-	})
 }

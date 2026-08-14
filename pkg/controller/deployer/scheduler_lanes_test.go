@@ -155,7 +155,7 @@ func newLaneScheduler(t *testing.T, minInterval time.Duration) (
 	scheduledCh = bus.SubscribeTypes("lane-watcher", 50, events.EventTypeDeploymentScheduled)
 	bus.Start()
 
-	s = NewDeploymentScheduler(bus, testutil.NewTestLogger(), minInterval, 30*time.Second)
+	s = newDeploymentScheduler(bus, testutil.NewTestLogger(), minInterval, 30*time.Second)
 	s.lastDispatchedPodSetHash = computePodSetHash(oneEndpoint())
 	applied = make(chan struct{}, 16)
 	s.runtimeBypass.newSyncer = func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
@@ -175,7 +175,7 @@ func oneEndpoint() []dataplane.Endpoint {
 func TestSchedulerLanes_SameURLReplacementForcesStructural(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
-	s := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	baseline, _, _ := laneRenders(t)
 	oldEndpoint := dataplane.Endpoint{URL: "http://localhost:5555", PodName: "haproxy-0", PodUID: "uid-old"}
 	replacement := oldEndpoint
@@ -231,7 +231,7 @@ func TestSchedulerLanes_Case1_RuntimeEligibleIdle_AppliesRuntimeRawNow(t *testin
 func TestSchedulerLanes_IncompleteRuntimeApplyFallsBackToStructural(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
-	s := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	baseline, runtime, _ := laneRenders(t)
 	endpoints := oneEndpoint()
 
@@ -627,7 +627,7 @@ func TestSchedulerLanes_Case8_StructuralWaitZero_AppliesRuntimeSubset(t *testing
 // server op (ServerOpCount 0, nil runtimeUpdates). Both must no-op rather than
 // panic or attempt a real apply.
 func TestScheduler_ApplyRuntimeSubset_NilOrZeroOpNoOp(t *testing.T) {
-	s := NewDeploymentScheduler(testutil.NewTestBus(), testutil.NewTestLogger(), 5*time.Second, 30*time.Second)
+	s := newDeploymentScheduler(testutil.NewTestBus(), testutil.NewTestLogger(), 5*time.Second, 30*time.Second)
 	require.NotPanics(t, func() {
 		s.applyRuntimeSubset(context.Background(), nil)
 		s.applyRuntimeSubset(context.Background(), &scheduledDeployment{}) // nil runtimeUpdates → ServerOpCount 0

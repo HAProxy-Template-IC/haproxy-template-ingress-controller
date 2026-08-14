@@ -63,7 +63,7 @@ func TestScheduler_ValidationForMissingRenderIsDiscarded(t *testing.T) {
 	bus.Start()
 
 	ctx := context.Background()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	scheduler.ctx = ctx
 
 	// Render N-1 arrives and is cached.
@@ -93,7 +93,7 @@ func TestScheduler_ValidationForCachedRenderIsAccepted(t *testing.T) {
 	bus.Start()
 
 	ctx := context.Background()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	scheduler.ctx = ctx
 
 	rendered := renderedEvent("global\n  daemon\n")

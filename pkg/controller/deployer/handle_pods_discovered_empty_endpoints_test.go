@@ -52,7 +52,7 @@ func TestPerformPodsDiscovered_EmptyEndpointsWithValidConfigSkipsDeployment(t *t
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	var closes atomic.Int32
 	scheduler.runtimeBypass.newSyncer = func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
 		return &fakeRuntimeSyncer{
@@ -116,7 +116,7 @@ func TestPerformPodsDiscovered_EmptyEndpointsWithValidConfigSkipsDeployment(t *t
 func TestPerformPodsDiscovered_StructuralReplacementEvictsRuntimeClient(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	ctx := context.Background()
 
 	var closes atomic.Int32
@@ -152,7 +152,7 @@ func TestPerformPodsDiscovered_CancelsDeploymentForRetiredAuthority(t *testing.T
 	bus := testutil.NewTestBus()
 	cancelCh := bus.SubscribeTypes("authority-cancellation", 1, events.EventTypeDeploymentCancelRequest)
 	bus.Start()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	oldEndpoint := dataplane.Endpoint{URL: "http://same", PodName: "haproxy-0", PodNamespace: "haptic", PodUID: "uid-old"}
 	scheduler.runtimeBypass.replaceEndpointAuthorities([]dataplane.Endpoint{oldEndpoint})
 	scheduler.schedulerMutex.Lock()

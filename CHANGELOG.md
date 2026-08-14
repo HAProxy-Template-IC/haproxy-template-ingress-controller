@@ -59,10 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The standalone `deployer.NewDeploymentScheduler` constructor. Use `NewDeployStack` so structural and runtime writes share endpoint state.
 - The four-slot parsed-config cache in the dataplane parser, and the `haptic_parser_cache_hits_total`, `haptic_parser_cache_misses_total`, `haptic_parser_cache_hits_by_source_total` and `haptic_parser_cache_misses_by_source_total` metrics that reported it. The cache existed to let the desired config be parsed once and reused across HAProxy replicas, but the deploy path already carries that parse by reference (`ValidationCompletedEvent.ParsedConfig`), so its one beneficiary never consulted it — measured at 122 hits against 1509 misses on a live cluster, while pinning four fully-parsed configs (~900 MB of live heap at 1000 HTTPRoutes, since a parsed config is 35-90x its text size). Parsing is now always direct.
 
 ### Fixed
 
+- Version-cache hits no longer force an unnecessary HAProxy reload, and concurrent runtime updates can no longer leave a reusable stale endpoint observation.
 - Local Docker builds and tagged-release controller binaries now report their source-input hash instead of `unknown`.
 - The current-config store no longer re-parses an unchanged HAProxy configuration when only auxiliary files changed. It keyed the decision on `spec.checksum`, which covers the config *and* every map file, certificate and CRT-list — so ordinary endpoint churn rewriting a map file re-parsed byte-identical config text. A parsed configuration costs 35–90× its text, which made this one of the larger allocations on the churn path that OOMKilled the controller at its default memory limit. The parse decision now uses a hash of the config text; the checksum remains a fast path for the case where nothing changed at all.
 - Losing leadership now disables the drift-prevention timer without firing and re-arming it on the former leader.

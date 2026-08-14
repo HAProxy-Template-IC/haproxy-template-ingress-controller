@@ -57,7 +57,7 @@ opts := &dataplane.SyncOptions{
 | Field | What it does |
 |-------|--------------|
 | `PreParsedConfig *parser.StructuredConfig` | Skips parsing `desiredConfig` if non-nil. Set by callers that already parsed the config (e.g. the validation pipeline). |
-| `CachedCurrentConfig *parser.StructuredConfig` + `CachedConfigVersion int64` | Used together: `GetVersion()` is consulted first, and the expensive `GetRawConfiguration()`+parse round-trip is skipped if the live version on the pod matches `CachedConfigVersion`. |
+| `CachedCurrentConfig`, `CachedConfigVersion`, `CachedCurrentConfigChecksum`, `LastActivatedConfigChecksum` | Used together: when the paired current and activated checksums match, `GetVersion()` is consulted first and a matching live version skips the expensive `GetRawConfiguration()`+parse round-trip. |
 | `ContentChecksum string` + `LastDeployedChecksum string` | Used together: when both are set and equal, the orchestrator skips the auxiliary-file comparison entirely (no downloads from HAProxy). Drift-prevention syncs should leave `LastDeployedChecksum` empty to force a real check. |
 
 ### `AuxiliaryFiles`

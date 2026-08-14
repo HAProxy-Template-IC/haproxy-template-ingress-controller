@@ -82,18 +82,7 @@ type runtimeBypass struct {
 	// component, and it only incremented a counter (ADR-0001). Nil in tests.
 	recordFastPath func(serverUpdates int, failed bool)
 
-	// recordActivation reports what an apply proved about the endpoint's running
-	// config: the checksum on success, "" to clear the proof. Clearing on
-	// failure is load-bearing — a skip_version push writes its body to disk even
-	// when the runtime actions fail, so a failed apply leaves content on disk
-	// that no worker ever loaded. Leaving a stale proof behind would let the
-	// next sync short-circuit an empty diff over that parked content, which is
-	// the #112 stall. Nil in tests.
-	recordActivation func(endpoint *dataplane.Endpoint, proof string)
-
-	// retainAuthorities evicts structural-sync observations for retired
-	// endpoint authorities. Nil in isolated tests.
-	retainAuthorities func([]dataplane.Endpoint)
+	configCache *configVersionCache
 
 	mu             sync.Mutex
 	clients        map[endpointAuthority]runtimeSyncer
@@ -106,8 +95,9 @@ type runtimeBypass struct {
 // newRuntimeBypass builds a runtimeBypass that opens real dataplane clients.
 func newRuntimeBypass(logger *slog.Logger, eventBus *busevents.EventBus) *runtimeBypass {
 	return &runtimeBypass{
-		logger:   logger.With("path", "runtime-bypass"),
-		eventBus: eventBus,
+		logger:      logger.With("path", "runtime-bypass"),
+		eventBus:    eventBus,
+		configCache: newConfigVersionCache(),
 		newSyncer: func(ctx context.Context, ep *dataplane.Endpoint) (runtimeSyncer, error) {
 			return dataplane.NewClient(ctx, ep)
 		},
@@ -118,6 +108,11 @@ func newRuntimeBypass(logger *slog.Logger, eventBus *busevents.EventBus) *runtim
 
 type runtimeAuthorityLease struct {
 	epoch uint64
+}
+
+type runtimeCacheMutation struct {
+	generation uint64
+	tracked    bool
 }
 
 // bypassPush bundles the per-apply parameters shared by every endpoint of one
@@ -225,6 +220,20 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 			"endpoint", ep.URL, "error", err)
 		return false
 	}
+	mutation, ok := b.beginEndpointMutation(parentCtx, lease, ep)
+	if !ok {
+		return false
+	}
+	mutationFinished := false
+	defer func() {
+		if !mutationFinished && mutation.tracked {
+			b.configCache.finishRuntimeMutation(ep, mutation.generation, "")
+		}
+	}()
+	finishMutation := func(proof string, commit func()) bool {
+		mutationFinished = true
+		return b.finishEndpointMutation(parentCtx, lease, ep, mutation, proof, commit)
+	}
 
 	opts := dataplane.DefaultSyncOptions()
 	opts.Timeout = runtimeBypassTimeout
@@ -245,8 +254,7 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 		// body even when the runtime actions 500), so this endpoint's running
 		// state is no longer provable. Drop the proof and let the next sync
 		// force a reload rather than trust an empty diff.
-		if !b.commitEndpointLease(parentCtx, lease, ep, func() {
-			b.noteActivation(ep, "")
+		if !finishMutation("", func() {
 			b.publishResult(0, true)
 		}) {
 			return false
@@ -256,18 +264,21 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 		return false
 	}
 	if result == nil || !result.Success {
-		b.recordEndpointFailure(parentCtx, lease, ep)
+		if !finishMutation("", func() {
+			b.publishResult(0, true)
+		}) {
+			return false
+		}
 		b.logger.Debug("Bypass apply returned no success proof; structural deploy will converge",
 			"endpoint", ep.URL)
 		return false
 	}
 	ops := len(result.AppliedOperations)
-	if !b.commitEndpointLease(parentCtx, lease, ep, func() {
-		proof := result.ActivatedConfigChecksum
-		if push.unproven {
-			proof = ""
-		}
-		b.noteActivation(ep, proof)
+	proof := result.ActivatedConfigChecksum
+	if push.unproven {
+		proof = ""
+	}
+	if !finishMutation(proof, func() {
 		b.publishResult(ops, false)
 		b.publishConfigApplied(dep, ep, result, push.partial)
 		successes.Add(1)
@@ -284,19 +295,46 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 }
 
 func (b *runtimeBypass) recordEndpointFailure(ctx context.Context, lease runtimeAuthorityLease, endpoint *dataplane.Endpoint) {
-	b.commitEndpointLease(ctx, lease, endpoint, func() {
-		b.noteActivation(endpoint, "")
+	mutation, ok := b.beginEndpointMutation(ctx, lease, endpoint)
+	if !ok {
+		return
+	}
+	b.finishEndpointMutation(ctx, lease, endpoint, mutation, "", func() {
 		b.publishResult(0, true)
 	})
 }
 
-// noteActivation forwards an activation proof (or its removal) to the deployer's
-// cache, if one is wired.
-func (b *runtimeBypass) noteActivation(endpoint *dataplane.Endpoint, proof string) {
-	if b.recordActivation == nil {
-		return
+func (b *runtimeBypass) beginEndpointMutation(ctx context.Context, lease runtimeAuthorityLease, endpoint *dataplane.Endpoint) (runtimeCacheMutation, bool) {
+	mutation := runtimeCacheMutation{}
+	accepted := true
+	current := b.commitEndpointLease(ctx, lease, endpoint, func() {
+		generation, ok := b.configCache.beginRuntimeMutation(endpoint)
+		if !ok {
+			accepted = false
+			return
+		}
+		mutation = runtimeCacheMutation{generation: generation, tracked: true}
+	})
+	return mutation, current && accepted
+}
+
+func (b *runtimeBypass) finishEndpointMutation(ctx context.Context, lease runtimeAuthorityLease, endpoint *dataplane.Endpoint, mutation runtimeCacheMutation, proof string, commit func()) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	authority := endpointAuthorityOf(endpoint)
+	current := ctx.Err() == nil && b.endpointLeaseCurrentLocked(lease, &authority)
+	if !current {
+		proof = ""
 	}
-	b.recordActivation(endpoint, proof)
+	if mutation.tracked && !b.configCache.finishRuntimeMutation(endpoint, mutation.generation, proof) {
+		return false
+	}
+	if !current {
+		return false
+	}
+	commit()
+	return true
 }
 
 // publishConfigApplied advances the pod's status.deployedToPods[].Checksum after
@@ -428,9 +466,7 @@ func (b *runtimeBypass) replaceEndpointAuthorities(endpoints []dataplane.Endpoin
 	}
 	b.mu.Unlock()
 
-	if b.retainAuthorities != nil {
-		b.retainAuthorities(endpoints)
-	}
+	b.configCache.retain(endpoints)
 	return changed
 }
 
@@ -485,7 +521,6 @@ func (b *runtimeBypass) commitLease(ctx context.Context, lease runtimeAuthorityL
 // loses leadership, so the bypass holds no clients while not the active writer.
 func (b *runtimeBypass) Close() {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.closed = true
 	b.epoch++
 	b.authorities = make(map[endpointAuthority]struct{})
@@ -494,4 +529,6 @@ func (b *runtimeBypass) Close() {
 		_ = c.Close()
 		delete(b.clients, identity)
 	}
+	b.mu.Unlock()
+	b.configCache.retain(nil)
 }

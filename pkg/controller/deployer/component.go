@@ -30,7 +30,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
@@ -85,9 +84,7 @@ type Component struct {
 	// participant). Nil in tests.
 	metrics *metrics.Metrics
 
-	// versionCache caches the last-synced config version per endpoint authority.
-	// Allows skipping expensive GetRawConfiguration() + parse on subsequent syncs
-	// when the pod's config version hasn't changed.
+	// versionCache shares fenced endpoint observations with the runtime bypass.
 	versionCache *configVersionCache
 
 	// Deployment cancellation support
@@ -215,23 +212,6 @@ func (c *Component) CoalescesOn() []string {
 // HealthCheck implements the lifecycle.HealthChecker interface.
 // Returns an error if the component appears to be stalled (processing for > timeout).
 // Returns nil when idle (not processing) - idle is always healthy for event-driven components.
-// RecordActivation records (or, with an empty proof, clears) what an apply
-// proved about an endpoint's running config.
-//
-// Exported so the runtime-bypass path — which writes to the same pods through a
-// different component — updates the same per-endpoint state the structural sync
-// reads. Two independent writers to one pod with two independent notions of
-// "what is running" is precisely how a config goes parked unnoticed (#112).
-func (c *Component) RecordActivation(endpoint *dataplane.Endpoint, proof string) {
-	c.versionCache.setActivated(endpoint, proof)
-}
-
-// RetainEndpointAuthorities evicts observations that belong to endpoints no
-// longer present in the scheduler's authoritative fleet view.
-func (c *Component) RetainEndpointAuthorities(endpoints []dataplane.Endpoint) {
-	c.versionCache.retain(endpoints)
-}
-
 func (c *Component) HealthCheck() error {
 	return c.healthTracker.Check()
 }

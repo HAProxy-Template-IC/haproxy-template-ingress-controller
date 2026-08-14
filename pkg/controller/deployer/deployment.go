@@ -463,45 +463,37 @@ func (c *Component) deployToSingleEndpoint(
 		opts.PreParsedConfig = parsedConfig
 	}
 
-	// Populate cached current config from version cache (if available)
-	cachedVersion, cachedConfig, cachedChecksum := c.versionCache.get(endpoint)
-	if cachedConfig != nil {
-		opts.CachedCurrentConfig = cachedConfig
-		opts.CachedConfigVersion = cachedVersion
+	cacheSnapshot := c.versionCache.snapshot(endpoint)
+	if cacheSnapshot.parsedConfig != nil && cacheSnapshot.currentConfigChecksum != "" {
+		opts.CachedCurrentConfig = cacheSnapshot.parsedConfig
+		opts.CachedConfigVersion = cacheSnapshot.version
+		opts.CachedCurrentConfigChecksum = cacheSnapshot.currentConfigChecksum
 	}
 
 	// Pass content checksum for aux file comparison cache.
 	// Drift prevention deployments must always force comparison (bypass cache)
 	// to detect out-of-band changes on the HAProxy pod.
 	opts.ContentChecksum = contentChecksum
-	if reason != events.TriggerReasonDriftPrevention && cachedChecksum != "" {
-		opts.LastDeployedChecksum = cachedChecksum
+	if reason != events.TriggerReasonDriftPrevention && cacheSnapshot.contentChecksum != "" {
+		opts.LastDeployedChecksum = cacheSnapshot.contentChecksum
 	}
 
 	// What this endpoint was last PROVEN to be running. Unlike the caches above
 	// this is passed on EVERY sync including drift prevention: it does not skip
 	// work, it decides whether an empty diff may be trusted at all, and drift
 	// prevention is exactly when a stale answer is most costly.
-	opts.LastActivatedConfigChecksum = c.versionCache.activated(endpoint)
+	opts.LastActivatedConfigChecksum = cacheSnapshot.activatedChecksum
 
 	// Sync configuration
 	result, err := client.Sync(ctx, config, auxFiles, opts)
 	if err != nil {
-		// Invalidate cache on failure - pod state is uncertain. invalidate()
-		// drops the activation proof with the rest of the entry, which is the
-		// right call: a push that errored may still have written its body to
-		// disk (a skip_version push does so even when its runtime actions
-		// fail), so nothing about this pod's running state is provable now.
-		c.versionCache.invalidate(endpoint)
+		// A newer writer owns any later generation; its proof-only state still
+		// forces a raw fetch before reuse.
+		c.versionCache.abortSync(endpoint, cacheSnapshot.generation)
 		return nil, fmt.Errorf("sync failed: %w", err)
 	}
 
-	// Record what this sync proved, or clear the proof when it proved nothing.
-	// Both directions matter: without the record every sync would force a
-	// reload; without the clear a parked config would keep short-circuiting.
-	c.versionCache.setActivated(endpoint, result.ActivatedConfigChecksum)
-
-	// Update version cache with post-sync state (including content checksum).
+	// Update the complete endpoint observation in one generation-checked write.
 	// Prefer result.PostSyncParsedConfig (the pod's ACTUAL post-sync state,
 	// fetched and parsed by the orchestrator) over parsedConfig (the caller's
 	// desired intent). The two diverge when the dataplane API applies
@@ -517,9 +509,15 @@ func (c *Component) deployToSingleEndpoint(
 	if cachedParsed == nil {
 		cachedParsed = parsedConfig
 	}
-	if result.PostSyncVersion > 0 && cachedParsed != nil {
-		c.versionCache.set(endpoint, result.PostSyncVersion, cachedParsed, contentChecksum)
-	}
+	cacheCommitted := c.versionCache.commitSync(
+		endpoint,
+		cacheSnapshot.generation,
+		result.PostSyncVersion,
+		cachedParsed,
+		result.ActivatedConfigChecksum,
+		contentChecksum,
+		result.ActivatedConfigChecksum,
+	)
 
 	c.Logger().Debug("Sync completed for endpoint",
 		"endpoint", endpoint.URL,
@@ -527,7 +525,8 @@ func (c *Component) deployToSingleEndpoint(
 		"applied_operations", len(result.AppliedOperations),
 		"reload_triggered", result.ReloadTriggered,
 		"used_preparsed_config", parsedConfig != nil,
-		"cache_hit", cachedConfig != nil,
+		"cache_hit", opts.CachedCurrentConfig != nil,
+		"cache_committed", cacheCommitted,
 		"post_sync_version", result.PostSyncVersion,
 		"cached_actual_post_sync", result.PostSyncParsedConfig != nil,
 		"duration", result.Duration)

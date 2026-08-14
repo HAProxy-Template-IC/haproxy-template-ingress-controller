@@ -56,7 +56,7 @@ func TestCheckDeploymentTimeout_NoFireWhenStartTimeIsZero(t *testing.T) {
 	// between deployInFlight being set and start-time assignment.
 	bus := testutil.NewTestBus()
 	bus.Start()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
 	initLoopChannels(scheduler)
 
 	scheduler.schedulerMutex.Lock()
@@ -84,7 +84,7 @@ func TestCheckDeploymentTimeout_NoFireWhenElapsedWithinTimeout(t *testing.T) {
 	// timeout instead of a hard deadline.
 	bus := testutil.NewTestBus()
 	bus.Start()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	initLoopChannels(scheduler)
 
 	scheduler.schedulerMutex.Lock()
@@ -110,7 +110,7 @@ func TestCheckDeploymentTimeout_PublishesCancelEventWithActiveDeploymentID(t *te
 	eventChan := bus.Subscribe("cancel-event-watcher", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
 	initLoopChannels(scheduler)
 
 	const activeCorrID = "in-flight-deployment-corr-1"
@@ -168,7 +168,7 @@ func TestCheckDeploymentTimeout_DoesNotPublishCancelWithEmptyDeploymentID(t *tes
 	eventChan := bus.Subscribe("cancel-empty-corr-watcher", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
 	initLoopChannels(scheduler)
 
 	scheduler.schedulerMutex.Lock()

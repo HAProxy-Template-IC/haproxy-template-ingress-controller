@@ -66,7 +66,7 @@ func (s *bodyRecordingSyncer) pushed() bool {
 // newBodyRecordingScheduler builds a scheduler whose bypass records pushes.
 func newBodyRecordingScheduler(t *testing.T) (*DeploymentScheduler, *bodyRecordingSyncer) {
 	t.Helper()
-	s := NewDeploymentScheduler(testutil.NewTestBus(), testutil.NewTestLogger(), 5*time.Second, 30*time.Second)
+	s := newDeploymentScheduler(testutil.NewTestBus(), testutil.NewTestLogger(), 5*time.Second, 30*time.Second)
 	rec := &bodyRecordingSyncer{}
 	s.runtimeBypass.newSyncer = func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
 		return rec, nil
@@ -341,14 +341,6 @@ func TestScheduler_ApplyRuntimeSubset_InFlightPatchesDispatchedNotActivated(t *t
 	s, rec := newBodyRecordingScheduler(t)
 	rec.activated = "proof-from-syncer"
 
-	var mu sync.Mutex
-	proofs := []string{}
-	s.runtimeBypass.recordActivation = func(_ *dataplane.Endpoint, proof string) {
-		mu.Lock()
-		defer mu.Unlock()
-		proofs = append(proofs, proof)
-	}
-
 	// The fleet is running the plain base; the in-flight structural deploy has
 	// dispatched (and written) base+api2.
 	activatedRaw := fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
@@ -385,10 +377,7 @@ func TestScheduler_ApplyRuntimeSubset_InFlightPatchesDispatchedNotActivated(t *t
 	assert.Contains(t, body, "10.0.0.2:8080", "the runtime-eligible address change IS patched in")
 	assert.False(t, opts.RestampVersionHeader, "a partial apply must leave the config headerless")
 
-	mu.Lock()
-	defer mu.Unlock()
-	require.Len(t, proofs, 1, "the apply records exactly one activation outcome")
-	assert.Empty(t, proofs[0],
+	assert.Empty(t, s.runtimeBypass.configCache.snapshot(&oneEndpoint()[0]).activatedChecksum,
 		"the body's structural half is parked unloaded until the in-flight reload lands, so it proves nothing (mode B)")
 }
 
@@ -398,14 +387,6 @@ func TestScheduler_ApplyRuntimeSubset_InFlightPatchesDispatchedNotActivated(t *t
 func TestScheduler_ApplyRuntimeSubset_NoDeployInFlightPatchesActivated(t *testing.T) {
 	s, rec := newBodyRecordingScheduler(t)
 	rec.activated = "proof-from-syncer"
-
-	var mu sync.Mutex
-	proofs := []string{}
-	s.runtimeBypass.recordActivation = func(_ *dataplane.Endpoint, proof string) {
-		mu.Lock()
-		defer mu.Unlock()
-		proofs = append(proofs, proof)
-	}
 
 	baselineRaw := fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
 	baseline := parseLaneConfig(t, baselineRaw)
@@ -433,8 +414,6 @@ func TestScheduler_ApplyRuntimeSubset_NoDeployInFlightPatchesActivated(t *testin
 	assert.Contains(t, body, "10.0.0.2:8080")
 	assert.NotContains(t, body, "api2", "no structural content enters a body pushed over the activated config")
 
-	mu.Lock()
-	defer mu.Unlock()
-	require.Len(t, proofs, 1)
-	assert.NotEmpty(t, proofs[0], "with disk == activated + runtime patch, the apply proves the running state")
+	assert.NotEmpty(t, s.runtimeBypass.configCache.snapshot(&oneEndpoint()[0]).activatedChecksum,
+		"with disk == activated + runtime patch, the apply proves the running state")
 }

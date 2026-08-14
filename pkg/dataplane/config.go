@@ -128,13 +128,18 @@ type SyncOptions struct {
 	PreParsedConfig *parserconfig.StructuredConfig
 
 	// CachedCurrentConfig is an optional cached parsed current configuration
-	// from a previous sync. When set with CachedConfigVersion, sync calls
-	// GetVersion() first and reuses the cached config if the version matches.
+	// from a previous sync. Reuse also requires CachedConfigVersion and matching
+	// cached-current and last-activated checksums.
 	CachedCurrentConfig *parserconfig.StructuredConfig
 
 	// CachedConfigVersion is the expected config version on the pod. Only
 	// used when CachedCurrentConfig is also set.
 	CachedConfigVersion int64
+
+	// CachedCurrentConfigChecksum is activationChecksum() of the raw config
+	// represented by CachedCurrentConfig. A cache hit also requires this to
+	// match LastActivatedConfigChecksum; otherwise sync fetches the raw config.
+	CachedCurrentConfigChecksum string
 
 	// ContentChecksum is the pre-computed checksum of the desired config +
 	// aux files. When it matches LastDeployedChecksum, the expensive aux

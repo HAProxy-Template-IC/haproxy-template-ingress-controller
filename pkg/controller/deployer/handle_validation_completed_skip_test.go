@@ -49,7 +49,7 @@ func TestHandleValidationCompleted_SkipsWhenConfigAndPodSetUnchanged(t *testing.
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	ctx := context.Background()
 	scheduler.ctx = ctx
 
@@ -133,7 +133,7 @@ func TestHandleValidationCompleted_DoesNotSkipSameURLReplacement(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("replacement", 10)
 	bus.Start()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startLoopForTest(t, scheduler, ctx)
@@ -176,7 +176,7 @@ func TestHandleValidationCompleted_PublishesDeploymentSkippedOnCacheHit(t *testi
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	ctx := context.Background()
 	scheduler.ctx = ctx
 
@@ -219,7 +219,7 @@ func TestHandleValidationCompleted_DriftPreventionBypassesSkip(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	// Drive the deploy loop: scheduleOrQueue now only sets pending + signals the
 	// loop, which is the goroutine that publishes DeploymentScheduledEvent.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -276,7 +276,7 @@ func TestHandleTemplateRendered_CachesStatusPatches(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	patches := []templating.StatusPatch{
 		{Name: "gw", Kind: "Gateway"},
@@ -307,7 +307,7 @@ func TestHandleValidationCompleted_DeploymentScheduledCarriesStatusPatches(t *te
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	// Drive the deploy loop: scheduleOrQueue now only sets pending + signals the
 	// loop, which is the goroutine that publishes DeploymentScheduledEvent.
 	ctx, cancel := context.WithCancel(context.Background())
