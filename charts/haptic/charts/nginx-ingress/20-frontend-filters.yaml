@@ -34,6 +34,9 @@ templateSnippets:
   frontend-filters-740-nginx-ingress-custom-headers:
     template: |
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -54,7 +57,15 @@ templateSnippets:
                   {%- if len(parts) >= 2 %}
                     {%- var headerName = trimSpace(parts[0]) %}
                     {%- var headerValue = trimSpace(join(parts[1:], ":")) %}
-      http-request set-header {{ headerName }} '{{ headerValue }}' if {{ HostMatchCondition(hosts) }}
+                    {%- var nameInj = ConfigInjectionKind(headerName, "token") %}
+                    {%- var valInj = ConfigInjectionKind(headerValue, "line") %}
+                    {%- if nameInj != "" %}
+                      {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/custom-request-headers' header name contains " + nameInj + ", which would break the set-header directive; the header is not applied. Remove it from the header name.") -}}
+                    {%- else if valInj != "" %}
+                      {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/custom-request-headers' value contains " + valInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
+                    {%- else %}
+      http-request set-header {{ headerName }} "{{ EscapeLogFormatValue(headerValue) }}" if {{ HostMatchCondition(hosts) }}
+                    {%- end %}
                   {%- end %}
                 {%- end %}
               {%- end %}
@@ -68,7 +79,15 @@ templateSnippets:
                   {%- if len(parts) >= 2 %}
                     {%- var headerName = trimSpace(parts[0]) %}
                     {%- var headerValue = trimSpace(join(parts[1:], ":")) %}
-      http-response set-header {{ headerName }} '{{ headerValue }}' if {{ HostMatchCondition(hosts) }}
+                    {%- var nameInj = ConfigInjectionKind(headerName, "token") %}
+                    {%- var valInj = ConfigInjectionKind(headerValue, "line") %}
+                    {%- if nameInj != "" %}
+                      {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/custom-response-headers' header name contains " + nameInj + ", which would break the set-header directive; the header is not applied. Remove it from the header name.") -}}
+                    {%- else if valInj != "" %}
+                      {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/custom-response-headers' value contains " + valInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
+                    {%- else %}
+      http-response set-header {{ headerName }} "{{ EscapeLogFormatValue(headerValue) }}" if {{ HostMatchCondition(hosts) }}
+                    {%- end %}
                   {%- end %}
                 {%- end %}
               {%- end %}
@@ -120,6 +139,8 @@ templateSnippets:
           documented canary precedence: header > cookie > weight. #}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var isCanary = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary"] %}
         {%- if isCanary == "true" %}
@@ -149,12 +170,44 @@ templateSnippets:
                 var canaryCookie = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-cookie"]
                 var canaryWeight = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-weight"]
               %%}
+              {#- The header/cookie NAMES and the numeric weight are emitted unquoted
+                  (req.hdr(<h>), req.cook(<c>), rand(100) lt <w>), so a space or quote
+                  there breaks out of the ACL — token context. The regex/exact match
+                  VALUES are single-quoted below (-m reg '<p>' / -m str '<v>'), where
+                  HAProxy strong-quoting passes a backslash (e.g. \d+) literally with no
+                  $ expansion — only a ' or a control character is a danger, so squote.
+                  Only the operands that will actually be emitted are checked. -#}
+              {%- var canaryInj = "" %}
+              {%- var canaryField = "" %}
+              {%- if canaryHeader != "" %}
+                {%- canaryInj = ConfigInjectionKind(canaryHeader, "token") %}
+                {%- if canaryInj != "" %}{%- canaryField = "canary-by-header" %}{%- end %}
+                {%- if canaryInj == "" && canaryHeaderPattern != "" %}
+                  {%- canaryInj = ConfigInjectionKind(canaryHeaderPattern, "squote") %}
+                  {%- if canaryInj != "" %}{%- canaryField = "canary-by-header-pattern" %}{%- end %}
+                {%- else if canaryInj == "" && canaryHeaderValue != "" %}
+                  {%- canaryInj = ConfigInjectionKind(canaryHeaderValue, "squote") %}
+                  {%- if canaryInj != "" %}{%- canaryField = "canary-by-header-value" %}{%- end %}
+                {%- end %}
+              {%- end %}
+              {%- if canaryInj == "" && canaryCookie != "" %}
+                {%- canaryInj = ConfigInjectionKind(canaryCookie, "token") %}
+                {%- if canaryInj != "" %}{%- canaryField = "canary-by-cookie" %}{%- end %}
+              {%- end %}
+              {%- if canaryInj == "" && canaryWeight != "" %}
+                {%- canaryInj = ConfigInjectionKind(canaryWeight, "token") %}
+                {%- if canaryInj != "" %}{%- canaryField = "canary-weight" %}{%- end %}
+              {%- end %}
+              {%- if canaryInj != "" %}
+                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/" + canaryField + "' value contains " + canaryInj + ", which would break out of the canary routing condition; the canary route is not applied. Remove it from the value.") -}}
+                {%- continue %}
+              {%- end %}
       # nginx-ingress/canary ({{ key }})
               {%- if canaryHeader != "" %}
                 {%- if canaryHeaderPattern != "" %}
-      use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m reg {{ canaryHeaderPattern }} } {{ cond }}
+      use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m reg '{{ canaryHeaderPattern }}' } {{ cond }}
                 {%- else if canaryHeaderValue != "" %}
-      use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m str {{ canaryHeaderValue }} } {{ cond }}
+      use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m str '{{ canaryHeaderValue }}' } {{ cond }}
                 {%- else %}
       use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m str always } {{ cond }}
                 {%- end %}

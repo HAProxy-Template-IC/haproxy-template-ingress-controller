@@ -776,3 +776,73 @@ validationTests:
         target: map:path-prefix.map
         pattern: "(?m)^solo-canary\\.example\\.com/ BACKEND:default_solo-canary_svc_solo-canary-service_80$"
         description: "with no main to defer to, the canary owns and serves its own base route"
+
+  # Positive regression (issue #157): a regex/exact match value carrying a
+  # backslash (e.g. \d) is single-quoted, so HAProxy strong-quoting passes it
+  # literally instead of the config parser mangling it — the canary route still
+  # renders. token context would have wrongly rejected the backslash.
+  test-nginx-ingress-canary-by-header-pattern-backslash-renders:
+    description: A canary-by-header-pattern containing a backslash renders single-quoted, so the regex reaches HAProxy intact.
+    fixtures:
+      services:
+        - {apiVersion: v1, kind: Service, metadata: {namespace: default, name: bsp-service}, spec: {ports: [{port: 80}]}}
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata: {name: bsp-service-abc, namespace: default, labels: {kubernetes.io/service-name: bsp-service}}
+          addressType: IPv4
+          endpoints: [{addresses: ["10.0.0.7"]}]
+          ports: [{port: 8080}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bsp-canary
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-by-header: "X-Canary"
+              nginx.ingress.kubernetes.io/canary-by-header-pattern: "release\\d"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bsp-canary.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: bsp-service, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '-m reg ''release\\d'''}
+
+  test-nginx-ingress-canary-by-header-value-backslash-renders:
+    description: A canary-by-header-value containing a backslash renders single-quoted, so the exact match value reaches HAProxy intact.
+    fixtures:
+      services:
+        - {apiVersion: v1, kind: Service, metadata: {namespace: default, name: bsv-service}, spec: {ports: [{port: 80}]}}
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata: {name: bsv-service-abc, namespace: default, labels: {kubernetes.io/service-name: bsv-service}}
+          addressType: IPv4
+          endpoints: [{addresses: ["10.0.0.8"]}]
+          ports: [{port: 8080}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bsv-canary
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-by-header: "X-Canary"
+              nginx.ingress.kubernetes.io/canary-by-header-value: "blue\\green"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bsv-canary.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: bsv-service, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '-m str ''blue\\green'''}

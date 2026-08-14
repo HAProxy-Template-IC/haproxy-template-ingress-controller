@@ -85,3 +85,37 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request auth realm \"Restricted\" unless \\{ http_auth\\(ni_auth_default_satall-auth\\) \\}"
+
+  # Config-injection wiring check (issue #157): the combined satisfy=any gate is a
+  # distinct auth-realm emitter from backend-directives-760; it too guards the
+  # realm (line context) and fails closed on a control character.
+  test-nginx-ingress-satisfy-any-auth-realm-injection-fails:
+    description: A control character in auth-realm fails the render on the satisfy=any combined gate.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {namespace: default, name: satr-auth}
+          data:
+            auth: YWRtaW46JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: satr-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8"
+              nginx.ingress.kubernetes.io/auth-type: "basic"
+              nginx.ingress.kubernetes.io/auth-secret: "satr-auth"
+              nginx.ingress.kubernetes.io/auth-realm: "Zone\nacl pwned"
+              nginx.ingress.kubernetes.io/satisfy: "any"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: satr.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "break the auth realm directive"}

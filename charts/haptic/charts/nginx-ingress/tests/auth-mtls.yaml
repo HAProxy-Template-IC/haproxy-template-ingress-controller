@@ -622,3 +622,113 @@ validationTests:
       # below is the protection, and it self-heals when the store catches up.
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
+
+  # ============================================================================
+  # Config-injection guards (issue #157). auth-* annotation values reach
+  # whitespace-delimited map files or a quoted directive; a control character
+  # would smuggle a second map entry or break the directive line. Char-class
+  # rejection itself is proven by base's ConfigInjectionKind/Escape* tests —
+  # these are per-site wiring checks that the guard is actually called.
+  # ============================================================================
+  test-nginx-ingress-auth-maps-skip-injection:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: One Ingress with control characters in auth-url, auth-signin and auth-method renders clean — each map guard skips its value (deny at admission via the shared reject helper, which base tests cover).
+    extraContext: *extracontextSpoahubEnabled
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-hostile
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check\nURLWN"
+              nginx.ingress.kubernetes.io/auth-signin: "https://login.example/start\nSIGNINWN"
+              nginx.ingress.kubernetes.io/auth-method: "POST\nMETHODWN"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: auth-hostile.example.com
+                http: *httpApi
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: map:auth-url.map, pattern: "URLWN"}
+      - {type: not_contains, target: map:auth-signin.map, pattern: "SIGNINWN"}
+      - {type: not_contains, target: map:auth-method.map, pattern: "METHODWN"}
+
+  test-nginx-ingress-external-auth-response-headers-injection-fails-closed:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: A trailing control character in auth-response-headers fails the render via the map snippet's own local guard. The companion header-name check strips per-name whitespace before validating, so it passes a trailing newline that would still reach the map value raw — the local line guard is what catches it.
+    extraContext: *extracontextSpoahubEnabled
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hdr-attacker
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+              nginx.ingress.kubernetes.io/auth-response-headers: "X-Foo\n"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: attacker.example.com
+                http: *httpApi
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "inject an entry into the auth response-headers map"}
+
+  test-nginx-ingress-auth-realm-escapes-quote:
+    description: A double quote in auth-realm is escaped (not a breakout), so the emitted realm stays one valid HAProxy quoted string.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {namespace: default, name: realm-auth}
+          data:
+            auth: YWRtaW46JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: realm-quote
+            annotations:
+              nginx.ingress.kubernetes.io/auth-type: "basic"
+              nginx.ingress.kubernetes.io/auth-secret: "realm-auth"
+              nginx.ingress.kubernetes.io/auth-realm: 'Zone"members'
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: realm.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "http-request auth realm \"Zone"}
+
+  test-nginx-ingress-auth-realm-injection-fails:
+    description: A control character in auth-realm fails closed — the basic-auth backend directive is never emitted from a broken realm.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {namespace: default, name: realm-auth}
+          data:
+            auth: YWRtaW46JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: realm-attacker
+            annotations:
+              nginx.ingress.kubernetes.io/auth-type: "basic"
+              nginx.ingress.kubernetes.io/auth-secret: "realm-auth"
+              nginx.ingress.kubernetes.io/auth-realm: "Zone\nhttp-request set-header X-Pwned 1"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: realm.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "break the auth realm directive"}

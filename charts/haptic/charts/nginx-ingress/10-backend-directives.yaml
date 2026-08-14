@@ -3,6 +3,8 @@ templateSnippets:
   backend-directives-670-nginx-ingress-session-affinity:
     template: |
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -12,6 +14,8 @@ templateSnippets:
           {%- var cookieName = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-name"] %}
           {%- if cookieName == "" %}{%- cookieName = "INGRESSCOOKIE" %}{%- end %}
           {%- var cookiePath = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-path"] %}
+          {%- var scInj = ConfigInjectionKind(cookieName, "token") %}
+          {%- if scInj == "" && cookiePath != "" %}{%- scInj = ConfigInjectionKind(cookiePath, "token") %}{%- end %}
           {%- var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic" %}
           {%- if cookiePath != "" %}
             {#- HAProxy's `cookie` has no bare `path` keyword; the path rides on `attr Path=`. -#}
@@ -51,9 +55,13 @@ templateSnippets:
           {%- if cookieHash != "" %}
       # Warning: nginx.ingress.kubernetes.io/session-cookie-hash={{ cookieHash }} on Ingress {{ key }} is not configurable in HAProxy — dynamic cookies always hash via dynamic-cookie-key.
           {%- end %}
+          {%- if scInj != "" %}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' session-cookie-name/-path contains " + scInj + ", which would break the backend cookie directive; session affinity is not applied. Remove whitespace and control characters from the value.") -}}
+          {%- else %}
       # nginx-ingress/session-affinity ({{ key }})
       {{ cookieDir }}
       dynamic-cookie-key {{ sha256(key) }}
+          {%- end %}
         {%- end %}
       {%- end -%}
 
@@ -317,6 +325,7 @@ templateSnippets:
   backend-directives-770-nginx-ingress-rate-limiting:
     template: |
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {#- One stick-table per backend, and it stores each data type once: http_req_rate(1s) and
           http_req_rate(60s) can't coexist ("store option 'http_req_rate' already enabled, ignored"),
           so limit-rps and limit-rpm are mutually exclusive. conn_cur is a separate data type. -#}
@@ -327,6 +336,22 @@ templateSnippets:
         {%- var limitRps = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rps"] %}
         {%- var limitRpm = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rpm"] %}
         {%- var limitConn = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-connections"] %}
+        {#- The threshold reaches an unquoted sc_http_req_rate/sc_conn_cur ACL operand;
+            a malformed value must fail rather than silently ship without the limit. Only
+            the value that is actually emitted is checked (rps > rpm > connections). -#}
+        {%- var rlInj = "" %}
+        {%- var rlField = "" %}
+        {%- var rlVal = "" %}
+        {%- if limitRps != "" %}
+          {%- rlInj = ConfigInjectionKind(limitRps, "token") %}{%- rlField = "limit-rps" %}{%- rlVal = limitRps %}
+        {%- else if limitRpm != "" %}
+          {%- rlInj = ConfigInjectionKind(limitRpm, "token") %}{%- rlField = "limit-rpm" %}{%- rlVal = limitRpm %}
+        {%- else if limitConn != "" %}
+          {%- rlInj = ConfigInjectionKind(limitConn, "token") %}{%- rlField = "limit-connections" %}{%- rlVal = limitConn %}
+        {%- end %}
+        {%- if rlInj != "" %}
+          {{- fail("Invalid value '" + rlVal + "' for annotation 'nginx.ingress.kubernetes.io/" + rlField + "' on Ingress '" + key + "': contains " + rlInj + ", which would break the rate-limit ACL. Use a plain integer.") -}}
+        {%- end %}
         {%- var limitWhitelist = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-whitelist"] %}
         {%- var exempt = "" %}
         {%- if limitWhitelist != "" %}
