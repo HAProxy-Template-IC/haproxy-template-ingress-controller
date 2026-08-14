@@ -1,10 +1,12 @@
 package commentator
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	ctlevents "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 )
@@ -78,6 +80,8 @@ func TestRingBuffer_FindByType(t *testing.T) {
 
 	configEvents := rb.FindByTypeInWindow("config.parsed", longWindow)
 	assert.Len(t, configEvents, 2)
+	_, correlated := configEvents[0].(ctlevents.CorrelatedEvent)
+	assert.False(t, correlated)
 
 	validatedEvents := rb.FindByTypeInWindow("config.validated", longWindow)
 	assert.Len(t, validatedEvents, 1)
@@ -146,34 +150,25 @@ func TestRingBuffer_TypeIndex_LazyCleanup(t *testing.T) {
 	assert.Len(t, type2Events, 3)
 }
 
-func TestRingBuffer_Concurrent(t *testing.T) {
-	rb := NewRingBuffer(100)
+func TestRingBuffer_ConcurrentWraparound(t *testing.T) {
+	const capacity = 31
+	rb := NewRingBuffer(capacity)
 
-	// Spawn multiple goroutines adding events
-	done := make(chan bool)
-	for range 5 {
+	var writers sync.WaitGroup
+	for range 8 {
+		writers.Add(1)
 		go func() {
-			for range 20 {
-				rb.Add(mockEvent{
-					eventType: "concurrent.test",
-					timestamp: time.Now(),
-				})
+			defer writers.Done()
+			for range 100 {
+				rb.Add(mockEvent{eventType: "concurrent.test", timestamp: time.Now()})
+				_ = rb.FindByTypeInWindow("concurrent.test", longWindow)
 			}
-			done <- true
 		}()
 	}
+	writers.Wait()
 
-	// Wait for all goroutines
-	for range 5 {
-		<-done
-	}
-
-	// Should have 100 events (capacity limit)
-	assert.Equal(t, 100, rb.size)
-
-	// Should be able to find them
-	events := rb.FindByTypeInWindow("concurrent.test", longWindow)
-	assert.NotNil(t, events)
+	assert.Equal(t, capacity, rb.size)
+	assert.Len(t, rb.FindByTypeInWindow("concurrent.test", longWindow), capacity)
 }
 
 func TestRingBuffer_FindByCorrelationID(t *testing.T) {
@@ -197,6 +192,12 @@ func TestRingBuffer_FindByCorrelationID(t *testing.T) {
 
 	found := rb.FindByCorrelationID(correlationID, 0) // 0 means no limit
 	assert.Len(t, found, 2)
+	assert.Equal(t, event2.EventType(), found[0].EventType())
+	projected, ok := found[0].(ctlevents.CorrelatedEvent)
+	require.True(t, ok)
+	assert.Equal(t, event2.EventID(), projected.EventID())
+	assert.Equal(t, event2.CorrelationID(), projected.CorrelationID())
+	assert.Equal(t, event2.CausationID(), projected.CausationID())
 
 	// Find with max count = 1
 	found = rb.FindByCorrelationID(correlationID, 1)

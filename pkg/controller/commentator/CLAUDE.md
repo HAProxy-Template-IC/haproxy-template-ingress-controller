@@ -35,13 +35,12 @@ EventCommentator
 
 ## Event Correlation
 
-The internal `*RingBuffer` (in `ring_buffer.go`, *not* `pkg/events/ringbuffer`) exposes three lookup methods:
+The internal `*RingBuffer` (in `ring_buffer.go`, *not* `pkg/events/ringbuffer`) retains metadata projections rather than event payloads and exposes two lookup methods:
 
-- `FindByType(eventType)` — every entry of the given type, oldest-first.
-- `FindByTypeInWindow(eventType, window)` — entries of the given type whose timestamp falls within `window` of now.
+- `FindByTypeInWindow(eventType, window)` — entries of the given type whose timestamp falls within `window` of now, newest-first.
 - `FindByCorrelationID(correlationID, maxCount)` — entries sharing a correlation ID.
 
-All of them live on the private `ringBuffer` field; insight code inside this package uses them directly. There is no `FindLast` — use `FindByTypeInWindow` and pick the most recent entry instead.
+Both live on the private `ringBuffer` field and return newest-first. Add scalar fields to `historyEntry` only when correlation logic or the event-interface projection consumes them; never retain an event, pointer, slice, map, or payload-derived backing string.
 
 ```go
 // Example: how long since the previous reconciliation started?
@@ -49,7 +48,7 @@ All of them live on the private `ringBuffer` field; insight code inside this pac
 const window = 60 * time.Second
 prior := ec.ringBuffer.FindByTypeInWindow(events.EventTypeReconciliationStarted, window)
 if len(prior) > 0 {
-    last := prior[len(prior)-1]
+    last := prior[0]
     timeSince := event.Timestamp().Sub(last.Timestamp())
     logger.Info("reconciliation started",
         "since_last", timeSince,

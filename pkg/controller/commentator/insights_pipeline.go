@@ -71,10 +71,10 @@ func (ec *EventCommentator) reconciliationInsight(event busevents.Event, attrs [
 	switch e := event.(type) {
 	case *events.ReconciliationTriggeredEvent:
 		// Correlate: when was the last reconciliation?
-		recentReconciliations := ec.ringBuffer.FindByTypeInWindow(events.EventTypeReconciliationCompleted, reconciliationLookbackWindow)
+		recentReconciliations := ec.ringBuffer.findByTypeInWindow(events.EventTypeReconciliationCompleted, reconciliationLookbackWindow)
 		var correlationMsg string
 		if len(recentReconciliations) > 0 {
-			timeSince := event.Timestamp().Sub(recentReconciliations[0].Timestamp())
+			timeSince := event.Timestamp().Sub(recentReconciliations[0].timestamp)
 			correlationMsg = fmt.Sprintf(" (previous reconciliation was %v ago)", timeSince.Round(time.Second))
 		}
 		return fmt.Sprintf("Reconciliation triggered: %s%s", e.Reason, correlationMsg),
@@ -86,10 +86,10 @@ func (ec *EventCommentator) reconciliationInsight(event busevents.Event, attrs [
 
 	case *events.ReconciliationCompletedEvent:
 		// Correlate: find the ReconciliationStartedEvent
-		startEvents := ec.ringBuffer.FindByTypeInWindow(events.EventTypeReconciliationStarted, startEventLookbackWindow)
+		startEvents := ec.ringBuffer.findByTypeInWindow(events.EventTypeReconciliationStarted, startEventLookbackWindow)
 		var phaseInfo string
 		if len(startEvents) > 0 {
-			totalDuration := event.Timestamp().Sub(startEvents[0].Timestamp())
+			totalDuration := event.Timestamp().Sub(startEvents[0].timestamp)
 			phaseInfo = fmt.Sprintf(" (total cycle: %v, reconciliation: %dms)",
 				totalDuration.Round(time.Millisecond), e.DurationMs)
 		} else {
@@ -191,7 +191,7 @@ func (ec *EventCommentator) podInsight(event busevents.Event, attrs []any) (insi
 	switch e := event.(type) {
 	case *events.HAProxyPodsDiscoveredEvent:
 		// Correlate: was this a change?
-		recentDiscoveries := ec.ringBuffer.FindByTypeInWindow(events.EventTypeHAProxyPodsDiscovered, discoveryLookbackWindow)
+		recentDiscoveries := ec.ringBuffer.findByTypeInWindow(events.EventTypeHAProxyPodsDiscovered, discoveryLookbackWindow)
 		var changeInfo string
 		if len(recentDiscoveries) > 1 {
 			// Compare with previous discovery

@@ -117,10 +117,8 @@ func (ec *EventCommentator) Start(ctx context.Context) error {
 
 // processEvent handles a single event: adds to buffer and logs with domain insights.
 func (ec *EventCommentator) processEvent(event busevents.Event) {
-	// Add to ring buffer first (for correlation), filtering heavyweight events
-	if shouldStoreInBuffer(event) {
-		ec.ringBuffer.Add(event)
-	}
+	// Add to ring buffer first so the current event participates in correlation.
+	ec.ringBuffer.Add(event)
 
 	// Generate domain-aware log message with correlation
 	ec.logWithInsight(event)

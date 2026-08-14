@@ -98,23 +98,23 @@ func (ec *EventCommentator) computeReconciliationSummary(
 	}
 
 	// Find correlated events to extract phase timings and timestamps
-	correlatedEvents := ec.ringBuffer.FindByCorrelationID(correlationID, 0)
+	correlatedEvents := ec.ringBuffer.findByCorrelationID(correlationID, 0)
 
 	var triggerTimestamp time.Time
 	var renderTimestamp time.Time
 	var validateTimestamp time.Time
 
-	for _, evt := range correlatedEvents {
-		switch te := evt.(type) {
-		case *events.ReconciliationTriggeredEvent:
-			summary.Trigger = te.Reason
-			triggerTimestamp = te.Timestamp()
-		case *events.TemplateRenderedEvent:
-			summary.RenderMs = te.DurationMs
-			renderTimestamp = te.Timestamp()
-		case *events.ValidationCompletedEvent:
-			summary.ValidateMs = te.DurationMs
-			validateTimestamp = te.Timestamp()
+	for _, entry := range correlatedEvents {
+		switch entry.eventType {
+		case events.EventTypeReconciliationTriggered:
+			summary.Trigger = entry.trigger
+			triggerTimestamp = entry.timestamp
+		case events.EventTypeTemplateRendered:
+			summary.RenderMs = entry.durationMs
+			renderTimestamp = entry.timestamp
+		case events.EventTypeValidationCompleted:
+			summary.ValidateMs = entry.durationMs
+			validateTimestamp = entry.timestamp
 		}
 	}
 
@@ -153,18 +153,4 @@ func (ec *EventCommentator) computeReconciliationSummary(
 	summary.TotalQueueMs = summary.TriggerToRenderQueueMs + summary.RenderToValidateQueueMs + summary.ValidateToDeployQueueMs
 
 	return summary
-}
-
-// shouldStoreInBuffer determines if an event should be stored in the ring buffer.
-// Heavyweight events containing large payloads are filtered out to reduce memory usage.
-// These events are still logged but not retained in the ring buffer.
-func shouldStoreInBuffer(event busevents.Event) bool {
-	switch event.(type) {
-	case *events.TemplateRenderedEvent,
-		*events.ValidationCompletedEvent,
-		*events.DeploymentScheduledEvent:
-		return false
-	default:
-		return true
-	}
 }
