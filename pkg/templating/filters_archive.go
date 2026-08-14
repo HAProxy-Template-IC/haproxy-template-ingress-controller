@@ -152,15 +152,10 @@ func archiveEntryPath(name string) (string, error) {
 	if name == "" {
 		return "", errors.New("untar_gz: archive contains an entry with an empty name")
 	}
-	if path.IsAbs(name) || strings.HasPrefix(name, `\`) || strings.Contains(name, `:\`) {
-		return "", fmt.Errorf("untar_gz: archive entry %q is an absolute path", name)
+	if err := rejectUncontainedPath("untar_gz: archive entry", name); err != nil {
+		return "", err
 	}
-
-	cleaned := path.Clean(name)
-	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", fmt.Errorf("untar_gz: archive entry %q escapes the archive root", name)
-	}
-	return cleaned, nil
+	return path.Clean(name), nil
 }
 
 // readArchiveEntry reads one entry, refusing to allocate past the limit.

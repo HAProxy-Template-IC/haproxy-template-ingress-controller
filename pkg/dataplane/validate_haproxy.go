@@ -154,26 +154,46 @@ func clearDirectory(dir string) error {
 	return nil
 }
 
-// resolveAuxiliaryFilePath determines the full path for an auxiliary file.
+// resolveAuxiliaryFilePath determines the full path for an auxiliary file and
+// rejects any path that escapes the base directory it resolves under.
 // It handles three cases:
 // - Absolute paths: Extract filename and use fallback directory (for validation with temp directories).
 // - Relative paths with subdirectories (e.g., "maps/hosts.map"): resolved relative to config directory.
 // - Simple filenames: written to the specified fallback directory.
-func resolveAuxiliaryFilePath(filePath, configDir, fallbackDir string) string {
-	if filepath.IsAbs(filePath) {
+func resolveAuxiliaryFilePath(filePath, configDir, fallbackDir string) (string, error) {
+	var base, resolved string
+	switch {
+	case filepath.IsAbs(filePath):
 		// Absolute path - extract filename and use fallback directory
 		// This allows validation to work with temp directories instead of production paths
 		// Example: /etc/haproxy/ssl/cert.pem → <tmpdir>/ssl/cert.pem
-		return filepath.Join(fallbackDir, filepath.Base(filePath))
-	}
-
-	if strings.Contains(filePath, string(filepath.Separator)) {
+		base, resolved = fallbackDir, filepath.Join(fallbackDir, filepath.Base(filePath))
+	case strings.Contains(filePath, string(filepath.Separator)):
 		// Relative path with subdirectory - resolve relative to config directory
-		return filepath.Join(configDir, filePath)
+		base, resolved = configDir, filepath.Join(configDir, filePath)
+	default:
+		// Just a filename - write to fallback directory
+		base, resolved = fallbackDir, filepath.Join(fallbackDir, filePath)
 	}
 
-	// Just a filename - write to fallback directory
-	return filepath.Join(fallbackDir, filePath)
+	if err := ensureContainedPath(base, resolved); err != nil {
+		return "", fmt.Errorf("auxiliary file %q: %w", filePath, err)
+	}
+	return resolved, nil
+}
+
+// ensureContainedPath returns an error when target resolves outside base.
+// Both are compared after cleaning, so a "../" climb is caught even when it is
+// buried mid-path or expressed as a lone "..".
+func ensureContainedPath(base, target string) error {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return fmt.Errorf("resolving path under %q: %w", base, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path %q escapes %q", target, base)
+	}
+	return nil
 }
 
 // writeFileWithDir writes a file to disk, creating parent directories if needed.
@@ -190,6 +210,16 @@ func writeFileWithDir(path, content, fileType string) error {
 	return nil
 }
 
+// resolveAndWriteAuxiliaryFile resolves filePath under its base directory,
+// rejecting any path that escapes it, then writes the content to disk.
+func resolveAndWriteAuxiliaryFile(filePath, content, configDir, fallbackDir, label string) error {
+	resolved, err := resolveAuxiliaryFilePath(filePath, configDir, fallbackDir)
+	if err != nil {
+		return err
+	}
+	return writeFileWithDir(resolved, content, label)
+}
+
 // writeAuxiliaryFiles writes all auxiliary files to their respective directories.
 func writeAuxiliaryFiles(auxFiles *AuxiliaryFiles, paths *ValidationPaths) error {
 	if auxFiles == nil {
@@ -200,8 +230,7 @@ func writeAuxiliaryFiles(auxFiles *AuxiliaryFiles, paths *ValidationPaths) error
 
 	// Write map files
 	for _, mapFile := range auxFiles.MapFiles {
-		mapPath := resolveAuxiliaryFilePath(mapFile.Path, configDir, paths.MapsDir)
-		if err := writeFileWithDir(mapPath, mapFile.Content, "map file "+mapFile.Path); err != nil {
+		if err := resolveAndWriteAuxiliaryFile(mapFile.Path, mapFile.Content, configDir, paths.MapsDir, "map file "+mapFile.Path); err != nil {
 			return err
 		}
 	}
@@ -215,24 +244,21 @@ func writeAuxiliaryFiles(auxFiles *AuxiliaryFiles, paths *ValidationPaths) error
 		if pathToUse == "" {
 			pathToUse = file.Filename
 		}
-		filePath := resolveAuxiliaryFilePath(pathToUse, configDir, paths.GeneralStorageDir)
-		if err := writeFileWithDir(filePath, file.Content, "general file "+pathToUse); err != nil {
+		if err := resolveAndWriteAuxiliaryFile(pathToUse, file.Content, configDir, paths.GeneralStorageDir, "general file "+pathToUse); err != nil {
 			return err
 		}
 	}
 
 	// Write SSL certificates
 	for _, cert := range auxFiles.SSLCertificates {
-		certPath := resolveAuxiliaryFilePath(cert.Path, configDir, paths.SSLCertsDir)
-		if err := writeFileWithDir(certPath, cert.Content, "SSL certificate "+cert.Path); err != nil {
+		if err := resolveAndWriteAuxiliaryFile(cert.Path, cert.Content, configDir, paths.SSLCertsDir, "SSL certificate "+cert.Path); err != nil {
 			return err
 		}
 	}
 
 	// Write SSL CA files (stored in same directory as SSL certificates)
 	for _, caFile := range auxFiles.SSLCaFiles {
-		caPath := resolveAuxiliaryFilePath(caFile.Path, configDir, paths.SSLCertsDir)
-		if err := writeFileWithDir(caPath, caFile.Content, "SSL CA file "+caFile.Path); err != nil {
+		if err := resolveAndWriteAuxiliaryFile(caFile.Path, caFile.Content, configDir, paths.SSLCertsDir, "SSL CA file "+caFile.Path); err != nil {
 			return err
 		}
 	}
@@ -240,8 +266,7 @@ func writeAuxiliaryFiles(auxFiles *AuxiliaryFiles, paths *ValidationPaths) error
 	// Write CRT-list files
 	// Use CRTListDir which may differ from SSLCertsDir on HAProxy < 3.2
 	for _, crtList := range auxFiles.CRTListFiles {
-		crtListPath := resolveAuxiliaryFilePath(crtList.Path, configDir, paths.CRTListDir)
-		if err := writeFileWithDir(crtListPath, crtList.Content, "CRT-list file "+crtList.Path); err != nil {
+		if err := resolveAndWriteAuxiliaryFile(crtList.Path, crtList.Content, configDir, paths.CRTListDir, "CRT-list file "+crtList.Path); err != nil {
 			return err
 		}
 	}
