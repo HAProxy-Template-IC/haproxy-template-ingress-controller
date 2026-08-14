@@ -173,7 +173,7 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	// Utility functions
 	decl[FuncCeil] = scriggoCeil
 	decl[FuncSeq] = scriggoSeq
-	decl[FuncRegexSearch] = scriggoRegexSearch
+	decl[FuncRegexSearch] = newScriggoRegexSearch()
 	decl[FuncIsDigit] = scriggoIsDigit
 	decl[FuncSanitizeRegex] = scriggoSanitizeRegex
 	decl[FuncTitle] = scriggoTitle

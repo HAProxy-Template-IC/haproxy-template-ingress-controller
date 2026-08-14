@@ -319,22 +319,25 @@ func scriggoSanitizeRegex(s any) string {
 	return regexp.QuoteMeta(str)
 }
 
-// scriggoRegexSearch checks if a value matches a regex pattern.
+// newScriggoRegexSearch returns a regex matcher with an engine-scoped cache.
 // Both string parameters are converted to string using lenient type conversion.
 // Returns true if pattern is found in string.
 //
 // Usage in Scriggo templates:
 //
 //	{% if regex_search(name, "ssl.*passthrough") %}
-func scriggoRegexSearch(env native.Env, s, pattern any) bool {
-	str := scriggoToString(s)
-	patternStr := scriggoToString(pattern)
-	re, err := regexp.Compile(patternStr)
-	if err != nil {
-		env.Fatal(fmt.Errorf("regex_search: invalid pattern %q: %w", patternStr, err))
-		return false
+func newScriggoRegexSearch() func(native.Env, any, any) bool {
+	cache := &boundedRegexCache[*regexp.Regexp]{maxEntries: regexSearchCacheEntries}
+	return func(env native.Env, s, pattern any) bool {
+		str := scriggoToString(s)
+		patternStr := scriggoToString(pattern)
+		re, err := cache.compile(patternStr, regexp.Compile)
+		if err != nil {
+			env.Fatal(fmt.Errorf("regex_search: invalid pattern %q: %w", patternStr, err))
+			return false
+		}
+		return re.MatchString(str)
 	}
-	return re.MatchString(str)
 }
 
 // scriggoIsDigit checks if a value contains only digits.

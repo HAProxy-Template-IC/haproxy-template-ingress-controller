@@ -255,6 +255,22 @@ THEN it SHALL return "Hello World".
 WHEN sanitize_regex is called with "api.example.com"
 THEN it SHALL return "api\\.example\\.com".
 
+### Requirement: Bounded Regex Search Compilation Cache
+
+Each engine SHALL retain a successful `regex_search` compilation when its pattern is at most 256 bytes, its bounded complexity cost is at most 256, and the cache still has capacity when the decision is committed. Empty, no-match, zero-width, and wildcard operators cost one; literal cost is `max(1, 2 * rune count)`; character-class cost is one plus its rune-table size; capture and star add two to their child; plus and question add one; concatenation sums its children; alternation also adds one per branch after the first; finite repetition costs `max * child + max - min`; zero-minimum unbounded repetition adds two to its child; and positive-minimum unbounded repetition costs `min * child + 1`. All arithmetic SHALL saturate above 256.
+
+The engine SHALL retain at most 64 `regex_search` decisions. Invalid or longer patterns and patterns encountered after the cache reaches capacity SHALL use the existing compile path without being retained. A valid high-complexity pattern MAY retain its bounded key and a rejection decision, but not its compiled program. Invalid patterns SHALL still abort the render.
+
+#### Scenario: Repeated patterns preserve results
+
+- **WHEN** `regex_search` receives a pattern whose successful compilation was admitted to its cache
+- **THEN** later calls SHALL return the same result as a fresh compilation while the engine reuses that compiled pattern.
+
+#### Scenario: Uncached patterns preserve errors
+
+- **WHEN** a `regex_search` pattern is invalid, longer than 256 bytes, has a bounded complexity cost above 256, or arrives after the cache reaches capacity
+- **THEN** compilation and error behavior SHALL remain unchanged, and the engine SHALL NOT retain its compiled program.
+
 ### Requirement: String Aliases and Fused Accessors
 
 Alongside the strings_* forms, the engine SHALL register the short aliases strip and trim (whitespace removal), toLower, replace (overriding the builtin to support the three-argument form that replaces all occurrences), hasPrefix, and hasSuffix. The engine SHALL also provide dig_string, fusing the dig-fallback-tostring chain into one call — `value | dig_string(defaultStr, keys...)` SHALL be equivalent to `value | dig(keys...) | fallback(defaultStr) | tostring()` — for string access at polymorphic value boundaries such as annotation lookups.

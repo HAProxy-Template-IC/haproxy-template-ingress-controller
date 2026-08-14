@@ -166,6 +166,8 @@ The engine depends on a forked Scriggo (`gitlab.com/haproxy-haptic/scriggo`) con
 
 Nothing in here expects vanilla Scriggo; don't swap the dep for upstream without running the template benchmarks.
 
+Each engine owns the bounded `regex_search` cache, so concurrent renders share compiled patterns and replacing the engine makes them eligible for garbage collection.
+
 ## Sandbox Posture
 
 Templates come from `HAProxyTemplateConfig` / `HAProxyTemplateLibrary` objects and execute in-process on the controller's goroutines — including on the admission path, before an operator has necessarily reviewed them. What that execution can and cannot reach:

@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `regex_search` reuses a bounded set of compiled patterns per engine instead of recompiling repeated patterns on every call.
 - The template engine releases what a pooled VM held from its previous render instead of truncating around it, so a render's object graph is no longer pinned for the process lifetime. On a 1000-route churn this cuts peak RSS from 2603-3527 MiB to 1476 MiB and retained heap from 600-1096 MiB to 78 MiB, while rendering 7.5% faster — fewer live references is less for the collector to mark.
 - Watched-resource admission reuses the reconciliation pipeline's compiled templates and caches only its validation verdict instead of retaining a second parsed HAProxy configuration.
 - Endpoint caches share one parsed desired HAProxy configuration after post-reload comparison proves equivalence, instead of retaining an equivalent parsed read-back per pod.
