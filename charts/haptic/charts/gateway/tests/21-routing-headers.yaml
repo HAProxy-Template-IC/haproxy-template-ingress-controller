@@ -382,3 +382,213 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "\\{ req\\.hdr\\(X-Special-Chars\\) \"value-with-dashes_and_underscores\\.dots\" \\}"
+
+  # Frontend ACL injection guard (#155). Match values land inside double-quoted
+  # HAProxy ACL patterns, so a " closes the pattern and appends attacker ACL terms
+  # (routing hijack) while a newline splits the line into a new directive. Gateway API
+  # does not charset-validate RegularExpression / header / query values, and the
+  # injected content is valid config that haproxy -c accepts — so the value is guarded
+  # before emission: denied at admission, warned-and-skipped on reconcile.
+  test-httproute-header-value-injection-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: A double quote in an HTTPRoute header match value is skipped; the smuggled ACL term never reaches the frontend while a valid sibling route renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web, namespace: default}
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: hdr-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - headers:
+                      - {type: Exact, name: X-Version, value: "v1\" } || { req.hdr(X-Pwned) -m found } || { path -m reg \"x"}
+                backendRefs:
+                  - {name: web, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: hdr-good, namespace: default}
+          spec:
+            hostnames:
+              - good.example.com
+            rules:
+              - matches:
+                  - headers:
+                      - {type: Exact, name: X-Version, value: ok}
+                backendRefs:
+                  - {name: web, port: 80}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "\\{ req\\.hdr\\(X-Version\\) \"ok\" \\}"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "X-Pwned"}
+
+  test-httproute-header-value-injection-admission-rejected:
+    requires: [httproutes]
+    description: A newline in an HTTPRoute header match value is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web, namespace: default}
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: hdr-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - headers:
+                      - {type: Exact, name: X-Version, value: "v1\nhttp-request set-header X-Pwned 1"}
+                backendRefs:
+                  - {name: web, port: 80}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "break out of its routing ACL"}
+
+  test-httproute-query-value-injection-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: A double quote in an HTTPRoute query-param match value is skipped; the smuggled ACL term never reaches the frontend while a valid sibling route renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web, namespace: default}
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: qp-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - queryParams:
+                      - {type: Exact, name: version, value: "v2\" } || { urlp(qpwned) -m found } || { path -m reg \"x"}
+                backendRefs:
+                  - {name: web, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: qp-good, namespace: default}
+          spec:
+            hostnames:
+              - good.example.com
+            rules:
+              - matches:
+                  - queryParams:
+                      - {type: Exact, name: version, value: ok}
+                backendRefs:
+                  - {name: web, port: 80}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "\\{ urlp\\(version\\) \"ok\" \\}"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "qpwned"}
+
+  test-httproute-query-value-injection-admission-rejected:
+    requires: [httproutes]
+    description: A newline in an HTTPRoute query-param match value is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web, namespace: default}
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: qp-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - queryParams:
+                      - {type: Exact, name: version, value: "v2\nhttp-request set-header X-Pwned 1"}
+                backendRefs:
+                  - {name: web, port: 80}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "break out of its routing ACL"}
+
+  # The path value only reaches a frontend ACL for a path-only match whose HTTPRoute
+  # is "advanced" (some sibling match keys on a header/method/query). The sibling
+  # header match below makes the route advanced; the path-only RegularExpression match
+  # then emits `{ path -m reg "<value>" }`, which is where a " breaks out.
+  test-httproute-regex-path-frontend-injection-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: A double quote in a path-only RegularExpression match is skipped in the frontend chain while the advanced sibling match still renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web, namespace: default}
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: path-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - path: {type: RegularExpression, value: "^/a\" } || { path -m beg /ppwned } || { path -m reg \"z"}
+                  - headers:
+                      - {type: Exact, name: X-Adv, value: adv}
+                backendRefs:
+                  - {name: web, port: 80}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "\\{ req\\.hdr\\(X-Adv\\) \"adv\" \\}"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "ppwned"}
+
+  test-httproute-regex-path-frontend-injection-admission-rejected:
+    requires: [httproutes]
+    description: A double quote in a path-only RegularExpression match (advanced route) is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web, namespace: default}
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: path-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - path: {type: RegularExpression, value: "^/a\"x"}
+                  - headers:
+                      - {type: Exact, name: X-Adv, value: adv}
+                backendRefs:
+                  - {name: web, port: 80}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "break out of its routing ACL"}

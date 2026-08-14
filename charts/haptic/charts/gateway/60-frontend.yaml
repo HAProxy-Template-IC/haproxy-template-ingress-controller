@@ -169,6 +169,8 @@ templateSnippets:
   frontend-matchers-advanced-500-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-value-injection" for ConfigValueInjection -%}
       {{- "" }}
       {# Non-stripping form: keeps the blank line before the section marker. #}
       # gateway/frontend-matchers-advanced-500-gateway
@@ -267,6 +269,28 @@ templateSnippets:
             most-specific path's rule IDs, so a path-only catch-all would lose to a
             more-specific sibling whose sub-matchers failed, but the spec wants fallback. -#}
         {%- var isPathOnly = !hasMethod && len(headerSpecs) == 0 && len(paramSpecs) == 0 && !hasGrpcMethod %}
+
+        {#- #155: match values land inside double-quoted HAProxy ACL patterns below; a "
+            breaks out and appends ACL terms (routing hijack), a control char splits the
+            line into a new directive. Names and Exact gRPC service/method are token-charset
+            validated by the Gateway API, but every RegularExpression value and header/query
+            value is arbitrary, so check the values that reach an emitted pattern. The path
+            value is only emitted for path-only rules (otherwise the derived conflictGroup
+            matches). -#}
+        {%- var matchValues = []any{} %}
+        {%- if isPathOnly %}{%- matchValues = append(matchValues, tostring(pathValue)) %}{%- end %}
+        {%- for _, hSpec := range headerSpecs %}{%- var hm map[string]any = hSpec %}{%- matchValues = append(matchValues, tostring(hm["value"])) %}{%- end %}
+        {%- for _, pSpec := range paramSpecs %}{%- var pm map[string]any = pSpec %}{%- matchValues = append(matchValues, tostring(pm["value"])) %}{%- end %}
+        {%- if hasGrpcMethod %}{%- matchValues = append(matchValues, tostring(grpcService), tostring(grpcMethodName)) %}{%- end %}
+        {%- var matchInjection = "" %}
+        {%- for _, mv := range matchValues %}
+          {%- if matchInjection == "" %}{%- matchInjection = ConfigValueInjection(tostring(mv)) %}{%- end %}
+        {%- end %}
+        {%- if matchInjection != "" %}
+          {{- WebhookRejectOrWarn(routeInfo["route"], "InvalidMatch", riKind + " " + riNs + "/" + riName + " has a match value containing " + matchInjection + ", which would break out of its routing ACL; the route is not applied. Remove double quotes and control characters from the match value.") -}}
+          {%- continue %}
+        {%- end %}
+
         {%- var conditions = []any{"!{ var(txn.gw_rule_id) -m found }"} %}
 
         {%- if isPathOnly %}
@@ -770,6 +794,8 @@ templateSnippets:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {%- import "util-route-condition" for RouteIdCondition -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-value-injection" for ConfigValueInjection -%}
       {{- render "util-gateway-analysis" -}}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
       {%- if gaVal == nil %}{% return %}{% end %}
@@ -830,13 +856,26 @@ templateSnippets:
               {%- var pathExpr = "%[path]" %}
               {%- if pathMod != nil %}
                 {%- var pathType = pathMod | dig("type") %}
+                {#- #155: replaceFullPath / replacePrefixMatch are arbitrary strings, and a
+                    RegularExpression-matched route's pathValue is too; a " or control char
+                    would break out of the emitted regsub/location directive below. -#}
+                {%- var redirInjection = "" %}
+                {%- if pathType == "ReplaceFullPath" %}
+                  {%- redirInjection = ConfigValueInjection(tostring(pathMod | dig("replaceFullPath"))) %}
+                {%- else if pathType == "ReplacePrefixMatch" %}
+                  {%- redirInjection = ConfigValueInjection(tostring(pathMod | dig_string("", "replacePrefixMatch"))) %}
+                  {%- if redirInjection == "" %}{%- redirInjection = ConfigValueInjection(tostring(routeInfo.(map[string]any)["pathValue"])) %}{%- end %}
+                {%- end %}
+                {%- if redirInjection != "" %}
+                  {{- WebhookRejectOrWarn(routeInfo.(map[string]any)["route"], "InvalidRedirect", "HTTPRoute RequestRedirect path value contains " + redirInjection + ", which would break out of the redirect directive; the redirect is not applied. Remove double quotes and control characters.") -}}
+                  {%- continue %}
+                {%- end %}
                 {%- if pathType == "ReplaceFullPath" %}
                   {%- pathExpr = (pathMod | dig("replaceFullPath") | tostring()) %}
                 {%- else if pathType == "ReplacePrefixMatch" %}
                   {%- var matchPrefix = tostring(routeInfo.(map[string]any)["pathValue"]) %}
                   {%- if matchPrefix == "" %}{%- matchPrefix = "/" %}{%- end %}
                   {%- var replacementPrefix = (pathMod | dig_string("", "replacePrefixMatch")) %}
-                  {#- The replacement needs no escaping: Gateway API enforces a path literal. -#}
                   {%- var escapedPrefix = sanitize_regex(matchPrefix) %}
       http-request set-var(txn.gw_redirect_path) path,regsub("^{{ escapedPrefix }}","{{ replacementPrefix }}") if {{ cond }}
                   {%- pathExpr = "%[var(txn.gw_redirect_path)]" %}
@@ -884,6 +923,8 @@ templateSnippets:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {%- import "util-route-condition" for RouteIdCondition -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-value-injection" for ConfigValueInjection -%}
       {{- render "util-gateway-analysis" -}}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
       {%- if gaVal == nil %}{% return %}{% end %}
@@ -928,7 +969,15 @@ templateSnippets:
               {%- if pathMod != nil %}
                 {%- var pathType = pathMod | dig("type") %}
                 {%- if pathType == "ReplaceFullPath" %}
-      http-request set-path "{{ pathMod | dig("replaceFullPath") }}" if {{ cond }}
+                  {#- #155: replaceFullPath is an arbitrary string (no Gateway-API charset
+                      validation); a " or control char breaks out of the set-path directive. -#}
+                  {%- var rfp = tostring(pathMod | dig("replaceFullPath")) %}
+                  {%- var rfpInjection = ConfigValueInjection(rfp) %}
+                  {%- if rfpInjection != "" %}
+                    {{- WebhookRejectOrWarn(routeInfo.(map[string]any)["route"], "InvalidURLRewrite", "HTTPRoute URLRewrite ReplaceFullPath value contains " + rfpInjection + ", which would break out of the set-path directive; the rewrite is not applied. Remove double quotes and control characters.") -}}
+                  {%- else %}
+      http-request set-path "{{ rfp }}" if {{ cond }}
+                  {%- end %}
                 {%- else if pathType == "ReplacePrefixMatch" %}
                   {%- var origPrefix = tostring(routeInfo.(map[string]any)["pathValue"]) %}
                   {%- if origPrefix == "" %}{%- origPrefix = "/" %}{%- end %}
@@ -938,6 +987,14 @@ templateSnippets:
                   {%- end %}
                   {%- var regexPrefix = origPrefix | replace(".", "\\.") | replace("/", "\\/") %}
                   {%- var rp = pathMod | dig("replacePrefixMatch") | tostring() %}
+                  {#- #155: replacePrefixMatch is arbitrary, and a RegularExpression-matched
+                      route's origPrefix is too; neither replace() nor sanitize_regex neutralizes
+                      a " or control char, which breaks out of the replace-path pattern. -#}
+                  {%- var rwInjection = ConfigValueInjection(rp) %}
+                  {%- if rwInjection == "" %}{%- rwInjection = ConfigValueInjection(origPrefix) %}{%- end %}
+                  {%- if rwInjection != "" %}
+                    {{- WebhookRejectOrWarn(routeInfo.(map[string]any)["route"], "InvalidURLRewrite", "HTTPRoute URLRewrite ReplacePrefixMatch value contains " + rwInjection + ", which would break out of the replace-path directive; the rewrite is not applied. Remove double quotes and control characters.") -}}
+                  {%- else %}
                   {#- The separator is added before the capture group, so the replacement's
                       own trailing slash must go or the result is "//rest". -#}
                   {%- var rpExact = rp %}
@@ -949,6 +1006,7 @@ templateSnippets:
                   {%- if rpStripped == "/" %}{%- rpStripped = "" %}{%- end %}
       http-request replace-path "^{{ regexPrefix }}/?\$" "{{ rpExact }}" if {{ cond }}
       http-request replace-path "^{{ regexPrefix }}/(.*)\$" "{{ rpStripped }}/\\1" if {{ cond }}
+                  {%- end %}
                 {%- end %}
               {%- end %}
             {%- end %}

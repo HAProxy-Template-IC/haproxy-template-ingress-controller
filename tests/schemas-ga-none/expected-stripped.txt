@@ -82,6 +82,8 @@ test-httproute-header-edge-cases
 test-httproute-header-exact
 test-httproute-header-matching-conformance-fixture
 test-httproute-header-regex
+test-httproute-header-value-injection-admission-rejected
+test-httproute-header-value-injection-reconcile-warns-and-skips
 test-httproute-invalid-regex
 test-httproute-listener-port-matching
 test-httproute-method-matching
@@ -94,8 +96,16 @@ test-httproute-path-only-route-resolved-by-map
 test-httproute-path-regex
 test-httproute-precedence
 test-httproute-query-params
+test-httproute-query-value-injection-admission-rejected
+test-httproute-query-value-injection-reconcile-warns-and-skips
 test-httproute-redirect-preserves-request-scheme
+test-httproute-redirect-regex-path-injection-admission-rejected
+test-httproute-redirect-regex-path-injection-reconcile-warns-and-skips
+test-httproute-redirect-replacefullpath-injection-reconcile-warns-and-skips
+test-httproute-redirect-replaceprefix-injection-admission-rejected
 test-httproute-regex-dollar-escaping
+test-httproute-regex-path-frontend-injection-admission-rejected
+test-httproute-regex-path-frontend-injection-reconcile-warns-and-skips
 test-httproute-regex-path-injection-reconcile-warns-and-skips
 test-httproute-request-header-modifier
 test-httproute-request-mirror-fraction
@@ -114,6 +124,9 @@ test-httproute-single-backend
 test-httproute-status-backend-not-found
 test-httproute-status-patches
 test-httproute-url-rewrite
+test-httproute-urlrewrite-replacefullpath-injection-admission-rejected
+test-httproute-urlrewrite-replacefullpath-injection-reconcile-warns-and-skips
+test-httproute-urlrewrite-replaceprefix-injection-admission-rejected
 test-httproute-weight-default
 test-httproute-weight-no-matches
 test-httproute-weight-two-backends

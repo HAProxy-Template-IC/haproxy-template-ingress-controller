@@ -137,6 +137,17 @@ templateSnippets:
         {{- value -}}
       {%- end macro %}
 
+  # A value interpolated into a double-quoted HAProxy ACL or directive breaks out of
+  # the config when it contains the closing quote (appends arbitrary ACL terms) or a
+  # control character (a newline splits the line into a new directive). Both are valid
+  # config that `haproxy -c` accepts, so callers reject the resource via
+  # WebhookRejectOrWarn. Returns the offending kind, or "" when the value is safe.
+  util-config-value-injection:
+    template: |-
+      {%- macro ConfigValueInjection(value string) string -%}
+        {%- if strings_contains(value, "\"") -%}a double quote{%- else if regex_search(value, "[[:cntrl:]]") -%}a control character{%- end -%}
+      {%- end macro -%}
+
   util-ingress-helpers:
     template: |
       {# Generates HAProxy host match condition for use in if-expressions.
