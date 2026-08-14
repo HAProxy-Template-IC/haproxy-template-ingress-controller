@@ -281,6 +281,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `nginx.ingress.kubernetes.io/proxy-ssl-secret` client certificates deploy under the correct path: the rendered `crt` value is the bare filename instead of an `ssl/`-prefixed path that doubled to `ssl/ssl/<name>` and made HAProxy reject the config.
 - The Gateway API template library no longer requires the Ingress library; its shared hostname-to-map-key helper moved into the always-loaded base library, so `controller.templateLibraries.gateway` can be enabled with `ingress` disabled.
 - `nginx.ingress.kubernetes.io/limit-rate-after` is documented as `different` rather than supported. It maps to the bandwidth filter's `min-size` — the smallest chunk HAProxy forwards, not nginx's "start throttling after N bytes".
+- **A tenant could hijack another tenant's host and path by putting a newline or space in an Ingress or HTTPRoute path.** The path was written verbatim into the shared routing map, whose keys are whitespace-delimited, so a control character or space smuggled a second map line pointing a victim's host+path at the attacker's backend — content `haproxy -c` accepts. Ingress and Gateway path values are now guarded before they reach the routing map: denied at admission, and warned-and-skipped with an `InvalidPath` Warning Event under reconcile so one hostile object can't brick the fleet.
 
 ## [0.2.0-alpha.1] - 2026-07-05
 

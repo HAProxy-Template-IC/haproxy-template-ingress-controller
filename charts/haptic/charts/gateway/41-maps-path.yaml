@@ -12,6 +12,7 @@ templateSnippets:
         type-switch on routeInfo["route"].
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {% macro PathMapEntryGatewayShard(sortedRoutes []any, pathGroups any, pathType string, suffix string) string %}
       {%- for _, routeInfo := range sortedRoutes %}
         {%- var pathKey = tostring(routeInfo["pathKey"]) %}
@@ -26,6 +27,12 @@ templateSnippets:
           {%- var routeIds_str = tostring(firstRoute["conflictGroup"]) -%}
           {%- var frHostname = tostring(firstRoute["hostname"]) %}
           {%- var frPath_val = tostring(firstRoute["pathValue"]) %}
+          {#- Map keys are whitespace-delimited: a space/tab/newline in a path
+              splits the line and smuggles a second entry (#153). Reject the route. -#}
+          {%- if regex_search(frPath_val, "[[:cntrl:]]") || strings_contains(frPath_val, " ") %}
+            {{- WebhookRejectOrWarn(firstRoute["route"], "InvalidPath", "Route path '" + frPath_val + "' (host '" + frHostname + "') contains whitespace or control characters, which cannot be written to the routing map; the route is not applied. Remove spaces, tabs and newlines from the HTTPRoute path value.") -}}
+            {%- continue %}
+          {%- end %}
           {#- Skip the catch-all `/` entry only for PathPrefix routes —
               an Exact `/` route must still emit, otherwise requests
               to the bare root are unroutable. PathPrefix `/` matches
@@ -95,6 +102,7 @@ templateSnippets:
           GRPCRoute sibling. #}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- macro GeneratePathRegexMap(routes []*resources.httproutes.T) -%}
       {%- for _, route := range routes %}
       {%- var routeNs = route.Metadata.Namespace %}
@@ -124,6 +132,12 @@ templateSnippets:
       {%- var matchPath_type = match | dig("path", "type") | fallback("") %}
       {%- var matchPathValue = match | dig("path", "value") | fallback("/") %}
       {%- if matchPath_type == "RegularExpression" %}
+      {#- Map keys are whitespace-delimited: a space/tab/newline in the regex value
+          splits the line and smuggles a second entry (#153). Reject the match. -#}
+      {%- if regex_search(tostring(matchPathValue), "[[:cntrl:]]") || strings_contains(tostring(matchPathValue), " ") %}
+      {{- WebhookRejectOrWarn(route, "InvalidPath", "HTTPRoute '" + routeNs + "/" + routeName + "' has a RegularExpression path containing whitespace or control characters, which cannot be written to the routing map; the route is not applied. Remove spaces, tabs and newlines from the path value.") -}}
+      {%- continue %}
+      {%- end %}
       {%- regexEntries = append(regexEntries, map[string]any{
         "hostname": hostname,
         "pathValue": matchPathValue,

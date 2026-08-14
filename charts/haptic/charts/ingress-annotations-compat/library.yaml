@@ -24,22 +24,6 @@ _helm_load: {enable: '{{ .Values.controller.templateLibraries.ingressAnnotations
 
 templateSnippets:
 
-  util-webhook-reject-or-warn:
-    template: |-
-      {#
-        CALLER CONTRACT: the warn path returns and the render CONTINUES, so the
-        caller MUST skip the offending resource's own output right after calling
-        this ({% continue %} in a per-resource loop, or stop emitting in a macro)
-        — otherwise it emits config built from the value it just rejected.
-      #}
-      {%- macro WebhookRejectOrWarn(resource any, reason string, message string) -%}
-        {%- if renderMode == "admission" -%}
-          {{- fail(message) -}}
-        {%- else -%}
-          {{- recordEvent(resource, reason, message) -}}
-        {%- end -%}
-      {%- end macro -%}
-
   util-build-annotation-ssl-passthrough:
     template: |
       {#
@@ -279,20 +263,6 @@ templateSnippets:
           {%- end %}
         {%- end %}
         {{- join(out, " ") -}}
-      {%- end macro %}
-
-  # A control character in an interpolated annotation value would split the
-  # config line and smuggle a second directive past `haproxy -c`.
-  util-validate-config-value:
-    template: |
-      {%- macro ValidateConfigValue(value string, annotation string, key string, allowSpaces bool) %}
-        {%- if regex_search(value, "[[:cntrl:]]") %}
-          {{- fail("Invalid value for annotation '" + annotation + "' on Ingress '" + key + "': must not contain control characters (newlines/tabs) — config-injection guard.") -}}
-        {%- end %}
-        {%- if !allowSpaces && strings_contains(value, " ") %}
-          {{- fail("Invalid value for annotation '" + annotation + "' on Ingress '" + key + "': must not contain spaces.") -}}
-        {%- end %}
-        {{- value -}}
       {%- end macro %}
 
   # One macro owns the "is WAF governance active, and what may an Ingress author
