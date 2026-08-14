@@ -4,6 +4,9 @@ templateSnippets:
     template: |
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
       {%- macro GenerateHTTPRouteBackends(routes []*resources.httproutes.T, dedupCategory string) -%}
         {%- _ = render "util-backendtlspolicies-contrib" default "" -%}
       {%- for _, route := range routes -%}
@@ -370,10 +373,20 @@ templateSnippets:
                 {%- if bf.Type == "RequestHeaderModifier" %}
                   {%- var mod = bf.RequestHeaderModifier %}
                   {%- for _, h := range mod.Set %}
-        http-request set-header {{ h.Name }} '{{ h.Value }}' if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+                    {%- var hInj = ConfigInjectionKind(h.Value, "line") %}
+                    {%- if hInj != "" %}
+                      {{- WebhookRejectOrWarn(route, "InvalidHeaderModifier", "HTTPRoute " + routeNs + "/" + routeName + " backendRef RequestHeaderModifier set-header value contains " + hInj + ", which would split the backend directive; the header is not applied. Remove control characters from the value.") -}}
+                    {%- else %}
+        http-request set-header {{ h.Name }} "{{ EscapeLogFormatValue(h.Value) }}" if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+                    {%- end %}
                   {%- end %}
                   {%- for _, h := range mod.Add %}
-        http-request add-header {{ h.Name }} '{{ h.Value }}' if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+                    {%- var hInj = ConfigInjectionKind(h.Value, "line") %}
+                    {%- if hInj != "" %}
+                      {{- WebhookRejectOrWarn(route, "InvalidHeaderModifier", "HTTPRoute " + routeNs + "/" + routeName + " backendRef RequestHeaderModifier add-header value contains " + hInj + ", which would split the backend directive; the header is not applied. Remove control characters from the value.") -}}
+                    {%- else %}
+        http-request add-header {{ h.Name }} "{{ EscapeLogFormatValue(h.Value) }}" if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+                    {%- end %}
                   {%- end %}
                   {%- for _, name := range mod.Remove %}
         http-request del-header {{ name }} if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }

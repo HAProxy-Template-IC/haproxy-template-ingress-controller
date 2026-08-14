@@ -43,6 +43,31 @@ templateSnippets:
   # ============================================================================
   util-gateway-listener-tls-options:
     template: |
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+
+      {#- Reports the first token-context injection across the min/max-version and
+          cipher-suite option values, or "" when safe. These reach the shared HTTPS
+          bind line as unquoted keywords (ssl-min-ver / ciphers / ciphersuites), so a
+          space, quote, '#', backslash or control char breaks out of the bind
+          directive. Cipher tokens are checked after the same split+strip the emitter
+          applies, so a legit ", "-separated list is not rejected on its spaces. -#}
+      {%- macro TLSOptionsInjection(listener any) string -%}
+        {%- var result = "" -%}
+        {%- var opts = dig(listener, "tls", "options") -%}
+        {%- if opts != nil -%}
+          {%- var minV = tostring(dig(opts, "gateway.networking.k8s.io/tls-min-version") | fallback("")) -%}
+          {%- var maxV = tostring(dig(opts, "gateway.networking.k8s.io/tls-max-version") | fallback("")) -%}
+          {%- var ciphersOpt = tostring(dig(opts, "gateway.networking.k8s.io/tls-cipher-suites") | fallback("")) -%}
+          {%- if result == "" && minV != "" -%}{%- result = ConfigInjectionKind(minV, "token") -%}{%- end -%}
+          {%- if result == "" && maxV != "" -%}{%- result = ConfigInjectionKind(maxV, "token") -%}{%- end -%}
+          {%- for _, c := range split(ciphersOpt, ",") -%}
+            {%- var cc = strip(c) -%}
+            {%- if result == "" && cc != "" -%}{%- result = ConfigInjectionKind(cc, "token") -%}{%- end -%}
+          {%- end -%}
+        {%- end -%}
+        {%- show result -%}
+      {%- end macro -%}
+
       {%- macro NormalizeTLSVersion(v string) string -%}
         {%- if v == "1.0" %}TLSv1.0
         {%- else if v == "1.1" %}TLSv1.1

@@ -1,0 +1,323 @@
+# Gateway header-modifier value + per-listener TLS-options injection guards (#156).
+# Header-modifier set/add VALUES land inside a double-quoted HAProxy directive; a
+# control char splits the line into a new directive, and a " / $ would break out or
+# trigger env expansion unless escaped. tls.options values reach the shared HTTPS bind
+# line as unquoted keywords; whitespace or a quote breaks out. Values are guarded
+# before emission: denied at admission, warned-and-skipped on reconcile.
+_fx:
+  servicesWeb: &servicesWeb
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: web, namespace: default}
+      spec:
+        ports:
+          - port: 80
+validationTests:
+  # ---- RequestHeaderModifier value (frontend) ----
+  test-httproute-request-header-value-injection-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: A control character in a RequestHeaderModifier set value is skipped; the smuggled directive never reaches the frontend while a valid sibling route renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services: *servicesWeb
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rh-attacker, namespace: default}
+          spec:
+            hostnames: [attacker.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: RequestHeaderModifier
+                    requestHeaderModifier:
+                      set:
+                        - {name: X-Version, value: "v1\nhttp-request set-header X-Pwned 1"}
+                backendRefs: [{name: web, port: 80}]
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rh-good, namespace: default}
+          spec:
+            hostnames: [good.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: RequestHeaderModifier
+                    requestHeaderModifier:
+                      set:
+                        - {name: X-Version, value: ok}
+                backendRefs: [{name: web, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-Version "ok" if'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "X-Pwned"}
+
+  test-httproute-request-header-value-injection-admission-rejected:
+    requires: [httproutes]
+    description: A control character in a RequestHeaderModifier set value is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      services: *servicesWeb
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rh-attacker, namespace: default}
+          spec:
+            hostnames: [attacker.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: RequestHeaderModifier
+                    requestHeaderModifier:
+                      set:
+                        - {name: X-Version, value: "v1\nhttp-request set-header X-Pwned 1"}
+                backendRefs: [{name: web, port: 80}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would split the frontend directive"}
+
+  test-httproute-request-header-value-escaped:
+    requires: [httproutes]
+    description: A RequestHeaderModifier value with a double quote and a dollar sign renders escaped inside double quotes, so it cannot break out or trigger env expansion.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services: *servicesWeb
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rh-esc, namespace: default}
+          spec:
+            hostnames: [esc.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: RequestHeaderModifier
+                    requestHeaderModifier:
+                      set:
+                        - {name: X-Esc, value: 'a"b$c'}
+                backendRefs: [{name: web, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Esc "a\\"b\\\$c" if'}
+
+  test-httproute-request-header-value-percent-escaped:
+    requires: [httproutes]
+    description: A RequestHeaderModifier value with a log-format fetch and a plain percent renders with every % doubled to %%, so HAProxy treats it as literal text instead of evaluating request-scoped state.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services: *servicesWeb
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rh-pct, namespace: default}
+          spec:
+            hostnames: [pct.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: RequestHeaderModifier
+                    requestHeaderModifier:
+                      set:
+                        - {name: X-Con, value: "50%-%[var(txn.foo)]"}
+                backendRefs: [{name: web, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Con "50%%-%%\[var\(txn\.foo\)\]" if'}
+
+  # ---- ResponseHeaderModifier value (frontend) ----
+  test-httproute-response-header-value-injection-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: A control character in a ResponseHeaderModifier set value is skipped while a valid sibling route renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services: *servicesWeb
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rsh-attacker, namespace: default}
+          spec:
+            hostnames: [attacker.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: ResponseHeaderModifier
+                    responseHeaderModifier:
+                      set:
+                        - {name: X-Frame, value: "DENY\nhttp-response set-header X-Pwned 1"}
+                backendRefs: [{name: web, port: 80}]
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rsh-good, namespace: default}
+          spec:
+            hostnames: [good.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: ResponseHeaderModifier
+                    responseHeaderModifier:
+                      set:
+                        - {name: X-Frame, value: SAMEORIGIN}
+                backendRefs: [{name: web, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response set-header X-Frame "SAMEORIGIN" if'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "X-Pwned"}
+
+  test-httproute-response-header-value-injection-admission-rejected:
+    requires: [httproutes]
+    description: A control character in a ResponseHeaderModifier set value is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      services: *servicesWeb
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rsh-attacker, namespace: default}
+          spec:
+            hostnames: [attacker.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: ResponseHeaderModifier
+                    responseHeaderModifier:
+                      set:
+                        - {name: X-Frame, value: "DENY\nhttp-response set-header X-Pwned 1"}
+                backendRefs: [{name: web, port: 80}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would split the frontend directive"}
+
+  # ---- backendRef RequestHeaderModifier value (backend) ----
+  test-httproute-backend-header-value-injection-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: A control character in a backendRef RequestHeaderModifier set value is skipped while a valid sibling backendRef header renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web, namespace: default}
+          spec: {ports: [{port: 80}]}
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web2, namespace: default}
+          spec: {ports: [{port: 80}]}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: brh-route, namespace: default}
+          spec:
+            hostnames: [br.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                backendRefs:
+                  - name: web
+                    port: 80
+                    filters:
+                      - type: RequestHeaderModifier
+                        requestHeaderModifier:
+                          set:
+                            - {name: Backend, value: "v1\nhttp-request set-header X-Pwned 1"}
+                  - name: web2
+                    port: 80
+                    filters:
+                      - type: RequestHeaderModifier
+                        requestHeaderModifier:
+                          set:
+                            - {name: Backend, value: v2ok}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header Backend "v2ok" if'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "X-Pwned"}
+
+  test-httproute-backend-header-value-injection-admission-rejected:
+    requires: [httproutes]
+    description: A control character in a backendRef RequestHeaderModifier set value is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      services: *servicesWeb
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: brh-route, namespace: default}
+          spec:
+            hostnames: [br.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                backendRefs:
+                  - name: web
+                    port: 80
+                    filters:
+                      - type: RequestHeaderModifier
+                        requestHeaderModifier:
+                          set:
+                            - {name: Backend, value: "v1\nhttp-request set-header X-Pwned 1"}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would split the backend directive"}
+
+  # ---- per-listener TLS options (bind line) ----
+  test-gateway-listener-tls-options-injection-reconcile-warns-and-skips:
+    requires: [gateways]
+    description: A space in a tls.options value is rejected (token context), skipping that listener's bind, while a sibling listener with a legit comma-and-space cipher list still renders.
+    extraContext:
+      renderMode: reconcile
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gw-tlsinj, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: https-good
+                port: 443
+                protocol: HTTPS
+                allowedRoutes: {namespaces: {from: Same}}
+                tls:
+                  certificateRefs: [{kind: Secret, name: shared-tls, namespace: default}]
+                  options:
+                    gateway.networking.k8s.io/tls-cipher-suites: "ECDHE-ECDSA-AES128-GCM-SHA256, TLS_AES_256_GCM_SHA384"
+              - name: https-bad
+                port: 8443
+                protocol: HTTPS
+                allowedRoutes: {namespaces: {from: Same}}
+                tls:
+                  certificateRefs: [{kind: Secret, name: shared-tls, namespace: default}]
+                  options:
+                    gateway.networking.k8s.io/tls-min-version: "1.3 INJECTED-KEYWORD"
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "ciphers ECDHE-ECDSA-AES128-GCM-SHA256 ciphersuites TLS_AES_256_GCM_SHA384"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "INJECTED-KEYWORD"}
+
+  test-gateway-listener-tls-options-injection-admission-rejected:
+    requires: [gateways]
+    description: A space in a tls.options value is denied by the admission webhook.
+    extraContext:
+      renderMode: admission
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gw-tlsinj, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: https
+                port: 443
+                protocol: HTTPS
+                allowedRoutes: {namespaces: {from: Same}}
+                tls:
+                  certificateRefs: [{kind: Secret, name: shared-tls, namespace: default}]
+                  options:
+                    gateway.networking.k8s.io/tls-min-version: "1.3 INJECTED-KEYWORD"
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would break out of the bind directive"}

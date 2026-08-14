@@ -88,6 +88,9 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "WARNING haproxy-haptic.org/api-key-secret: Secret 'default/not-observed-yet'.*failing closed \\(503\\)"
+        pattern: "WARNING haproxy-haptic.org/api-key-secret: referenced Secret not found.*failing closed \\(503\\)"
       - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
       - {type: not_contains, target: haproxy.cfg, pattern: "haptic-apikeys-default-not-observed-yet\\.map"}
+      # The tenant-controlled Secret name must not be interpolated into a rendered
+      # comment (a newline in it would inject a directive); it is absent from config.
+      - {type: not_contains, target: haproxy.cfg, pattern: "not-observed-yet"}

@@ -137,15 +137,61 @@ templateSnippets:
         {{- value -}}
       {%- end macro %}
 
-  # A value interpolated into a double-quoted HAProxy ACL or directive breaks out of
-  # the config when it contains the closing quote (appends arbitrary ACL terms) or a
-  # control character (a newline splits the line into a new directive). Both are valid
-  # config that `haproxy -c` accepts, so callers reject the resource via
-  # WebhookRejectOrWarn. Returns the offending kind, or "" when the value is safe.
+  # Reject-detector for a tenant value bound for an HAProxy config context. Returns
+  # the first offending character's human name, or "" when the value is safe for the
+  # given context. Callers reject the resource via WebhookRejectOrWarn (routing) or
+  # fail() (auth). Contexts and what each rejects on top of control chars:
+  #   line   — nothing extra (a control char alone splits the config line).
+  #   mapkey — a space (map files are whitespace-delimited: key is the first field).
+  #   token  — a space, ' " # \ (unquoted ACL operand / directive argument).
+  #   dquote — a " (double-quoted ACL/value context).
+  #   squote — a ' (single-quoted context where escaping is not wanted).
+  # "a control character" is generic on purpose: the class is all C0/C1, not just \n.
+  util-config-injection-kind:
+    template: |-
+      {%- macro ConfigInjectionKind(value string, context string) string -%}
+        {%- if regex_search(value, "[[:cntrl:]]") -%}a control character
+        {%- else if (context == "mapkey" || context == "token") && strings_contains(value, " ") -%}a space
+        {%- else if context == "token" && strings_contains(value, "'") -%}a single quote
+        {%- else if context == "token" && strings_contains(value, "#") -%}a '#'
+        {%- else if context == "token" && strings_contains(value, "\\") -%}a backslash
+        {%- else if (context == "dquote" || context == "token") && strings_contains(value, "\"") -%}a double quote
+        {%- else if context == "squote" && strings_contains(value, "'") -%}a single quote
+        {%- end -%}
+      {%- end macro -%}
+
+  # Escapes a value the caller emits INSIDE double quotes: backslash first (so the
+  # ones we add are not re-escaped), then the closing quote, then `$` (HAProxy expands
+  # `$VAR`/`${VAR}` in double-quoted strings, so a literal `$` must be escaped). The
+  # caller MUST first reject control characters (ConfigInjectionKind(value, "line")):
+  # a control char cannot live in an HAProxy double-quoted string and a valid header
+  # value never carries one. Single quotes pass through untouched, so `'self'` and a
+  # quoted ETag survive.
+  util-escape-dquote-value:
+    template: |-
+      {%- macro EscapeDquoteValue(value string) string -%}
+        {%- show replace(replace(replace(value, "\\", "\\\\"), "\"", "\\\""), "$", "\\$") -%}
+      {%- end macro -%}
+
+  # For a set-header/add-header VALUE, which HAProxy evaluates as a log-format string:
+  # `%` introduces a fetch (`%[...]`) at request time, so a literal `%` must be doubled
+  # to `%%` on top of the double-quote escaping — otherwise a tenant value reads
+  # request-scoped internal state into its own header. NOT for a literal `string` /
+  # `content-type` argument, where `%` is not special.
+  util-escape-logformat-value:
+    template: |-
+      {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
+      {%- macro EscapeLogFormatValue(value string) string -%}
+        {%- show replace(EscapeDquoteValue(value), "%", "%%") -%}
+      {%- end macro -%}
+
+  # Thin wrapper preserving the #155 call sites: a value bound for a double-quoted ACL
+  # or directive, rejected on a closing quote or a control character.
   util-config-value-injection:
     template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- macro ConfigValueInjection(value string) string -%}
-        {%- if strings_contains(value, "\"") -%}a double quote{%- else if regex_search(value, "[[:cntrl:]]") -%}a control character{%- end -%}
+        {%- show ConfigInjectionKind(value, "dquote") -%}
       {%- end macro -%}
 
   util-ingress-helpers:

@@ -102,6 +102,9 @@ templateSnippets:
       #}
       {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -119,8 +122,13 @@ templateSnippets:
                 {%- if t != "" && strings_contains(t, " ") %}
                   {%- var parts = split(t, " ") %}
                   {%- var hName = ValidateConfigValue(parts[0], "haproxy-haptic.org/request-set-header", key, false) %}
-                  {%- var hVal = ValidateConfigValue(join(parts[1:], " "), "haproxy-haptic.org/request-set-header", key, true) %}
-      http-request set-header {{ hName }} '{{ hVal }}' if {{ HostMatchCondition(hosts) }}
+                  {%- var hVal = join(parts[1:], " ") %}
+                  {%- var hInj = ConfigInjectionKind(hVal, "line") %}
+                  {%- if hInj != "" %}
+                    {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/request-set-header' value contains " + hInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
+                  {%- else %}
+      http-request set-header {{ hName }} "{{ EscapeLogFormatValue(hVal) }}" if {{ HostMatchCondition(hosts) }}
+                  {%- end %}
                 {%- end %}
               {%- end %}
             {%- end %}
@@ -141,6 +149,9 @@ templateSnippets:
       #}
       {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -158,8 +169,13 @@ templateSnippets:
                 {%- if t != "" && strings_contains(t, " ") %}
                   {%- var parts = split(t, " ") %}
                   {%- var hName = ValidateConfigValue(parts[0], "haproxy-haptic.org/response-set-header", key, false) %}
-                  {%- var hVal = ValidateConfigValue(join(parts[1:], " "), "haproxy-haptic.org/response-set-header", key, true) %}
-      http-response set-header {{ hName }} '{{ hVal }}' if {{ HostMatchCondition(hosts) }}
+                  {%- var hVal = join(parts[1:], " ") %}
+                  {%- var hInj = ConfigInjectionKind(hVal, "line") %}
+                  {%- if hInj != "" %}
+                    {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/response-set-header' value contains " + hInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
+                  {%- else %}
+      http-response set-header {{ hName }} "{{ EscapeLogFormatValue(hVal) }}" if {{ HostMatchCondition(hosts) }}
+                  {%- end %}
                 {%- end %}
               {%- end %}
             {%- end %}

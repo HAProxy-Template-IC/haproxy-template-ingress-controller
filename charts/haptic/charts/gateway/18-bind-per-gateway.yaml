@@ -60,7 +60,8 @@ templateSnippets:
     requires: [gateways]
     template: |
       {%- import "util-ssl-bind-options-for-crtlist" for SSLBindOptionsForCrtlist %}
-      {%- import "util-gateway-listener-tls-options" for TLSOptionsSuffix %}
+      {%- import "util-gateway-listener-tls-options" for TLSOptionsSuffix, TLSOptionsInjection %}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn %}
       {%- import "util-gateway-listener-crtlist-name" for CrtlistName %}
       {%- import "util-resource-helpers" for
           ResourceNamespace, ResourceName,
@@ -136,6 +137,11 @@ templateSnippets:
                     {%- if tostring(cfg["verify_mode"]) == "optional" %}
                       {%- ignoreErrSuffix = " ca-ignore-err all crt-ignore-err all" %}
                     {%- end %}
+                  {%- end %}
+                  {%- var tlsInj = TLSOptionsInjection(listener) %}
+                  {%- if tlsInj != "" %}
+                    {{- WebhookRejectOrWarn(gw, "InvalidTLSOptions", "Gateway " + gwNs + "/" + gwName + " listener " + lName + " has a tls.options value containing " + tlsInj + ", which would break out of the bind directive; the listener is not applied. Remove whitespace, quotes and control characters from the TLS min/max-version and cipher-suites values.") -}}
+                    {%- continue %}
                   {%- end %}
       bind *:{{ podPort }}{{ SSLBindOptionsForCrtlist(crtlist) }}{{ ignoreErrSuffix }}{{ TLSOptionsSuffix(listener) }}
                 {%- end %}

@@ -686,6 +686,9 @@ templateSnippets:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {%- import "util-route-condition" for RouteIdCondition -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
       {{- render "util-gateway-analysis" -}}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
       {%- if gaVal == nil %}{% return %}{% end %}
@@ -719,10 +722,22 @@ templateSnippets:
             {%- var mod = filter | dig("requestHeaderModifier") %}
             {%- if mod != nil %}
               {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
-      http-request set-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
+                {%- var hVal = tostring(h | dig("value")) %}
+                {%- var hInj = ConfigInjectionKind(hVal, "line") %}
+                {%- if hInj != "" %}
+                  {{- WebhookRejectOrWarn(routeInfo.(map[string]any)["route"], "InvalidHeaderModifier", "A Gateway route RequestHeaderModifier set-header value contains " + hInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
+                {%- else %}
+      http-request set-header {{ h | dig("name") }} "{{ EscapeLogFormatValue(hVal) }}" if {{ cond }}
+                {%- end %}
               {%- end %}
               {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
-      http-request add-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
+                {%- var hVal = tostring(h | dig("value")) %}
+                {%- var hInj = ConfigInjectionKind(hVal, "line") %}
+                {%- if hInj != "" %}
+                  {{- WebhookRejectOrWarn(routeInfo.(map[string]any)["route"], "InvalidHeaderModifier", "A Gateway route RequestHeaderModifier add-header value contains " + hInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
+                {%- else %}
+      http-request add-header {{ h | dig("name") }} "{{ EscapeLogFormatValue(hVal) }}" if {{ cond }}
+                {%- end %}
               {%- end %}
               {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
       http-request del-header {{ name }} if {{ cond }}
@@ -741,6 +756,9 @@ templateSnippets:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {%- import "util-route-condition" for RouteIdCondition -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
       {{- render "util-gateway-analysis" -}}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
       {%- if gaVal == nil %}{% return %}{% end %}
@@ -777,10 +795,22 @@ templateSnippets:
       http-request set-var(txn.filters_applied) str(ResponseHeaderModifier) if {{ cond }} !{ var(txn.filters_applied) -m found }
               {%- end %}
               {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
-      http-response set-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
+                {%- var hVal = tostring(h | dig("value")) %}
+                {%- var hInj = ConfigInjectionKind(hVal, "line") %}
+                {%- if hInj != "" %}
+                  {{- WebhookRejectOrWarn(routeInfo.(map[string]any)["route"], "InvalidHeaderModifier", "A Gateway route ResponseHeaderModifier set-header value contains " + hInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
+                {%- else %}
+      http-response set-header {{ h | dig("name") }} "{{ EscapeLogFormatValue(hVal) }}" if {{ cond }}
+                {%- end %}
               {%- end %}
               {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
-      http-response add-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
+                {%- var hVal = tostring(h | dig("value")) %}
+                {%- var hInj = ConfigInjectionKind(hVal, "line") %}
+                {%- if hInj != "" %}
+                  {{- WebhookRejectOrWarn(routeInfo.(map[string]any)["route"], "InvalidHeaderModifier", "A Gateway route ResponseHeaderModifier add-header value contains " + hInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
+                {%- else %}
+      http-response add-header {{ h | dig("name") }} "{{ EscapeLogFormatValue(hVal) }}" if {{ cond }}
+                {%- end %}
               {%- end %}
               {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
       http-response del-header {{ name }} if {{ cond }}

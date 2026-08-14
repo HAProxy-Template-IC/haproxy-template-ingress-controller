@@ -59,10 +59,10 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "http-request set-header X-Custom-Req 'req-value' if"}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-Custom-Req "req-value" if'}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-response set-header X-Custom-Resp 'resp-value' if"
+        pattern: 'http-response set-header X-Custom-Resp "resp-value" if'
       - {type: contains, target: haproxy.cfg, pattern: "http-request set-src hdr\\(X-Real-IP\\) if"}
       - {type: contains, target: haproxy.cfg, pattern: "capture request header X-Forwarded-Proto len 256"}
 

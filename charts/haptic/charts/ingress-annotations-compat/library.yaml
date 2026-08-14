@@ -131,6 +131,9 @@ templateSnippets:
         different and lives in haproxytech's own library — it does NOT call this.
       #}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn %}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind %}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue %}
       {%- macro EmitAnnotationCORS(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) %}
         {%- var corsEnabled = ingress.Metadata.Annotations[enabledAnn] %}
         {%- if corsEnabled == "true" %}
@@ -152,6 +155,17 @@ templateSnippets:
             {%- var exposeHeaders = ingress.Metadata.Annotations[prefix + "/cors-expose-headers"] %}
             {%- var maxAge = ingress.Metadata.Annotations[prefix + "/cors-max-age"] %}
             {%- if maxAge == "" %}{%- maxAge = defaultMaxAge %}{%- end %}
+            {#- These four values are emitted inside double quotes below; a control
+                character would split the frontend directive. Reject before any
+                emission so a warn-and-skip drops the whole CORS block, not part. -#}
+            {%- var corsInj = "" %}
+            {%- for _, cv := range []string{methods, headers, maxAge, exposeHeaders} %}
+              {%- if corsInj == "" %}{%- corsInj = ConfigInjectionKind(cv, "line") %}{%- end %}
+            {%- end %}
+            {%- if corsInj != "" %}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " has a CORS annotation value containing " + corsInj + ", which would split the frontend directive; CORS is not applied. Remove control characters from the cors-allow-methods/-headers/-max-age/-expose-headers values.") -}}
+              {%- return %}
+            {%- end %}
             {%- var cond = HostMatchCondition(hosts) %}
             {%- var allowAny = false %}
             {%- var exact = []string{} %}
@@ -189,14 +203,14 @@ templateSnippets:
               {%- end %}
             {%- end %}
       http-after-response set-header Access-Control-Allow-Origin '{{ originHdr }}' if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Allow-Methods '{{ methods }}' if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Allow-Headers '{{ headers }}' if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Max-Age '{{ maxAge }}' if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Allow-Methods "{{ EscapeLogFormatValue(methods) }}" if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Allow-Headers "{{ EscapeLogFormatValue(headers) }}" if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Max-Age "{{ EscapeLogFormatValue(maxAge) }}" if {{ cond }} {{ aclName }}
             {%- if credentials == "true" %}
       http-after-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }} {{ aclName }}
             {%- end %}
             {%- if exposeHeaders != "" %}
-      http-after-response set-header Access-Control-Expose-Headers '{{ exposeHeaders }}' if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Expose-Headers "{{ EscapeLogFormatValue(exposeHeaders) }}" if {{ cond }} {{ aclName }}
             {%- end %}
             {%- if !allowAny %}
       {# add-header, never set-header: Vary is a comma-combinable list per RFC 9110
