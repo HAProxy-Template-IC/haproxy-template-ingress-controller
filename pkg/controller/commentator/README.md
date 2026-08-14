@@ -2,7 +2,7 @@
 
 The `EventCommentator` subscribes to every event on the `EventBus` and turns them into structured log lines with domain-specific context. It's the single component that logs system behaviour for humans — everything else emits events and lets the commentator describe them.
 
-Key property: the commentator owns its own ring buffer (separate from the generic `pkg/events/ringbuffer` used by `pkg/controller/debug`). The controller-specific ring buffer is indexed by event type and correlation ID, which is what the "insight" functions use to add context like "last reconciliation was 5.2s ago" to a log line.
+Key property: the commentator owns its own ring buffer (separate from the generic `pkg/events/ringbuffer` used by `pkg/controller/debug`). It retains only event type, timestamp, correlation identifiers, and the scalar phase metadata used by insights. The commentator therefore doesn't extend event payload lifetimes.
 
 ## Usage
 
@@ -39,7 +39,7 @@ ERROR deployment failed instance=haproxy-0 error="connection refused"
 
 ## Correlation
 
-The insight functions use the ring-buffer's queries — `FindByTypeInWindow` and `FindByCorrelationID` — to decide what context to attach to each log line. Those methods live on the private `ringBuffer` field; consumers outside this package should subscribe to the event bus directly and do their own correlation.
+The insight functions use the ring-buffer's queries — `FindByTypeInWindow` and `FindByCorrelationID` — to decide what context to attach to each log line. Queries return metadata projections through `Event` and, when applicable, `CorrelatedEvent`, not the original concrete events. Consumers outside this package should subscribe to the event bus directly and do their own correlation.
 
 ## Adding a Log Line for a New Event Type
 
@@ -49,7 +49,7 @@ When a new event type lands in `pkg/controller/events`:
 2. Pick a case in `determineLogLevel` (or add one) so it doesn't fall through to the default `Debug`.
 3. If the message should reference prior events, use the `FindByCorrelationID` / `FindByTypeInWindow` helpers on the ring buffer rather than scanning the slice manually.
 
-Missing a case isn't a hard error — the event is still stored in the ring buffer and shows up in debug surfaces — but it logs at `Debug` with only the generic event fields, which is usually not what you want for a new domain event.
+Missing a case isn't a hard error — the event still gets a metadata-only history entry — but it logs at `Debug` with only the generic event fields, which is usually not what you want for a new domain event.
 
 ## See Also
 

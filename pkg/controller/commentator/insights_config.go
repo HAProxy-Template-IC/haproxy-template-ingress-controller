@@ -65,10 +65,10 @@ func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (i
 		}
 
 		// Correlate: how long did validation take?
-		validationRequests := ec.ringBuffer.FindByTypeInWindow(events.EventTypeConfigValidationRequest, validationLookbackWindow)
+		validationRequests := ec.ringBuffer.findByTypeInWindow(events.EventTypeConfigValidationRequest, validationLookbackWindow)
 		var correlationMsg string
 		if len(validationRequests) > 0 {
-			duration := event.Timestamp().Sub(validationRequests[0].Timestamp())
+			duration := event.Timestamp().Sub(validationRequests[0].timestamp)
 			correlationMsg = fmt.Sprintf(" (validation completed in %v)", duration.Round(time.Millisecond))
 		}
 		return fmt.Sprintf("Configuration validated successfully%s", correlationMsg),

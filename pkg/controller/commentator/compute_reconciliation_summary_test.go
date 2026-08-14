@@ -221,7 +221,7 @@ func TestComputeReconciliationSummary_AllPhaseEventsPopulateMs(t *testing.T) {
 	// Composite happy-path: trigger + render + validate + deployment
 	// (all correlated). All four phase-fields must be populated,
 	// catching a regression that dropped one specific phase's case
-	// from the type switch in the buffer-walk loop.
+	// from the event-type switch in the buffer-walk loop.
 	trigger := ctlevents.NewReconciliationTriggeredEvent("config_change", true, ctlevents.WithNewCorrelation())
 	corrID := trigger.CorrelationID()
 	corr := ctlevents.WithCorrelation(corrID, trigger.EventID())
