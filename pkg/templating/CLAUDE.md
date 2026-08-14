@@ -116,6 +116,7 @@ pkg/templating/
 ├── filters_jsonpath.go         # Generic resource-agnostic helpers: dynamic resource access + concrete-JSONPath get/set (resource / jsonpathGet / jsonpathSet)
 ├── filters_version.go          # semver_gte and friends
 ├── filters_guid.go             # GUID generation helpers (make_guid)
+├── regex_cache.go              # Engine-scoped bounded regex compilation cache
 ├── postprocessor.go            # Post-processor pipeline runner
 ├── postprocessor_regex.go      # regex_replace post-processor
 ├── postprocessor_template.go   # template post-processor (second Scriggo pass with `input`)
@@ -1068,6 +1069,8 @@ Use `shared.ComputeIfAbsent()` for compute-once patterns:
 **Impact:** Reduces expensive computation calls from N to 1 per render.
 
 ## Performance Optimization
+
+Keep the regex compilation cache engine-scoped and bounded; package-global state would outlive a config iteration and let rejected candidate engines displace active patterns.
 
 ### Benchmarking
 

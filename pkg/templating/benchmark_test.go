@@ -17,14 +17,16 @@ package templating
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"testing"
 )
 
 // Package-level result sinks prevent compiler dead code elimination.
 // These variables ensure the benchmark results are actually used.
 var (
-	benchResultString string
-	benchResultErr    error
+	benchResultString  string
+	benchResultErr     error
+	benchmarkRegexExpr = "^value$"
 )
 
 // BenchmarkEngine_Render benchmarks template rendering with various configurations.
@@ -48,6 +50,108 @@ func BenchmarkEngine_Render_Filters(b *testing.B) {
 	b.Run("filter=sort_by", func(b *testing.B) {
 		benchmarkFilterSortBy(b)
 	})
+}
+
+func BenchmarkEngine_Render_RegexReuse(b *testing.B) {
+	engine, err := New(map[string]string{
+		"regex": `{% for i := 0; i < 100; i++ %}{{ regex_search("value", "^val") }}{% end %}`,
+	}, &Options{EntryPoints: []string{"regex"}})
+	if err != nil {
+		b.Fatalf("creating engine: %v", err)
+	}
+
+	ctx := context.Background()
+	if _, err = engine.Render(ctx, "regex", nil); err != nil {
+		b.Fatalf("warming engine: %v", err)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for b.Loop() {
+		benchResultString, benchResultErr = engine.Render(ctx, "regex", nil)
+	}
+}
+
+func BenchmarkBoundedRegexCache(b *testing.B) {
+	b.Run("direct_compile", benchmarkRegexDirectCompile)
+	b.Run("hot", benchmarkRegexCacheHot)
+	b.Run("hot_parallel", benchmarkRegexCacheHotParallel)
+	b.Run("saturated_miss", benchmarkRegexCacheSaturatedMiss)
+	b.Run("negative_decision", benchmarkRegexCacheNegativeDecision)
+}
+
+func benchmarkRegexDirectCompile(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		compiled, err := regexp.Compile(benchmarkRegexExpr)
+		if err != nil || !compiled.MatchString("value") {
+			b.Fail()
+		}
+	}
+}
+
+func benchmarkRegexCacheHot(b *testing.B) {
+	cache := warmedRegexCache(b, benchmarkRegexExpr)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		compiled, err := cache.compile(benchmarkRegexExpr, regexp.Compile)
+		if err != nil || !compiled.MatchString("value") {
+			b.Fail()
+		}
+	}
+}
+
+func benchmarkRegexCacheHotParallel(b *testing.B) {
+	cache := warmedRegexCache(b, benchmarkRegexExpr)
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			compiled, err := cache.compile(benchmarkRegexExpr, regexp.Compile)
+			if err != nil || !compiled.MatchString("value") {
+				b.Fail()
+			}
+		}
+	})
+}
+
+func benchmarkRegexCacheSaturatedMiss(b *testing.B) {
+	cache := &boundedRegexCache[*regexp.Regexp]{maxEntries: regexSearchCacheEntries}
+	for i := range regexSearchCacheEntries {
+		if _, err := cache.compile(fmt.Sprintf("^value-%d$", i), regexp.Compile); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		compiled, err := cache.compile(benchmarkRegexExpr, regexp.Compile)
+		if err != nil || !compiled.MatchString("value") {
+			b.Fail()
+		}
+	}
+}
+
+func benchmarkRegexCacheNegativeDecision(b *testing.B) {
+	cache := warmedRegexCache(b, `\p{L}`)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		compiled, err := cache.compile(`\p{L}`, regexp.Compile)
+		if err != nil || !compiled.MatchString("value") {
+			b.Fail()
+		}
+	}
+}
+
+func warmedRegexCache(b *testing.B, pattern string) *boundedRegexCache[*regexp.Regexp] {
+	b.Helper()
+	cache := &boundedRegexCache[*regexp.Regexp]{maxEntries: regexSearchCacheEntries}
+	if _, err := cache.compile(pattern, regexp.Compile); err != nil {
+		b.Fatal(err)
+	}
+	return cache
 }
 
 // BenchmarkEngine_Render_Scale benchmarks rendering with varying data sizes.
