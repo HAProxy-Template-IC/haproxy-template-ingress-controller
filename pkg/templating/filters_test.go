@@ -212,6 +212,45 @@ func TestPathResolver_GetPath(t *testing.T) {
 	}
 }
 
+// TestPathResolver_GetPath_RejectsTraversal proves the containment guard fires
+// for every file type: a resource-derived filename that escapes its directory
+// (or is an absolute/Windows path) must be rejected, while a clean name passes.
+func TestPathResolver_GetPath_RejectsTraversal(t *testing.T) {
+	resolver := &PathResolver{
+		MapsDir:    "maps",
+		SSLDir:     "ssl",
+		CRTListDir: "ssl",
+		GeneralDir: "files",
+	}
+
+	for _, fileType := range []string{"map", "file", "cert", "crt-list"} {
+		t.Run(fileType, func(t *testing.T) {
+			traversals := []struct {
+				name     string
+				filename string
+			}{
+				{"parent traversal", "../../etc/passwd"},
+				{"traversal mid-path", "sub/../../../etc/passwd"},
+				{"absolute path", "/etc/passwd"},
+				{"windows drive", `c:\evil`},
+				{"windows unc", `\\host\share`},
+			}
+			for _, tc := range traversals {
+				t.Run(tc.name, func(t *testing.T) {
+					_, err := resolver.GetPath(tc.filename, fileType)
+					require.Error(t, err, "traversal %q must be rejected for type %q", tc.filename, fileType)
+				})
+			}
+
+			t.Run("clean filename passes", func(t *testing.T) {
+				got, err := resolver.GetPath("valid-name.dat", fileType)
+				require.NoError(t, err)
+				assert.NotEmpty(t, got)
+			})
+		})
+	}
+}
+
 func TestStrip(t *testing.T) {
 	tests := []struct {
 		name  string

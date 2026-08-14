@@ -152,6 +152,13 @@ func (pr *PathResolver) GetPath(args ...any) (any, error) {
 		return basePath, nil
 	}
 
+	// Reject a name that would steer the write outside basePath before it is
+	// joined. Applied to every type: cert/crt-list sanitisation already strips
+	// traversal, but map/file are used verbatim and this is their only guard.
+	if err := rejectUncontainedPath("GetPath: filename", filenameStr); err != nil {
+		return nil, err
+	}
+
 	// Sanitize filename for SSL certificates and crt-list files only.
 	// The HAProxy client-native library sanitizes filenames when storing SSL certificates
 	// to avoid issues with domain names containing dots (e.g., "api.example.com.pem").
@@ -167,6 +174,23 @@ func (pr *PathResolver) GetPath(args ...any) (any, error) {
 	fullPath := path.Join(basePath, filenameStr)
 
 	return fullPath, nil
+}
+
+// rejectUncontainedPath returns an error when name would escape a base
+// directory it is about to be joined under: an absolute path, a Windows
+// drive/UNC path, or one that climbs out via "..". label names the offending
+// value so the operator can fix it. Empty names are the caller's concern.
+//
+// This is the auxiliary-file counterpart of the untar_gz archive-entry guard;
+// both stop a resource-derived name from steering a write outside its directory.
+func rejectUncontainedPath(label, name string) error {
+	if path.IsAbs(name) || strings.HasPrefix(name, `\`) || strings.Contains(name, `:\`) {
+		return fmt.Errorf("%s %q is an absolute path", label, name)
+	}
+	if cleaned := path.Clean(name); cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return fmt.Errorf("%s %q escapes the base directory", label, name)
+	}
+	return nil
 }
 
 func strip(s string) string {

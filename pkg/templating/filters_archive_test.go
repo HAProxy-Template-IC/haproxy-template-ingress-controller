@@ -140,12 +140,12 @@ func TestUntarGz_RejectsBadArchives(t *testing.T) {
 		{
 			name:    "path traversal",
 			archive: makeTarGz(t, tarEntry{name: "../../etc/passwd", content: "x"}),
-			wantErr: "escapes the archive root",
+			wantErr: "escapes the base directory",
 		},
 		{
 			name:    "traversal hidden mid-path",
 			archive: makeTarGz(t, tarEntry{name: "rules/../../../etc/passwd", content: "x"}),
-			wantErr: "escapes the archive root",
+			wantErr: "escapes the base directory",
 		},
 		{
 			name:    "absolute path",

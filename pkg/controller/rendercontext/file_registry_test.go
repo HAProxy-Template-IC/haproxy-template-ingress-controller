@@ -110,6 +110,34 @@ func TestFileRegistry_Register(t *testing.T) {
 	}
 }
 
+// TestFileRegistry_Register_RejectsTraversal proves Register inherits the
+// containment guard for every routable type, including "ca-file" (which routes
+// through the general-file path) and "map" (whose filename is otherwise stored
+// verbatim). A traversal or absolute filename must be rejected before it is
+// recorded; a clean filename must pass.
+func TestFileRegistry_Register_RejectsTraversal(t *testing.T) {
+	pathResolver := &templating.PathResolver{
+		MapsDir:    "/etc/haproxy/maps",
+		SSLDir:     "/etc/haproxy/certs",
+		CRTListDir: "/etc/haproxy/crt-list",
+		GeneralDir: "/etc/haproxy/files",
+	}
+
+	for _, fileType := range []string{"map", "file", "ca-file", "cert", "crt-list"} {
+		t.Run(fileType, func(t *testing.T) {
+			for _, filename := range []string{"../../etc/passwd", "sub/../../../etc/passwd", "/etc/passwd", `c:\evil`, `\\host\share`} {
+				registry := NewFileRegistry(pathResolver)
+				_, err := registry.Register(fileType, filename, "content")
+				require.Error(t, err, "traversal %q must be rejected for type %q", filename, fileType)
+			}
+
+			registry := NewFileRegistry(pathResolver)
+			_, err := registry.Register(fileType, "clean-name.dat", "content")
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestFileRegistry_Register_Idempotent(t *testing.T) {
 	pathResolver := &templating.PathResolver{
 		MapsDir: "/etc/haproxy/maps",
