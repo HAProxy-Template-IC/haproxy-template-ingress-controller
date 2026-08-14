@@ -767,3 +767,264 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'str\(http\|m3\.default\.svc\.cluster\.local:8083\|50000\|3;\),concat\(,txn\.gw_mirror_targets,\)'
+
+  # Rewrite/redirect directive injection guard (#155). replaceFullPath /
+  # replacePrefixMatch are arbitrary strings (no Gateway-API charset validation) that
+  # land inside double-quoted set-path / replace-path / regsub / redirect directives; a
+  # " breaks out and a newline splits the line into a new directive. Guarded before
+  # emission: denied at admission, warned-and-skipped on reconcile.
+  test-httproute-urlrewrite-replacefullpath-injection-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: A double quote in a URLRewrite ReplaceFullPath value is skipped; the set-path directive is not emitted while a valid sibling rewrite renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services: *servicesServiceApiService
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rw-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /a}
+                filters:
+                  - type: URLRewrite
+                    urlRewrite:
+                      path: {type: ReplaceFullPath, replaceFullPath: "/new\" if { path /rwpwned }"}
+                backendRefs:
+                  - {name: api-service, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rw-good, namespace: default}
+          spec:
+            hostnames:
+              - good.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /b}
+                filters:
+                  - type: URLRewrite
+                    urlRewrite:
+                      path: {type: ReplaceFullPath, replaceFullPath: /rwok}
+                backendRefs:
+                  - {name: api-service, port: 80}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-path "/rwok" if'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "rwpwned"}
+
+  test-httproute-urlrewrite-replacefullpath-injection-admission-rejected:
+    requires: [httproutes]
+    description: A newline in a URLRewrite ReplaceFullPath value is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      services: *servicesServiceApiService
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rw-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /a}
+                filters:
+                  - type: URLRewrite
+                    urlRewrite:
+                      path: {type: ReplaceFullPath, replaceFullPath: "/new\nhttp-request set-header X-Pwned 1"}
+                backendRefs:
+                  - {name: api-service, port: 80}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "break out of the set-path directive"}
+
+  test-httproute-urlrewrite-replaceprefix-injection-admission-rejected:
+    requires: [httproutes]
+    description: A double quote in a URLRewrite ReplacePrefixMatch value is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      services: *servicesServiceApiService
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rw-prefix-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /a}
+                filters:
+                  - type: URLRewrite
+                    urlRewrite:
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: "/new\"x"}
+                backendRefs:
+                  - {name: api-service, port: 80}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "break out of the replace-path directive"}
+
+  test-httproute-redirect-replaceprefix-injection-admission-rejected:
+    requires: [httproutes]
+    description: A double quote in a RequestRedirect ReplacePrefixMatch value is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      services: *servicesServiceApiService
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: redir-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /a}
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: new.example.com
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: "/new\"x"}
+                      statusCode: 301
+                backendRefs:
+                  - {name: api-service, port: 80}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "break out of the redirect directive"}
+
+  test-httproute-redirect-replacefullpath-injection-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: A double quote in a RequestRedirect ReplaceFullPath value is skipped; the redirect directive is not emitted while a valid sibling redirect renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services: *servicesServiceApiService
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: redir-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /a}
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: new.example.com
+                      path: {type: ReplaceFullPath, replaceFullPath: "/new\" code 301 if { path /redirpwned } #"}
+                      statusCode: 301
+                backendRefs:
+                  - {name: api-service, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: redir-good, namespace: default}
+          spec:
+            hostnames:
+              - good.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /b}
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: new.example.com
+                      path: {type: ReplaceFullPath, replaceFullPath: /redirok}
+                      statusCode: 301
+                backendRefs:
+                  - {name: api-service, port: 80}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'https://new\.example\.com/redirok'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "redirpwned"}
+
+  # The RequestRedirect ReplacePrefixMatch branch folds the route's own match path
+  # (routeInfo.pathValue) into regsub("^<sanitize_regex(path)>", ...). sanitize_regex
+  # (QuoteMeta) escapes regex metacharacters but NOT a " or control character, so a
+  # RegularExpression match path is a second injection vector even when the
+  # replacePrefixMatch value itself is clean. The clean header match makes the rule
+  # non-path-only, so the frontend routing ACL matches on the derived conflict group,
+  # not the raw path — the redirect regsub is then the sole place the path is emitted,
+  # isolating this fallback guard from the match-value guard.
+  test-httproute-redirect-regex-path-injection-admission-rejected:
+    requires: [httproutes]
+    description: A double quote in a RegularExpression match path is denied by admission even when the RequestRedirect ReplacePrefixMatch value is clean.
+    extraContext: {renderMode: admission}
+    fixtures:
+      services: *servicesServiceApiService
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: redir-path-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - path: {type: RegularExpression, value: "^/a\"x"}
+                    headers:
+                      - {type: Exact, name: X-Adv, value: adv}
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: new.example.com
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: /clean}
+                      statusCode: 301
+                backendRefs:
+                  - {name: api-service, port: 80}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "break out of the redirect directive"}
+
+  test-httproute-redirect-regex-path-injection-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: A double quote in a RegularExpression match path (clean replacePrefixMatch) is skipped; the smuggled regsub content never appears while a valid sibling redirect renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services: *servicesServiceApiService
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: redir-path-attacker, namespace: default}
+          spec:
+            hostnames:
+              - attacker.example.com
+            rules:
+              - matches:
+                  - path: {type: RegularExpression, value: "^/REDIRPATHPWNED\"x"}
+                    headers:
+                      - {type: Exact, name: X-Adv, value: adv}
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: new.example.com
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: /clean}
+                      statusCode: 301
+                backendRefs:
+                  - {name: api-service, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: redir-path-good, namespace: default}
+          spec:
+            hostnames:
+              - good.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /b}
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: new.example.com
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: /clean}
+                      statusCode: 301
+                backendRefs:
+                  - {name: api-service, port: 80}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'regsub\("\^/b","/clean"\)'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "REDIRPATHPWNED"}
