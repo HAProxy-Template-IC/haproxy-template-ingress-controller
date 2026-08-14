@@ -172,14 +172,24 @@ The Deployer SHALL stamp each pod's per-pod status checksum with the deployment'
 
 ### Requirement: Per-Endpoint Version Cache
 
-The Deployer SHALL keep a per-endpoint cache of the last-synced config version, parsed config, current raw-config activation checksum, content checksum, activation proof, and generation, letting subsequent syncs skip the full fetch-and-parse when the pod's version is unchanged. These fields SHALL be read and committed as one locked observation. Every entry SHALL be keyed by the complete endpoint authority: URL, credentials, pod namespace, pod name, pod UID, container execution epoch, and detected version. The cached parsed config SHALL be the pod's ACTUAL post-sync state when the sync reports one (preferring the orchestrator's post-sync fetch over the caller's desired config), so per-pod divergence stays detectable. A structural sync SHALL capture the generation before its pod call and commit only if that generation and authority remain current. Its failure SHALL clear only the observation at its captured generation. An endpoint leaving the discovered fleet or a component start SHALL fence outstanding observations. Drift-prevention deployments SHALL NOT pass the cached checksum as the last-deployed checksum, forcing full comparison.
+The Deployer SHALL keep a per-endpoint cache of the last-synced config version, parsed config, current raw-config activation checksum, content checksum, activation proof, and generation, letting subsequent syncs skip the full fetch-and-parse when the pod's version is unchanged. These fields SHALL be read and committed as one locked observation. Every entry SHALL be keyed by the complete endpoint authority: URL, credentials, pod namespace, pod name, pod UID, container execution epoch, and detected version. The cached parsed config SHALL be the pod's ACTUAL post-sync state when the sync reports one, unless the post-reload comparator proved zero operations against the caller's desired parsed config; only that proof permits caching the shared desired pointer instead. The version, current raw-config checksum, content checksum, and activation proof SHALL still describe the actual endpoint observation. Runtime-only divergence and every unproven result with a parsed read-back SHALL retain that actual graph, so per-pod divergence stays detectable. A structural sync SHALL capture the generation before its pod call and commit only if that generation and authority remain current. Its failure SHALL clear only the observation at its captured generation. An endpoint leaving the discovered fleet or a component start SHALL fence outstanding observations. Drift-prevention deployments SHALL NOT pass the cached checksum as the last-deployed checksum, forcing full comparison.
 
 Before a runtime-bypass pod write, the shared cache SHALL advance that endpoint's generation and clear its complete observation. After the write returns, it SHALL advance the generation again and retain only the resulting activation proof, never a version or parsed-config tuple. This finish SHALL run with an empty proof after errors, cancellation, or panic even when the runtime lifecycle lease has expired. Metrics, status, and deploy publications remain gated by the current runtime lease. Structural snapshots from before or during the runtime write SHALL therefore be unable to resurrect a reusable tuple after the write.
 
 #### Scenario: Cache stores actual post-sync state
 
 - **WHEN** a sync applies operations and the post-sync fetch succeeds
-- **THEN** the cache SHALL store the fetched post-sync parsed config rather than the desired input
+- **THEN** the cache SHALL store the fetched post-sync parsed config unless the post-reload comparator proved it equivalent to desired
+
+#### Scenario: Equivalent endpoints share the desired parsed graph
+
+- **WHEN** multiple endpoint reload read-backs each compare to desired with zero operations
+- **THEN** their cache entries SHALL reference the same desired parsed config while retaining their own actual version, checksums, and activation proof
+
+#### Scenario: Runtime-divergent endpoint retains its actual graph
+
+- **WHEN** a post-reload read-back differs from desired by runtime-eligible operations
+- **THEN** that endpoint's cache SHALL retain the actual parsed read-back rather than the desired parsed config
 
 #### Scenario: Failure invalidates the entry
 

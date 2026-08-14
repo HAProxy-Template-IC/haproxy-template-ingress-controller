@@ -150,6 +150,10 @@ func TestSync_HeaderlessRuntimeOnlyDelta_ForcesReload(t *testing.T) {
 				assert.False(t, result.ReloadTriggered)
 				assert.NotContains(t, rec.lastQuery(), "force_reload=true")
 			}
+			if result.SyncMode != SyncModeReload {
+				assert.False(t, result.PostSyncConfigMatchesDesired,
+					"only a post-reload comparator can prove graph equivalence")
+			}
 		})
 	}
 }
@@ -169,14 +173,21 @@ func TestApplyWithReload_ReadBackVerdicts(t *testing.T) {
 	desired := readBackTestBase + readBackTestExtraBackend
 
 	tests := []struct {
-		name           string
-		readBackBody   string
-		wantErr        bool
-		wantDivergence bool
+		name               string
+		readBackBody       string
+		wantErr            bool
+		wantDivergence     bool
+		wantMatchesDesired bool
 	}{
 		{
-			name:         "read-back identical to the pushed body succeeds",
-			readBackBody: "# _md5hash=abc\n# _version=6\n" + desired,
+			name:               "read-back identical to the pushed body succeeds",
+			readBackBody:       "# _md5hash=abc\n# _version=6\n" + desired,
+			wantMatchesDesired: true,
+		},
+		{
+			name:               "byte-different comparator-equivalent read-back succeeds",
+			readBackBody:       "# retained dataplane comment\n" + desired,
+			wantMatchesDesired: true,
 		},
 		{
 			name: "runtime-only divergence (concurrent bypass patched an address) succeeds",
@@ -213,6 +224,7 @@ func TestApplyWithReload_ReadBackVerdicts(t *testing.T) {
 				require.NotNil(t, result, "the failed result still describes the attempted deploy")
 				assert.False(t, result.Success)
 				assert.True(t, result.ReloadTriggered)
+				assert.False(t, result.PostSyncConfigMatchesDesired)
 				return
 			}
 			require.NoError(t, err)
@@ -220,8 +232,33 @@ func TestApplyWithReload_ReadBackVerdicts(t *testing.T) {
 			assert.Equal(t, SyncModeReload, result.SyncMode)
 			require.NotNil(t, result.PostSyncParsedConfig,
 				"the read-back parse feeds the caller's post-sync cache without a second fetch")
+			assert.Equal(t, tt.wantMatchesDesired, result.PostSyncConfigMatchesDesired)
 		})
 	}
+}
+
+func TestApplyWithReload_ByteIdentityDoesNotClaimComparatorEquivalence(t *testing.T) {
+	desired := readBackTestBase + readBackTestExtraBackend
+	p, err := parser.New()
+	require.NoError(t, err)
+	nonEquivalentDesired, err := p.ParseFromString(desired + strings.Replace(readBackTestExtraBackend, "api2", "api3", 1))
+	require.NoError(t, err)
+
+	rec := &configPostRecorder{}
+	var readBack atomic.Value
+	readBack.Store("# _md5hash=abc\n# _version=6\n" + desired)
+	orch, cleanup := newReadBackOrchestrator(t, rec, "5", "# _md5hash=abc\n# _version=5\n"+readBackTestBase, &readBack)
+	defer cleanup()
+
+	opts := DefaultSyncOptions()
+	opts.PreParsedConfig = nonEquivalentDesired
+	result, err := orch.sync(context.Background(), desired, opts, DefaultAuxiliaryFiles())
+
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.NotNil(t, result.PostSyncParsedConfig)
+	assert.False(t, result.PostSyncConfigMatchesDesired,
+		"matching raw bytes do not prove the supplied parsed desired graph is equivalent")
 }
 
 // TestApplyWithReload_ReadBackFetchFailure pins the unknown-state verdict:

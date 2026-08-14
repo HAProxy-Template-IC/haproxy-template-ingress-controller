@@ -103,14 +103,15 @@ type SyncResult struct {
 	// succeeded; nil otherwise (no-changes paths, or fetch/parse failure —
 	// callers fall back to the desired config in those cases).
 	//
-	// Callers should cache this in preference to their input desired config:
-	// incremental dataplane patches don't guarantee byte-identity with the
-	// caller's intent (different starting baselines across pods produce
-	// logically-equivalent-but-byte-different end states). Caching the
-	// actual post-sync state lets subsequent drift checks compare apples to
-	// apples — the comparator sees pod-actual vs desired, not
-	// desired vs desired.
+	// This remains the actual-state result contract. Callers may retain the
+	// desired graph instead only when PostSyncConfigMatchesDesired is true;
+	// otherwise retaining desired would hide per-pod divergence.
 	PostSyncParsedConfig *parserconfig.StructuredConfig
+
+	// PostSyncConfigMatchesDesired is true only when the post-reload
+	// comparator proved that PostSyncParsedConfig has zero operations against
+	// the desired config.
+	PostSyncConfigMatchesDesired bool
 }
 
 // AppliedOperation represents a single applied configuration change.

@@ -524,7 +524,7 @@ func (o *orchestrator) applyWithReload(
 	// runtime-bypass push legitimately patches server fields onto this very
 	// body. Runs before the orphan aux-file delete: on divergence the worker's
 	// loaded config is unknown, so deleting files it may reference is unsafe.
-	readBackParsed, activatedChecksum, readBackErr := o.verifyPostReloadReadBack(ctx, desiredConfig, reloadID, opts)
+	readBackParsed, activatedChecksum, readBackMatchesDesired, readBackErr := o.verifyPostReloadReadBack(ctx, desiredConfig, reloadID, opts)
 	if readBackErr != nil {
 		o.logger.Error("Post-reload read-back failed; skipping orphan aux-file delete and reporting the deploy failed",
 			"reload_id", reloadID, "error", readBackErr)
@@ -559,6 +559,9 @@ func (o *orchestrator) applyWithReload(
 		// doesn't fetch a second time. Nil when the read-back parse failed
 		// (best-effort — the deferred populate then retries).
 		PostSyncParsedConfig: readBackParsed,
+		// The comparator, rather than byte equality, proves when this endpoint
+		// can share the caller's desired parsed graph.
+		PostSyncConfigMatchesDesired: readBackMatchesDesired,
 		// Proof for the next sync: the reload was verified AND the read-back
 		// confirmed these exact bytes are on disk. Without both, an empty diff
 		// against this content must not be trusted.
@@ -588,7 +591,7 @@ func (o *orchestrator) applyWithReload(
 //
 // Each per-deploy read-back logs the pushed and on-disk checksums so a
 // divergence is diagnosable from the controller log alone.
-func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody, reloadID string, opts *SyncOptions) (parsed *parserconfig.StructuredConfig, onDiskChecksum string, err error) {
+func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody, reloadID string, opts *SyncOptions) (parsed *parserconfig.StructuredConfig, onDiskChecksum string, matchesDesired bool, err error) {
 	retry := client.RetryConfig{
 		MaxAttempts: 4,
 		// The reload already succeeded and was verified; this read is purely
@@ -605,7 +608,7 @@ func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody,
 		return o.client.GetRawConfiguration(ctx)
 	})
 	if err != nil {
-		return nil, "", &SyncError{
+		return nil, "", false, &SyncError{
 			Stage:   stagePostReloadReadback,
 			Message: "failed to read back on-disk config after reload",
 			Cause:   err,
@@ -633,35 +636,19 @@ func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody,
 		"endpoint", o.client.Endpoint.URL)
 
 	readBackParsed, parseErr := o.parser.ParseFromString(readBack)
-	// Kept despite seldom firing: both checksums are computed for the log line
-	// anyway, so this costs one string compare, and it is still correct for a
-	// config simple enough to survive re-serialisation unchanged. Normalising
-	// the pushed body to make it fire in general was measured at 11x the cost of
-	// the comparison it would skip (#121) — the fast path is not worth buying.
-	if pushedChecksum == readBackChecksum {
-		if parseErr != nil {
-			// Bytes match the pushed body, so the deploy is truthful; the
-			// parse failure only loses the post-sync cache entry.
-			o.logger.Debug("Post-reload read-back parse failed on byte-identical content",
-				"error", parseErr)
-		}
-		return readBackParsed, readBackChecksum, nil
+	matchesDesired, err = o.classifyPostReloadReadBack(readBackParsed, parseErr, pushedBody, opts, pushedChecksum, readBackChecksum)
+	if err != nil {
+		return nil, "", false, err
 	}
-	if err := o.checkReadBackDivergence(readBackParsed, parseErr, pushedBody, opts, pushedChecksum, readBackChecksum); err != nil {
-		return nil, "", err
-	}
-	// Byte divergence with structural equality: tolerated (see doc). The proof
-	// is taken over what is ACTUALLY on disk, not what we pushed — a concurrent
-	// runtime bypass legitimately patched server fields onto this body, and the
-	// next sync diffs against those bytes.
-	return readBackParsed, readBackChecksum, nil
+	// The activation proof is always taken over what is ACTUALLY on disk,
+	// including when the parsed graph can be shared with desired.
+	return readBackParsed, readBackChecksum, matchesDesired, nil
 }
 
-// checkReadBackDivergence decides whether a byte-divergent read-back is
-// tolerable (only runtime-eligible server field diffs — a concurrent runtime
-// bypass) or a real structural divergence, returning the
-// stagePostReloadDivergence SyncError for the latter.
-func (o *orchestrator) checkReadBackDivergence(readBackParsed *parserconfig.StructuredConfig, parseErr error, pushedBody string, opts *SyncOptions, pushedChecksum, readBackChecksum string) error {
+// classifyPostReloadReadBack proves graph equivalence only for a zero-op diff.
+// Byte-identical but unproven content remains a successful deploy; byte-
+// divergent structural or unprovable content fails.
+func (o *orchestrator) classifyPostReloadReadBack(readBackParsed *parserconfig.StructuredConfig, parseErr error, pushedBody string, opts *SyncOptions, pushedChecksum, readBackChecksum string) (bool, error) {
 	divergence := func(message string, cause error) error {
 		return &SyncError{
 			Stage:   stagePostReloadDivergence,
@@ -673,9 +660,17 @@ func (o *orchestrator) checkReadBackDivergence(readBackParsed *parserconfig.Stru
 			},
 		}
 	}
+	byteIdentical := pushedChecksum == readBackChecksum
+	unproven := func(message string, cause error) (bool, error) {
+		if byteIdentical {
+			o.logger.Debug(message, "error", cause)
+			return false, nil
+		}
+		return false, divergence(message, cause)
+	}
 	if parseErr != nil {
-		return divergence(
-			fmt.Sprintf("on-disk config after reload diverged from the pushed body and cannot be parsed (pushed %s, on disk %s)", pushedChecksum, readBackChecksum),
+		return unproven(
+			fmt.Sprintf("cannot parse on-disk config after reload (pushed %s, on disk %s)", pushedChecksum, readBackChecksum),
 			parseErr)
 	}
 	desiredParsed := opts.PreParsedConfig
@@ -683,20 +678,28 @@ func (o *orchestrator) checkReadBackDivergence(readBackParsed *parserconfig.Stru
 		var err error
 		desiredParsed, err = o.parser.ParseFromString(pushedBody)
 		if err != nil {
-			return divergence("cannot parse the pushed body to prove read-back equivalence", err)
+			return unproven("cannot parse the pushed body to prove read-back equivalence", err)
 		}
 	}
 	diff, err := o.comparator.Compare(readBackParsed, desiredParsed)
 	if err != nil {
-		return divergence("cannot compare the read-back config against the pushed body", err)
+		return unproven("cannot compare the read-back config against the pushed body", err)
+	}
+	if len(diff.Operations) == 0 {
+		return true, nil
 	}
 	if _, structuralOps := partitionByRuntimeEligibility(diff.Operations); len(structuralOps) > 0 {
+		if byteIdentical {
+			o.logger.Debug("Post-reload comparator disagreed with byte-identical pushed content; retaining the actual parsed config",
+				"operation_count", len(diff.Operations))
+			return false, nil
+		}
 		logOperationDetail(o.logger, "post_reload_divergence", structuralOps)
-		return divergence(
+		return false, divergence(
 			fmt.Sprintf("on-disk config after reload structurally diverged from the pushed body (%d structural ops; pushed %s, on disk %s)", len(structuralOps), pushedChecksum, readBackChecksum),
 			nil)
 	}
-	return nil
+	return false, nil
 }
 
 // onDiskIsProvenActivated reports whether an empty diff can be trusted: the

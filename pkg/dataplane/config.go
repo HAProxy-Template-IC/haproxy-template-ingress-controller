@@ -127,8 +127,9 @@ type SyncOptions struct {
 	// non-nil, sync skips parsing the desiredConfig string.
 	PreParsedConfig *parserconfig.StructuredConfig
 
-	// CachedCurrentConfig is an optional cached parsed current configuration
-	// from a previous sync. Reuse also requires CachedConfigVersion and matching
+	// CachedCurrentConfig is an optional parsed graph for the endpoint's current
+	// config. It may be parsed from the endpoint bytes or comparator-proven
+	// equivalent to them. Reuse also requires CachedConfigVersion and matching
 	// cached-current and last-activated checksums.
 	CachedCurrentConfig *parserconfig.StructuredConfig
 
@@ -136,9 +137,10 @@ type SyncOptions struct {
 	// used when CachedCurrentConfig is also set.
 	CachedConfigVersion int64
 
-	// CachedCurrentConfigChecksum is activationChecksum() of the raw config
-	// represented by CachedCurrentConfig. A cache hit also requires this to
-	// match LastActivatedConfigChecksum; otherwise sync fetches the raw config.
+	// CachedCurrentConfigChecksum is activationChecksum() of the endpoint's
+	// actual raw config paired with CachedCurrentConfig. A cache hit also
+	// requires this to match LastActivatedConfigChecksum; otherwise sync fetches
+	// the raw config.
 	CachedCurrentConfigChecksum string
 
 	// ContentChecksum is the pre-computed checksum of the desired config +
