@@ -36,7 +36,8 @@ templateSnippets:
           http-request return status <code> [content-type "<ct>" string "<body>"] if <host-match>
       #}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -58,10 +59,11 @@ templateSnippets:
             {%- if len(hosts) > 0 %}
       # haptic/fixed-response ({{ key }})
               {%- if body != "" %}
-                {%- if regex_search(body, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-haptic.org/fixed-response-body' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
-                {#- Escape for HAProxy's double-quoted string: backslash first, then quote. -#}
-                {%- var safeBody = replace(replace(body, "\\", "\\\\"), "\"", "\\\"") %}
-      http-request return status {{ code }} content-type "{{ ValidateConfigValue(ct, "haproxy-haptic.org/fixed-response-content-type", key, false) }}" string "{{ safeBody }}" if {{ HostMatchCondition(hosts) }}
+                {%- var bodyInj = ConfigInjectionKind(body, "line") %}
+                {%- if bodyInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/fixed-response-body' value contains " + bodyInj + ", which would split the frontend directive; the response is not applied. Remove control characters from the value.") -}}{%- continue %}{%- end %}
+                {%- var ctInj = ConfigInjectionKind(ct, "line") %}
+                {%- if ctInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/fixed-response-content-type' value contains " + ctInj + ", which would split the frontend directive; the response is not applied. Remove control characters from the value.") -}}{%- continue %}{%- end %}
+      http-request return status {{ code }} content-type "{{ EscapeDquoteValue(ct) }}" string "{{ EscapeDquoteValue(body) }}" if {{ HostMatchCondition(hosts) }}
               {%- else %}
       http-request return status {{ code }} if {{ HostMatchCondition(hosts) }}
               {%- end %}
@@ -89,7 +91,8 @@ templateSnippets:
           http-request return status <code> content-type "<ct>" string "<body>" if <host-match>
       #}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -97,9 +100,8 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var body = ingress.Metadata.Annotations["haproxy-haptic.org/mock-response"] %}
           {%- if body != "" %}
-            {%- if regex_search(body, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-haptic.org/mock-response' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
-            {#- Escape for HAProxy's double-quoted string: backslash first, then quote. -#}
-            {%- var safeBody = replace(replace(body, "\\", "\\\\"), "\"", "\\\"") %}
+            {%- var bodyInj = ConfigInjectionKind(body, "line") %}
+            {%- if bodyInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/mock-response' value contains " + bodyInj + ", which would split the frontend directive; the response is not applied. Remove control characters from the value.") -}}{%- continue %}{%- end %}
             {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/mock-response-code"] %}
             {%- if code == "" %}{%- code = "200" %}{%- end %}
             {%- if toint(code) < 100 || toint(code) > 599 %}
@@ -107,13 +109,15 @@ templateSnippets:
             {%- end %}
             {%- var ct = ingress.Metadata.Annotations["haproxy-haptic.org/mock-response-content-type"] %}
             {%- if ct == "" %}{%- ct = "application/json" %}{%- end %}
+            {%- var ctInj = ConfigInjectionKind(ct, "line") %}
+            {%- if ctInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/mock-response-content-type' value contains " + ctInj + ", which would split the frontend directive; the response is not applied. Remove control characters from the value.") -}}{%- continue %}{%- end %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
       # haptic/mock-response ({{ key }})
-      http-request return status {{ code }} content-type "{{ ValidateConfigValue(ct, "haproxy-haptic.org/mock-response-content-type", key, false) }}" string "{{ safeBody }}" if {{ HostMatchCondition(hosts) }}
+      http-request return status {{ code }} content-type "{{ EscapeDquoteValue(ct) }}" string "{{ EscapeDquoteValue(body) }}" if {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
       {%- end -%}
@@ -451,7 +455,7 @@ templateSnippets:
           {%- var secret, _ = secretAny.(*resources.secrets.T) %}
       # haptic/hmac ({{ key }})
           {%- if secret == nil %}
-      # WARNING haproxy-haptic.org/hmac-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until it is present.
+      # WARNING haproxy-haptic.org/hmac-secret: referenced Secret not found at render time; failing closed (503) for this route until it is present.
       http-request set-var(txn.denied_by) str(hmac_unavailable)
       http-request deny deny_status 503
           {%- else %}

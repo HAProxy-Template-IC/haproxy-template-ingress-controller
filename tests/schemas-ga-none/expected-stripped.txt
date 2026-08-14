@@ -41,6 +41,8 @@ test-gateway-insecure-frontend-validation-mode-default
 test-gateway-insecure-frontend-validation-mode-per-port
 test-gateway-listener-isolation-hostname-intersection
 test-gateway-listener-port-override-stands-alone
+test-gateway-listener-tls-options-injection-admission-rejected
+test-gateway-listener-tls-options-injection-reconcile-warns-and-skips
 test-gateway-listener-tls-options-min-version-only
 test-gateway-listener-tls-options-version-and-ciphers
 test-gateway-mixed-unsupported-protocol
@@ -71,6 +73,8 @@ test-grpcroute-multi-hostname-map-newlines
 test-grpcroute-multiple-headers
 test-grpcroute-status-patches
 test-httproute-all-matchers
+test-httproute-backend-header-value-injection-admission-rejected
+test-httproute-backend-header-value-injection-reconcile-warns-and-skips
 test-httproute-backend-request-header-modifier
 test-httproute-cors-filter
 test-httproute-cors-no-hostname
@@ -108,6 +112,10 @@ test-httproute-regex-path-frontend-injection-admission-rejected
 test-httproute-regex-path-frontend-injection-reconcile-warns-and-skips
 test-httproute-regex-path-injection-reconcile-warns-and-skips
 test-httproute-request-header-modifier
+test-httproute-request-header-value-escaped
+test-httproute-request-header-value-injection-admission-rejected
+test-httproute-request-header-value-injection-reconcile-warns-and-skips
+test-httproute-request-header-value-percent-escaped
 test-httproute-request-mirror-fraction
 test-httproute-request-mirror-https-scheme
 test-httproute-request-mirror-multiple
@@ -117,6 +125,8 @@ test-httproute-request-mirror-static-spoe-config
 test-httproute-request-redirect
 test-httproute-request-redirect-default-port-omission
 test-httproute-response-header-modifier
+test-httproute-response-header-value-injection-admission-rejected
+test-httproute-response-header-value-injection-reconcile-warns-and-skips
 test-httproute-route-key-shapes
 test-httproute-same-path-matcher-precedence
 test-httproute-same-route-conflicts

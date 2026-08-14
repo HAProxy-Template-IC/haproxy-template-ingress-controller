@@ -53,11 +53,11 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request add-header X-Custom-Header 'custom-value' if"
+        pattern: 'http-request add-header X-Custom-Header "custom-value" if'
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-header X-Replace-Header 'new-value' if"
+        pattern: 'http-request set-header X-Replace-Header "new-value" if'
 
       - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-Remove-Header if'}
 
@@ -91,11 +91,11 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-response add-header X-Response-Header 'response-value' if"
+        pattern: 'http-response add-header X-Response-Header "response-value" if'
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-response set-header X-Replace-Response 'new-response' if"
+        pattern: 'http-response set-header X-Replace-Response "new-response" if'
 
       - {type: contains, target: haproxy.cfg, pattern: 'http-response del-header X-Remove-Response if'}
 
@@ -358,15 +358,15 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "(?s)backend gtw_default_br-route_backend-v1_8080.*?http-request set-header Backend 'backend-v1'.*?backend gtw_default_br-route_backend-v2_8080"
+        pattern: '(?s)backend gtw_default_br-route_backend-v1_8080.*?http-request set-header Backend "backend-v1".*?backend gtw_default_br-route_backend-v2_8080'
 
       - type: contains
         target: haproxy.cfg
-        pattern: "(?s)backend gtw_default_br-route_backend-v2_8080.*?http-request set-header Backend 'backend-v2'"
+        pattern: '(?s)backend gtw_default_br-route_backend-v2_8080.*?http-request set-header Backend "backend-v2"'
 
       - type: contains
         target: haproxy.cfg
-        pattern: "backend gtw_default_br-route_backend-v1_8080[^a-zA-Z]+[^\\n]*\\n([^\\n]+\\n){0,5}[^\\n]*http-request set-header Backend 'backend-v1'"
+        pattern: "backend gtw_default_br-route_backend-v1_8080[^a-zA-Z]+[^\\n]*\\n([^\\n]+\\n){0,5}[^\\n]*http-request set-header Backend \"backend-v1\""
 
   test-httproute-cors-no-hostname:
     requires: [gatewayclasses, gateways, httproutes]

@@ -1,0 +1,416 @@
+# HAPTIC-native annotation library — config-injection guard tests.
+# Header/content-type/CORS VALUES are emitted inside double quotes via
+# EscapeDquoteValue (a " / $ is escaped, a control char is rejected); oauth-uri-prefix
+# is guarded (mapkey) before it reaches an auth routing-map value. Denied at
+# admission, warned-and-skipped on reconcile.
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+
+validationTests:
+
+  # ---- request/response-set-header VALUE escaping + control-char guard ----
+  test-haptic-request-set-header-escapes-values:
+    description: A set-header value with a single quote ('self'), a double quote, and a dollar sign renders inside double quotes with " and $ escaped and ' passed through — closing the quote-break the old single-quoted form allowed.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hdr-esc
+            annotations:
+              haproxy-haptic.org/request-set-header: "Content-Security-Policy default-src 'self'\nX-Quoted has\"quote\nX-Dollar a$b"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: esc.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header Content-Security-Policy "default-src ''self''" if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Quoted "has\\"quote" if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Dollar "a\\\$b" if'}
+
+  test-haptic-request-set-header-control-char-reconcile-warns-and-skips:
+    description: A control character in a request-set-header value is skipped while a valid sibling Ingress still emits its header.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: hdr-bad, annotations: {haproxy-haptic.org/request-set-header: "X-Bad val\rmore"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bad.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: hdr-ok, annotations: {haproxy-haptic.org/request-set-header: "X-Good goodval"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: ok.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Good "goodval" if'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "X-Bad"}
+
+  test-haptic-request-set-header-control-char-admission-rejected:
+    description: A control character in a request-set-header value is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: hdr-bad, annotations: {haproxy-haptic.org/request-set-header: "X-Bad val\rmore"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bad.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would split the frontend directive"}
+
+  test-haptic-response-set-header-control-char-reconcile-warns-and-skips:
+    description: A control character in a response-set-header value is skipped while a valid sibling Ingress still emits its header.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: rhdr-bad, annotations: {haproxy-haptic.org/response-set-header: "X-Bad val\rmore"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rbad.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: rhdr-ok, annotations: {haproxy-haptic.org/response-set-header: "X-Good goodval"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rok.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response set-header X-Good "goodval" if'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "X-Bad"}
+
+  # ---- fixed-response / mock-response content-type + body ----
+  test-haptic-fixed-response-body-escapes-dollar:
+    description: A fixed-response body containing a dollar sign renders with $ escaped, so HAProxy does not expand it as an environment variable.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: fr-dollar
+            annotations:
+              haproxy-haptic.org/fixed-response: "true"
+              haproxy-haptic.org/fixed-response-body: "cost $5"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: frd.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'string "cost \\\$5" if'}
+
+  test-haptic-fixed-response-content-type-control-char-reconcile-warns-and-skips:
+    description: A control character in fixed-response-content-type is skipped while a valid sibling fixed-response still renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: fr-bad
+            annotations:
+              haproxy-haptic.org/fixed-response: "true"
+              haproxy-haptic.org/fixed-response-body: "maint"
+              haproxy-haptic.org/fixed-response-content-type: "text/plain\nacl fr-inj-marker always"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: frbad.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: fr-ok
+            annotations:
+              haproxy-haptic.org/fixed-response: "true"
+              haproxy-haptic.org/fixed-response-body: "ok"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: frok.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'string "ok" if'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "fr-inj-marker"}
+
+  test-haptic-fixed-response-content-type-control-char-admission-rejected:
+    description: A control character in fixed-response-content-type is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: fr-bad
+            annotations:
+              haproxy-haptic.org/fixed-response: "true"
+              haproxy-haptic.org/fixed-response-body: "maint"
+              haproxy-haptic.org/fixed-response-content-type: "text/plain\nacl fr-inj-marker always"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: frbad.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would split the frontend directive"}
+
+  test-haptic-mock-response-content-type-control-char-reconcile-warns-and-skips:
+    description: A control character in mock-response-content-type is skipped while a valid sibling mock-response still renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mock-bad
+            annotations:
+              haproxy-haptic.org/mock-response: '{"ok":1}'
+              haproxy-haptic.org/mock-response-content-type: "application/json\nacl mock-inj-marker always"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mockbad.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mock-ok
+            annotations:
+              haproxy-haptic.org/mock-response: 'served'
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mockok.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'string "served" if'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "mock-inj-marker"}
+
+  # ---- shared EmitAnnotationCORS macro ----
+  test-haptic-cors-value-control-char-reconcile-warns-and-skips:
+    description: A control character in a CORS value drops the whole CORS block for that Ingress while a valid sibling Ingress still emits CORS.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cors-bad
+            annotations:
+              haproxy-haptic.org/cors-enable: "true"
+              haproxy-haptic.org/cors-allow-methods: "GET\nacl cors-inj-marker always"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: corsbad.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cors-ok
+            annotations:
+              haproxy-haptic.org/cors-enable: "true"
+              haproxy-haptic.org/cors-allow-origin: "https://app.example.com"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: corsok.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "set-header Access-Control-Allow-Origin"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "cors-inj-marker"}
+
+  test-haptic-cors-value-control-char-admission-rejected:
+    description: A control character in a CORS value is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cors-bad
+            annotations:
+              haproxy-haptic.org/cors-enable: "true"
+              haproxy-haptic.org/cors-allow-methods: "GET\nacl cors-inj-marker always"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: corsbad.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "CORS is not applied"}
+
+  test-haptic-cors-value-percent-escaped:
+    description: A CORS value with a log-format fetch renders with every % doubled to %%, so a tenant cannot read request-scoped state into the CORS response header.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cors-pct
+            annotations:
+              haproxy-haptic.org/cors-enable: "true"
+              haproxy-haptic.org/cors-allow-origin: "https://app.example.com"
+              haproxy-haptic.org/cors-expose-headers: "X-%[req.hdr(y)]"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: corspct.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'Access-Control-Expose-Headers "X-%%\[req\.hdr\(y\)\]"'}
+
+  # ---- oauth-uri-prefix into auth routing maps (mapkey guard) ----
+  test-haptic-oauth-uri-prefix-legit-renders:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: A legit non-default oauth-uri-prefix renders into the signin/url auth maps.
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: [check-auth]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: oauth-app-svc}
+          spec: {ports: [{port: 80}]}
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: oauth2-proxy}
+          spec: {ports: [{port: 4180}]}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: oauthcustom, annotations: {haproxy-haptic.org/oauth: "oauth2-proxy", haproxy-haptic.org/oauth-uri-prefix: "/custom-oauth"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: oauthcustom.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: oauth-app-svc, port: {number: 80}}}}
+                    - {path: /custom-oauth, pathType: Prefix, backend: {service: {name: oauth2-proxy, port: {number: 4180}}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: 'map:auth-signin.map', pattern: "default/oauthcustom /custom-oauth/start"}
+      - {type: contains, target: 'map:auth-url.map', pattern: "default/oauthcustom http://oauth2-proxy.default.svc:4180/custom-oauth/auth"}
+
+  test-haptic-oauth-uri-prefix-injection-reconcile-warns-and-skips:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: A control character in oauth-uri-prefix is skipped, so no entry is injected into the auth signin map.
+    extraContext:
+      renderMode: reconcile
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: [check-auth]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: oauth2-proxy}
+          spec: {ports: [{port: 4180}]}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: oauthbad, annotations: {haproxy-haptic.org/oauth: "oauth2-proxy", haproxy-haptic.org/oauth-uri-prefix: "/oauth2\ninjected-oauth-map-entry"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: oauthbad.example.com
+                http:
+                  paths:
+                    - {path: /oauth2, pathType: Prefix, backend: {service: {name: oauth2-proxy, port: {number: 4180}}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: 'map:auth-signin.map', pattern: "injected-oauth-map-entry"}
+
+  test-haptic-oauth-uri-prefix-injection-admission-rejected:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: A control character in oauth-uri-prefix is denied by the admission webhook.
+    extraContext:
+      renderMode: admission
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: [check-auth]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: oauth2-proxy}
+          spec: {ports: [{port: 4180}]}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: oauthbad, annotations: {haproxy-haptic.org/oauth: "oauth2-proxy", haproxy-haptic.org/oauth-uri-prefix: "/oauth2\ninjected-oauth-map-entry"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: oauthbad.example.com
+                http:
+                  paths:
+                    - {path: /oauth2, pathType: Prefix, backend: {service: {name: oauth2-proxy, port: {number: 4180}}}}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "inject an entry into the auth routing map"}

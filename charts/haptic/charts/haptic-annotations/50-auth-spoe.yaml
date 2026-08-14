@@ -269,7 +269,7 @@ templateSnippets:
           Secret silently turning the gate off. Fail closed instead, matching what
           the JWT, api-key, HMAC and consumer-group paths already do for the same
           event. #}
-      # WARNING haproxy-haptic.org/auth-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until it is present.
+      # WARNING haproxy-haptic.org/auth-secret: referenced Secret not found at render time; failing closed (503) for this route until it is present.
       http-request set-var(txn.denied_by) str(basic_auth_unavailable)
       http-request deny deny_status 503
             {%- end %}
@@ -787,6 +787,8 @@ templateSnippets:
   map-auth-url-825-haptic-oauth:
     template: |-
       {%- import "util-service-port-resolution" for ResolveServicePort -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
@@ -798,6 +800,11 @@ templateSnippets:
           {%- end -%}
           {%- var prefix = ingress.Metadata.Annotations["haproxy-haptic.org/oauth-uri-prefix"] -%}
           {%- if prefix == "" -%}{%- prefix = "/oauth2" -%}{%- end -%}
+          {%- var prefixInj = ConfigInjectionKind(prefix, "mapkey") -%}
+          {%- if prefixInj != "" -%}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + ns + "/" + name + " annotation 'haproxy-haptic.org/oauth-uri-prefix' value contains " + prefixInj + ", which would inject an entry into the auth routing map; the OAuth route is not applied. Remove whitespace and control characters from the value.") -}}
+            {%- continue -%}
+          {%- end -%}
           {%- if len(prefix) > 1 && hasSuffix(prefix, "/") -%}{%- prefix = prefix[:len(prefix)-1] -%}{%- end -%}
           {%- var emitted = false -%}
           {%- for _, path := range ingress.Spec.Rules[*].Http.Paths -%}
@@ -815,6 +822,8 @@ templateSnippets:
 
   map-auth-signin-825-haptic-oauth:
     template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
@@ -826,6 +835,11 @@ templateSnippets:
           {%- var name = ingress.Metadata.Name -%}
           {%- var prefix = ingress.Metadata.Annotations["haproxy-haptic.org/oauth-uri-prefix"] -%}
           {%- if prefix == "" -%}{%- prefix = "/oauth2" -%}{%- end -%}
+          {%- var prefixInj = ConfigInjectionKind(prefix, "mapkey") -%}
+          {%- if prefixInj != "" -%}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + ns + "/" + name + " annotation 'haproxy-haptic.org/oauth-uri-prefix' value contains " + prefixInj + ", which would inject an entry into the auth routing map; the OAuth route is not applied. Remove whitespace and control characters from the value.") -}}
+            {%- continue -%}
+          {%- end -%}
           {%- if len(prefix) > 1 && hasSuffix(prefix, "/") -%}{%- prefix = prefix[:len(prefix)-1] -%}{%- end -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ prefix }}/start?rd=%[path]
         {%- end -%}
