@@ -195,3 +195,57 @@ func TestConfigVersionCache_ConcurrentAccess(t *testing.T) {
 	})
 	wg.Wait()
 }
+
+func TestSelectCachedParsedConfig(t *testing.T) {
+	desired := newTestConfig()
+	actual := newTestConfig()
+
+	tests := []struct {
+		name       string
+		result     *dataplane.SyncResult
+		desired    *parserconfig.StructuredConfig
+		want       *parserconfig.StructuredConfig
+		wantShared bool
+	}{
+		{
+			name: "comparator proof shares desired graph",
+			result: &dataplane.SyncResult{
+				PostSyncParsedConfig:         actual,
+				PostSyncConfigMatchesDesired: true,
+			},
+			desired:    desired,
+			want:       desired,
+			wantShared: true,
+		},
+		{
+			name: "runtime divergence retains actual graph",
+			result: &dataplane.SyncResult{
+				PostSyncParsedConfig: actual,
+			},
+			desired: desired,
+			want:    actual,
+		},
+		{
+			name: "proof without desired graph retains actual graph",
+			result: &dataplane.SyncResult{
+				PostSyncParsedConfig:         actual,
+				PostSyncConfigMatchesDesired: true,
+			},
+			want: actual,
+		},
+		{
+			name:    "missing actual graph falls back to desired",
+			result:  &dataplane.SyncResult{},
+			desired: desired,
+			want:    desired,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, shared := selectCachedParsedConfig(tt.result, tt.desired)
+			assert.Same(t, tt.want, got)
+			assert.Equal(t, tt.wantShared, shared)
+		})
+	}
+}

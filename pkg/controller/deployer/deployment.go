@@ -494,21 +494,7 @@ func (c *Component) deployToSingleEndpoint(
 	}
 
 	// Update the complete endpoint observation in one generation-checked write.
-	// Prefer result.PostSyncParsedConfig (the pod's ACTUAL post-sync state,
-	// fetched and parsed by the orchestrator) over parsedConfig (the caller's
-	// desired intent). The two diverge when the dataplane API applies
-	// incremental patches against pods with different starting baselines — e.g.
-	// a rolling HAProxy Deployment where one pod is synced twice and another
-	// once. Both end up "logically desired" but byte-different on disk; caching
-	// the input desired would hide that drift from every subsequent reconcile
-	// and the divergent pod would never be re-synced. The orchestrator only
-	// populates PostSyncParsedConfig when ops were applied AND the post-sync
-	// fetch+parse succeeded; otherwise desired is equivalent to the live state
-	// (the no-changes path already verified pod==desired).
-	cachedParsed := result.PostSyncParsedConfig
-	if cachedParsed == nil {
-		cachedParsed = parsedConfig
-	}
+	cachedParsed, cachedSharedDesired := selectCachedParsedConfig(result, parsedConfig)
 	cacheCommitted := c.versionCache.commitSync(
 		endpoint,
 		cacheSnapshot.generation,
@@ -528,8 +514,19 @@ func (c *Component) deployToSingleEndpoint(
 		"cache_hit", opts.CachedCurrentConfig != nil,
 		"cache_committed", cacheCommitted,
 		"post_sync_version", result.PostSyncVersion,
-		"cached_actual_post_sync", result.PostSyncParsedConfig != nil,
+		"cached_actual_post_sync", cacheCommitted && result.PostSyncParsedConfig != nil && !cachedSharedDesired,
+		"cached_shared_desired", cacheCommitted && cachedSharedDesired,
 		"duration", result.Duration)
 
 	return result, nil
+}
+
+func selectCachedParsedConfig(result *dataplane.SyncResult, desired *parser.StructuredConfig) (*parser.StructuredConfig, bool) {
+	if result.PostSyncConfigMatchesDesired && desired != nil {
+		return desired, true
+	}
+	if result.PostSyncParsedConfig != nil {
+		return result.PostSyncParsedConfig, false
+	}
+	return desired, false
 }

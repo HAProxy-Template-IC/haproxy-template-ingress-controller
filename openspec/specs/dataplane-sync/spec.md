@@ -462,6 +462,25 @@ On the reload path, when runtime actions exist, the orchestrator SHALL first iss
 - **WHEN** reload verification fails after a force-reload push
 - **THEN** the orchestrator SHALL NOT delete orphaned auxiliary files in the post-config phase.
 
+### Requirement: Post-Reload Config Equivalence Proof
+
+After a successful reload, the orchestrator SHALL parse the on-disk read-back and, when both parsed graphs are available, compare it against desired exactly once. SyncResult.PostSyncConfigMatchesDesired SHALL be true only when that comparison succeeds with zero operations. Checksum equality alone SHALL NOT set the field. Runtime-only differences, parse or comparison failures, non-reload paths, and deferred post-sync fetches SHALL leave it false. Byte-identical read-back SHALL preserve deploy success when equivalence cannot be proved, while byte-divergent structural or unprovable differences SHALL fail the sync.
+
+#### Scenario: Comparator-equivalent read-back is shareable
+
+- **WHEN** the post-reload read-back differs in bytes but comparison against desired produces zero operations
+- **THEN** PostSyncConfigMatchesDesired SHALL be true.
+
+#### Scenario: Runtime divergence is not shareable
+
+- **WHEN** the post-reload comparison produces only runtime-eligible operations
+- **THEN** the sync SHALL succeed with PostSyncConfigMatchesDesired false and retain the actual parsed read-back.
+
+#### Scenario: Byte equality without comparator proof is not shareable
+
+- **WHEN** the on-disk bytes match the pushed body but parsing or comparison cannot prove zero operations
+- **THEN** the sync SHALL succeed with PostSyncConfigMatchesDesired false.
+
 ### Requirement: Retry Logic with Exponential Backoff
 
 The retry utility SHALL support configurable MaxAttempts, a RetryCondition predicate, a BackoffStrategy (None, Linear, or Exponential), and a BaseDelay. Exponential backoff SHALL double the delay on each attempt (BaseDelay * 2^(attempt-1)). Context cancellation during backoff SHALL abort the retry loop. The IsConnectionError condition SHALL match connection refused, connection reset, dial failures, and DNS resolution failures.
