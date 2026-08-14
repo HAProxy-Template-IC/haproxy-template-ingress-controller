@@ -53,9 +53,10 @@ func (f *fakeRuntimeSyncer) Close() error {
 
 func newTestBypass(newSyncer func(ctx context.Context, ep *dataplane.Endpoint) (runtimeSyncer, error)) *runtimeBypass {
 	return &runtimeBypass{
-		logger:    slog.Default(),
-		newSyncer: newSyncer,
-		clients:   make(map[endpointAuthority]runtimeSyncer),
+		logger:      slog.Default(),
+		newSyncer:   newSyncer,
+		configCache: newConfigVersionCache(),
+		clients:     make(map[endpointAuthority]runtimeSyncer),
 	}
 }
 
@@ -382,7 +383,6 @@ func TestRuntimeBypass_CloseFencesBlockedSyncResult(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	done := make(chan struct{})
-	var activations atomic.Int32
 	var metrics atomic.Int32
 	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
 		return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
@@ -392,17 +392,18 @@ func TestRuntimeBypass_CloseFencesBlockedSyncResult(t *testing.T) {
 		}}, nil
 	})
 	b.eventBus = bus
-	b.recordActivation = func(_ *dataplane.Endpoint, _ string) { activations.Add(1) }
 	b.recordFastPath = func(_ int, _ bool) { metrics.Add(1) }
+	endpoint := dataplane.Endpoint{
+		URL: "http://a", PodName: "haproxy-0", PodNamespace: "haptic", PodUID: "uid-1",
+	}
+	commitTestObservation(t, b.configCache, &endpoint, 2, newTestConfig(), "old-proof", "content", "old-proof")
 	dep := &scheduledDeployment{
 		config:                 "config",
 		contentChecksum:        "checksum",
 		lane:                   laneRuntimeRaw,
 		runtimeConfigName:      "cfg",
 		runtimeConfigNamespace: "haptic",
-		endpoints: []dataplane.Endpoint{{
-			URL: "http://a", PodName: "haproxy-0", PodNamespace: "haptic", PodUID: "uid-1",
-		}},
+		endpoints:              []dataplane.Endpoint{endpoint},
 	}
 
 	go func() {
@@ -422,10 +423,107 @@ func TestRuntimeBypass_CloseFencesBlockedSyncResult(t *testing.T) {
 		t.Fatal("runtime apply did not return")
 	}
 
-	assert.Zero(t, activations.Load())
 	assert.Zero(t, metrics.Load())
+	assert.Nil(t, b.configCache.snapshot(&endpoint).parsedConfig)
+	assert.Empty(t, b.configCache.snapshot(&endpoint).activatedChecksum)
 	testutil.AssertNoEvent[*events.ConfigAppliedToPodEvent](t, appliedCh, testutil.NoEventTimeout)
 	testutil.AssertNoEvent[*events.DeployedConfigPublishRequest](t, publishCh, testutil.NoEventTimeout)
+}
+
+func TestRuntimeBypass_InvalidatesCacheBeforePodWrite(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
+		return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
+			close(started)
+			<-release
+			return &dataplane.SyncResult{Success: true, ActivatedConfigChecksum: "runtime-proof"}, nil
+		}}, nil
+	})
+	endpoint := dataplane.Endpoint{URL: "http://a"}
+	commitTestObservation(t, b.configCache, &endpoint, 2, newTestConfig(), "old-proof", "content", "old-proof")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{endpoint}), bypassPush{body: "config"})
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("runtime sync did not start")
+	}
+	duringWrite := b.configCache.snapshot(&endpoint)
+	assert.Nil(t, duringWrite.parsedConfig)
+	assert.Empty(t, duringWrite.activatedChecksum)
+
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("runtime sync did not finish")
+	}
+	afterWrite := b.configCache.snapshot(&endpoint)
+	assert.Nil(t, afterWrite.parsedConfig)
+	assert.Equal(t, "runtime-proof", afterWrite.activatedChecksum)
+}
+
+func TestRuntimeBypass_StaleResultClosesMutationWithoutProof(t *testing.T) {
+	tests := []struct {
+		name  string
+		stale func(context.CancelFunc, *runtimeBypass, dataplane.Endpoint)
+	}{
+		{
+			name: "cancelled context",
+			stale: func(cancel context.CancelFunc, _ *runtimeBypass, _ dataplane.Endpoint) {
+				cancel()
+			},
+		},
+		{
+			name: "expired authority lease",
+			stale: func(_ context.CancelFunc, bypass *runtimeBypass, endpoint dataplane.Endpoint) {
+				bypass.replaceEndpointAuthorities([]dataplane.Endpoint{endpoint, {URL: "http://b"}})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
+				return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
+					close(started)
+					<-release
+					return &dataplane.SyncResult{Success: true, ActivatedConfigChecksum: "stale-proof"}, nil
+				}}, nil
+			})
+			endpoint := dataplane.Endpoint{URL: "http://a"}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				b.applyRuntimeRaw(ctx, depFor([]dataplane.Endpoint{endpoint}), bypassPush{body: "config"})
+			}()
+
+			select {
+			case <-started:
+			case <-time.After(testutil.LongTimeout):
+				t.Fatal("runtime sync did not start")
+			}
+			test.stale(cancel, b, endpoint)
+			close(release)
+			select {
+			case <-done:
+			case <-time.After(testutil.LongTimeout):
+				t.Fatal("runtime sync did not finish")
+			}
+
+			snapshot := b.configCache.snapshot(&endpoint)
+			assert.Nil(t, snapshot.parsedConfig)
+			assert.Empty(t, snapshot.activatedChecksum)
+		})
+	}
 }
 
 func TestRuntimeBypass_BeginLeadershipTermReopensCache(t *testing.T) {

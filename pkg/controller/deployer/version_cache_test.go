@@ -19,190 +19,179 @@ func cacheEndpoint(url string) *dataplane.Endpoint {
 	return &dataplane.Endpoint{URL: url}
 }
 
-func TestConfigVersionCache_GetEmpty(t *testing.T) {
-	cache := newConfigVersionCache()
-
-	version, config, checksum := cache.get(cacheEndpoint("http://pod1:5555"))
-	assert.Equal(t, int64(0), version)
-	assert.Nil(t, config)
-	assert.Empty(t, checksum)
+func commitTestObservation(t *testing.T, cache *configVersionCache, endpoint *dataplane.Endpoint, version int64, parsed *parserconfig.StructuredConfig, currentChecksum, contentChecksum, proof string) configVersionSnapshot {
+	t.Helper()
+	snapshot := cache.snapshot(endpoint)
+	require.True(t, cache.commitSync(endpoint, snapshot.generation, version, parsed, currentChecksum, contentChecksum, proof))
+	return cache.snapshot(endpoint)
 }
 
-func TestConfigVersionCache_SetAndGet(t *testing.T) {
+func TestConfigVersionCache_SnapshotIsAtomic(t *testing.T) {
 	cache := newConfigVersionCache()
+	endpoint := cacheEndpoint("http://pod1:5555")
 	parsed := newTestConfig()
 
+	snapshot := commitTestObservation(t, cache, endpoint, 42, parsed, "raw-42", "content-42", "raw-42")
+
+	assert.NotZero(t, snapshot.generation)
+	assert.Equal(t, int64(42), snapshot.version)
+	assert.Same(t, parsed, snapshot.parsedConfig)
+	assert.Equal(t, "raw-42", snapshot.currentConfigChecksum)
+	assert.Equal(t, "content-42", snapshot.contentChecksum)
+	assert.Equal(t, "raw-42", snapshot.activatedChecksum)
+}
+
+func TestConfigVersionCache_DoesNotCacheUnprovenTuple(t *testing.T) {
+	cache := newConfigVersionCache()
 	endpoint := cacheEndpoint("http://pod1:5555")
-	cache.set(endpoint, 42, parsed, "abc123")
 
-	version, config, checksum := cache.get(endpoint)
-	assert.Equal(t, int64(42), version)
-	require.NotNil(t, config)
-	assert.Same(t, parsed, config)
-	assert.Equal(t, "abc123", checksum)
+	snapshot := commitTestObservation(t, cache, endpoint, 42, newTestConfig(), "raw-42", "content-42", "other-proof")
+
+	assert.Zero(t, snapshot.version)
+	assert.Nil(t, snapshot.parsedConfig)
+	assert.Empty(t, snapshot.currentConfigChecksum)
+	assert.Empty(t, snapshot.contentChecksum)
+	assert.Equal(t, "other-proof", snapshot.activatedChecksum)
 }
 
-func TestConfigVersionCache_SetOverwrite(t *testing.T) {
+func TestConfigVersionCache_RuntimeMutationLeavesProofOnly(t *testing.T) {
 	cache := newConfigVersionCache()
-	parsed1 := newTestConfig()
-	parsed2 := newTestConfig()
-
 	endpoint := cacheEndpoint("http://pod1:5555")
-	cache.set(endpoint, 42, parsed1, "hash1")
-	cache.set(endpoint, 43, parsed2, "hash2")
+	commitTestObservation(t, cache, endpoint, 2, newTestConfig(), "config-a", "content-a", "config-a")
 
-	version, config, checksum := cache.get(endpoint)
-	assert.Equal(t, int64(43), version)
-	assert.Same(t, parsed2, config)
-	assert.Equal(t, "hash2", checksum)
+	generation, ok := cache.beginRuntimeMutation(endpoint)
+	require.True(t, ok)
+	require.True(t, cache.finishRuntimeMutation(endpoint, generation, "config-b"))
+
+	snapshot := cache.snapshot(endpoint)
+	assert.Zero(t, snapshot.version, "version 2 may now name a different body")
+	assert.Nil(t, snapshot.parsedConfig)
+	assert.Empty(t, snapshot.currentConfigChecksum)
+	assert.Empty(t, snapshot.contentChecksum)
+	assert.Equal(t, "config-b", snapshot.activatedChecksum)
 }
 
-func TestConfigVersionCache_MultipleEndpoints(t *testing.T) {
+func TestConfigVersionCache_RuntimeMutationFencesOlderStructuralCommit(t *testing.T) {
 	cache := newConfigVersionCache()
-	parsed1 := newTestConfig()
-	parsed2 := newTestConfig()
+	endpoint := cacheEndpoint("http://pod1:5555")
+	structural := cache.snapshot(endpoint)
 
-	endpoint1 := cacheEndpoint("http://pod1:5555")
-	endpoint2 := cacheEndpoint("http://pod2:5555")
-	cache.set(endpoint1, 10, parsed1, "hash1")
-	cache.set(endpoint2, 20, parsed2, "hash2")
+	generation, ok := cache.beginRuntimeMutation(endpoint)
+	require.True(t, ok)
+	require.True(t, cache.finishRuntimeMutation(endpoint, generation, "runtime-proof"))
 
-	v1, c1, cs1 := cache.get(endpoint1)
-	v2, c2, cs2 := cache.get(endpoint2)
-
-	assert.Equal(t, int64(10), v1)
-	assert.Same(t, parsed1, c1)
-	assert.Equal(t, "hash1", cs1)
-	assert.Equal(t, int64(20), v2)
-	assert.Same(t, parsed2, c2)
-	assert.Equal(t, "hash2", cs2)
+	assert.False(t, cache.commitSync(endpoint, structural.generation, 3, newTestConfig(), "stale", "stale", "stale"))
+	current := cache.snapshot(endpoint)
+	assert.Nil(t, current.parsedConfig)
+	assert.Equal(t, "runtime-proof", current.activatedChecksum)
 }
 
-func TestConfigVersionCache_Invalidate(t *testing.T) {
+func TestConfigVersionCache_RuntimeFinishFencesStructuralSnapshotTakenDuringWrite(t *testing.T) {
 	cache := newConfigVersionCache()
-	parsed := newTestConfig()
+	endpoint := cacheEndpoint("http://pod1:5555")
 
-	endpoint1 := cacheEndpoint("http://pod1:5555")
-	endpoint2 := cacheEndpoint("http://pod2:5555")
-	cache.set(endpoint1, 42, parsed, "hash1")
-	cache.set(endpoint2, 43, parsed, "hash2")
+	generation, ok := cache.beginRuntimeMutation(endpoint)
+	require.True(t, ok)
+	structural := cache.snapshot(endpoint)
+	require.True(t, cache.commitSync(endpoint, structural.generation, 3, newTestConfig(), "structural", "content", "structural"))
+	require.True(t, cache.finishRuntimeMutation(endpoint, generation, "runtime"))
 
-	cache.invalidate(endpoint1)
-
-	v1, c1, cs1 := cache.get(endpoint1)
-	assert.Equal(t, int64(0), v1)
-	assert.Nil(t, c1)
-	assert.Empty(t, cs1)
-
-	// pod2 should be unaffected
-	v2, c2, cs2 := cache.get(endpoint2)
-	assert.Equal(t, int64(43), v2)
-	assert.NotNil(t, c2)
-	assert.Equal(t, "hash2", cs2)
+	current := cache.snapshot(endpoint)
+	assert.Zero(t, current.version)
+	assert.Nil(t, current.parsedConfig)
+	assert.Equal(t, "runtime", current.activatedChecksum)
+	assert.False(t, cache.commitSync(endpoint, structural.generation, 3, newTestConfig(), "stale", "stale", "stale"))
 }
 
-func TestConfigVersionCache_InvalidateNonExistent(t *testing.T) {
+func TestConfigVersionCache_AbortSyncClearsObservation(t *testing.T) {
 	cache := newConfigVersionCache()
-	// Should not panic
-	cache.invalidate(cacheEndpoint("http://nonexistent:5555"))
+	endpoint := cacheEndpoint("http://pod1:5555")
+	commitTestObservation(t, cache, endpoint, 4, newTestConfig(), "raw", "content", "raw")
+	snapshot := cache.snapshot(endpoint)
+
+	require.True(t, cache.abortSync(endpoint, snapshot.generation))
+
+	assert.Nil(t, cache.snapshot(endpoint).parsedConfig)
 }
 
-func TestConfigVersionCache_DoesNotCrossPodUIDAtSameURL(t *testing.T) {
+func TestConfigVersionCache_AbortSyncDoesNotClearNewerRuntimeProof(t *testing.T) {
+	cache := newConfigVersionCache()
+	endpoint := cacheEndpoint("http://pod1:5555")
+	structural := cache.snapshot(endpoint)
+	generation, ok := cache.beginRuntimeMutation(endpoint)
+	require.True(t, ok)
+	require.True(t, cache.finishRuntimeMutation(endpoint, generation, "runtime-proof"))
+
+	assert.False(t, cache.abortSync(endpoint, structural.generation))
+	assert.Equal(t, "runtime-proof", cache.snapshot(endpoint).activatedChecksum)
+}
+
+func TestConfigVersionCache_AbortSyncDuringRuntimeWriteKeepsFinishOpen(t *testing.T) {
+	cache := newConfigVersionCache()
+	endpoint := cacheEndpoint("http://pod1:5555")
+	generation, ok := cache.beginRuntimeMutation(endpoint)
+	require.True(t, ok)
+	structural := cache.snapshot(endpoint)
+
+	require.True(t, cache.abortSync(endpoint, structural.generation))
+	require.True(t, cache.finishRuntimeMutation(endpoint, generation, "runtime-proof"))
+	assert.Equal(t, "runtime-proof", cache.snapshot(endpoint).activatedChecksum)
+}
+
+func TestConfigVersionCache_RetiredAuthorityCannotResurrect(t *testing.T) {
 	cache := newConfigVersionCache()
 	oldEndpoint := &dataplane.Endpoint{
 		URL: "http://10.0.0.1:5555/v3", Username: "admin", Password: "secret",
 		PodName: "haproxy-0", PodNamespace: "haptic", PodUID: "uid-old",
 		DetectedMajorVersion: 3, DetectedMinorVersion: 2, DetectedFullVersion: "3.2.1",
 	}
-	cache.set(oldEndpoint, 42, newTestConfig(), "old-checksum")
-	cache.setActivated(oldEndpoint, "old-proof")
-
+	stale := cache.snapshot(oldEndpoint)
 	replacement := *oldEndpoint
 	replacement.PodUID = "uid-new"
-	version, parsed, checksum := cache.get(&replacement)
-	assert.Zero(t, version)
-	assert.Nil(t, parsed)
-	assert.Empty(t, checksum)
-	assert.Empty(t, cache.activated(&replacement))
-
 	cache.retain([]dataplane.Endpoint{replacement})
-	cache.set(oldEndpoint, 43, newTestConfig(), "late-old-checksum")
-	cache.setActivated(oldEndpoint, "late-old-proof")
-	cache.mu.RLock()
-	defer cache.mu.RUnlock()
-	assert.Empty(t, cache.entries)
+
+	assert.False(t, cache.commitSync(oldEndpoint, stale.generation, 7, newTestConfig(), "old", "old", "old"))
+	assert.Zero(t, cache.snapshot(oldEndpoint).generation)
+	assert.NotZero(t, cache.snapshot(&replacement).generation)
 }
 
-func TestConfigVersionCache_Clear(t *testing.T) {
+func TestConfigVersionCache_ClearFencesSnapshot(t *testing.T) {
 	cache := newConfigVersionCache()
-	parsed := newTestConfig()
-
-	endpoint1 := cacheEndpoint("http://pod1:5555")
-	endpoint2 := cacheEndpoint("http://pod2:5555")
-	cache.set(endpoint1, 42, parsed, "hash1")
-	cache.set(endpoint2, 43, parsed, "hash2")
+	endpoint := cacheEndpoint("http://pod1:5555")
+	stale := cache.snapshot(endpoint)
 
 	cache.clear()
 
-	v1, c1, cs1 := cache.get(endpoint1)
-	v2, c2, cs2 := cache.get(endpoint2)
-
-	assert.Equal(t, int64(0), v1)
-	assert.Nil(t, c1)
-	assert.Empty(t, cs1)
-	assert.Equal(t, int64(0), v2)
-	assert.Nil(t, c2)
-	assert.Empty(t, cs2)
+	assert.False(t, cache.commitSync(endpoint, stale.generation, 7, newTestConfig(), "old", "old", "old"))
+	assert.NotZero(t, cache.snapshot(endpoint).generation)
 }
 
 func TestConfigVersionCache_ConcurrentAccess(t *testing.T) {
 	cache := newConfigVersionCache()
-	parsed := newTestConfig()
+	endpoints := []dataplane.Endpoint{{URL: "http://pod1:5555"}, {URL: "http://pod2:5555"}}
 
 	var wg sync.WaitGroup
-	endpoints := []dataplane.Endpoint{
-		{URL: "http://pod1:5555"},
-		{URL: "http://pod2:5555"},
-		{URL: "http://pod3:5555"},
-		{URL: "http://pod4:5555"},
-	}
-
-	// Concurrent writes
-	for i, ep := range endpoints {
-		wg.Add(1)
-		go func(endpoint dataplane.Endpoint, version int64) {
-			defer wg.Done()
-			for j := range 100 {
-				cache.set(&endpoint, version+int64(j), parsed, "hash")
-			}
-		}(ep, int64(i*100))
-	}
-
-	// Concurrent reads
-	for _, ep := range endpoints {
-		wg.Add(1)
-		go func(endpoint dataplane.Endpoint) {
-			defer wg.Done()
+	for i := range endpoints {
+		endpoint := &endpoints[i]
+		wg.Go(func() {
 			for range 100 {
-				cache.get(&endpoint)
+				snapshot := cache.snapshot(endpoint)
+				cache.commitSync(endpoint, snapshot.generation, 2, newTestConfig(), "raw", "content", "raw")
 			}
-		}(ep)
+		})
+		wg.Go(func() {
+			for range 100 {
+				generation, ok := cache.beginRuntimeMutation(endpoint)
+				if ok {
+					cache.finishRuntimeMutation(endpoint, generation, "runtime")
+				}
+			}
+		})
 	}
-
-	// Concurrent invalidations
 	wg.Go(func() {
 		for range 50 {
-			cache.invalidate(&endpoints[0])
+			cache.abortSync(&endpoints[0], cache.snapshot(&endpoints[0]).generation)
 		}
 	})
-
-	// Concurrent clear
-	wg.Go(func() {
-		for range 10 {
-			cache.clear()
-		}
-	})
-
-	// Should not race or panic
 	wg.Wait()
 }

@@ -28,7 +28,7 @@ func TestDeployLoopCancelledBeforeImmediatelyDuePendingDoesNotPublish(t *testing
 	scheduledCh := bus.SubscribeTypes("cancelled-scheduler-watcher", 1, events.EventTypeDeploymentScheduled)
 	bus.Start()
 
-	s := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, time.Second)
+	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	initLoopChannels(s)

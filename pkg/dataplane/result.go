@@ -73,9 +73,9 @@ type SyncResult struct {
 	Message string
 
 	// PostSyncVersion is the config version on the pod after a successful sync.
-	// Callers can cache this alongside the desired parsed config to skip
-	// redundant GetRawConfiguration() + parse on subsequent syncs when the
-	// pod's version hasn't changed. Zero means version was not captured.
+	// Callers can cache this alongside the actual parsed config and
+	// ActivatedConfigChecksum to skip redundant GetRawConfiguration() + parse
+	// when the pod's version hasn't changed. Zero means version was not captured.
 	//
 	// Never carries 1: version 1 is the headerless sentinel — a config
 	// written by a skip_version push (the runtime bypass) has no

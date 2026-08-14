@@ -27,12 +27,19 @@ THEN the orchestrator SHALL return a SyncError at the "parse-desired" stage cont
 
 ### Requirement: Configuration Version Caching
 
-The orchestrator SHALL support version-based caching to skip expensive configuration fetch and parse operations. When CachedCurrentConfig and CachedConfigVersion are provided in SyncOptions, the orchestrator SHALL call GetVersion (a lightweight check) first. If the pod version matches CachedConfigVersion, the cached parsed configuration SHALL be used directly. On version mismatch or GetVersion failure, the orchestrator SHALL fall through to the full fetch-and-parse path. The GetVersion call SHALL use retry logic with exponential backoff for connection errors.
+The orchestrator SHALL support version-based caching to skip expensive configuration fetch and parse operations. A reusable observation consists of CachedCurrentConfig, CachedConfigVersion, CachedCurrentConfigChecksum, and a matching non-empty LastActivatedConfigChecksum. Only then SHALL the orchestrator call GetVersion (a lightweight check) first and use the cached parsed configuration when the pod version matches. Missing or mismatched checksums, a version mismatch, or GetVersion failure SHALL fall through to the full fetch-and-parse path. The GetVersion call SHALL use retry logic with exponential backoff for connection errors. The checksum paired with a cache hit SHALL be used for activation-proof decisions; the absent raw string SHALL never be hashed as though it were the pod config.
+
+A full fetch SHALL recover a valid version greater than 1 from the raw config header so the resulting proven observation becomes cacheable without another API request. A headerless or malformed version SHALL remain uncacheable.
 
 #### Scenario: Version cache hit skips full fetch
 
-WHEN CachedCurrentConfig is provided and the pod version matches CachedConfigVersion
+WHEN a complete proven cached observation is provided and the pod version matches CachedConfigVersion
 THEN the orchestrator SHALL use the cached config directly without calling GetRawConfiguration.
+
+#### Scenario: Unproven cache entry triggers full fetch
+
+WHEN the cached current checksum is missing or differs from LastActivatedConfigChecksum
+THEN the orchestrator SHALL fetch the full configuration without consulting GetVersion.
 
 #### Scenario: Version cache miss triggers full fetch
 

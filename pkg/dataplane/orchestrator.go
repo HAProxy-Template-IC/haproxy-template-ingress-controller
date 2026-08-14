@@ -114,7 +114,7 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		o.populatePostSyncParsedConfig(ctx, result)
 	}()
 
-	currentConfigStr, preParsedCurrent, preCachedVersion, fetchErr := o.fetchCurrentConfig(ctx, opts)
+	currentConfigStr, preParsedCurrent, preCachedVersion, currentConfigChecksum, fetchErr := o.fetchCurrentConfig(ctx, opts)
 	if fetchErr != nil {
 		return nil, fetchErr
 	}
@@ -154,9 +154,9 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		// diff is only trustworthy when the config was written by a
 		// versioned, reload-coupled push — otherwise force one reload to
 		// activate whatever is on disk, which also re-stamps the header.
-		if !o.onDiskIsProvenActivated(currentConfigStr, opts) {
+		if !o.onDiskIsProvenActivated(currentConfigChecksum, opts) {
 			o.logger.Info("No diff against an on-disk config whose activation was never proven; forcing a reload to activate potentially parked content",
-				"on_disk_checksum", configTextChecksum(currentConfigStr),
+				"on_disk_checksum", currentConfigChecksum,
 				"last_activated_checksum", lastActivatedChecksum(opts),
 				"headerless", currentIsHeaderless)
 			version := o.resolveCurrentVersion(ctx, preCachedVersion)
@@ -711,12 +711,12 @@ func (o *orchestrator) checkReadBackDivergence(readBackParsed *parserconfig.Stru
 // With no proof recorded (first sync to this pod, a restarted controller, a
 // cleared entry) the answer is NO. Forcing one reload is cheap and correct;
 // trusting an unproven config is what strands a render indefinitely.
-func (o *orchestrator) onDiskIsProvenActivated(currentConfigStr string, opts *SyncOptions) bool {
+func (o *orchestrator) onDiskIsProvenActivated(currentConfigChecksum string, opts *SyncOptions) bool {
 	activated := lastActivatedChecksum(opts)
-	if activated == "" {
+	if activated == "" || currentConfigChecksum == "" {
 		return false
 	}
-	return activationChecksum(currentConfigStr) == activated
+	return currentConfigChecksum == activated
 }
 
 // activationChecksum is the single definition of the bytes an activation proof

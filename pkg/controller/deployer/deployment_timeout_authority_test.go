@@ -78,7 +78,7 @@ func TestDeploymentTimeoutCancelsBlockedExecutorOutOfBand(t *testing.T) {
 		t.Fatal("fake endpoint did not receive the deployment request")
 	}
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, time.Millisecond)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, time.Millisecond)
 	initLoopChannels(scheduler)
 	scheduler.schedulerMutex.Lock()
 	scheduler.state.deployInFlight = true
@@ -100,7 +100,7 @@ func TestDeploymentTimeoutCancelsBlockedExecutorOutOfBand(t *testing.T) {
 func TestDeploymentSchedulerRejectsMismatchedCompletionBeforeMutation(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, time.Second)
 	initLoopChannels(scheduler)
 
 	parsed := &parser.StructuredConfig{}
@@ -153,7 +153,7 @@ func TestTimedOutDeploymentRetiresBeforeQueuedWorkAdvances(t *testing.T) {
 	scheduledEvents := bus.SubscribeTypes("scheduled-watcher", 20, events.EventTypeDeploymentScheduled)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, time.Millisecond)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startLoopForTest(t, scheduler, ctx)

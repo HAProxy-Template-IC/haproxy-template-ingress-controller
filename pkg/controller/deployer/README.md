@@ -1,39 +1,22 @@
 # pkg/controller/deployer
 
-Three components that together get validated configurations onto HAProxy pods:
+`NewDeployStack` builds the three components that get validated configurations onto HAProxy pods:
 
 - **`DeploymentScheduler`** — decides *when* to deploy. Keeps the last validated config + last discovered endpoints, rate-limits to `minDeploymentInterval`, and queues at most one pending deployment ("latest wins"). Also times out deployments that take longer than `deploymentTimeout` so a dropped `DeploymentCompletedEvent` can't wedge the pipeline forever.
-- **`Component`** (the deployer itself) — stateless executor. Consumes `DeploymentScheduledEvent` and deploys to every discovered HAProxy endpoint in parallel using `pkg/dataplane.Client`. Its per-sync timeouts (`reloadVerificationTimeout`, `syncTimeout`, passed to `New`) are forwarded to each `pkg/dataplane` sync.
+- **`Component`** (the deployer itself) — consumes `DeploymentScheduledEvent` and deploys to every discovered HAProxy endpoint in parallel using `pkg/dataplane.Client`. `NewDeployStack` reads its per-sync timeouts from the controller config.
 - **`DriftPreventionMonitor`** — fires a synthetic `DriftPreventionTriggeredEvent` every `driftPreventionInterval` when nothing has deployed recently, so an out-of-band change applied directly via the Dataplane API gets overwritten by the controller's last-known-good config.
 
 All three are leader-only — only the replica holding the `Lease` deploys, observers on other replicas stay idle.
 
-## Minimal Usage
+## Construction
+
+Construct the set through `NewDeployStack` so structural deployments and runtime updates share one fenced endpoint cache:
 
 ```go
-import (
-    "context"
-    "time"
-
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/deployer"
-    "gitlab.com/haproxy-haptic/haptic/pkg/events"
-)
-
-scheduler := deployer.NewDeploymentScheduler(
-    bus, logger,
-    2*time.Second,   // minDeploymentInterval
-    30*time.Second,  // deploymentTimeout
-)
-exec := deployer.New(bus, logger,
-    10*time.Second, // reloadVerificationTimeout
-    2*time.Minute,  // syncTimeout
-)
-monitor := deployer.NewDriftPreventionMonitor(bus, logger, 60*time.Second)
-
-go scheduler.Start(ctx)
-go exec.Start(ctx)
-go monitor.Start(ctx)
+stack := deployer.NewDeployStack(bus, cfg, logger, domainMetrics)
 ```
+
+The controller registers the returned components with the leader lifecycle in `pkg/controller/reconciliation.go`.
 
 All durations / ints come from `spec.dataplane` and `spec.controller` on the CRD: `minDeploymentInterval`, `deploymentTimeout`, `driftPreventionInterval`, `reloadVerificationTimeout`, `syncTimeout`.
 

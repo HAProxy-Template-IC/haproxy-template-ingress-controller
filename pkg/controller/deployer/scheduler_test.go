@@ -76,7 +76,7 @@ func TestNewDeploymentScheduler(t *testing.T) {
 	minInterval := 100 * time.Millisecond
 	timeout := 30 * time.Second
 
-	scheduler := NewDeploymentScheduler(bus, logger, minInterval, timeout)
+	scheduler := newDeploymentScheduler(bus, logger, minInterval, timeout)
 
 	require.NotNil(t, scheduler)
 	assert.Equal(t, minInterval, scheduler.minDeploymentInterval)
@@ -87,7 +87,7 @@ func TestNewDeploymentScheduler(t *testing.T) {
 
 func TestDeploymentScheduler_Start(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -100,7 +100,7 @@ func TestDeploymentScheduler_Start(t *testing.T) {
 
 func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
 
 	event := events.NewTemplateRenderedEvent(
 		"global\n  daemon\n",        // haproxyConfig
@@ -128,7 +128,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	// Run the deploy loop so scheduleOrQueue's pending → published event flows
 	// (minInterval=0 → the loop emits immediately on signal).
@@ -195,7 +195,7 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	// Run the deploy loop so the valid-config subtest's pending deploy is emitted.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -264,7 +264,7 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	// Run the deploy loop so the fallback subtest's pending deploy is emitted.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -337,7 +337,7 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 
 func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	// handleDeploymentCompleted calls signalCompleted(), which is a no-op send on
 	// a nil channel unless the loop channels exist. Create them (no loop running).
 	initLoopChannels(scheduler)
@@ -363,7 +363,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 
 func TestDeploymentScheduler_HandleConfigPublished(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	event := events.NewConfigPublishedEvent(
 		"test-config",
@@ -383,7 +383,7 @@ func TestDeploymentScheduler_HandleConfigPublished(t *testing.T) {
 
 func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	// Set up state that should be cleared
 	scheduler.schedulerMutex.Lock()
@@ -416,7 +416,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	ctx := context.Background()
 	scheduler.ctx = ctx
 	initLoopChannels(scheduler)
@@ -456,7 +456,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 
 func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	ctx := context.Background()
 	scheduler.ctx = ctx
@@ -604,14 +604,14 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 
 func TestDeploymentScheduler_Name(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
 
 	assert.Equal(t, SchedulerComponentName, scheduler.Name())
 }
 
 func TestDeploymentScheduler_HandleConfigValidated(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	t.Run("caches template config metadata", func(t *testing.T) {
 		templateConfig := &v1alpha1.HAProxyTemplateConfig{
@@ -674,7 +674,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startLoopForTest(t, scheduler, ctx)
@@ -725,7 +725,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 	bus.Start()
 
 	// Use longer rate limit to test the path
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 50*time.Millisecond, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 50*time.Millisecond, 30*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -759,7 +759,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 	bus.Start()
 
 	// Use long rate limit so the loop is parked in its interval wait when we cancel.
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 5*time.Second, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 5*time.Second, 30*time.Second)
 
 	scheduler.schedulerMutex.Lock()
 	scheduler.state.lastDeploymentEndTime = time.Now()
@@ -794,7 +794,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testi
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -826,7 +826,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testi
 func TestDeploymentScheduler_DeployInFlightState(t *testing.T) {
 	t.Run("initial deployInFlight is false", func(t *testing.T) {
 		bus := testutil.NewTestBus()
-		scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+		scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -837,7 +837,7 @@ func TestDeploymentScheduler_DeployInFlightState(t *testing.T) {
 	t.Run("timeout only fires when deployInFlight", func(t *testing.T) {
 		bus := testutil.NewTestBus()
 		bus.Start()
-		scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
+		scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
 		initLoopChannels(scheduler)
 		ctx := context.Background()
 
@@ -904,7 +904,7 @@ func TestScheduler_NoBurstUnderConcurrentReconciles(t *testing.T) {
 	bus.Start()
 
 	const interval = 100 * time.Millisecond
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -967,7 +967,7 @@ func TestScheduler_LatestWinsCoalescing(t *testing.T) {
 	bus.Start()
 
 	const interval = 100 * time.Millisecond
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -995,7 +995,7 @@ func TestScheduler_LoopStopsOnContextCancel(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	startLoopForTest(t, scheduler, ctx)
 
@@ -1019,7 +1019,7 @@ func TestScheduler_IntervalUsesCompletionEndTime(t *testing.T) {
 	bus.Start()
 
 	const interval = 200 * time.Millisecond
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

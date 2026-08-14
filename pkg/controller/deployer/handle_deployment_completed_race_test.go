@@ -61,7 +61,7 @@ import (
 func TestHandleDeploymentCompleted_UsesEventChecksumNotLatestRender(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	// Simulate the race window:
 	//  - The deployment that just finished was for content X.
@@ -101,7 +101,7 @@ func TestHandleDeploymentCompleted_UsesEventChecksumNotLatestRender(t *testing.T
 func TestHandleDeploymentCompleted_UsesEventPodSetHashNotCurrentEndpoints(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	oldEndpoints := []dataplane.Endpoint{{
 		URL:          "https://haproxy.default.svc:5555",
@@ -151,7 +151,7 @@ func TestHandleDeploymentCompleted_UsesEventPodSetHashNotCurrentEndpoints(t *tes
 func TestHandleDeploymentCompleted_EmptyChecksumLeavesCacheUntouched(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	const priorDeployedHash = "real-deploy-hash-from-the-last-actual-deploy"
 
@@ -189,7 +189,7 @@ func TestHandleDeploymentCompleted_EmptyChecksumLeavesCacheUntouched(t *testing.
 func TestHandleDeploymentCompleted_FailedDeployLeavesCacheUntouched(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	const priorDeployedHash = "real-deploy-hash-from-the-last-successful-deploy"
 

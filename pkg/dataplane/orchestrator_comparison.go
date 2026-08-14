@@ -17,6 +17,7 @@ package dataplane
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,12 +44,11 @@ const headerlessConfigVersion = 1
 // reload. sync() must not trust an empty diff against such a config: the
 // running worker may never have loaded it.
 //
-// preCachedVersion carries GetVersion's reading when fetchCurrentConfig made
-// one (1 = headerless sentinel, >1 = real header). When no version check
-// happened (-1), fall back to scanning the fetched config text for the header
-// line. A cache HIT is only possible at a real version >1 (the sentinel forces
-// a full fetch), so the empty-string currentConfigStr of the hit path never
-// reaches the scan.
+// preCachedVersion carries GetVersion's reading or a version recovered from a
+// fetched header (1 = headerless sentinel, >1 = real header). When neither is
+// available (-1), scan the fetched config text for a header. A cache HIT is
+// only possible at a real version >1, so its empty raw string never reaches
+// the scan.
 func currentConfigIsHeaderless(preCachedVersion int64, currentConfigStr string) bool {
 	if preCachedVersion > 0 {
 		return preCachedVersion == headerlessConfigVersion
@@ -61,36 +61,48 @@ func currentConfigIsHeaderless(preCachedVersion int64, currentConfigStr string) 
 // the file (alongside `# _md5hash=`) on every versioned push; only the first
 // few lines need scanning.
 func hasVersionHeader(config string) bool {
+	_, ok := configVersionFromHeader(config)
+	return ok
+}
+
+func configVersionFromHeader(config string) (int64, bool) {
 	const headerPrefix = "# _version="
 	scanned := 0
 	for line := range strings.SplitSeq(config, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), headerPrefix) {
-			return true
+		trimmed := strings.TrimSpace(line)
+		if value, found := strings.CutPrefix(trimmed, headerPrefix); found {
+			version, err := strconv.ParseInt(value, 10, 64)
+			return version, err == nil
 		}
 		if scanned >= 8 {
 			break
 		}
 		scanned++
 	}
-	return false
+	return 0, false
 }
 
 // fetchCurrentConfig obtains the current HAProxy configuration, either from cache or by fetching.
 //
-// When CachedCurrentConfig is set in opts, it first calls GetVersion() (lightweight ~100 bytes)
-// to check if the pod's config version matches CachedConfigVersion. On match, returns the cached
-// parsed config directly, skipping the expensive GetRawConfiguration() + parse.
+// When all cached-current fields are set in opts, it first calls GetVersion()
+// (lightweight ~100 bytes) to check if the pod's config version matches
+// CachedConfigVersion. On match, returns the cached parsed config and its
+// paired raw checksum, skipping the expensive GetRawConfiguration() + parse.
 // On mismatch or error, falls through to the full fetch path.
 //
 // Returns:
 //   - currentConfigStr: raw config string (empty when cache hit - not needed)
 //   - preParsedCurrent: pre-parsed current config (non-nil on cache hit)
-//   - preCachedVersion: pod's version from cache check (-1 if not checked, >0 if checked)
+//   - preCachedVersion: pod version from cache check or raw header (-1 if unavailable)
+//   - currentConfigChecksum: activation checksum of the current raw config
 //   - err: connection error if fetch fails
-func (o *orchestrator) fetchCurrentConfig(ctx context.Context, opts *SyncOptions) (currentConfigStr string, preParsedCurrent *parserconfig.StructuredConfig, preCachedVersion int64, err error) {
+func (o *orchestrator) fetchCurrentConfig(ctx context.Context, opts *SyncOptions) (currentConfigStr string, preParsedCurrent *parserconfig.StructuredConfig, preCachedVersion int64, currentConfigChecksum string, err error) {
 	preCachedVersion = -1
 
-	if opts.CachedCurrentConfig != nil {
+	cacheProofMatches := opts.CachedCurrentConfigChecksum != "" &&
+		opts.LastActivatedConfigChecksum != "" &&
+		opts.CachedCurrentConfigChecksum == opts.LastActivatedConfigChecksum
+	if opts.CachedCurrentConfig != nil && opts.CachedConfigVersion > headerlessConfigVersion && cacheProofMatches {
 		versionRetryConfig := client.RetryConfig{
 			MaxAttempts: 3,
 			RetryIf:     client.IsConnectionError(),
@@ -121,7 +133,7 @@ func (o *orchestrator) fetchCurrentConfig(ctx context.Context, opts *SyncOptions
 			case opts.CachedConfigVersion:
 				o.logger.Debug("Config version cache hit, skipping full fetch+parse",
 					"version", podVersion)
-				return "", opts.CachedCurrentConfig, preCachedVersion, nil
+				return "", opts.CachedCurrentConfig, preCachedVersion, opts.CachedCurrentConfigChecksum, nil
 			default:
 				o.logger.Debug("Config version cache miss, fetching full config",
 					"cached_version", opts.CachedConfigVersion,
@@ -146,10 +158,15 @@ func (o *orchestrator) fetchCurrentConfig(ctx context.Context, opts *SyncOptions
 		return o.client.GetRawConfiguration(ctx)
 	})
 	if err != nil {
-		return "", nil, preCachedVersion, NewConnectionError(o.client.Endpoint.URL, err)
+		return "", nil, preCachedVersion, "", NewConnectionError(o.client.Endpoint.URL, err)
+	}
+	if preCachedVersion < 0 {
+		if version, ok := configVersionFromHeader(currentConfigStr); ok && version > headerlessConfigVersion {
+			preCachedVersion = version
+		}
 	}
 
-	return currentConfigStr, nil, preCachedVersion, nil
+	return currentConfigStr, nil, preCachedVersion, activationChecksum(currentConfigStr), nil
 }
 
 // parseAndCompareConfigs parses both current and desired configurations and compares them.

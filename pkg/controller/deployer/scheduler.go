@@ -301,17 +301,7 @@ func hashEndpointAuthorityWithKey(endpoint *dataplane.Endpoint, key []byte) [sha
 	return [sha256.Size]byte(h.Sum(nil))
 }
 
-// NewDeploymentScheduler creates a new DeploymentScheduler component.
-//
-// Parameters:
-//   - eventBus: The EventBus for subscribing to events and publishing scheduled deployments
-//   - logger: Structured logger for component logging
-//   - minDeploymentInterval: Minimum time between consecutive deployments (rate limiting)
-//   - deploymentTimeout: Maximum time to wait for a deployment to complete before retrying
-//
-// Returns:
-//   - A new DeploymentScheduler instance ready to be started
-func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, minDeploymentInterval, deploymentTimeout time.Duration) *DeploymentScheduler {
+func newDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, minDeploymentInterval, deploymentTimeout time.Duration) *DeploymentScheduler {
 	// Note: eventChan is NOT subscribed here - subscription happens in Start().
 	// This is a leader-only component that subscribes when Start() is called
 	// (after leadership is acquired). All-replica components replay their state

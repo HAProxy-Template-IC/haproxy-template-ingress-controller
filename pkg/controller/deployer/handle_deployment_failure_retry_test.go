@@ -63,7 +63,7 @@ func newFailureRetryScheduler(t *testing.T, minInterval time.Duration, checksum 
 	scheduledCh = bus.SubscribeTypes("retry-watcher", 50, events.EventTypeDeploymentScheduled)
 	bus.Start()
 
-	s = NewDeploymentScheduler(bus, testutil.NewTestLogger(), minInterval, 30*time.Second)
+	s = newDeploymentScheduler(bus, testutil.NewTestLogger(), minInterval, 30*time.Second)
 
 	// Prime the last-validated cache directly (no ValidationCompleted dispatch),
 	// so the FIRST published DeploymentScheduledEvent is a fast retry.
@@ -102,7 +102,7 @@ func TestDeployFailureRetry_ReschedulesAfterFullFailure(t *testing.T) {
 	// retry lands in tens of ms; still far under the 60s drift backstop the
 	// pre-fix code relies on.
 	const interval = 20 * time.Millisecond
-	s := NewDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
+	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
 
 	// Prime the render cache + endpoints so ValidationCompleted schedules a deploy.
 	s.mu.Lock()
@@ -235,7 +235,7 @@ func TestDeployFailureRetry_PartialFailureAlsoReschedules(t *testing.T) {
 
 func TestStopFailureRetriesJoinsRunningCallback(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	s := NewDeploymentScheduler(bus, logger, time.Millisecond, time.Second)
+	s := newDeploymentScheduler(bus, logger, time.Millisecond, time.Second)
 	s.ctx = context.Background()
 
 	s.mu.Lock()
@@ -280,7 +280,7 @@ func TestStopFailureRetriesJoinsRunningCallback(t *testing.T) {
 
 func TestDeployFailureRetry_NewerWorkRejectsRunningCallback(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	s := NewDeploymentScheduler(bus, logger, time.Millisecond, time.Second)
+	s := newDeploymentScheduler(bus, logger, time.Millisecond, time.Second)
 	s.ctx = context.Background()
 
 	s.mu.Lock()
@@ -319,7 +319,7 @@ func TestDeployFailureRetry_CancelAfterCallbackStartsDoesNotPublish(t *testing.T
 	scheduledCh := bus.SubscribeTypes("cancelled-retry-watcher", 1, events.EventTypeDeploymentScheduled)
 	bus.Start()
 
-	s := NewDeploymentScheduler(bus, testutil.NewTestLogger(), time.Millisecond, time.Second)
+	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), time.Millisecond, time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startLoopForTest(t, s, ctx)

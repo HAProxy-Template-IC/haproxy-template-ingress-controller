@@ -101,17 +101,154 @@ func TestFetchCurrentConfig_CacheHit(t *testing.T) {
 
 	cachedConfig := &parserconfig.StructuredConfig{}
 	opts := &SyncOptions{
-		CachedCurrentConfig: cachedConfig,
-		CachedConfigVersion: 42,
+		CachedCurrentConfig:         cachedConfig,
+		CachedConfigVersion:         42,
+		CachedCurrentConfigChecksum: "cached-proof",
+		LastActivatedConfigChecksum: "cached-proof",
 	}
 
-	configStr, preParsedCurrent, preCachedVersion, err := orch.fetchCurrentConfig(context.Background(), opts)
+	configStr, preParsedCurrent, preCachedVersion, currentChecksum, err := orch.fetchCurrentConfig(context.Background(), opts)
 
 	require.NoError(t, err)
 	assert.Empty(t, configStr, "config string should be empty on cache hit")
 	assert.Same(t, cachedConfig, preParsedCurrent, "should return the cached config pointer")
 	assert.Equal(t, int64(42), preCachedVersion)
+	assert.Equal(t, "cached-proof", currentChecksum)
 	assert.Equal(t, int32(0), rawConfigCalls.Load(), "GetRawConfiguration should not be called on cache hit")
+}
+
+func TestFetchCurrentConfig_UnprovenCacheForcesRawFetch(t *testing.T) {
+	tests := []struct {
+		name     string
+		checksum string
+		proof    string
+	}{
+		{name: "missing current checksum", proof: "proof"},
+		{name: "missing activation proof", checksum: "current"},
+		{name: "mismatched activation proof", checksum: "current", proof: "other"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var versionCalls atomic.Int32
+			var rawCalls atomic.Int32
+			const raw = "global\n  daemon\n"
+			orch, cleanup := createTestOrchestratorWithParser(t, func(w http.ResponseWriter, r *http.Request) {
+				if v3InfoResponse(w, r) {
+					return
+				}
+				switch r.URL.Path {
+				case "/services/haproxy/configuration/version":
+					versionCalls.Add(1)
+					fmt.Fprint(w, "42")
+				case "/services/haproxy/configuration/raw":
+					rawCalls.Add(1)
+					fmt.Fprint(w, raw)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}, &mockConfigParser{})
+			defer cleanup()
+
+			configStr, parsed, version, checksum, err := orch.fetchCurrentConfig(context.Background(), &SyncOptions{
+				CachedCurrentConfig:         &parserconfig.StructuredConfig{},
+				CachedConfigVersion:         42,
+				CachedCurrentConfigChecksum: test.checksum,
+				LastActivatedConfigChecksum: test.proof,
+			})
+
+			require.NoError(t, err)
+			assert.Equal(t, raw, configStr)
+			assert.Nil(t, parsed)
+			assert.Equal(t, int64(-1), version)
+			assert.Equal(t, activationChecksum(raw), checksum)
+			assert.Zero(t, versionCalls.Load())
+			assert.Equal(t, int32(1), rawCalls.Load())
+		})
+	}
+}
+
+func TestFetchCurrentConfig_InvalidCachedVersionForcesRawFetch(t *testing.T) {
+	for _, cachedVersion := range []int64{-1, 0, headerlessConfigVersion} {
+		t.Run(fmt.Sprintf("version_%d", cachedVersion), func(t *testing.T) {
+			var versionCalls atomic.Int32
+			var rawCalls atomic.Int32
+			const raw = "global\n  daemon\n"
+			orch, cleanup := createTestOrchestratorWithParser(t, func(w http.ResponseWriter, r *http.Request) {
+				if v3InfoResponse(w, r) {
+					return
+				}
+				switch r.URL.Path {
+				case "/services/haproxy/configuration/version":
+					versionCalls.Add(1)
+					fmt.Fprint(w, cachedVersion)
+				case "/services/haproxy/configuration/raw":
+					rawCalls.Add(1)
+					fmt.Fprint(w, raw)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}, &mockConfigParser{})
+			defer cleanup()
+
+			configStr, parsed, version, checksum, err := orch.fetchCurrentConfig(context.Background(), &SyncOptions{
+				CachedCurrentConfig:         &parserconfig.StructuredConfig{},
+				CachedConfigVersion:         cachedVersion,
+				CachedCurrentConfigChecksum: "proof",
+				LastActivatedConfigChecksum: "proof",
+			})
+
+			require.NoError(t, err)
+			assert.Equal(t, raw, configStr)
+			assert.Nil(t, parsed)
+			assert.Equal(t, int64(-1), version)
+			assert.Equal(t, activationChecksum(raw), checksum)
+			assert.Zero(t, versionCalls.Load())
+			assert.Equal(t, int32(1), rawCalls.Load())
+		})
+	}
+}
+
+func TestSync_ProvenCacheHitNeedsNoRawFetchOrPush(t *testing.T) {
+	var rawCalls atomic.Int32
+	var posts atomic.Int32
+	parsed := &parserconfig.StructuredConfig{}
+	const proof = "paired-proof"
+	orch, cleanup := createTestOrchestratorWithParser(t, func(w http.ResponseWriter, r *http.Request) {
+		if v3InfoResponse(w, r) {
+			return
+		}
+		switch r.URL.Path {
+		case "/services/haproxy/configuration/version":
+			fmt.Fprint(w, "42")
+		case "/services/haproxy/configuration/raw":
+			if r.Method == http.MethodPost {
+				posts.Add(1)
+			} else {
+				rawCalls.Add(1)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, &mockConfigParser{})
+	defer cleanup()
+
+	result, err := orch.sync(context.Background(), "unused", &SyncOptions{
+		CachedCurrentConfig:         parsed,
+		CachedConfigVersion:         42,
+		CachedCurrentConfigChecksum: proof,
+		LastActivatedConfigChecksum: proof,
+		PreParsedConfig:             parsed,
+		ContentChecksum:             "content",
+		LastDeployedChecksum:        "content",
+	}, nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, SyncModeNoChanges, result.SyncMode)
+	assert.Equal(t, int64(42), result.PostSyncVersion)
+	assert.Equal(t, proof, result.ActivatedConfigChecksum)
+	assert.Zero(t, rawCalls.Load())
+	assert.Zero(t, posts.Load())
 }
 
 func TestFetchCurrentConfig_CacheMiss(t *testing.T) {
@@ -137,16 +274,19 @@ func TestFetchCurrentConfig_CacheMiss(t *testing.T) {
 
 	cachedConfig := &parserconfig.StructuredConfig{}
 	opts := &SyncOptions{
-		CachedCurrentConfig: cachedConfig,
-		CachedConfigVersion: 42,
+		CachedCurrentConfig:         cachedConfig,
+		CachedConfigVersion:         42,
+		CachedCurrentConfigChecksum: "cached-proof",
+		LastActivatedConfigChecksum: "cached-proof",
 	}
 
-	configStr, preParsedCurrent, preCachedVersion, err := orch.fetchCurrentConfig(context.Background(), opts)
+	configStr, preParsedCurrent, preCachedVersion, currentChecksum, err := orch.fetchCurrentConfig(context.Background(), opts)
 
 	require.NoError(t, err)
 	assert.Equal(t, "global\n  daemon\n", configStr, "should return raw config on cache miss")
 	assert.Nil(t, preParsedCurrent, "preParsedCurrent should be nil on cache miss")
 	assert.Equal(t, int64(43), preCachedVersion, "should report the actual pod version")
+	assert.Equal(t, activationChecksum(configStr), currentChecksum)
 	assert.Equal(t, int32(1), rawConfigCalls.Load(), "GetRawConfiguration should be called on cache miss")
 }
 
@@ -171,16 +311,19 @@ func TestFetchCurrentConfig_GetVersionFailure(t *testing.T) {
 	defer cleanup()
 
 	opts := &SyncOptions{
-		CachedCurrentConfig: &parserconfig.StructuredConfig{},
-		CachedConfigVersion: 42,
+		CachedCurrentConfig:         &parserconfig.StructuredConfig{},
+		CachedConfigVersion:         42,
+		CachedCurrentConfigChecksum: "cached-proof",
+		LastActivatedConfigChecksum: "cached-proof",
 	}
 
-	configStr, preParsedCurrent, preCachedVersion, err := orch.fetchCurrentConfig(context.Background(), opts)
+	configStr, preParsedCurrent, preCachedVersion, currentChecksum, err := orch.fetchCurrentConfig(context.Background(), opts)
 
 	require.NoError(t, err)
 	assert.Equal(t, "global\n  daemon\n", configStr, "should fall back to raw config fetch")
 	assert.Nil(t, preParsedCurrent, "preParsedCurrent should be nil on version check failure")
 	assert.Equal(t, int64(-1), preCachedVersion, "preCachedVersion should remain -1 on failure")
+	assert.Equal(t, activationChecksum(configStr), currentChecksum)
 	assert.Equal(t, int32(1), rawConfigCalls.Load(), "GetRawConfiguration should be called as fallback")
 }
 
@@ -210,12 +353,13 @@ func TestFetchCurrentConfig_NoCachedConfig(t *testing.T) {
 		// No CachedCurrentConfig — version check should be skipped entirely
 	}
 
-	configStr, preParsedCurrent, preCachedVersion, err := orch.fetchCurrentConfig(context.Background(), opts)
+	configStr, preParsedCurrent, preCachedVersion, currentChecksum, err := orch.fetchCurrentConfig(context.Background(), opts)
 
 	require.NoError(t, err)
 	assert.Equal(t, "global\n  daemon\n", configStr)
 	assert.Nil(t, preParsedCurrent)
 	assert.Equal(t, int64(-1), preCachedVersion, "preCachedVersion should be -1 when no cache used")
+	assert.Equal(t, activationChecksum(configStr), currentChecksum)
 	assert.Equal(t, int32(0), versionCalls.Load(), "GetVersion should not be called when no cached config")
 	assert.Equal(t, int32(1), rawConfigCalls.Load(), "GetRawConfiguration should be called directly")
 }
@@ -275,6 +419,7 @@ func TestParseAndCompareConfigs_ParsesDesiredWhenOnlyCurrentPreParsed(t *testing
 // drift that even drift-prevention deploys can't correct).
 func TestFetchCurrentConfig_HeaderlessSentinelForcesFetch(t *testing.T) {
 	var rawConfigCalls atomic.Int32
+	var versionCalls atomic.Int32
 
 	orch, cleanup := createTestOrchestratorWithParser(t, func(w http.ResponseWriter, r *http.Request) {
 		if v3InfoResponse(w, r) {
@@ -282,6 +427,7 @@ func TestFetchCurrentConfig_HeaderlessSentinelForcesFetch(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/services/haproxy/configuration/version":
+			versionCalls.Add(1)
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, "1") // headerless sentinel
 		case "/services/haproxy/configuration/raw":
@@ -296,16 +442,20 @@ func TestFetchCurrentConfig_HeaderlessSentinelForcesFetch(t *testing.T) {
 
 	cachedConfig := &parserconfig.StructuredConfig{}
 	opts := &SyncOptions{
-		CachedCurrentConfig: cachedConfig,
-		CachedConfigVersion: 1, // equal to the pod's sentinel reading
+		CachedCurrentConfig:         cachedConfig,
+		CachedConfigVersion:         1, // equal to the pod's sentinel reading
+		CachedCurrentConfigChecksum: "cached-proof",
+		LastActivatedConfigChecksum: "cached-proof",
 	}
 
-	configStr, preParsedCurrent, preCachedVersion, err := orch.fetchCurrentConfig(context.Background(), opts)
+	configStr, preParsedCurrent, preCachedVersion, currentChecksum, err := orch.fetchCurrentConfig(context.Background(), opts)
 
 	require.NoError(t, err)
 	assert.Equal(t, "global\n  daemon\n", configStr, "must fetch the actual config despite version equality at 1")
 	assert.Nil(t, preParsedCurrent, "must not serve the cached config for the headerless sentinel")
-	assert.Equal(t, int64(1), preCachedVersion)
+	assert.Equal(t, int64(-1), preCachedVersion)
+	assert.Equal(t, activationChecksum(configStr), currentChecksum)
+	assert.Zero(t, versionCalls.Load(), "an invalid cached version must bypass the cache check")
 	assert.Equal(t, int32(1), rawConfigCalls.Load(), "GetRawConfiguration must be called")
 }
 
@@ -332,11 +482,6 @@ func TestSync_NoChanges_ReportsRealPostSyncVersion(t *testing.T) {
 	defer cleanup()
 
 	opts := &SyncOptions{
-		// Cached config present but at a non-matching version so the
-		// sync takes the full-fetch path and reaches the no-changes
-		// branch with preCachedVersion = the pod's reading.
-		CachedCurrentConfig: &parserconfig.StructuredConfig{},
-		CachedConfigVersion: 99,
 		// Matching checksums skip the auxiliary-file comparison, so
 		// the equal config diff lands in the no-changes branch.
 		ContentChecksum:      "abc",
