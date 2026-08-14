@@ -80,6 +80,8 @@ templateSnippets:
           http-after-response, not http-response: the headers must also reach the synthetic preflight 204. #}
       {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -102,6 +104,20 @@ templateSnippets:
             {%- var maxAge = ingress.Metadata.Annotations["haproxy.org/cors-max-age"] %}
             {%- if maxAge == "" %}{%- maxAge = "5" %}{%- end %}
             {%- var respondOptions = ingress.Metadata.Annotations["haproxy.org/cors-respond-to-options"] %}
+            {#- origin is a regex emitted as a `-m reg` operand, so it is SINGLE-quoted
+                (strong quoting: no escape processing, `\`/`$`/space/`}` pass literally, so
+                a regex like `.*\.example\.com` renders) and guarded with squote — only a
+                `'` or a control char can break out. methods/headers/maxAge are log-format
+                set-header values, double-quoted via EscapeLogFormatValue after a control-char
+                reject. -#}
+            {%- var corsInj = "" %}
+            {%- if origin != "*" %}{%- corsInj = ConfigInjectionKind(origin, "squote") %}{%- end %}
+            {%- if corsInj == "" %}{%- corsInj = ConfigInjectionKind(methods, "line") %}{%- end %}
+            {%- if corsInj == "" %}{%- corsInj = ConfigInjectionKind(headers, "line") %}{%- end %}
+            {%- if corsInj == "" %}{%- corsInj = ConfigInjectionKind(maxAge, "line") %}{%- end %}
+            {%- if corsInj != "" %}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "A CORS annotation on Ingress '" + key + "' contains " + corsInj + ", which would split the frontend directive; CORS is not applied. Remove control characters from the value.") -}}{%- continue %}
+            {%- end %}
             {%- if credentials == "true" && origin == "*" %}
               {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "CORS configuration error on Ingress '" + key + "': cors-allow-credentials cannot be 'true' when cors-allow-origin is '*'. Specify an explicit origin.") -}}{%- continue %}
             {%- end %}
@@ -109,21 +125,21 @@ templateSnippets:
               {%- var originHdr = origin %}
               {%- var originAcl = "{ var(txn.cors_origin) -m found }" %}
               {%- if origin != "*" %}
-                {%- originAcl = "{ var(txn.cors_origin) -m reg " + origin + " }" %}
+                {%- originAcl = "{ var(txn.cors_origin) -m reg '" + origin + "' }" %}
                 {%- originHdr = "%[var(txn.cors_origin)]" %}
               {%- end %}
       # haproxytech/frontend-filters-haproxytech-cors (for {{ key }})
       http-request set-var(txn.cors_origin) req.hdr(origin) if {{ cond }}
       http-after-response set-header Access-Control-Allow-Origin '{{ originHdr }}' if {{ cond }} {{ originAcl }}
-      http-after-response set-header Access-Control-Allow-Methods '{{ methods }}' if {{ cond }} {{ originAcl }}
+      http-after-response set-header Access-Control-Allow-Methods "{{ EscapeLogFormatValue(methods) }}" if {{ cond }} {{ originAcl }}
               {%- if headers != "" %}
-      http-after-response set-header Access-Control-Allow-Headers '{{ headers }}' if {{ cond }} {{ originAcl }}
+      http-after-response set-header Access-Control-Allow-Headers "{{ EscapeLogFormatValue(headers) }}" if {{ cond }} {{ originAcl }}
               {%- end %}
               {%- if credentials == "true" %}
       http-after-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }} {{ originAcl }}
               {%- end %}
               {%- if maxAge != "" %}
-      http-after-response set-header Access-Control-Max-Age '{{ maxAge }}' if {{ cond }} {{ originAcl }}
+      http-after-response set-header Access-Control-Max-Age "{{ EscapeLogFormatValue(maxAge) }}" if {{ cond }} {{ originAcl }}
               {%- end %}
               {%- if respondOptions == "true" %}
       http-request return status 204 if {{ cond }} METH_OPTIONS
@@ -236,6 +252,8 @@ templateSnippets:
   frontend-filters-500-haproxytech-logging:
     template: |
       {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -245,6 +263,13 @@ templateSnippets:
           {%- var captureLen = ingress.Metadata.Annotations["haproxy.org/request-capture-len"] %}
           {%- if captureLen == "" %}{%- captureLen = "128" %}{%- end %}
           {%- if srcIpHeader != "" %}
+            {#- src-ip-header rewrites the trusted client address (set-src), so a bad
+                value must fail closed, not skip: emitting nothing would leave downstream
+                trust ACLs judging the proxy's address. The header name is a bare token. -#}
+            {%- var srcInj = ConfigInjectionKind(srcIpHeader, "token") %}
+            {%- if srcInj != "" %}
+              {{- fail("Invalid value for annotation 'haproxy.org/src-ip-header' on Ingress '" + key + "': contains " + srcInj + ", which would break the set-src directive. Use a plain header name.") -}}
+            {%- end %}
             {# Scoped by matched route. set-src rewrites the address every
                 src-based ACL then evaluates, so a wildcard or host-less rule
                 that skipped this left the CIDR allow/deny lists judging the
@@ -253,11 +278,22 @@ templateSnippets:
       http-request set-src hdr({{ srcIpHeader }}) if {{ ResourceMatchCondition([]string{key}) }}
           {%- end %}
           {%- if reqCapture != "" %}
+            {#- captureLen is a bare positive integer; toint() rejects any trailing
+                garbage (a newline, a second word) by returning 0, so this one check
+                is both the sanity gate and the injection guard for the len operand. -#}
+            {%- if toint(captureLen) <= 0 %}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + captureLen + "' for annotation 'haproxy.org/request-capture-len' on Ingress '" + key + "'. Must be a positive integer; request capture is skipped.") -}}{%- continue %}
+            {%- end %}
       # haproxytech/frontend-filters-haproxytech-logging (request-capture for {{ key }})
             {%- for _, line := range split(reqCapture, "\n") %}
               {%- var t = trimSpace(line) %}
               {%- if t != "" %}
+                {%- var capInj = ConfigInjectionKind(t, "token") %}
+                {%- if capInj != "" %}
+                  {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy.org/request-capture' on Ingress '" + key + "' names a header containing " + capInj + ", which would break the capture directive; that entry is skipped.") -}}
+                {%- else %}
       capture request header {{ t }} len {{ captureLen }}
+                {%- end %}
               {%- end %}
             {%- end %}
           {%- end %}
@@ -359,32 +395,34 @@ templateSnippets:
 
   backend-directives-100-haproxytech-timeouts:
     template: |
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
-        {%- var tServer = ingress.Metadata.Annotations["haproxy.org/timeout-server"] %}
-        {%- var tConnect = ingress.Metadata.Annotations["haproxy.org/timeout-connect"] %}
-        {%- var tQueue = ingress.Metadata.Annotations["haproxy.org/timeout-queue"] %}
-        {%- var tTunnel = ingress.Metadata.Annotations["haproxy.org/timeout-tunnel"] %}
-        {%- var tCheck = ingress.Metadata.Annotations["haproxy.org/timeout-check"] %}
-        {%- if tServer != "" %}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+        {%- var emitted = false %}
+        {%- for _, t := range [][]string{ {"haproxy.org/timeout-server", "server"}, {"haproxy.org/timeout-connect", "connect"}, {"haproxy.org/timeout-queue", "queue"}, {"haproxy.org/timeout-tunnel", "tunnel"}, {"haproxy.org/timeout-check", "check"} } %}
+          {%- var ann = t[0] %}
+          {%- var n = t[1] %}
+          {%- var v = ingress.Metadata.Annotations[ann] %}
+          {%- if v != "" %}
+            {%- var inj = ConfigInjectionKind(v, "token") %}
+            {%- if inj != "" %}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value for annotation '" + ann + "' on Ingress '" + key + "': contains " + inj + ", which would split the backend directive; the timeout is skipped.") -}}
+            {%- else %}
+              {%- if !emitted %}
       # haproxytech/backend-directives-haproxytech-timeouts
-      timeout server {{ tServer }}
-        {% end %}
-        {%- if tConnect != "" %}
-      timeout connect {{ tConnect }}
-        {% end %}
-        {%- if tQueue != "" %}
-      timeout queue {{ tQueue }}
-        {% end %}
-        {%- if tTunnel != "" %}
-      timeout tunnel {{ tTunnel }}
-        {% end %}
-        {%- if tCheck != "" %}
-      timeout check {{ tCheck }}
-        {% end %}
+                {%- emitted = true %}
+              {%- end %}
+      timeout {{ n }} {{ v }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
       {%- end -%}
 
   backend-directives-150-haproxytech-load-balance:
     template: |
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -403,8 +441,16 @@ templateSnippets:
           {%- if !isValid %}
             {{- fail("Invalid value '" + lb + "' for annotation 'haproxy.org/load-balance' on Ingress '" + key + "'. Valid algorithms: " + (exactValid | join(", ")) + ", or parameterized: " + (prefixValid | join("(...), ")) + "(...)") -}}
           {%- end %}
+          {#- The parameterized forms accept an unbounded suffix (hdr(<v>), url_param(<v>)),
+              so a control char or space there would split the backend directive; the
+              exact algorithms can't carry one. -#}
+          {%- var lbInj = ConfigInjectionKind(lb, "token") %}
+          {%- if lbInj != "" %}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value for annotation 'haproxy.org/load-balance' on Ingress '" + key + "': contains " + lbInj + ", which would split the backend directive; load-balancing is left at the default.") -}}
+          {%- else %}
       # haproxytech/backend-directives-haproxytech-load-balance
       balance {{ lb }}
+          {%- end %}
         {%- end %}
       {%- end -%}
 
@@ -428,26 +474,42 @@ templateSnippets:
 
   backend-directives-210-haproxytech-advanced-health-checks:
     template: |
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
         {%- var checkHttp = ingress.Metadata.Annotations["haproxy.org/check-http"] %}
         {%- var checkInterval = ingress.Metadata.Annotations["haproxy.org/check-interval"] %}
         {%- if checkHttp != "" %}
-      # haproxytech/backend-directives-haproxytech-advanced-health-checks
-          {%- if strings_contains(checkHttp, " ") %}
-      option httpchk {{ checkHttp }}
+          {#- httpchk legitimately holds spaces (method + uri + version), so only
+              control chars are rejected here. -#}
+          {%- var httpInj = ConfigInjectionKind(checkHttp, "line") %}
+          {%- if httpInj != "" %}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy.org/check-http' on Ingress '" + key + "': contains " + httpInj + ", which would split the backend directive; the HTTP health check is skipped.") -}}
           {%- else %}
+      # haproxytech/backend-directives-haproxytech-advanced-health-checks
+            {%- if strings_contains(checkHttp, " ") %}
+      option httpchk {{ checkHttp }}
+            {%- else %}
       option httpchk GET {{ checkHttp }}
+            {%- end %}
           {%- end %}
         {%- end %}
         {#- 200-health-checks already ran, so checkDirective is set; inter is meaningless under no-check. -#}
         {%- if checkInterval != "" && (serverOpts | dig("checkDirective") | fallback("check") | tostring()) != "no-check" %}
+          {%- var intInj = ConfigInjectionKind(checkInterval, "token") %}
+          {%- if intInj != "" %}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value for annotation 'haproxy.org/check-interval' on Ingress '" + key + "': contains " + intInj + ", which would split the server directive; the check interval is skipped.") -}}
+          {%- else %}
           {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "inter " + checkInterval) %}
+          {%- end %}
         {%- end %}
       {%- end -%}
 
   backend-directives-250-haproxytech-rate-limiting:
     template: |
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- if ingress != nil %}
         {%- var rateReq = ingress.Metadata.Annotations["haproxy.org/rate-limit-requests"] %}
         {%- if rateReq != "" %}
@@ -457,6 +519,16 @@ templateSnippets:
           {%- if size == "" %}{%- size = "100k" %}{%- end %}
           {%- var status = ingress.Metadata.Annotations["haproxy.org/rate-limit-status-code"] %}
           {%- if status == "" %}{%- status = "403" %}{%- end %}
+          {#- Rate limiting is a security control: an injected value must fail closed, not
+              skip (skipping would drop the limit entirely). Each field is a bare token. -#}
+          {%- var rlName = "" %}{%- var rlChar = "" %}{%- var c = "" %}
+          {%- c = ConfigInjectionKind(rateReq, "token") %}{%- if c != "" %}{%- rlName = "rate-limit-requests" %}{%- rlChar = c %}{%- end %}
+          {%- if rlName == "" %}{%- c = ConfigInjectionKind(period, "token") %}{%- if c != "" %}{%- rlName = "rate-limit-period" %}{%- rlChar = c %}{%- end %}{%- end %}
+          {%- if rlName == "" %}{%- c = ConfigInjectionKind(size, "token") %}{%- if c != "" %}{%- rlName = "rate-limit-size" %}{%- rlChar = c %}{%- end %}{%- end %}
+          {%- if rlName == "" %}{%- c = ConfigInjectionKind(status, "token") %}{%- if c != "" %}{%- rlName = "rate-limit-status-code" %}{%- rlChar = c %}{%- end %}{%- end %}
+          {%- if rlName != "" %}
+            {{- fail("Invalid value for annotation 'haproxy.org/" + rlName + "' on Ingress '" + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + "': contains " + rlChar + ", which would split the rate-limit directive. Rate limiting must stay enforceable, so the config is rejected.") -}}
+          {%- end %}
           {%- var whitelist = ingress.Metadata.Annotations["haproxy.org/rate-limit-whitelist"] %}
           {%- var guard = "" %}
           {%- if whitelist != "" %}
@@ -498,7 +570,15 @@ templateSnippets:
 
   backend-directives-300-haproxytech-header-manipulation:
     template: |
+      {#- The VALUE is emitted double-quoted through EscapeLogFormatValue: a set-header
+          value is an HAProxy log-format string, so " / $ / % / \ are escaped and a
+          literal ' no longer closes the old single-quoted form. Lines are pre-split on
+          "\n", so only a stray control char (a tab) remains to reject on the value. -#}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
         {%- var reqHeaders = ingress.Metadata.Annotations["haproxy.org/request-set-header"] %}
         {%- var respHeaders = ingress.Metadata.Annotations["haproxy.org/response-set-header"] %}
         {%- if reqHeaders != "" %}
@@ -507,7 +587,14 @@ templateSnippets:
             {%- var t = trimSpace(line) %}
             {%- if t != "" && strings_contains(t, " ") %}
               {%- var parts = split(t, " ") %}
-      http-request set-header {{ parts[0] }} '{{ parts[1:] | join(" ") }}'
+              {%- var hVal = parts[1:] | join(" ") %}
+              {%- if ConfigInjectionKind(parts[0], "token") != "" %}
+                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy.org/request-set-header' on Ingress '" + key + "' names a header containing " + ConfigInjectionKind(parts[0], "token") + "; that header is skipped.") -}}
+              {%- else if ConfigInjectionKind(hVal, "line") != "" %}
+                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy.org/request-set-header' on Ingress '" + key + "' has a value containing " + ConfigInjectionKind(hVal, "line") + ", which would split the backend directive; that header is skipped.") -}}
+              {%- else %}
+      http-request set-header {{ parts[0] }} "{{ EscapeLogFormatValue(hVal) }}"
+              {%- end %}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -517,7 +604,14 @@ templateSnippets:
             {%- var t = trimSpace(line) %}
             {%- if t != "" && strings_contains(t, " ") %}
               {%- var parts = split(t, " ") %}
-      http-response set-header {{ parts[0] }} '{{ parts[1:] | join(" ") }}'
+              {%- var hVal = parts[1:] | join(" ") %}
+              {%- if ConfigInjectionKind(parts[0], "token") != "" %}
+                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy.org/response-set-header' on Ingress '" + key + "' names a header containing " + ConfigInjectionKind(parts[0], "token") + "; that header is skipped.") -}}
+              {%- else if ConfigInjectionKind(hVal, "line") != "" %}
+                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy.org/response-set-header' on Ingress '" + key + "' has a value containing " + ConfigInjectionKind(hVal, "line") + ", which would split the backend directive; that header is skipped.") -}}
+              {%- else %}
+      http-response set-header {{ parts[0] }} "{{ EscapeLogFormatValue(hVal) }}"
+              {%- end %}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -525,10 +619,20 @@ templateSnippets:
 
   backend-directives-350-haproxytech-path-rewrite:
     template: |
+      {#- Both the match regex and the replacement legitimately carry backslashes —
+          regex escapes and \N group backreferences — so they are emitted raw and guarded
+          for control chars only (EscapeLogFormatValue would double the backslashes and
+          break the backreferences). A control char is the cross-directive injection here. -#}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
         {%- var rewrite = ingress.Metadata.Annotations["haproxy.org/path-rewrite"] %}
         {%- if rewrite != "" %}
-          {%- if strings_contains(rewrite, " ") %}
+          {%- var rwInj = ConfigInjectionKind(rewrite, "line") %}
+          {%- if rwInj != "" %}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy.org/path-rewrite' on Ingress '" + key + "': contains " + rwInj + ", which would split the backend directive; the path rewrite is skipped.") -}}
+          {%- else if strings_contains(rewrite, " ") %}
             {%- var parts = split(rewrite, " ") %}
       # haproxytech/backend-directives-haproxytech-path-rewrite
       http-request replace-path {{ parts[0] }} {{ parts[1:] | join(" ") }}
@@ -541,16 +645,26 @@ templateSnippets:
 
   backend-directives-400-haproxytech-session-persistence:
     template: |
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
         {%- var cookie = ingress.Metadata.Annotations["haproxy.org/cookie-persistence"] %}
         {%- if cookie != "" %}
+          {%- var cookieInj = ConfigInjectionKind(cookie, "token") %}
+          {%- if cookieInj != "" %}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy.org/cookie-persistence' on Ingress '" + key + "': contains " + cookieInj + ", which would split the backend directive; session persistence is skipped.") -}}
+          {%- else %}
       # haproxytech/backend-directives-haproxytech-session-persistence
       cookie {{ cookie }} insert indirect nocache dynamic
+          {%- end %}
         {%- end %}
       {%- end -%}
 
   backend-directives-401-haproxytech-session-persistence-no-dynamic:
     template: |
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -561,14 +675,21 @@ templateSnippets:
           {{- fail("Cannot use both 'haproxy.org/cookie-persistence' and 'haproxy.org/cookie-persistence-no-dynamic' on Ingress '" + key + "'. Use only one cookie persistence method.") -}}
         {%- end %}
         {%- if static != "" %}
+          {%- var staticInj = ConfigInjectionKind(static, "token") %}
+          {%- if staticInj != "" %}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy.org/cookie-persistence-no-dynamic' on Ingress '" + key + "': contains " + staticInj + ", which would split the backend directive; session persistence is skipped.") -}}
+          {%- else %}
       # haproxytech/backend-directives-haproxytech-session-persistence-no-dynamic
       cookie {{ static }} insert indirect nocache
+          {%- end %}
         {%- end %}
       {%- end -%}
 
   backend-directives-500-haproxytech-ingress-auth:
     template: |
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -583,6 +704,12 @@ templateSnippets:
           {%- if authRealm == "" %}{%- authRealm = "Protected-Content" %}{%- end %}
           {#- The DataPlane API realm field forbids spaces (^[^\s]+$); upstream dashes them too, so don't fail. -#}
           {%- authRealm = replace(authRealm, " ", "-") %}
+          {#- Auth is security-critical: fail closed on a control char (it cannot live in a
+              double-quoted realm string). The " / \ / $ are escaped for the quoted emission. -#}
+          {%- var realmInj = ConfigInjectionKind(authRealm, "line") %}
+          {%- if realmInj != "" %}
+            {{- fail("Invalid value for annotation 'haproxy.org/auth-realm' on Ingress '" + key + "': contains " + realmInj + ". The realm must not contain control characters.") -}}
+          {%- end %}
           {%- if authSecret != "" %}
             {%- var secretNs = ns %}
             {%- var secretName = authSecret %}
@@ -604,7 +731,7 @@ templateSnippets:
             {%- if htAuthSecret != nil %}
       # haproxytech/backend-directives-haproxytech-ingress-auth
       http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ userlistName }}) }
-      http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
+      http-request auth realm "{{ EscapeDquoteValue(authRealm) }}" unless { http_auth({{ userlistName }}) }
             {%- else %}
               {# Without a resolvable Secret there is no userlist, and emitting
                   nothing served every request unauthenticated. Fail closed. #}
@@ -619,6 +746,8 @@ templateSnippets:
 
   backend-directives-900-haproxytech-advanced:
     template: |
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -644,7 +773,12 @@ templateSnippets:
 
         {%- var serverProto = ingress.Metadata.Annotations["haproxy.org/server-proto"] %}
         {%- if serverProto != "" %}
+          {%- var protoInj = ConfigInjectionKind(serverProto, "token") %}
+          {%- if protoInj != "" %}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy.org/server-proto' on Ingress '" + key + "': contains " + protoInj + ", which would split the server directive; the upstream protocol is skipped.") -}}
+          {%- else %}
           {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "proto " + serverProto) %}
+          {%- end %}
         {%- end %}
 
         {%- var serverCa = ingress.Metadata.Annotations["haproxy.org/server-ca"] %}
@@ -665,10 +799,15 @@ templateSnippets:
               {%- if caRegErr != nil -%}{{ fail("failed to register CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify required ca-file " + caPath) %}
             {%- else %}
-            # Warning: Secret {{ caNs }}/{{ caName }} missing 'ca.crt' key
+              {#- Name-free comment: the tenant-controlled Secret name goes only into the
+                  Kubernetes Event, never into the rendered config, so a newline in it can't
+                  smuggle a directive past the # comment. -#}
+              {{- recordEvent(ingress, "ServerCASecretMissingCACert", "Ingress " + key + " references Secret '" + serverCa + "' in 'haproxy.org/server-ca', but it has no ca.crt. Upstream certificate verification is skipped.") -}}
+            # haproxy.org/server-ca: referenced Secret has no ca.crt; upstream verification skipped
             {%- end %}
           {%- else %}
-            # Warning: Secret {{ caNs }}/{{ caName }} referenced by haproxy.org/server-ca not found
+            {{- recordEvent(ingress, "ServerCASecretMissing", "Ingress " + key + " references Secret '" + serverCa + "' in 'haproxy.org/server-ca', but it could not be resolved. Upstream certificate verification is skipped.") -}}
+            # haproxy.org/server-ca: referenced Secret not found; upstream verification skipped
           {%- end %}
         {%- end %}
 
@@ -693,10 +832,12 @@ templateSnippets:
               {#- Bare filename, not the registry path: HAProxy resolves `crt` against crt-base. -#}
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "crt " + crtFilename) %}
             {%- else %}
-            # Warning: Secret {{ crtNs }}/{{ crtName }} missing 'tls.crt' or 'tls.key' keys
+              {{- recordEvent(ingress, "ServerCrtSecretIncomplete", "Ingress " + key + " references Secret '" + serverCrt + "' in 'haproxy.org/server-crt', but it has no tls.crt/tls.key. No client certificate is presented upstream.") -}}
+            # haproxy.org/server-crt: referenced Secret missing tls.crt/tls.key; no client certificate presented
             {%- end %}
           {%- else %}
-            # Warning: Secret {{ crtNs }}/{{ crtName }} referenced by haproxy.org/server-crt not found
+            {{- recordEvent(ingress, "ServerCrtSecretMissing", "Ingress " + key + " references Secret '" + serverCrt + "' in 'haproxy.org/server-crt', but it could not be resolved. No client certificate is presented upstream.") -}}
+            # haproxy.org/server-crt: referenced Secret not found; no client certificate presented
           {%- end %}
         {%- end %}
 
@@ -1043,7 +1184,11 @@ validationTests:
                       backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "var\\(txn\\.cors_origin\\) -m reg \\^https://"}
+      # The regex origin is single-quoted, and its backslash-escaped dots survive
+      # literally inside the strong quotes (token/double-quote guarding would have
+      # mangled the '\').
+      - {type: contains, target: haproxy.cfg, pattern: 'var\(txn\.cors_origin\) -m reg ''\^https://'}
+      - {type: contains, target: haproxy.cfg, pattern: 'example\\\.com\$'' \}'}
       - type: contains
         target: haproxy.cfg
         pattern: "Access-Control-Allow-Origin '%\\[var\\(txn\\.cors_origin\\)\\]'"
@@ -1671,6 +1816,220 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "server SRV_5 "}
       - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_6 "}
+
+  # ---------------------------------------------------------------------------
+  # Config-injection guards (#157, phase 2). The centralized utilities are behavior-
+  # tested once in base/library.yaml (phase 1); these are wiring checks. One hostile
+  # fixture drives every routing guard at once (a shared ZZINJECT marker must never
+  # reach the config); positive fixtures prove the load-bearing special cases
+  # (single-quoted regex origin, %→%% header value, \N path backref, escaped realm);
+  # the security sites fail closed.
+  # ---------------------------------------------------------------------------
+
+  test-haproxytech-injection-routing-warns-and-skips:
+    description: Every haproxy.org routing value carrying an injection payload is skipped (reconcile), so the ZZINJECT marker never reaches the config; a single unguarded site would leak it.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: inj-a
+            annotations:
+              haproxy.org/cors-enable: "true"
+              haproxy.org/cors-allow-origin: "https://ok.example.com"
+              haproxy.org/cors-allow-methods: "GET\nZZINJECT"
+              haproxy.org/timeout-server: "30s\nZZINJECT"
+              haproxy.org/load-balance: "hdr(x-session-id)\nZZINJECT"
+              haproxy.org/check-http: "/h\nZZINJECT"
+              haproxy.org/check-interval: "10s\nZZINJECT"
+              haproxy.org/cookie-persistence: "SID\nZZINJECT"
+              haproxy.org/path-rewrite: "/a\nZZINJECT"
+              haproxy.org/server-proto: "h2\nZZINJECT"
+              haproxy.org/request-set-header: "X-Inj ZZINJECT\tval"
+              haproxy.org/response-set-header: "Y-Inj ZZINJECT\tval"
+              haproxy.org/request-capture: "X-Cap ZZINJECT"
+          spec: *specTestExampleComRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: inj-b
+            annotations:
+              haproxy.org/cookie-persistence-no-dynamic: "SID\nZZINJECT"
+              haproxy.org/request-capture: "X-ValidCap"
+              haproxy.org/request-capture-len: "5\nZZINJECT"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: inj-b.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: "ZZINJECT"}
+
+  test-haproxytech-guarded-values-render:
+    description: Legit values still render correctly through the new guards, including the load-bearing cases — %→%% in a header value, a \N path backreference, and a single-quoted regex CORS origin with backslashes.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ok-be
+            annotations:
+              haproxy.org/timeout-server: "30s"
+              haproxy.org/load-balance: "leastconn"
+              haproxy.org/check-interval: "10s"
+              haproxy.org/cookie-persistence: "SESSIONID"
+              haproxy.org/server-proto: "h2"
+              haproxy.org/check-http: "GET /healthz HTTP/1.1"
+              haproxy.org/src-ip-header: "X-Real-IP"
+              haproxy.org/request-capture: "X-Forwarded-For"
+              haproxy.org/request-capture-len: "256"
+              haproxy.org/request-set-header: "X-Pct a%b"
+              haproxy.org/path-rewrite: "/api/(.*) /v2/\\1"
+          spec: *specTestExampleComRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ok-cors
+            annotations:
+              haproxy.org/cors-enable: "true"
+              haproxy.org/cors-allow-origin: "https://.*\\.example\\.com"
+              haproxy.org/cors-allow-methods: "GET, POST"
+              haproxy.org/cors-allow-headers: "X-H%K"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: ok-cors.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "timeout server 30s"}
+      - {type: contains, target: haproxy.cfg, pattern: "balance leastconn"}
+      - {type: contains, target: haproxy.cfg, pattern: "default-server check inter 10s"}
+      - {type: contains, target: haproxy.cfg, pattern: "cookie SESSIONID insert indirect nocache dynamic"}
+      - {type: contains, target: haproxy.cfg, pattern: "proto h2"}
+      - {type: contains, target: haproxy.cfg, pattern: "option httpchk GET /healthz HTTP/1.1"}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-src hdr\(X-Real-IP\)'}
+      - {type: contains, target: haproxy.cfg, pattern: "capture request header X-Forwarded-For len 256"}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Pct "a%%b"'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request replace-path /api/\(\.\*\) /v2/\\1'}
+      - {type: contains, target: haproxy.cfg, pattern: 'var\(txn\.cors_origin\) -m reg ''https://\.\*\\\.example\\\.com'''}
+      - {type: contains, target: haproxy.cfg, pattern: 'Access-Control-Allow-Methods "GET, POST"'}
+      - {type: contains, target: haproxy.cfg, pattern: 'Access-Control-Allow-Headers "X-H%%K"'}
+
+  test-haproxytech-cors-origin-single-quote-rejected:
+    description: A single quote in the regex cors-allow-origin is denied at admission (it would close the strong-quoted -m reg operand).
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cors-origin-quote
+            annotations:
+              haproxy.org/cors-enable: "true"
+              haproxy.org/cors-allow-origin: "https://ok.example.com' or { always_true } '"
+          spec: *specTestExampleComRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would split the frontend directive"}
+
+  test-haproxytech-src-ip-header-fails-closed:
+    description: A control character in src-ip-header fails closed (set-src rewrites the trusted client address; skipping is not an option).
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: srcip-bad, annotations: {haproxy.org/src-ip-header: "X-Real-IP\nZZINJECT"}}
+          spec: *specTestExampleComRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "haproxy.org/src-ip-header"}
+      - {type: contains, target: rendering_error, pattern: "break the set-src directive"}
+
+  test-haproxytech-rate-limit-fails-closed:
+    description: A control character in a rate-limit field fails closed (rate limiting must stay enforceable).
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-bad
+            annotations:
+              haproxy.org/rate-limit-requests: "10"
+              haproxy.org/rate-limit-period: "10s\nZZINJECT"
+          spec: *specTestExampleComRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "haproxy.org/rate-limit-period"}
+      - {type: contains, target: rendering_error, pattern: "Rate limiting must stay enforceable"}
+
+  test-haproxytech-auth-realm-fails-closed:
+    description: A control character in auth-realm fails closed (auth is security-critical).
+    fixtures:
+      secrets:
+        - {apiVersion: v1, kind: Secret, metadata: {namespace: default, name: realm-auth}, type: Opaque, data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: realm-bad
+            annotations: {haproxy.org/auth-type: basic-auth, haproxy.org/auth-secret: realm-auth, haproxy.org/auth-realm: "Prod\nZZINJECT"}
+          spec: *specTestExampleComRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "haproxy.org/auth-realm"}
+
+  test-haproxytech-auth-realm-quote-escaped:
+    description: A double quote in auth-realm is escaped inside the quoted realm string.
+    fixtures:
+      secrets:
+        - {apiVersion: v1, kind: Secret, metadata: {namespace: default, name: realm-auth2}, type: Opaque, data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: realm-quote
+            annotations: {haproxy.org/auth-type: basic-auth, haproxy.org/auth-secret: realm-auth2, haproxy.org/auth-realm: "My\"Realm"}
+          spec: *specTestExampleComRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'auth realm "My\\"Realm"'}
+
+  test-haproxytech-server-tls-warning-name-free:
+    description: Missing server-ca/server-crt Secrets render name-free warning comments (the tenant Secret name goes only to the Event), so a newline in the reference cannot inject a directive.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: ca-missing, annotations: {haproxy.org/server-ca: "absent-ca\nZZINJECT"}}
+          spec: *specTestExampleComRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: crt-missing, annotations: {haproxy.org/server-crt: "absent-crt\nZZINJECT"}}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: crt.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "server-ca: referenced Secret not found; upstream verification skipped"}
+      - {type: contains, target: haproxy.cfg, pattern: "server-crt: referenced Secret not found; no client certificate presented"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "absent-ca"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "absent-crt"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "ZZINJECT"}
 
 # Consumed by the playground's migration report and the generated tables in
 # docs/site/docs/migrating.md; scripts/check-migration-coverage.sh pins drift.
