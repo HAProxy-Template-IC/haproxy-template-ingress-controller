@@ -115,8 +115,9 @@ func formatSummary(results *TestResults, verbose bool) string {
 			fmt.Fprintf(&out, "  %s\n", test.Description)
 		}
 
-		// Render error if present
-		if test.RenderError != "" {
+		// A render error on a PASSED test is the expected outcome of a
+		// rendering-error assertion, which reports it on its own line.
+		if test.RenderError != "" && !test.Passed {
 			out.WriteString("  ✗ Template rendering failed\n")
 			fmt.Fprintf(&out, "    Error: %s\n", formatMultilineError(test.RenderError, "           "))
 		}

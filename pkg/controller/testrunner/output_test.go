@@ -136,6 +136,32 @@ func TestFormatResults_SummaryWithRenderError(t *testing.T) {
 	assert.Contains(t, output, "undefined filter 'foo'")
 }
 
+func TestFormatResults_ExpectedRenderErrorIsNotReportedAsFailure(t *testing.T) {
+	results := &TestResults{
+		TotalTests:  1,
+		PassedTests: 1,
+		Duration:    100 * time.Millisecond,
+		TestResults: []TestResult{
+			{
+				TestName:    "guard-rejects-bad-value",
+				Passed:      true,
+				Duration:    100 * time.Millisecond,
+				RenderError: "Invalid extraContext.tls.ciphers: config-injection guard",
+				Assertions: []AssertionResult{
+					{Type: "rendering_error", Description: "Template rendering must fail with the guard message", Passed: true},
+				},
+			},
+		},
+	}
+
+	output, err := FormatResults(results, OutputOptions{Format: OutputFormatSummary})
+	require.NoError(t, err)
+
+	assert.Contains(t, output, "✓ guard-rejects-bad-value")
+	assert.Contains(t, output, "✓ Template rendering must fail with the guard message")
+	assert.NotContains(t, output, "✗", "an expected render error must not print as a failure")
+}
+
 func TestFormatResults_JSON(t *testing.T) {
 	results := &TestResults{
 		TotalTests:  1,
