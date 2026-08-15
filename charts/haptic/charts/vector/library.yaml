@@ -829,7 +829,7 @@ templateSnippets:
               if v != "" { attrs = push(attrs, {"key": "haptic." + f, "value": {"stringValue": v}}) }
             }
             for_each(sm) -> |_i, e| {
-              kv = split(string!(e), "|")
+              kv = split(e, "|")
               k = string!(kv[0])
               v = string(get(o, [string!(kv[1])]) ?? "") ?? ""
               if v != "" { attrs = push(attrs, {"key": k, "value": {"stringValue": v}}) }

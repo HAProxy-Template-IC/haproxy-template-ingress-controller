@@ -44,6 +44,9 @@ func (a *currentFilesAuthority) BeginTerm() uint64 {
 	a.active = true
 	a.hasAccepted = false
 	a.accepted = nil
+	if a.published != nil {
+		a.published.beginLeaderTerm()
+	}
 	return a.generation
 }
 
@@ -57,6 +60,9 @@ func (a *currentFilesAuthority) EndTerm(generation uint64) {
 	a.active = false
 	a.hasAccepted = false
 	a.accepted = nil
+	if a.published != nil {
+		a.published.endLeaderTerm()
+	}
 }
 
 func (a *currentFilesAuthority) Snapshot(generation uint64) (map[string]string, error) {
