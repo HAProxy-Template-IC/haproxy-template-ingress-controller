@@ -145,4 +145,4 @@ validationTests:
       - type: haproxy_valid
       - type: not_contains
         target: haproxy.cfg
-        pattern: 'backend gtw_default_noretry-route[\s\S]*?retry-on'
+        pattern: '(?m)^backend gtw_default_noretry-route$\n(?:[ \t].*\n)*[ \t]+retry-on'

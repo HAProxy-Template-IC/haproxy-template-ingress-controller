@@ -35,11 +35,11 @@ if [ -n "$extra" ]; then
   echo "  Remove them, or the metric advertises reasons that cannot occur." >&2
   rc=1
 fi
-# The three cache counters carry `requires: cache.varnish.enabled`, resolved at
+# The cache counters carry `requires: cache.varnish.enabled`, resolved at
 # helm time, so no validationTest can assert them. They were dropped from
 # values.yaml once already while the library, the CR template and two docs pages
 # still promised them, and nothing caught it.
-for entry in cacheStatus cacheAge cacheReason deniedBy rateLimitDegraded wafDegraded; do
+for entry in cacheStatus cacheAge cacheReason cacheDegraded deniedBy rateLimitDegraded wafDegraded schemaDegraded; do
   if ! python3 -c '
 import sys, yaml
 lm = yaml.safe_load(open(sys.argv[1]))["vector"]["logMetrics"]

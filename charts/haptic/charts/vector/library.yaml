@@ -13,12 +13,8 @@
 #   render -> dataplane API general-storage -> <GeneralStorageDir>/vector.yaml
 #   -> vector's --watch-config sees the write -> graceful reload, no restart.
 #
-# The readiness gate: this rendered config declares the prometheus_exporter sink,
-# and the bootstrap ConfigMap deliberately does NOT. The kubelet probes the
-# metrics port, so the container only becomes Ready once this file has been
-# pushed and reloaded. Measured against timberio/vector 0.57.0: enabling vector's
-# `api` block on a hot reload does NOT start the API server, so an api /health
-# probe would never pass — the exporter port is the gate that actually works.
+# The rendered config adds the metrics exporters omitted from the bootstrap
+# ConfigMap. Their scrape targets appear after this file is pushed and reloaded.
 
 _helm_load:
   enable: '{{ .Values.vector.enabled }}'
@@ -160,16 +156,14 @@ files:
         {%- end -%}
         {%- noMaint = noMaintBool -%}
       {%- end -%}
-      {#- Each pattern is embedded in a VRL r'...' literal, so a quote or newline
-          would break vector's config and crash-loop the sidecar. Reject those here
-          as well as in Helm: a hand-written CR bypasses Helm entirely. -#}
+      {#- Reject characters that break the VRL literal; a hand-written CR bypasses Helm. -#}
       {%- for _, pat := range excludes -%}
         {%- var ps = tostring(pat) -%}
         {%- if ps == "" -%}
           {%- fail("extraContext.vector.excludeMetrics contains an empty pattern; an empty regex matches every metric name and would drop the entire exposition.") -%}
         {%- end -%}
         {%- if regex_search(ps, "['\"\n\r\\\\]") -%}
-          {%- fail("extraContext.vector.excludeMetrics pattern '" + ps + "' contains a quote, backslash or newline. Patterns are embedded in a VRL r'...' literal, so those characters would break vector's config and crash-loop the sidecar.") -%}
+          {%- fail("extraContext.vector.excludeMetrics pattern '" + ps + "' contains a quote, backslash or newline. Patterns are embedded in a VRL r'...' literal, so those characters would break vector's config load and keep log and metric export unavailable.") -%}
         {%- end -%}
         {#- Compile check. Note the argument order: regex_search(subject, pattern),
             so the operator's string goes SECOND to be compiled as the pattern —
@@ -331,9 +325,7 @@ files:
           var tagName = m | dig_string("value", "tag")
           var vals = m | dig("values") | fallback([]any{}) | toSlice()
         %%}
-        {#- Field and metric names are embedded in a VRL regex and a metric name;
-            an unvalidated one would break vector's config load and crash-loop the
-            sidecar, exactly as excludeMetrics guards against. -#}
+        {#- Field and metric names are embedded in a VRL regex and metric name. -#}
         {%- if !regex_search(field, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".field must be an access-log field name (letters, digits, underscore), got '" + field + "'.") }}{%- end %}
         {%- if !regex_search(metricName, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".metric must be a Prometheus metric name, got '" + metricName + "'.") }}{%- end %}
         {%- if !regex_search(tagName, "^[A-Za-z_][A-Za-z0-9_]*$") %}{{ fail("extraContext.vector.logMetrics." + key + ".tag must be a Prometheus label name, got '" + tagName + "'.") }}{%- end %}
@@ -400,10 +392,7 @@ files:
       {%- end %}
       {%- end %}
       {%- if len(excludes) > 0 %}
-        {# Operator-controlled via extraContext.vector.excludeMetrics; each entry is
-            a regex matched against the METRIC NAME, validated (charset + compile)
-            before it gets here because an invalid one fails vector's config load and
-            crash-loops the sidecar. Rationale: values.yaml vector.excludeMetrics. #}
+        {# Operator-controlled metric-name regexes, validated before this point. #}
         # Drop metric families before they are re-exported.
         metrics_filtered:
           type: filter
@@ -471,8 +460,7 @@ files:
               content-type: application/json
       {%- end %}
 
-        # The primary scrape target. Its presence is ALSO the readiness gate — see
-        # the header comment.
+        # The primary merged scrape target, absent from the bootstrap config.
         metrics:
           type: prometheus_exporter
       {%- if len(excludes) > 0 %}
@@ -527,8 +515,7 @@ templateSnippets:
       {%- var mm = rm | dig("metrics") | fallback(map[string]any{}) -%}
       {%- var mOn = func(n string) bool { v, ok := mm.(map[string]any)[n]; return ok && tostring(v) == "true" } -%}
       {%- var prefix = rm | dig_string("haptic_ingress_controller", "prefix") -%}
-      {#- Re-validated here: a hand-written CR bypasses Helm, and a bad value fails
-          vector's config load and crash-loops the sidecar. -#}
+      {#- Re-validated here because a hand-written CR bypasses Helm. -#}
       {%- if !regex_search(prefix, "^[A-Za-z_][A-Za-z0-9_]*$") -%}
         {%- fail("extraContext.vector.requestMetrics.prefix must be a Prometheus metric-name prefix, got '" + prefix + "'.") -%}
       {%- end -%}
@@ -1010,9 +997,7 @@ validationTests:
       - type: contains
         target: file:vector.yaml
         pattern: 'type: prometheus_exporter'
-        description: >-
-          The exporter sink is the readiness gate — without it the kubelet probe
-          on the metrics port never passes
+        description: Rendered config must expose the merged metrics endpoint
 
   test-vector-metric-exclusions:
     description: excludeMetrics renders a filter transform, and the exporter reads from it
@@ -1347,9 +1332,7 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: 'contains a quote, backslash or newline'
-        description: >-
-          Patterns land inside a VRL r'...' literal; a quote would break vector's
-          config load and crash-loop the sidecar
+        description: A quote breaks the VRL literal and keeps Vector export unavailable.
 
   test-vector-config-no-spoa-hub:
     description: Without a hub metrics port, no dangling spoa_hub scrape source or input is emitted
@@ -1763,9 +1746,7 @@ validationTests:
       - {type: contains, target: file:vector.yaml, pattern: '(?m)^      - request_metrics_core$'}
 
   test-vector-request-metrics-sink-wiring:
-    description: >-
-      vector.yaml computes which transform names feed each exporter while the
-      snippet defines them; a drift between the two crash-loops the sidecar.
+    description: The generated exporter inputs must name transforms the config defines.
     fixtures: {}
     extraContext:
       vector:
@@ -1837,9 +1818,7 @@ validationTests:
       - {type: contains, target: file:vector.yaml, pattern: '(?m)^    address: 0\.0\.0\.0:9598$'}
 
   test-vector-request-metrics-rejects-bad-prefix:
-    description: >-
-      An invalid prefix fails vector's config load, which crash-loops the sidecar
-      and takes the HAProxy pod out of its Service.
+    description: An invalid prefix must fail before it keeps Vector export unavailable.
     fixtures: {}
     extraContext:
       renderMode: admission

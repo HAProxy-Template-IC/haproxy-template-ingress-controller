@@ -1,0 +1,25 @@
+{{- $haproxy := .Values.haproxy }}
+{{- $_ := include "haptic.haproxyPodDisruptionBudget.validateValues" . }}
+{{- if $haproxy.enabled }}
+{{- $pdb := $haproxy.podDisruptionBudget }}
+{{- if $pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "haptic.haproxyFullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+    app.kubernetes.io/component: loadbalancer
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  maxUnavailable: {{ include "haptic.haproxyPodDisruptionBudget.maxUnavailable" . }}
+  selector:
+    matchLabels:
+      {{- include "haptic.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: loadbalancer
+{{- end }}
+{{- end }}

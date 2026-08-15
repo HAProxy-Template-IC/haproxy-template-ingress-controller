@@ -534,7 +534,7 @@ validationTests:
         pattern: 'set-var\(txn\.coraza_active\) bool\(true\) if \{ var\(txn\.coraza_app\) -m found \} \|\| \{ var\(txn\.coraza_mode\) -m found \}'
       - type: contains
         target: haproxy.cfg
-        pattern: 'send-spoe-group spoa-hub check-request-group if \{ var\(txn\.coraza_active\) -m bool \}'
+        pattern: 'send-spoe-group spoa-hub-check-request check-request-group if \{ var\(txn\.coraza_active\) -m bool \}'
       - {type: not_contains, target: haproxy.cfg, pattern: 'coraza-disabled\.map'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.coraza_mode\) str\('}
 
@@ -586,10 +586,10 @@ validationTests:
         pattern: 'set-var\(txn\.coraza_active\) bool\(true\) unless \{ var\(txn\.coraza_disabled\) -m found \}'
       - type: contains
         target: haproxy.cfg
-        pattern: 'send-spoe-group spoa-hub check-request-group if \{ var\(txn\.coraza_active\) -m bool \}'
+        pattern: 'send-spoe-group spoa-hub-check-request check-request-group if \{ var\(txn\.coraza_active\) -m bool \}'
       - type: not_contains
         target: haproxy.cfg
-        pattern: 'send-spoe-group spoa-hub check-request-group if \{ var\(txn\.coraza_app\)'
+        pattern: 'send-spoe-group spoa-hub-check-request check-request-group if \{ var\(txn\.coraza_app\)'
 
   test-coraza-dispatch-default-on-detect:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'

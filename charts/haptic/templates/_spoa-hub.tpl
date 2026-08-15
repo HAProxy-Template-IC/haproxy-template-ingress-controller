@@ -239,6 +239,7 @@ objects such as resources/securityContext; the apiserver owns those schemas.
   {{- $_ := set $normalizedNames $normalizedName $name -}}
   {{- $allowedFields := list "enabled" "timeoutMs" "messages" "dependsOn" "maxConcurrency" "maxQueue" "queueTimeoutMs" "adaptiveConcurrency" "params" -}}
   {{- if eq $name "coraza" -}}{{- $allowedFields = append $allowedFields "directives" -}}{{- end -}}
+  {{- if eq $name "mirror" -}}{{- $allowedFields = concat $allowedFields (list "targetTimeoutMs" "targetRetries") -}}{{- end -}}
   {{- if eq $name "rate-limit" -}}{{- $allowedFields = append $allowedFields "storeOperationTimeoutMs" -}}{{- end -}}
   {{- range $field := keys $plugin -}}
     {{- if not (has $field $allowedFields) -}}{{- fail (printf "spoaHub.plugins.%s contains unknown field %q. Plugin runtime settings belong inside params." $name $field) -}}{{- end -}}
@@ -275,6 +276,12 @@ objects such as resources/securityContext; the apiserver owns those schemas.
   {{- end -}}
   {{- if and (hasKey $plugin "params") (not (kindIs "string" $plugin.params)) -}}{{- fail (printf "spoaHub.plugins.%s.params must be a TOML string." $name) -}}{{- end -}}
   {{- if and (eq $name "coraza") (hasKey $plugin "directives") (not (kindIs "string" $plugin.directives)) -}}{{- fail "spoaHub.plugins.coraza.directives must be a string." -}}{{- end -}}
+  {{- if eq $name "mirror" -}}
+    {{- if not (hasKey $plugin "targetTimeoutMs") -}}{{- fail "spoaHub.plugins.mirror.targetTimeoutMs is required." -}}{{- end -}}
+    {{- if not (hasKey $plugin "targetRetries") -}}{{- fail "spoaHub.plugins.mirror.targetRetries is required." -}}{{- end -}}
+    {{- $_ := include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "root" $root "name" $name "field" "targetTimeoutMs" "min" 1 "max" 60000) -}}
+    {{- $_ := include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "root" $root "name" $name "field" "targetRetries" "min" 0 "max" 10) -}}
+  {{- end -}}
   {{- if eq $name "rate-limit" -}}
     {{- if not (hasKey $plugin "storeOperationTimeoutMs") -}}{{- fail "spoaHub.plugins.rate-limit.storeOperationTimeoutMs is required." -}}{{- end -}}
     {{- $_ := include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "root" $root "name" $name "field" "storeOperationTimeoutMs" "min" 1) -}}
@@ -509,14 +516,20 @@ enabled months later.
 {{- if not (kindIs "map" $shared) -}}{{- fail "rateLimit.shared must be a map." -}}{{- end -}}
 {{- range $field := keys $shared -}}{{- if not (has $field (list "enabled" "failClosed" "managedStore" "externalStore")) -}}{{- fail (printf "rateLimit.shared contains unknown field %q. Valid fields: enabled, failClosed, managedStore, externalStore." $field) -}}{{- end -}}{{- end -}}
 {{- if not (kindIs "bool" $shared.enabled) -}}{{- fail "rateLimit.shared.enabled must be a boolean." -}}{{- end -}}
+{{- if not (kindIs "bool" $shared.failClosed) -}}{{- fail "rateLimit.shared.failClosed must be a boolean." -}}{{- end -}}
 
-{{- $external := $shared.externalStore | default dict -}}
+{{- $external := dict -}}
+{{- if hasKey $shared "externalStore" -}}{{- $external = $shared.externalStore -}}{{- end -}}
 {{- if not (kindIs "map" $external) -}}{{- fail "rateLimit.shared.externalStore must be a map." -}}{{- end -}}
 {{- range $field := keys $external -}}
   {{- if ne $field "urls" -}}{{- fail (printf "rateLimit.shared.externalStore contains unknown field %q. Valid field: urls." $field) -}}{{- end -}}
 {{- end -}}
-{{- $externalURLs := $external.urls | default list -}}
+{{- $externalURLs := list -}}
+{{- if hasKey $external "urls" -}}{{- $externalURLs = $external.urls -}}{{- end -}}
 {{- if not (kindIs "slice" $externalURLs) -}}{{- fail "rateLimit.shared.externalStore.urls must be a list of Redis/Valkey URLs." -}}{{- end -}}
+{{- if gt (len $externalURLs) 1 -}}
+  {{- fail "rateLimit.shared.externalStore.urls accepts one endpoint. Multiple URLs share one plugin circuit breaker, so one failed shard disables all shards. Use one HA Redis/Valkey/Sentinel/Cluster endpoint." -}}
+{{- end -}}
 {{- range $url := $externalURLs -}}
   {{- if or (not (kindIs "string" $url)) (eq (trim $url) "") -}}{{- fail "rateLimit.shared.externalStore.urls entries must be non-empty URL strings." -}}{{- end -}}
 {{- end -}}
@@ -544,8 +557,8 @@ enabled months later.
 {{- if or (not (kindIs "string" $store.maxMemory)) (not (regexMatch "(?i)^[1-9][0-9]*(b|k|kb|m|mb|g|gb|t|tb)$" $store.maxMemory)) -}}
   {{- fail "rateLimit.shared.managedStore.maxMemory must be a positive Valkey byte size such as 96mb or 1gb." -}}
 {{- end -}}
-{{- if or (not (kindIs "string" $store.maxMemoryPolicy)) (not (has $store.maxMemoryPolicy (list "noeviction" "allkeys-lru" "allkeys-lfu" "allkeys-random" "volatile-lru" "volatile-lfu" "volatile-random" "volatile-ttl"))) -}}
-  {{- fail "rateLimit.shared.managedStore.maxMemoryPolicy must be a supported Valkey eviction policy." -}}
+{{- if or (not (kindIs "string" $store.maxMemoryPolicy)) (ne $store.maxMemoryPolicy "noeviction") -}}
+  {{- fail "rateLimit.shared.managedStore.maxMemoryPolicy must be noeviction. Evicting a limiter key resets its budget; set maxMemoryPolicy: noeviction." -}}
 {{- end -}}
 
 {{- $sentinel := $store.sentinel | default dict -}}
@@ -670,8 +683,7 @@ Args: dict "root" $ "resources" <container resources map>
 Numeric port the hub binds its Prometheus /metrics endpoint on, parsed from
 spoaHub.hub.metricsAddr. Empty when metricsAddr is empty (metrics disabled).
 Used to declare the sidecar's named `metrics` containerPort so a PodMonitor can
-reference it by name — prometheus-operator only creates targets for declared
-container ports, so a bare targetPort on an undeclared port is never scraped.
+reference it by name.
 */}}
 {{- define "haptic.spoaHub.metricsPort" -}}
 {{- $addr := include "haptic.spoaHub.metricsAddrEffective" . -}}
@@ -745,6 +757,12 @@ is a sentinel rather than a plain default because `""` is already taken to mean
   {{- $managedLines = append $managedLines "response_check = false" -}}
 {{- end -}}
 {{- if eq $name "rate-limit" -}}
+  {{- if regexMatch "(?m)^\\s*(fail_open|store_failure_mode|invalid_rule_fail_open)\\s*=" $params -}}
+    {{- fail "spoaHub.plugins.rate-limit.params must not define fail_open, store_failure_mode, or invalid_rule_fail_open. rateLimit.shared.failClosed owns store failures; malformed rules always deny." -}}
+  {{- end -}}
+  {{- $managedLines = append $managedLines (printf "fail_open = %t" (not $root.Values.rateLimit.shared.failClosed)) -}}
+  {{- $managedLines = append $managedLines "invalid_rule_fail_open = false" -}}
+  {{- $managedLines = append $managedLines (printf "store_failure_mode = %q" (ternary "closed" "local" $root.Values.rateLimit.shared.failClosed)) -}}
   {{- if regexMatch "(?m)^\\s*store_timeout_ms\\s*=" $params -}}
     {{- fail "spoaHub.plugins.rate-limit.params must not define store_timeout_ms; spoaHub.plugins.rate-limit.storeOperationTimeoutMs is its single owner." -}}
   {{- end -}}
@@ -756,6 +774,10 @@ is a sentinel rather than a plain default because `""` is already taken to mean
     {{- fail "spoaHub.plugins.rate-limit.storeOperationTimeoutMs must be a positive integer milliseconds value." -}}
   {{- end -}}
   {{- $managedLines = append $managedLines (printf "store_timeout_ms = %d" $storeOperationTimeoutMs) -}}
+  {{- if regexMatch "(?m)^\\s*ttl_ms\\s*=" $params -}}
+    {{- fail "spoaHub.plugins.rate-limit.params must not define ttl_ms; the chart fixes it at the plugin's 3600000 ms maximum and the native annotation library validates its rules against that horizon." -}}
+  {{- end -}}
+  {{- $managedLines = append $managedLines "ttl_ms = 3600000" -}}
   {{- if regexMatch "(?m)^\\s*store_urls?\\s*=" $params -}}
     {{- fail "spoaHub.plugins.rate-limit.params must not define store_url or store_urls; rateLimit.shared.managedStore (chart-managed HA Valkey) or rateLimit.shared.externalStore.urls (bring your own store) is their single owner." -}}
   {{- end -}}
@@ -763,13 +785,7 @@ is a sentinel rather than a plain default because `""` is already taken to mean
   {{- if and $root.Values.rateLimit.shared.enabled $root.Values.rateLimit.shared.managedStore.enabled -}}
     {{- $managedLines = append $managedLines (include "haptic.rateLimit.storeURLTOML" $root | trim) -}}
   {{- else if gt (len $externalURLs) 0 -}}
-    {{- if eq (len $externalURLs) 1 -}}
-      {{- $managedLines = append $managedLines (printf "store_url = %s" (first $externalURLs | quote)) -}}
-    {{- else -}}
-      {{- $quoted := list -}}
-      {{- range $url := $externalURLs -}}{{- $quoted = append $quoted ($url | quote) -}}{{- end -}}
-      {{- $managedLines = append $managedLines (printf "store_urls = [%s]" (join ", " $quoted)) -}}
-    {{- end -}}
+    {{- $managedLines = append $managedLines (printf "store_url = %s" (first $externalURLs | quote)) -}}
   {{- else if $root.Values.rateLimit.shared.enabled -}}
     {{- fail "rateLimit.shared.enabled=true requires a shared store. Leave rateLimit.shared.managedStore.enabled=true for chart-managed HA Valkey, or set rateLimit.shared.externalStore.urls to bring your own Redis/Valkey." -}}
   {{- end -}}

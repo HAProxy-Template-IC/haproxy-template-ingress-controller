@@ -1156,10 +1156,8 @@ templateSnippets:
           {%- if percent < 100 %}
             {%- sampleCond = " { rand(100) -m int lt " + tostring(percent) + " }" %}
           {%- end %}
-          {#- The generous timeout/retry budget closes a HTTPRouteRequestMultipleMirrors
-              flake: kube-proxy/CoreDNS cold-start against freshly-created Services. -#}
-          {%- var timeoutMs = toint(extraContext | dig("timeout_server") | fallback("50000")) %}
-          {%- var retriesCount = toint(extraContext | dig("retries") | fallback("3")) %}
+          {%- var timeoutMs = toint(extraContext | dig("spoaHub", "mirror", "targetTimeoutMs") | fallback(2000)) %}
+          {%- var retriesCount = toint(extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0)) %}
           {%- var entry = bScheme + "|" + target + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount) %}
       http-request set-var(txn.gw_mirror_targets) str({{ entry }};),concat(,txn.gw_mirror_targets,) if {{ cond }}{{ sampleCond }}
         {%- end %}

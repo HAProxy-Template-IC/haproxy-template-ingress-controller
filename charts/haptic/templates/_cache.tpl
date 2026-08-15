@@ -12,10 +12,11 @@ invalid availability/autoscaling combinations until a later enable.
 
 {{- $haproxy := $cache.haproxy | default dict -}}
 {{- if not (kindIs "map" $haproxy) -}}{{- fail "cache.haproxy must be a map." -}}{{- end -}}
-{{- range $field := keys $haproxy -}}{{- if ne $field "hashBalanceFactor" -}}{{- fail (printf "cache.haproxy contains unknown field %q. Valid field: hashBalanceFactor." $field) -}}{{- end -}}{{- end -}}
+{{- range $field := keys $haproxy -}}{{- if not (has $field (list "hashBalanceFactor" "responseTimeoutMs")) -}}{{- fail (printf "cache.haproxy contains unknown field %q. Valid fields: hashBalanceFactor, responseTimeoutMs." $field) -}}{{- end -}}{{- end -}}
 {{- if not (regexMatch "^[0-9]+$" (toString $haproxy.hashBalanceFactor)) -}}{{- fail "cache.haproxy.hashBalanceFactor must be 0 (disabled) or an integer greater than 100." -}}{{- end -}}
 {{- $hashBalanceFactor := int $haproxy.hashBalanceFactor -}}
 {{- if and (ne $hashBalanceFactor 0) (le $hashBalanceFactor 100) -}}{{- fail "cache.haproxy.hashBalanceFactor must be 0 (disabled) or an integer greater than 100." -}}{{- end -}}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $haproxy.responseTimeoutMs))) (lt (int $haproxy.responseTimeoutMs) 1) -}}{{- fail "cache.haproxy.responseTimeoutMs must be a positive integer in milliseconds." -}}{{- end -}}
 
 {{- $varnish := $cache.varnish | default dict -}}
 {{- if not (kindIs "map" $varnish) -}}{{- fail "cache.varnish must be a map." -}}{{- end -}}

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +51,27 @@ const controllerForgetTimeout = 15 * time.Second
 // hiding behind a 90s budget (a wait that legitimately needs >12s here would
 // itself be the bug).
 const controllerDeployedTimeout = 12 * time.Second
+
+type controllerForgetCleanupKey struct {
+	test      *testing.T
+	namespace string
+}
+
+var controllerForgetCleanupKeys sync.Map
+
+// registerControllerForgetNamespaceCleanup schedules one wait after every Ingress cleanup in the namespace.
+func registerControllerForgetNamespaceCleanup(t *testing.T, client klient.Client, namespace string) {
+	t.Helper()
+	key := controllerForgetCleanupKey{test: t, namespace: namespace}
+	if _, loaded := controllerForgetCleanupKeys.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+
+	t.Cleanup(func() {
+		defer controllerForgetCleanupKeys.Delete(key)
+		waitForControllerForgetNamespace(context.Background(), t, client, namespace)
+	})
+}
 
 // waitForControllerForgetNamespace polls the controller's /debug/vars/rendered
 // endpoint until the rendered haproxy.cfg no longer contains the given

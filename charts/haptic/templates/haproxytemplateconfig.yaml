@@ -1226,6 +1226,7 @@ spec:
         {{- fail "spoaHub.haproxy.timeoutProcessingMarginMs must be between 1 and 60000 milliseconds." }}
       {{- end }}
       {{- $minimumProcessingUs := mul (add $maxMessageTimeoutMs $processingMarginMs) 1000 }}
+      {{- $deriveMessageTimeouts := eq $hub.timeoutProcessing nil }}
       {{- $timeoutProcessing := $hub.timeoutProcessing }}
       {{- if eq $timeoutProcessing nil }}
         {{- $timeoutProcessing = printf "%dms" (add $maxMessageTimeoutMs $processingMarginMs) }}
@@ -1249,12 +1250,27 @@ spec:
           {{- fail (printf "spoaHub.haproxy.timeoutProcessing (%s) must be at least the largest enabled SPOE message budget (%dms) plus timeoutProcessingMarginMs (%dms). Lower the relevant plugin timeouts or raise the HAProxy processing timeout." $timeoutProcessing $maxMessageTimeoutMs $processingMarginMs) }}
         {{- end }}
       {{- end }}
+      {{- $messageTimeouts := dict }}
+      {{- range $message, $budgetMs := $messageTimeoutSums }}
+        {{- $messageTimeout := $timeoutProcessing }}
+        {{- if $deriveMessageTimeouts }}
+          {{- $messageTimeout = printf "%dms" (add (int $budgetMs) $processingMarginMs) }}
+        {{- end }}
+        {{- $_ := set $messageTimeouts $message $messageTimeout }}
+      {{- end }}
+      {{- $mirrorExtra := dict }}
+      {{- if hasKey $.Values.spoaHub.plugins "mirror" }}
+        {{- $mirrorPlugin := get $.Values.spoaHub.plugins "mirror" }}
+        {{- $_ := set $mirrorExtra "targetTimeoutMs" (int (include "haptic.spoaHub.pluginInteger" (dict "plugin" $mirrorPlugin "root" $ "name" "mirror" "field" "targetTimeoutMs" "min" 1 "max" 60000))) }}
+        {{- $_ := set $mirrorExtra "targetRetries" (int (include "haptic.spoaHub.pluginInteger" (dict "plugin" $mirrorPlugin "root" $ "name" "mirror" "field" "targetRetries" "min" 0 "max" 10))) }}
+      {{- end }}
       {{- $spoaHubExtra := dict
           "enabled" true
           "haproxy" (dict
               "socketPath" $hub.socketPath
               "modeSpop" $hub.modeSpop
               "messages" .
+              "messageTimeouts" $messageTimeouts
               "timeoutHello" (toString $hub.timeoutHello)
               "timeoutIdle" (toString $hub.timeoutIdle)
               "timeoutProcessing" $timeoutProcessing
@@ -1272,6 +1288,7 @@ spec:
           )
           "plugins" $pluginEntries
       }}
+      {{- if $mirrorExtra }}{{- $_ := set $spoaHubExtra "mirror" $mirrorExtra }}{{- end }}
       {{- $_ := set $extraContext "spoaHub" $spoaHubExtra }}
     {{- end }}
   {{- end }}

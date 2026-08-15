@@ -11,8 +11,8 @@ exporter binds 0.0.0.0 in the rendered config, and the sources it scrapes are
 reached over loopback from inside the pod — which is precisely why enabling vector
 lets spoaHub.hub.metricsAddr stay on its loopback-only default.
 
-Targets only become UP once HAPTIC has pushed the rendered config: the exporter
-lives only there, and the readiness probe on the same port gates the container.
+Targets become UP once HAPTIC pushes the rendered config containing the exporter.
+A supervised Vector child exit leaves HAProxy readiness unchanged.
 */}}
 {{- if .Values.vector.enabled }}
 {{- $pm := .Values.vector.podMonitor }}

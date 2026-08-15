@@ -43,7 +43,7 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 | `fingerprinting`  | `v0.3.0`   |
 | `maxmind`         | `v0.4.0`          |
 | `mirror`          | `v0.6.0`           |
-| `rate-limit`      | `v0.2.0`       |
+| `rate-limit`      | `v0.3.0`       |
 | `sso-auth`        | `v0.3.0`         |
 
 Plugin `.so` files target glibc `2.36` (Debian bookworm).
@@ -74,7 +74,7 @@ HAProxy pods when the bundled `spoa-hub` image changes.
 - **fingerprinting** — computes JA3, JA3N, and JA4 TLS fingerprints from the ClientHello.
 - **maxmind** — performs in-memory MaxMind MMDB lookups against operator-provided database files: City, Country, Autonomous System Number (ASN), and so on.
 - **mirror** — mirrors HTTP requests to a secondary backend for traffic shadowing; used by the gateway library to implement the Gateway API `HTTPRouteFilter` of type `RequestMirror`.
-- **rate-limit** — enforces shared request-rate budgets for native `haproxy-haptic.org/rate-limit-*` annotations. By default, `rateLimit.shared.managedStore.enabled=true` deploys a chart-managed HA Valkey store: three StatefulSet pods, one writable primary, replicas, Sentinel failover, a PodDisruptionBudget, and a store NetworkPolicy. You can also disable the managed store and provide your own Redis/Valkey/Sentinel/Cluster endpoints via `rateLimit.shared.externalStore.urls`. Shared mode requires one of those stores; HAPTIC fails the render rather than silently falling back to per-pod limiting. If the hub/plugin produces no verdict for an annotated route, HAProxy fails closed with 429 to avoid bypassing the configured limit. The default token-bucket mode bounds local key state and disables optimistic cold-starts under capacity pressure. Exact `gcra` mode performs a synchronous store check with a short default store timeout, so store trouble fails closed instead of adding a long request tail. The managed store is HA but intentionally fixed-size; use bring-your-own infrastructure for horizontal Valkey scaling.
+- **rate-limit** — enforces shared request-rate budgets for native `haproxy-haptic.org/rate-limit-*` annotations. By default, `rateLimit.shared.managedStore.enabled=true` deploys a chart-managed HA Valkey store: three StatefulSet pods, one writable primary, replicas, Sentinel failover, a PodDisruptionBudget, and a store NetworkPolicy. You can instead configure one bring-your-own HA Redis/Valkey/Sentinel/Cluster endpoint through `rateLimit.shared.externalStore.urls`. Shared mode requires a store; HAPTIC fails the render rather than silently using a per-pod budget during normal operation. When Valkey can't answer, both algorithms use an independent, bounded limiter in each sidecar and mark the request `rate_limit_degraded`. Each emergency bucket starts with its configured burst and refills at the configured rate; lease mode can also spend tokens it obtained before the outage. If the hub/plugin itself can't answer, HAProxy allows and records the request. Set `rateLimit.shared.failClosed=true` to deny either failure instead; an existing lease remains usable until it drains. The managed store is HA but intentionally fixed-size; use bring-your-own infrastructure for horizontal Valkey scaling.
 - **sso-auth** — handles OIDC and SAML2 single sign-on flows with encrypted session cookies.
 
 When several plugins are enabled, cheap source-IP shared rate limiting runs first (`025`) so rejected floods don't consume WAF CPU. Coraza follows (`050`), then external auth (`100`), then JSON request validation (`200`). Authenticated-consumer rate limits run in the selected backend after native authentication establishes the consumer identity.
@@ -409,7 +409,9 @@ HAPTIC renders a fixed-size HA Valkey topology:
 - a PodDisruptionBudget with `maxUnavailable: 1`;
 - a NetworkPolicy that admits HAProxy/SPOA traffic plus store-internal Valkey/Sentinel traffic.
 
-This gives automatic failover for the default shared limiter store without adding a HAPTIC-owned Valkey operator. It's deliberately not an automatically horizontally scaled Valkey Cluster. A hot limiter key still maps to one writable primary, so DoS-facing protection relies on the plugin's bounded local key state, bounded background refresh queue, default store timeout of 10 milliseconds for exact store checks, circuit breaker, and fail-closed HAProxy verdict handling.
+This gives automatic failover for the default shared limiter store without adding a HAPTIC-owned Valkey operator. It's deliberately not an automatically horizontally scaled Valkey Cluster. A hot limiter key still maps to one writable primary, so DoS-facing protection relies on bounded local state and a bounded background refresh queue.
+
+When Valkey can't answer, the default policy enforces an emergency token bucket in each SPOA sidecar. Lease mode spends any tokens it already leased before using that emergency budget. Exact mode switches to the same local tier after the store-operation timeout. This bounds each process, not the fleet: during an outage, each pod can admit its emergency burst plus tokens refilled at the configured rate, in addition to outstanding lease tokens. If the local registry is full or the hub returns no verdict, the request is allowed and marked degraded. A sidecar restart loses its emergency state and starts a new process budget. Set `rateLimit.shared.failClosed=true` when denial is safer than any of those outage grants.
 
 If you already run a Redis/Valkey platform, disable the managed store and provide the endpoint directly:
 
@@ -424,9 +426,9 @@ rateLimit:
         - "redis-sentinel://valkey-sentinel.data.svc:26379/0?sentinelServiceName=mymaster"
 ```
 
-Listing several URLs generates the plugin's `store_urls = [...]` form for deployments that intentionally shard keys across independent stores. The chart generates the store lines itself and rejects a manual `store_url`/`store_urls` inside `spoaHub.plugins.rate-limit.params`, so overriding that scalar can't drop or duplicate the store wiring.
+Configure the external store with a non-evicting memory policy. The chart rejects multiple URLs because the bundled plugin shares one circuit breaker across its shards, so one failed shard would disable healthy shards too. It generates `store_url` itself and rejects a manual `store_url`/`store_urls` inside `spoaHub.plugins.rate-limit.params`.
 
-Both the outer plugin budget and its store-operation budget are plugin execution settings:
+Configure the hub-side plugin budget and store-operation budget together:
 
 ```yaml
 spoaHub:
@@ -436,7 +438,7 @@ spoaHub:
       storeOperationTimeoutMs: 10
 ```
 
-`storeOperationTimeoutMs` is the important request-latency bound for exact `gcra` mode because that mode performs a synchronous store operation per request. Set it from measured in-cluster Valkey/Sentinel round-trip time plus a small margin; raising it improves tolerance for slow cross-zone or external stores, but also raises the worst-case fail-closed request tail when the store is unhealthy. Keep the default token-bucket mode for DoS-facing edge limits.
+`timeoutMs` bounds the rate-limit plugin call inside the hub; the chart derives that message's outer HAProxy deadline from it. `storeOperationTimeoutMs` is the important request-latency bound for exact `gcra` mode because that mode performs a synchronous store operation per request. Set it from measured in-cluster Valkey/Sentinel round-trip time plus a small margin; raising it improves tolerance for slow cross-zone or external stores, but also delays the switch to local fallback when the store is unhealthy. Keep the default token-bucket mode for DoS-facing edge limits.
 
 ## Geolocation lookups
 
@@ -507,7 +509,7 @@ spoaHub:
 
 When the plugin is enabled, the chart emits the SPOE plumbing automatically: a `[[plugins]]` block, a `spoe-message geoip-enrich` (sending the client IP as `args ip=src`), and a `spoe-group geoip-enrich-group`. The SPOE agent runs with `option var-prefix hub`, so an `output_var` of `geo_country` lands in HAProxy as `txn.hub.maxmind.geo_country` — the `txn.hub.<plugin>.<output_var>` convention shared by every hub plugin.
 
-The one piece the chart can't infer is *when* to run the lookup and *what* to do with the result. Add a `frontend-spoe-filters-*` snippet through `controller.config.templateSnippets`; it renders right after the `filter spoe engine spoa-hub` directive, so `send-spoe-group` and the variable are both in scope:
+The one piece the chart can't infer is *when* to run the lookup and *what* to do with the result. Add a `frontend-spoe-filters-*` snippet through `controller.config.templateSnippets`. The chart creates one engine per message, named `spoa-hub-<message>`, so the GeoIP group runs in `spoa-hub-geoip-enrich`:
 
 ```yaml
 # values.yaml
@@ -516,7 +518,7 @@ controller:
     templateSnippets:
       frontend-spoe-filters-300-geoip:
         template: |
-          http-request send-spoe-group spoa-hub geoip-enrich-group
+          http-request send-spoe-group spoa-hub-geoip-enrich geoip-enrich-group
           # Pass the country to backends as a header...
           http-request set-header X-Country %[var(txn.hub.maxmind.geo_country)]
           # ...or block selected countries at the edge:
@@ -546,7 +548,7 @@ Each upstream `.so` was independently `sha256sum`-checked and `cosign verify-blo
 
 ## Performance tuning
 
-The chart's `spoaHub.haproxy.*` values map directly to HAProxy directives the chart's `spoa-hub` template library emits in the `backend spoa-hub` block and the `spoa-hub-agent` agent inside `spoe.conf`. Defaults are tuned for the typical sidecar deployment (single hub colocated with HAProxy over a Unix domain socket); change them when traffic profile or plugin behavior diverges from that baseline.
+The chart's `spoaHub.haproxy.*` values map directly to HAProxy directives in `backend spoa-hub` and the per-message agents in `spoe.conf`. Every agent uses the same local socket, but owns its own processing deadline. `option spop-check` removes an unhealthy hub from service after a real SPOP handshake fails without affecting HAProxy readiness.
 
 | Values key                          | HAProxy directive                                                  | Default              | When to change                                                                                                        |
 | ----------------------------------- | ------------------------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------- |
@@ -554,12 +556,12 @@ The chart's `spoaHub.haproxy.*` values map directly to HAProxy directives the ch
 | `spoaHub.haproxy.modeSpop`          | `mode` line in `backend spoa-hub` — `mode spop` (true) or `mode tcp` (false); the `filter spoe engine` directive on the frontend is emitted either way | `true`               | Auto-falls back to `mode tcp` on HAProxy 3.0 (`mode spop` was introduced in 3.1). Set `false` to force `mode tcp` on 3.1+ as well — rare, mostly compat testing.                                           |
 | `spoaHub.haproxy.timeoutHello`      | `timeout hello` on `spoe-agent`                                    | `2s`                 | Raise if the hub regularly logs `HELLO` timeouts under cold-start (for example heavy plugin init like MaxMind DB load).        |
 | `spoaHub.haproxy.timeoutIdle`       | `timeout idle` on `spoe-agent` and `timeout server` on the backend | `5m`                 | Lower to free pooled connections faster in low-traffic clusters; raise to match upstream auth-service idle budgets.   |
-| `spoaHub.haproxy.timeoutProcessing` | `timeout processing` on `spoe-agent`                               | largest enabled message budget + `100ms` | Leave null to derive a deadline that can honor every plugin handling one message, including sequential dependency stages. Plugins on unrelated messages don't inflate one another. An explicit shorter value fails rendering. |
-| `spoaHub.haproxy.timeoutProcessingMarginMs` | derivation margin                                         | `100`                | Scheduling and serialization margin in milliseconds between the hub's largest message budget and HAProxy's outer deadline. |
+| `spoaHub.haproxy.timeoutProcessing` | `timeout processing` on `spoe-agent`                               | each message budget + `100ms` | Leave null to derive each message engine's deadline, including sequential dependency stages. Plugins on unrelated messages don't inflate one another. An explicit value applies to every engine and must cover every enabled message's budget. |
+| `spoaHub.haproxy.timeoutProcessingMarginMs` | derivation margin                                         | `100`                | Scheduling and serialization margin in milliseconds between each message's plugin budget and its HAProxy deadline. |
 | `spoaHub.haproxy.poolMaxConn`       | `pool-max-conn` on the `server hub` line                           | `100`                | Tune to peak concurrent in-flight SPOE messages — usually `request-rate × p99-processing-latency`.                    |
 | `spoaHub.haproxy.poolPurgeDelay`    | `pool-purge-delay` on the `server hub` line                        | `30s`                | Lower to release idle pooled connections sooner during traffic dips.                                                  |
 
-The `spoaHub.plugins.<name>.timeoutMs` field on the chart side is independent — it sets the per-plugin timeout the hub enforces internally and doesn't appear in the rendered HAProxy config.
+`spoaHub.plugins.<name>.timeoutMs` bounds plugin work inside the hub. The chart combines sequential plugin stages for each message, then adds `timeoutProcessingMarginMs` to derive that message's HAProxy `timeout processing` deadline.
 
 ## See also
 

@@ -344,8 +344,8 @@ templateSnippets:
           {%- end %}
           {%- var safeAuthority = ValidateConfigValue(authority, "nginx.ingress.kubernetes.io/mirror-target", key, false) %}
           {%- var cond = HostMatchCondition(hosts) %}
-          {%- var timeoutMs = toint(extraContext | dig("timeout_server") | fallback("50000")) %}
-          {%- var retriesCount = toint(extraContext | dig("retries") | fallback("3")) %}
+          {%- var timeoutMs = toint(extraContext | dig("spoaHub", "mirror", "targetTimeoutMs") | fallback(2000)) %}
+          {%- var retriesCount = toint(extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0)) %}
           {%- var entry = scheme + "|" + safeAuthority + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount) %}
       # nginx-ingress/mirror-target ({{ key }})
       http-request set-var(txn.gw_mirror_targets) str({{ entry }};),concat(,txn.gw_mirror_targets,) if {{ cond }}

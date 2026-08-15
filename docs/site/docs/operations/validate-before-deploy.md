@@ -19,7 +19,7 @@ Three things make this worth an explicit step:
 
 - The controller's load gate is **fail-closed**. A configuration that fails it stops the controller from starting at all.
 - Nothing rejects a bad configuration at apply time. The admission webhook validates *watched resources* (Ingress, HTTPRoute, …), not the `HAProxyTemplateConfig` itself — so `kubectl apply` on a broken config succeeds and the failure only surfaces when the controller tries to load it.
-- Sidecar configuration fails **quietly**. A rejected Vector config leaves the sidecar on its bootstrap configuration with no metrics endpoint, so the pod never becomes ready and the rollout stalls with no error to read.
+- Sidecar configuration fails **quietly**. A rejected Vector config leaves log and metric export unavailable while HAProxy stays Ready, so traffic keeps flowing without surfacing the configuration error to callers.
 
 ## Run the check
 
@@ -56,7 +56,7 @@ that image was built with. Pass `--chart` to render a different one.
 | Check | Catches |
 |---|---|
 | Structural validation and the bundled `validationTests`, including `haproxy -c` | A configuration the controller would refuse to load |
-| `vector validate` on the rendered sidecar config | A malformed document **or** a broken transform — the sidecar would keep its bootstrap config and never become ready |
+| `vector validate` on the rendered sidecar config | A malformed document **or** a broken transform that would keep the supervised Vector child unavailable |
 | `varnishd -C` on the rendered Varnish Configuration Language (VCL) | A VCL that doesn't compile, which leaves the cache pod in `CrashLoopBackOff` |
 
 The last two run the real Vector and Varnish binaries in containers, so they

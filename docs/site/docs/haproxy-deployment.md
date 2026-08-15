@@ -4,6 +4,17 @@
 
 The chart can deploy HAProxy pods alongside the controller, or you can manage HAProxy separately.
 
+The chart supervises the Dataplane API, SPOA hub, and Vector processes inside
+their sidecar containers. A child exit or repeated failed health check leaves
+HAProxy running while the supervisor restarts only that child, with a backoff
+capped at 30 seconds. HAProxy's `/ready` endpoint is the only readiness probe the
+chart configures on these pods. Kubernetes still marks the pod NotReady while a
+container isn't running, and probes on user-supplied sidecars still apply.
+
+The watchdog uses `/usr/bin/bash` and `timeout`, which the default images provide.
+With a custom sidecar image missing either command, the supervisor logs a warning
+and still restarts child processes that exit.
+
 ## Resource limits
 
 Controller-pod sizing — the chart's request/limit defaults, the sizing table, and the GOMAXPROCS/GOMEMLIMIT container awareness — is covered in [Performance — Controller Resource Sizing](operations/performance.md#controller-resource-sizing). HAProxy and the Dataplane API sidecar have their own resource blocks in the chart values: `haproxy.resources` and `haproxy.dataplane.resources`.
@@ -258,13 +269,13 @@ render.
 | `term` | HAProxy's 4-character termination state — separates a client abort from a server abort, a timeout, and a response HAProxy generated itself |
 | `resource` | `<namespace>/<name>` of the Ingress, HTTPRoute or custom resource that owns the matched route — the join key back to Kubernetes |
 | `denied_by` | Which gate blocked the request; empty when the backend answered |
-| `rate_limit_degraded`, `waf_degraded` | The counterpart to `denied_by`: where that names the control which **refused** a request, these name a control that couldn't be consulted and so **allowed** it. Emitted on every record; empty when nothing was degraded |
+| `cache_degraded`, `rate_limit_degraded`, `waf_degraded`, `schema_degraded` | These mark a dependency-degraded cache, limiter, WAF, or schema-validation path. A strict policy can set both its degraded field and `denied_by`. Emitted on every record; empty when nothing was degraded |
 | `route` | The matched route **key** — the path template an operator wrote, host included, with a prefix match marked `*` (`echo.example.com/api/*`). Unlike `path` it's bounded by the number of rules, which is what makes it usable as a metric label. Present when tracing is on, or when [request metrics](operations/monitoring.md#request-metrics) use it for their `path` label; it costs a four-step map-lookup cascade per request, so it's absent when neither wants it |
 | `bytes_in` | Request **body** bytes from the client (`%U`) — no request line or headers, which HAProxy doesn't count. Present only when the `request_size` request metric is enabled, since nothing else reads it |
 
 Template libraries add fields for the features you configure, each only when
 that feature is in use: `waf_action`, `waf_rule_id` and `waf_score`;
-`rate_limit_allowed` and `rate_limit_remaining`; `cache` (`HIT`/`MISS`) and
+`rate_limit_allowed` and `rate_limit_remaining`; `cache` (`HIT`/`MISS`/`STALE`) and
 `app_backend`; `auth_status` and `consumer`; `schema_outcome`; `tls_version`,
 `tls_sni` and `tls_resumed`; `mtls_verify` and `mtls_cn`; `gw_route`;
 `captured_headers`; `client_ip_peer`.
@@ -533,7 +544,7 @@ HAProxy's `/healthz` and `/ready` stay reachable on the pod IP in both cases —
 kubelet's probes connect there, so only the exporter is restricted, not the
 listener.
 
-Set `vector.enabled=false` to remove the container and restore the previous
+Set `vector.enabled=false` to remove the sidecar and restore the previous
 behaviour exactly: HAProxy logs to its own stdout and Prometheus scrapes HAProxy
 and the hub directly.
 
@@ -542,15 +553,18 @@ and the hub directly.
 The same path the SPOA hub's config takes. HAPTIC renders the Vector config and
 pushes it through the Dataplane API into the shared general-storage volume, where
 Vector's file watch picks it up and reloads without a restart. A bootstrap
-ConfigMap seeds the file so the log socket exists before HAProxy starts — a Unix
-datagram sender gets no error when nothing is listening, so early records would
-otherwise be dropped silently.
+ConfigMap seeds the file before regular containers start, so Vector doesn't wait
+for the first push before it can bind the log socket. Kubernetes doesn't order
+regular-container startup, and HAProxy deliberately doesn't wait for telemetry;
+records emitted before Vector binds the socket can therefore be lost.
 
-The sidecar reports Ready only after HAPTIC's config has arrived. Its readiness
-probe targets the metrics port, and only the rendered config declares the exporter
-that serves it, so a pod never joins the Service advertising metrics it can't yet
-produce — the same principle as HAProxy's own `/ready`, which answers only once a
-pushed config is live.
+Vector runs under a supervisor as process 1 without a readiness probe. If the Vector
+process exits or its metrics endpoint fails three consecutive health checks, the
+supervisor keeps the container running and restarts only Vector, with a backoff
+capped at 30 seconds. Access-log and merged-metric export stop during that
+interval, but a healthy HAProxy remains in the Service. A failure of the container
+itself, including an out-of-memory termination, still restarts the container and
+can affect pod readiness.
 
 ### Request IDs
 

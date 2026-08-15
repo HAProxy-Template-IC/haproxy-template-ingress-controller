@@ -11,10 +11,8 @@
 package e2e
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -26,66 +24,19 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
-// execInHAProxyPod runs a command inside one container of an HAProxy pod.
-func execInHAProxyPod(ctx context.Context, pod, container string, argv ...string) (string, error) {
-	args := []string{
-		"--kubeconfig", kubeconfigPath,
-		"-n", ControllerNamespace,
-		"exec", pod, "-c", container, "--",
-	}
-	args = append(args, argv...)
-	cmd := exec.CommandContext(ctx, "kubectl", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return stdout.String(), fmt.Errorf("kubectl exec %s -c %s %v: %w (stderr: %s)",
-			pod, container, argv, err, stderr.String())
-	}
-	return stdout.String(), nil
-}
-
-// podJSONPath reads one jsonpath expression off an HAProxy pod.
-func podJSONPath(ctx context.Context, pod, expr string) (string, error) {
-	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
-		"-n", ControllerNamespace,
-		"get", "pod", pod, "-o", "jsonpath="+expr,
-	)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(stdout.String()), nil
-}
-
-// curlStatus returns the HTTP status code curl saw for url, from inside the
-// haproxy container. curl (not wget — the Debian HAProxy image ships no wget)
-// with -o /dev/null so a non-2xx response still exits 0 and the code is the
-// only thing read.
-func curlStatus(ctx context.Context, pod, url string) (string, error) {
-	out, err := execInHAProxyPod(ctx, pod, "haproxy",
-		"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", url)
+func vectorChildPID(ctx context.Context, pod string) (string, error) {
+	out, err := execInHAProxyPod(ctx, pod, "vector", "/bin/sh", "-c", `
+for _proc in /proc/[0-9]*; do
+  _comm=
+  IFS= read -r _comm < "$_proc/comm" || true
+  if [ "$_comm" = vector ]; then
+    printf '%s\n' "${_proc##*/}"
+    exit 0
+  fi
+done
+exit 1
+`)
 	return strings.TrimSpace(out), err
-}
-
-// apiProxyGet fetches a pod port through the API server proxy — the same
-// pod-IP path Prometheus uses, and it needs no tooling inside the container.
-// Returns the body; err is non-nil when the proxy could not reach the port.
-func apiProxyGet(ctx context.Context, pod string, port int, path string) (string, error) {
-	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
-		"get", "--raw",
-		fmt.Sprintf("/api/v1/namespaces/%s/pods/%s:%d/proxy/%s", ControllerNamespace, pod, port, path),
-	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return stdout.String(), fmt.Errorf("%w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
-	}
-	return stdout.String(), nil
 }
 
 // TestVectorSidecar covers the parts of the vector wiring that only a live
@@ -93,17 +44,16 @@ func apiProxyGet(ctx context.Context, pod string, port int, path string) (string
 // they cannot prove that HAProxy's datagrams arrive, that the pushed config
 // actually reached the sidecar, or that the metrics restriction behaves both ways.
 //
-// Deliberately NOT t.Parallel(): the restart assess kills the vector container of
-// a SHARED HAProxy pod, and `kubectl logs` serves only the current instance — every
-// access-log record written before it becomes unreadable, so a concurrent test
-// waiting on one fails with "no JSON access-log record appeared within timeout"
-// (job 15625160454). Serial keeps every parallel test paused across the restart.
+// Deliberately NOT t.Parallel(): the restart assess kills the Vector child of a
+// shared HAProxy pod. Export briefly stops while the supervisor recovers it, so a
+// concurrent test could misdiagnose that intentional fault as its own failure.
 func TestVectorSidecar(t *testing.T) {
 	var pod string
+	var pods []string
 
 	feature := features.New("Vector sidecar: log transport, merged metrics, loopback-only exporter").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			pods := listHAProxyPods(t)
+			pods = listHAProxyPods(t)
 			if len(pods) == 0 {
 				t.Fatal("no HAProxy pods found")
 			}
@@ -115,60 +65,52 @@ func TestVectorSidecar(t *testing.T) {
 			}
 			return ctx
 		}).
-		Assess("the sidecar is Ready, which only happens after the rendered config is pushed", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			// Readiness targets the prometheus_exporter port, and the exporter exists
-			// ONLY in the config HAPTIC pushes — the bootstrap ConfigMap omits it. A
-			// Ready vector container therefore proves the whole chain completed:
-			// render -> dataplane general-storage -> file-watch -> graceful reload.
-			// It would also catch a subPath mount silently killing inotify.
-			//
-			// POLLED, not sampled once: this transition is exactly what the gate
-			// exists to delay. The suite's readiness wait covers the controller
-			// pipeline, not this sidecar's first reload plus its probe's
-			// initialDelaySeconds, so a single read races the thing under test.
-			var ready string
-			err := testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
-				var err error
-				ready, err = podJSONPath(c, pod,
-					`{.status.containerStatuses[?(@.name=="vector")].ready}`)
+		Assess("the rendered config activates Vector's metrics exporter", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			for _, candidate := range pods {
+				var body string
+				err := testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
+					out, err := apiProxyGet(c, candidate, VectorMetricsPort, "metrics")
+					if err != nil {
+						return false, nil
+					}
+					body = out
+					return strings.Contains(body, "vector_"), nil
+				})
 				if err != nil {
-					return false, nil
+					configState, _ := execInHAProxyPod(ctx, candidate, "haproxy", "sh", "-c",
+						"ls -l /etc/haproxy/general/vector.yaml 2>&1 || true")
+					t.Fatalf("Vector's metrics exporter never activated on pod %s: %v (got %d bytes)\nconfig file state: %s",
+						candidate, err, len(body), configState)
 				}
-				return ready == "true", nil
-			})
-			if err != nil {
-				// A genuine failure here means the config never landed, so show what
-				// the sidecar itself said rather than only the timeout.
-				logs, _ := execInHAProxyPod(ctx, pod, "haproxy", "sh", "-c",
-					"ls -l /etc/haproxy/general/vector.yaml 2>&1 || true")
-				t.Fatalf("vector container never became Ready (last=%q): the rendered config never "+
-					"reached it, or its file-watch never fired.\nconfig file state: %s", ready, logs)
 			}
 			return ctx
 		}).
-		Assess("one endpoint carries HAProxy's and Vector's metrics together", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("each endpoint carries HAProxy's and Vector's metrics together", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			// The point of fronting the endpoints: haproxy_* (re-exported) and
 			// vector_* (internal) on a single port.
 			// Fetched through the API server proxy, which reaches the pod IP exactly
 			// as Prometheus does via the PodMonitor — so this asserts the real scrape
 			// path, not just that something is listening on loopback.
-			var body string
-			err := testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
-				out, err := apiProxyGet(c, pod, VectorMetricsPort, "metrics")
+			for _, candidate := range pods {
+				var body string
+				err := testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
+					out, err := apiProxyGet(c, candidate, VectorMetricsPort, "metrics")
+					if err != nil {
+						return false, nil
+					}
+					body = out
+					return strings.Contains(body, "haproxy_") && strings.Contains(body, "vector_"), nil
+				})
 				if err != nil {
-					return false, nil
+					t.Fatalf("merged /metrics on pod %s never carried both metric families: %v (got %d bytes)",
+						candidate, err, len(body))
 				}
-				body = out
-				return strings.Contains(body, "haproxy_") && strings.Contains(body, "vector_"), nil
-			})
-			if err != nil {
-				t.Fatalf("merged /metrics never carried both metric families: %v (got %d bytes)", err, len(body))
-			}
-			// haproxy_* can only be there if vector reached HAProxy's exporter over
-			// loopback, so this doubles as proof the loopback side of the gate works.
-			for _, want := range []string{"haproxy_", "vector_"} {
-				if !strings.Contains(body, want) {
-					t.Errorf("merged /metrics is missing %q series", want)
+				// haproxy_* can only be there if vector reached HAProxy's exporter over
+				// loopback, so this doubles as proof the loopback side of the gate works.
+				for _, want := range []string{"haproxy_", "vector_"} {
+					if !strings.Contains(body, want) {
+						t.Errorf("merged /metrics on pod %s is missing %q series", candidate, want)
+					}
 				}
 			}
 			return ctx
@@ -215,58 +157,121 @@ func TestVectorSidecar(t *testing.T) {
 			}
 			return ctx
 		}).
-		Assess("the sidecar recovers from a container restart", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			// Proves a restart works at all. It does NOT cover the stale-socket
-			// failure that took down a live cluster, and must not be read as if it
-			// does: `kill 1` is SIGTERM, and vector UNLINKS its socket on a graceful
-			// shutdown (verified against 0.57.0), so this path is clean whether or not
-			// the chart unlinks. Confirmed empirically — with the unlink removed from
-			// the chart, this assertion still passes.
-			//
-			// An unclean death cannot be forced from here: PID 1 cannot be SIGKILLed
-			// from inside its own PID namespace, and planting a stale file in the
-			// restart window loses the race. The regression guard for the unlink is
-			// therefore the chart assertion in charts/haptic/tests/vector_test.yaml
-			// ("should unlink a stale socket before starting vector"); the behavioural
-			// proof is recorded in the fix commit (second start without the unlink:
-			// running=false, exit=0, AddrInUse).
-			before, err := podJSONPath(ctx, pod,
+		Assess("the watchdog restarts a wedged Vector child without affecting HAProxy", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client, err := cfg.NewClient()
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			ns := NamespaceForTest(ctx, t, client)
+			DumpLogsOnFailure(t, ns)
+			backend := NewEchoServerBackend(ctx, t, client, ns)
+			host := fmt.Sprintf("vector-child-restart-%d.localdev.me", time.Now().UnixNano())
+			NewIngress(ctx, t, client, ns, IngressSpec{
+				Name:           "echo-vector-child-restart",
+				Host:           host,
+				BackendService: backend.Service,
+				BackendPort:    backend.Port,
+			})
+
+			availabilityPath := "/vector-child-availability"
+			err = testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
+				status, err := selectedHAProxyStatus(c, pod, host, availabilityPath)
+				return err == nil && status == "200", nil
+			})
+			if err != nil {
+				t.Fatalf("selected HAProxy pod %s never served the fault-test route: %v", pod, err)
+			}
+
+			beforeRestarts, err := podJSONPath(ctx, pod,
 				`{.status.containerStatuses[?(@.name=="vector")].restartCount}`)
 			if err != nil {
 				t.Fatalf("reading vector restartCount: %v", err)
 			}
-
-			// Kill PID 1 in the vector container; `exec` in the command means that
-			// is vector itself, so the kubelet restarts the container in place and
-			// the emptyDir (with the socket) is still there.
-			if _, err := execInHAProxyPod(ctx, pod, "vector", "/bin/sh", "-c", "kill 1"); err != nil {
-				// A killed PID 1 tears the exec down too; that is expected.
-				t.Logf("kill 1 returned %v (expected — the exec dies with the container)", err)
+			beforePID, err := vectorChildPID(ctx, pod)
+			if err != nil {
+				t.Fatalf("finding Vector child PID: %v", err)
 			}
 
-			// It must both restart AND come back Ready.
-			var restarts, ready string
-			err = testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
-				restarts, _ = podJSONPath(c, pod,
-					`{.status.containerStatuses[?(@.name=="vector")].restartCount}`)
-				ready, _ = podJSONPath(c, pod,
-					`{.status.containerStatuses[?(@.name=="vector")].ready}`)
-				return restarts != before && ready == "true", nil
+			stopAvailabilityMonitor, err := startSelectedHAProxyAvailabilityMonitor(ctx, pod, host, availabilityPath)
+			if err != nil {
+				t.Fatalf("starting selected-pod HAProxy availability monitor: %v", err)
+			}
+			monitorStopped := false
+			defer func() {
+				if !monitorStopped {
+					_ = stopAvailabilityMonitor()
+				}
+			}()
+
+			faultStarted := time.Now()
+			if _, err := execInHAProxyPod(ctx, pod, "vector", "/bin/sh", "-c",
+				`kill -STOP "$1"`, "stop-vector-child", beforePID); err != nil {
+				t.Fatalf("stopping Vector child PID %s: %v", beforePID, err)
+			}
+			childRecovered := false
+			defer func() {
+				if !childRecovered {
+					cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					_, _ = execInHAProxyPod(cleanupCtx, pod, "vector", "/bin/sh", "-c",
+						`kill -CONT "$1" 2>/dev/null || true`, "resume-vector-child", beforePID)
+				}
+			}()
+
+			var recoveredPID, metrics string
+			recoveryWait := testutil.WaitConfig{
+				InitialInterval: 100 * time.Millisecond,
+				MaxInterval:     time.Second,
+				Timeout:         time.Minute,
+				Multiplier:      1.5,
+			}
+			err = testutil.WaitForCondition(ctx, recoveryWait, func(c context.Context) (bool, error) {
+				pid, err := vectorChildPID(c, pod)
+				if err != nil || pid == beforePID {
+					return false, nil
+				}
+				body, err := apiProxyGet(c, pod, VectorMetricsPort, "metrics")
+				if err != nil {
+					return false, nil
+				}
+				recoveredPID, metrics = pid, body
+				return strings.Contains(metrics, "haproxy_") && strings.Contains(metrics, "vector_"), nil
 			})
 			if err != nil {
-				logs, _ := execInHAProxyPod(ctx, pod, "haproxy", "sh", "-c",
+				socketState, _ := execInHAProxyPod(ctx, pod, "haproxy", "sh", "-c",
 					"ls -l /run/vector/ 2>&1 || true")
-				t.Fatalf("vector did not recover from a restart (restarts %s->%s, ready=%q): "+
-					"a stale socket makes the bind fail with EADDRINUSE.\nsocket dir: %s",
-					before, restarts, ready, logs)
+				t.Fatalf("Vector watchdog did not replace stopped PID %s: %v (new PID=%q, metrics=%d bytes)\nsocket dir: %s",
+					beforePID, err, recoveredPID, len(metrics), socketState)
+			}
+			childRecovered = true
+
+			afterRestarts, err := podJSONPath(ctx, pod,
+				`{.status.containerStatuses[?(@.name=="vector")].restartCount}`)
+			if err != nil {
+				t.Fatalf("reading vector restartCount after child recovery: %v", err)
+			}
+			if afterRestarts != beforeRestarts {
+				t.Fatalf("Vector container restarted while its supervisor should have recovered only the child: %s -> %s",
+					beforeRestarts, afterRestarts)
 			}
 
-			// The log path must still work afterwards — a socket unlinked but never
-			// re-created would leave HAProxy writing into the void.
-			out, err := execInHAProxyPod(ctx, pod, "haproxy", "sh", "-c",
-				"test -S /run/vector/haproxy.sock && echo present || echo MISSING")
-			if err != nil || !strings.Contains(out, "present") {
-				t.Errorf("log socket was not re-created after the restart: %q (err=%v)", out, err)
+			marker := fmt.Sprintf("/vector-child-recovered-%d", time.Now().UnixNano())
+			status, err := selectedHAProxyStatus(ctx, pod, host, marker)
+			if err != nil || status != "200" {
+				t.Fatalf("selected HAProxy pod %s did not serve the recovery marker (status=%q): %v", pod, status, err)
+			}
+			rec := findAccessLogRecordInPod(ctx, t, pod, faultStarted, marker)
+			if got := recordString(t, rec, "host"); got != host {
+				t.Errorf("host = %q, want %q", got, host)
+			}
+			if got := recordString(t, rec, "instance_pod"); got != pod {
+				t.Errorf("instance_pod = %q, want %q", got, pod)
+			}
+
+			monitorErr := stopAvailabilityMonitor()
+			monitorStopped = true
+			if monitorErr != nil {
+				t.Fatalf("HAProxy became unavailable while the Vector child restarted: %v", monitorErr)
 			}
 
 			return ctx

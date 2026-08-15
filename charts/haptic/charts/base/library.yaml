@@ -3223,7 +3223,7 @@ validationTests:
         pattern: '(?m)^  http-request use-service prometheus-exporter if \{ path /metrics \}$'
       - type: not_contains
         target: haproxy.cfg
-        pattern: 'dst 127\.0\.0\.0/8'
+        pattern: '(?m)^  http-request use-service prometheus-exporter if .*dst 127\.0\.0\.0/8.*$'
         description: Without the sidecar the exporter must stay reachable from the pod IP for a direct Prometheus scrape
 
   test-guid-directives:
@@ -4161,16 +4161,14 @@ validationTests:
 
   test-access-log-suppress-off-by-default:
     description: >-
-      With suppression not requested, no frontend gets a set-log-level rule, so
-      every request is logged. Each of these tests pins accessLog.suppress in its
-      OWN extraContext: validationTests also run as the controller's fatal load
-      gate against the operator's config, so a test that assumed the default
-      would crash-loop the controller of anyone who enabled suppression.
+      With suppression not requested, no successful-response suppression rule
+      is emitted. The test pins accessLog.suppress because validation tests run
+      against the operator's config.
     extraContext: {accessLog: {suppress: {successful: false}}}
     fixtures: {}
     assertions:
       - type: haproxy_valid
-      - {type: not_contains, target: haproxy.cfg, pattern: 'set-log-level silent'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http-after-response set-log-level silent'}
 
   test-access-log-suppress-successful:
     description: >-

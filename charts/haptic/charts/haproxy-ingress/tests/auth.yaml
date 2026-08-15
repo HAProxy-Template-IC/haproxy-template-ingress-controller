@@ -295,7 +295,7 @@ validationTests:
         pattern: "http-request set-var\\(txn.auth_url\\).*auth-url\\.map"
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request send-spoe-group spoa-hub check-auth-group"
+        pattern: "http-request send-spoe-group spoa-hub-check-auth check-auth-group"
       - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 401"}
 
   test-haproxy-ingress-auth-url-ssl-passthrough-warns:

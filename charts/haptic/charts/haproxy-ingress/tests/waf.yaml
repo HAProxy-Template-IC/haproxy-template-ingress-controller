@@ -88,7 +88,7 @@ validationTests:
         pattern: "set-var\\(txn.coraza_active\\) bool\\(true\\) if \\{ var\\(txn.coraza_app\\) -m found \\} \\|\\| \\{ var\\(txn.coraza_mode\\) -m found \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "send-spoe-group spoa-hub check-request-group if \\{ var\\(txn.coraza_active\\) -m bool \\}"
+        pattern: "send-spoe-group spoa-hub-check-request check-request-group if \\{ var\\(txn.coraza_active\\) -m bool \\}"
       - type: contains
         target: haproxy.cfg
         pattern: "deny deny_status 403 if \\{ var\\(txn.coraza_active\\) -m bool \\} \\{ var\\(txn.hub.coraza.action\\) -m found \\} !\\{ var\\(txn.hub.coraza.action\\) -m str allow \\}"
@@ -268,7 +268,7 @@ validationTests:
         pattern: "# nginx-ingress modsecurity-snippet from default/nginx-modsec"
       - type: not_contains
         target: haproxy.cfg
-        pattern: "send-spoe-group spoa-hub check-request-group if \\{ var\\(txn.coraza_mode\\) -m found \\}"
+        pattern: "send-spoe-group spoa-hub-check-request check-request-group if \\{ var\\(txn.coraza_mode\\) -m found \\}"
       - type: contains
         target: haproxy.cfg
         pattern: "set-var\\(txn.coraza_detect_only\\) bool\\(true\\) if \\{ var\\(txn.coraza_active\\) -m bool \\} \\{ var\\(txn.coraza_mode\\) -m str detect \\}"

@@ -4,7 +4,7 @@ templates:
   - vector-podmonitor.yaml
   - haproxy-networkpolicy.yaml
 tests:
-  - it: should render the sidecar by default with readiness gated on the metrics port
+  - it: should render a supervised sidecar without owning pod readiness
     template: haproxy-deployment.yaml
     asserts:
       - contains:
@@ -12,36 +12,21 @@ tests:
           content:
             name: vector
           any: true
-      # The index is pinned by asserting the name at the same index, so a change in
-      # container order fails loudly here instead of silently moving the probe
-      # assertions onto a different container.
-      - equal:
-          path: spec.template.spec.containers[3].name
-          value: vector
-      # Readiness must target the metrics port: the exporter that serves it exists
-      # only in the config HAPTIC pushes, so this IS the config-version gate.
-      - equal:
-          path: spec.template.spec.containers[3].readinessProbe.httpGet.port
-          value: vector-metrics
-      - equal:
-          path: spec.template.spec.containers[3].readinessProbe.httpGet.path
-          value: /metrics
-      # Deliberately NO livenessProbe on that port — nothing listens before the
-      # first push, so a liveness probe would kill the container in a loop and it
-      # would never survive long enough to receive the config.
       - isNull:
-          path: spec.template.spec.containers[3].livenessProbe
+          path: spec.template.spec.containers[?(@.name=="vector")].readinessProbe
+      - isNull:
+          path: spec.template.spec.containers[?(@.name=="vector")].livenessProbe
       # Whole-volume mount, never subPath: kubelet implements subPath as an
       # isolated bind-mount that does not propagate inotify, so --watch-config
-      # would never fire and the sidecar would never become Ready.
+      # would never fire and the sidecar would keep its bootstrap config.
       - contains:
-          path: spec.template.spec.containers[3].volumeMounts
+          path: spec.template.spec.containers[?(@.name=="vector")].volumeMounts
           content:
             name: general-storage
             mountPath: /etc/haproxy/general
             readOnly: true
       - contains:
-          path: spec.template.spec.containers[3].volumeMounts
+          path: spec.template.spec.containers[?(@.name=="vector")].volumeMounts
           content:
             name: vector-socket
             mountPath: /run/vector
@@ -49,33 +34,67 @@ tests:
   - it: should unlink a stale socket before starting vector
     template: haproxy-deployment.yaml
     asserts:
-      # Vector panics with EADDRINUSE rather than unlinking an existing UNIX
-      # datagram socket, and the socket is on an emptyDir that survives a
-      # container restart — so without this the container can never restart. The
-      # panic also unwinds into a graceful exit 0, so it reads as "Completed".
+      # The socket survives a Vector child exit on the shared emptyDir.
       - equal:
-          path: spec.template.spec.containers[3].command
+          path: spec.template.spec.containers[?(@.name=="vector")].command
           value: ["/bin/sh", "-c"]
       - matchRegex:
-          path: spec.template.spec.containers[3].args[0]
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
           # (?m) so the anchors bind to a LINE — args[0] is a multi-line script
           # and Go's ^/$ would otherwise mean start/end of the whole string.
           # Quoted: the path is interpolated into a shell script. The charset
           # guard in _vector.tpl is the real boundary, this is defence in depth.
-          pattern: "(?m)^rm -f '/run/vector/haproxy\\.sock'$"
+          pattern: "(?m)^  rm -f '/run/vector/haproxy\\.sock'$"
       # Waits for the config rather than dying without it: the file can be
       # transiently absent (the dataplane prunes it as an orphan until a reconcile
       # includes it, and a controller rollout has a leaderless window), and vector
       # treats a missing --config as fatal — which turned into CrashLoopBackOff
       # whose backoff outlasted the config actually arriving.
       - matchRegex:
-          path: spec.template.spec.containers[3].args[0]
-          pattern: '(?m)^while \[ ! -s /etc/haproxy/general/vector\.yaml \]; do$'
-      # exec, so vector is PID 1 and gets SIGTERM directly instead of the shell
-      # swallowing it.
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: '(?m)^  while \[ ! -s /etc/haproxy/general/vector\.yaml \]; do$'
       - matchRegex:
-          path: spec.template.spec.containers[3].args[0]
-          pattern: 'exec /usr/bin/vector --watch-config --config /etc/haproxy/general/vector\.yaml'
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: '(?m)^  /usr/bin/vector --watch-config --watch-config-method poll --watch-config-poll-interval-seconds 2 --config /etc/haproxy/general/vector\.yaml &$'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: '(?m)^  while \[ ! -S ''/run/vector/haproxy\.sock'' \] && \[ "\$_sync_waited" -lt "\$_watch_startup_grace_seconds" \]; do$'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: '(?m)^    kill -HUP "\$_child_pid"$'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: 'trap _shutdown TERM INT'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: 'grep -q .*prometheus_exporter'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: 'HEAD /metrics HTTP/1\.0'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: '_watch_child "\$_child_pid" &'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: '(?s)_watch_startup_grace_seconds=120.*_health_seen=0.*if \[ "\$_health_seen" -eq 1 \] \|\| \[ "\$_watch_runtime_seconds" -ge "\$_watch_startup_grace_seconds" \]'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: 'kill -TERM "\$_watched_pid"'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: 'kill -KILL "\$_watched_pid"'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: 'access-log and merged-metric export are unavailable; restarting in \$\{_backoff\}s'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: '_child_runtime_seconds=\$\(\( \$\(date \+%s\) - _child_started_epoch_seconds \)\)'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: 'if \[ "\$_child_runtime_seconds" -ge 60 \]; then\s+_backoff=1'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          pattern: 'if \[ "\$_backoff" -gt 30 \]; then _backoff=30; fi'
 
   - it: should give the haproxy container write access to the log socket
     template: haproxy-deployment.yaml
@@ -129,16 +148,13 @@ tests:
             name: vector-sizes
             containerPort: 9599
             protocol: TCP
-      # The primary port is unaffected, and still gates readiness.
+      # The primary port is unaffected.
       - contains:
           path: spec.template.spec.containers[?(@.name=="vector")].ports
           content:
             name: vector-metrics
             containerPort: 9598
             protocol: TCP
-      - equal:
-          path: spec.template.spec.containers[?(@.name=="vector")].readinessProbe.httpGet.port
-          value: vector-metrics
 
   - it: should scrape both exporters from one PodMonitor
     template: vector-podmonitor.yaml

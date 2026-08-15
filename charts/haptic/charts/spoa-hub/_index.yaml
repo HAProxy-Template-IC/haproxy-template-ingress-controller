@@ -2,9 +2,9 @@
 #
 # Provides the HAProxy-side wiring for the bundled `spoa-hub` sidecar:
 #   - `backend spoa-hub` with `mode spop` (or `mode tcp` on HAProxy 2.x)
-#   - `filter spoe engine spoa-hub config <path>` directive in frontends
+#   - one `filter spoe engine spoa-hub-<message> config <path>` per message
 #   - `spoe.conf` registered as a general file via fileRegistry, containing
-#     the agent block and per-plugin spoe-message bodies
+#     per-message agent blocks and per-plugin spoe-message bodies
 #
 # This library is opt-in via `controller.templateLibraries.spoaHub.enabled`.
 # The chart auto-enables it when the SPOA hub sidecar is on (i.e. any

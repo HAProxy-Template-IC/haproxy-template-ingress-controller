@@ -1134,7 +1134,7 @@ annotations:
 
 ```haproxy
 http-request set-var(txn.auth_url) var(txn.host_match),concat(,txn.path,),map(maps/auth-url.map)
-http-request send-spoe-group spoa-hub check-auth-group if { var(txn.auth_url) -m found }
+http-request send-spoe-group spoa-hub-check-auth check-auth-group if { var(txn.auth_url) -m found }
 http-request deny deny_status 401 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool }
 ```
 
