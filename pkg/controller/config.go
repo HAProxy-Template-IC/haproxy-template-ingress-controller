@@ -64,8 +64,8 @@ type InitialConfigBundle struct {
 	// it for equality, so it has to change when ANY member changes.
 	ConfigVersion      string
 	CredentialsVersion string
-	// Sources names every config of the merged set, in merge order, at the
-	// generation the merge observed — for per-object status stamping.
+	// Sources names the HAProxyTemplateConfig objects that receive status, at the
+	// generation the merge observed. Libraries are a different kind and get none.
 	Sources []events.ConfigSourceRef
 }
 
@@ -177,14 +177,13 @@ func fetchAndValidateInitialConfig(
 		"config_version", configVersion,
 		"secret_version", secretResource.GetResourceVersion())
 
-	sourceRefs := make([]events.ConfigSourceRef, 0, len(crdResources))
-	for _, resource := range crdResources {
-		sourceRefs = append(sourceRefs, events.ConfigSourceRef{
-			Namespace:  resource.GetNamespace(),
-			Name:       resource.GetName(),
-			Generation: resource.GetGeneration(),
-		})
-	}
+	// Status is written to the HAProxyTemplateConfig only; the libraries are a
+	// different kind (same rule as configloader.sourceRefs).
+	sourceRefs := []events.ConfigSourceRef{{
+		Namespace:  configResource.GetNamespace(),
+		Name:       configResource.GetName(),
+		Generation: configResource.GetGeneration(),
+	}}
 
 	bundle := &InitialConfigBundle{
 		Config:             cfg,
@@ -240,9 +239,6 @@ func reportLoadGateFailure(ctx context.Context, k8sClient *client.Client, bundle
 		logger.Warn("Cannot build CRD client to report load-gate failure on status", "error", err)
 		return
 	}
-	// Every source of the merged set gets the verdict: the failure is a
-	// property of the set, and an operator describes whichever object they
-	// edited (ADR-0016).
 	for _, ref := range bundle.Sources {
 		configchange.ReportConfigLoadFailure(ctx, crdClient, ref, failures, logger)
 	}

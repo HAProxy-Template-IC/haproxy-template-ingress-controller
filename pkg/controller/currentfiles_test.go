@@ -80,7 +80,7 @@ func TestCurrentFilesAuthorityAcceptsOutputWithinTerm(t *testing.T) {
 	assert.Equal(t, "accepted", currentFilesSnapshot(t, authority, generation)["ticket.keys"])
 }
 
-func TestCurrentFilesAuthorityRejectsAcceptedOutputWhenPublishedAuthorityFails(t *testing.T) {
+func TestCurrentFilesAuthorityKeepsAcceptedOutputAcrossLegacyMutationInTerm(t *testing.T) {
 	mapGVR := haproxyMapFileGVR.String()
 	published := newPublishedAuxFiles("haptic")
 	published.setForGVR(mapGVR, map[string]publishedAuxFile{
@@ -96,8 +96,17 @@ func TestCurrentFilesAuthorityRejectsAcceptedOutputWhenPublishedAuthorityFails(t
 	})
 	assert.Equal(t, "accepted", currentFilesSnapshot(t, authority, generation)["routes.map"])
 
+	// A retired leader's late legacy write is absorbed, not latched: the term's
+	// own accepted output stays authoritative and the published view follows.
 	published.setForGVR(mapGVR, map[string]publishedAuxFile{
 		"map": {path: "maps/routes.map", content: "legacy-mutated"},
+	})
+	assert.Equal(t, "accepted", currentFilesSnapshot(t, authority, generation)["routes.map"])
+	assert.Equal(t, "legacy-mutated", currentFilesPublishedSnapshot(t, authority)["routes.map"])
+
+	authority.EndTerm(generation)
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map": {path: "maps/routes.map", content: "legacy-mutated-again"},
 	})
 	files, err := authority.Snapshot(generation)
 	require.ErrorContains(t, err, "legacy auxiliary publication changed without a set ID")

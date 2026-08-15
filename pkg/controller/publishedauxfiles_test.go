@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -311,6 +312,75 @@ func TestPublishedAuxFilesRejectsLegacyMutationUntilSetIDAppears(t *testing.T) {
 		mapGVR: {{name: "modern-map", namespace: "haptic"}},
 	}})
 	assert.Equal(t, "modern", publishedSnapshot(t, published)["routes.map"])
+}
+
+func TestPublishedAuxFilesLeaderTermLiftsLegacyLatch(t *testing.T) {
+	mapGVR := haproxyMapFileGVR.String()
+	legacyCommit := &publishedAuxCommit{refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "map", namespace: "haptic"}},
+	}}
+	published := newPublishedAuxFiles("haptic")
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map": {path: "maps/routes.map", content: "legacy-1"},
+	})
+	published.setCommit(legacyCommit)
+	assert.Equal(t, "legacy-1", publishedSnapshot(t, published)["routes.map"])
+
+	// A standby latches when an old-version leader mutates the legacy set.
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map": {path: "maps/routes.map", content: "legacy-2"},
+	})
+	_, err := published.get()
+	require.ErrorContains(t, err, "legacy auxiliary publication changed without a set ID")
+
+	// Becoming leader accepts the visible legacy snapshot, exactly as a
+	// restarted process would, instead of failing every render until a restart.
+	published.beginLeaderTerm()
+	assert.Equal(t, "legacy-2", publishedSnapshot(t, published)["routes.map"])
+
+	// A late legacy write landing during the term must not re-latch the leader.
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map": {path: "maps/routes.map", content: "legacy-3"},
+	})
+	assert.Equal(t, "legacy-3", publishedSnapshot(t, published)["routes.map"])
+	published.setError(errors.New("transient list failure"))
+	assert.Equal(t, "legacy-3", publishedSnapshot(t, published)["routes.map"])
+
+	// Back to standby: legacy mutations latch again until a set ID appears.
+	published.endLeaderTerm()
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map": {path: "maps/routes.map", content: "legacy-4"},
+	})
+	_, err = published.get()
+	require.ErrorContains(t, err, "legacy auxiliary publication changed without a set ID")
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map":        {path: "maps/routes.map", content: "legacy-4"},
+		"modern-map": {path: "maps/routes.map", content: "modern", setID: "sha256:set-b"},
+	})
+	published.setCommit(&publishedAuxCommit{setID: "sha256:set-b", refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "modern-map", namespace: "haptic"}},
+	}})
+	assert.Equal(t, "modern", publishedSnapshot(t, published)["routes.map"])
+}
+
+func TestPublishedAuxFilesLeaderTermKeepsModernDowngradeLatch(t *testing.T) {
+	mapGVR := haproxyMapFileGVR.String()
+	published := newPublishedAuxFiles("haptic")
+	published.setForGVR(mapGVR, map[string]publishedAuxFile{
+		"map-a": {path: "maps/routes.map", content: "modern-a", setID: "sha256:set-a"},
+	})
+	published.setCommit(&publishedAuxCommit{setID: "sha256:set-a", refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "map-a", namespace: "haptic"}},
+	}})
+	assert.Equal(t, "modern-a", publishedSnapshot(t, published)["routes.map"])
+
+	published.setCommit(&publishedAuxCommit{refs: map[string][]publishedAuxRef{
+		mapGVR: {{name: "map-a", namespace: "haptic"}},
+	}})
+	published.beginLeaderTerm()
+	_, err := published.get()
+	require.ErrorContains(t, err, "auxiliary publication lost its set ID",
+		"a set that lost its ID means another writer exists; leadership must not accept it")
 }
 
 func TestPublishedAuxFilesRejectsLegacySecretMutationByResourceVersion(t *testing.T) {

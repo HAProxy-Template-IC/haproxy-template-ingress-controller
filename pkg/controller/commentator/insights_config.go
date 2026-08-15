@@ -64,14 +64,7 @@ func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (i
 				append(attrs, "version", e.Version, "secret_version", e.SecretVersion)
 		}
 
-		// Correlate: how long did validation take?
-		validationRequests := ec.ringBuffer.findByTypeInWindow(events.EventTypeConfigValidationRequest, validationLookbackWindow)
-		var correlationMsg string
-		if len(validationRequests) > 0 {
-			duration := event.Timestamp().Sub(validationRequests[0].timestamp)
-			correlationMsg = fmt.Sprintf(" (validation completed in %v)", duration.Round(time.Millisecond))
-		}
-		return fmt.Sprintf("Configuration validated successfully%s", correlationMsg),
+		return fmt.Sprintf("Configuration validated successfully%s", ec.validationDurationSuffix(event)),
 			append(attrs, "version", e.Version, "secret_version", e.SecretVersion)
 
 	case *events.ConfigInvalidEvent:
@@ -133,4 +126,19 @@ func (ec *EventCommentator) validationInsight(event busevents.Event, attrs []any
 	default:
 		return "", attrs
 	}
+}
+
+// validationDurationSuffix correlates a verdict with the request that preceded
+// it. A verdict replayed on leadership can predate a newer request; that yields
+// no suffix rather than a negative duration.
+func (ec *EventCommentator) validationDurationSuffix(event busevents.Event) string {
+	requests := ec.ringBuffer.findByTypeInWindow(events.EventTypeConfigValidationRequest, validationLookbackWindow)
+	if len(requests) == 0 {
+		return ""
+	}
+	duration := event.Timestamp().Sub(requests[0].timestamp)
+	if duration < 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (validation completed in %v)", duration.Round(time.Millisecond))
 }

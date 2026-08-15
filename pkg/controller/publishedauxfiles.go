@@ -89,6 +89,7 @@ type publishedAuxFiles struct {
 	current        map[string]string
 	ready          bool
 	legacy         bool
+	leader         bool
 	modernAccepted bool
 	lastErr        error
 	unavailable    error
@@ -123,7 +124,7 @@ func (p *publishedAuxFiles) setForGVR(gvr string, files map[string]publishedAuxF
 
 	legacyChanged := p.legacy && p.legacyReferencesChanged(gvr, files)
 	p.byGVR[gvr] = files
-	if legacyChanged && (p.commit == nil || p.commit.setID == "") {
+	if legacyChanged && !p.leader && (p.commit == nil || p.commit.setID == "") {
 		p.markLegacyUnavailable()
 		return
 	}
@@ -141,7 +142,7 @@ func (p *publishedAuxFiles) setCommit(commit *publishedAuxCommit) {
 		p.markModernDowngradeUnavailable()
 		return
 	}
-	if legacyChanged && (commit == nil || commit.setID == "") {
+	if legacyChanged && !p.leader && (commit == nil || commit.setID == "") {
 		p.markLegacyUnavailable()
 		return
 	}
@@ -152,9 +153,29 @@ func (p *publishedAuxFiles) setError(err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.lastErr = err
-	if p.legacy {
+	if p.legacy && !p.leader {
 		p.markLegacyUnavailable()
 	}
+}
+
+// beginLeaderTerm lifts the legacy latch. Only a leader publishes, so once this
+// replica leads no old-version leader can still mutate a set-ID-less set: accept
+// the visible legacy snapshot (as a fresh process would) rather than latching
+// until a restart; the term's first publish replaces it with a set-ID-bearing one.
+func (p *publishedAuxFiles) beginLeaderTerm() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.leader = true
+	if p.unavailable != nil && !p.modernAccepted {
+		p.unavailable = nil
+		p.advanceLocked()
+	}
+}
+
+func (p *publishedAuxFiles) endLeaderTerm() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.leader = false
 }
 
 func (p *publishedAuxFiles) markLegacyUnavailable() {
