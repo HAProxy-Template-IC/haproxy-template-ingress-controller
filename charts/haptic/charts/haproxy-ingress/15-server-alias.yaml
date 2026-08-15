@@ -31,6 +31,8 @@ templateSnippets:
         Extension Point: map-host-* (priority 650 - compatibility layer)
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var aliasAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/server-alias"] %}
@@ -47,7 +49,9 @@ templateSnippets:
       {%- for _, rawAlias := range split(aliasAnnotation, ",") %}
       {%- var alias = strip(rawAlias) %}
       {%- if alias != "" %}
-      {{ MapKeyForHost(alias) }} {{ primaryKey }}
+      {%- var aliasInj = ConfigInjectionKind(alias, "mapkey") -%}
+      {%- if aliasInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidServerAlias", "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " annotation 'haproxy-ingress.github.io/server-alias' value contains " + aliasInj + ", which would split the host map; the alias is not applied. Remove whitespace and control characters from the value.") -}}{%- continue -%}{%- end -%}
+      {{ "\n" }}{{ MapKeyForHost(alias) }} {{ primaryKey }}
       {%- end %}
       {%- end %}
       {%- end %}
@@ -71,6 +75,8 @@ templateSnippets:
         Extension Point: map-hostregex-* (priority 650 - compatibility layer)
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var regexAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/server-alias-regex"] %}
@@ -79,12 +85,15 @@ templateSnippets:
       {%- if len(rules) > 0 %}
       {%- var primaryKey = MapKeyForHost(rules[0] | dig("host")) %}
       {%- if primaryKey != "" %}
+      {%- var regexTrimmed = strip(regexAnnotation) %}
+      {%- var regexInj = ConfigInjectionKind(regexTrimmed, "mapkey") %}
+      {%- if regexInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidServerAliasRegex", "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " annotation 'haproxy-ingress.github.io/server-alias-regex' value contains " + regexInj + ", which would split the host-regex map; the alias regex is not applied. Remove whitespace and control characters from the value.") -}}{%- continue %}{%- end %}
       {%- if isFirst %}
       # haproxy-ingress/map-hostregex-alias
       {%- isFirst = false %}
       {%- end %}
       # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} server-alias-regex
-      {{ strip(regexAnnotation) }} {{ primaryKey }}
+      {{ regexTrimmed }} {{ primaryKey }}
       {%- end %}
       {%- end %}
       {%- end %}

@@ -1,0 +1,351 @@
+# haproxy-ingress library — config-injection guards (#157, phase 2).
+# The centralized base utilities (ConfigInjectionKind per context,
+# EscapeLogFormatValue, EscapeDquoteValue) already carry the char-class behavior
+# tests. These tests prove each haproxy-ingress SITE is wired to them: a single
+# hostile Ingress packs many guarded annotations, each carrying a unique marker
+# asserted absent from its target, so neutering any one site's guard leaks that
+# marker here. Fail-closed (security) and escape/allow-through cases that abort
+# the render get their own minimal fixtures.
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+  secSpec: &secSpec
+    ingressClassName: haproxy
+    rules:
+      - host: sec.example.com
+        http: *httpRoot
+  spoaHubOn: &spoaHubOn
+    spoaHub:
+      enabled: true
+      haproxy:
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: [check-auth]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+
+validationTests:
+  # ---- Routing / backend / frontend sites: warn-and-skip on reconcile ----
+  # One Ingress poisons every warn-and-skip site; each marker is checked against
+  # the map or config it would land in, so every site stays independently load-bearing.
+  test-haproxy-ingress-injection-reconcile-warns-and-skips:
+    description: A control character in each guarded haproxy-ingress annotation is skipped; no smuggled map entry or directive reaches its target while the render stays valid.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: poison
+            annotations:
+              haproxy-ingress.github.io/server-alias: "good.example.com\nPWNALIAS evil.example.com"
+              haproxy-ingress.github.io/server-alias-regex: "^ok.*\nPWNREGEX bad.example.com"
+              haproxy-ingress.github.io/path-type: "regex"
+              haproxy-ingress.github.io/headers: "X-Good\nPWNHDRNAME:v1|X-Val:v2\nPWNHDRVAL 1"
+              haproxy-ingress.github.io/timeout-connect: "5s\nPWNTIMEOUT server 1ms"
+              haproxy-ingress.github.io/health-check-uri: "/h\nPWNHEALTH x"
+              haproxy-ingress.github.io/affinity: "cookie"
+              haproxy-ingress.github.io/session-cookie-name: "S\nPWNCOOKIE x"
+              haproxy-ingress.github.io/agent-check-port: "9999"
+              haproxy-ingress.github.io/agent-check-addr: "10.0.0.1\nPWNAGENT x"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: poison.example.com
+                http:
+                  paths:
+                    - path: "/api\nPWNPATH BACKEND:evil"
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: echo, port: {number: 80}}}
+        # The path guard is copied into all four path-type emitters; a separate
+        # minimal Ingress per type (each drives a distinct target map) keeps
+        # exact/prefix/begin load-bearing, not just regex.
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: poison-exact
+            annotations: {haproxy-ingress.github.io/path-type: "exact"}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: exact.example.com
+                http:
+                  paths:
+                    - {path: "/ex\nPWNPATHEXACT BACKEND:evil", pathType: ImplementationSpecific, backend: {service: {name: echo, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: poison-prefix
+            annotations: {haproxy-ingress.github.io/path-type: "prefix"}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: prefix.example.com
+                http:
+                  paths:
+                    - {path: "/pf\nPWNPATHPREFIX BACKEND:evil", pathType: ImplementationSpecific, backend: {service: {name: echo, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: poison-begin
+            annotations: {haproxy-ingress.github.io/path-type: "begin"}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: begin.example.com
+                http:
+                  paths:
+                    - {path: "/bg\nPWNPATHBEGIN BACKEND:evil", pathType: ImplementationSpecific, backend: {service: {name: echo, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: map:host.map, pattern: "PWNALIAS"}
+      - {type: not_contains, target: map:host-regex.map, pattern: "PWNREGEX"}
+      - {type: not_contains, target: map:path-regex.map, pattern: "PWNPATH"}
+      - {type: not_contains, target: map:path-exact.map, pattern: "PWNPATHEXACT"}
+      - {type: not_contains, target: map:path-prefix.map, pattern: "PWNPATHPREFIX"}
+      - {type: not_contains, target: map:path-prefix-exact.map, pattern: "PWNPATHBEGIN"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNHDRNAME"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNHDRVAL"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNTIMEOUT"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNHEALTH"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNCOOKIE"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNAGENT"}
+
+  # ---- Auth routing-map sites: warn-and-skip on reconcile ----
+  test-haproxy-ingress-auth-injection-reconcile-warns-and-skips:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: A control character in each auth-* / oauth-* value is skipped; no smuggled entry reaches any auth routing map while the render stays valid.
+    extraContext:
+      <<: *spoaHubOn
+      renderMode: reconcile
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: authpoison
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://a/check\ndefault/PWNAUTHURL http://evil"
+              haproxy-ingress.github.io/auth-signin: "https://a/start\ndefault/PWNSIGNIN x"
+              haproxy-ingress.github.io/auth-method: "POST\ndefault/PWNMETHOD x"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: authpoison.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: oauthpoison
+            annotations:
+              haproxy-ingress.github.io/oauth: "oauth2-proxy"
+              haproxy-ingress.github.io/oauth-uri-prefix: "/oauth2\ndefault/PWNPREFIX x"
+              haproxy-ingress.github.io/oauth-headers: "X-E:src\ndefault/PWNOHDR x"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: oauthpoison.example.com
+                http:
+                  paths:
+                    - path: /oauth2
+                      pathType: Prefix
+                      backend: {service: {name: oauth2-proxy, port: {number: 4180}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: map:auth-url.map, pattern: "PWNAUTHURL"}
+      - {type: not_contains, target: map:auth-signin.map, pattern: "PWNSIGNIN"}
+      - {type: not_contains, target: map:auth-method.map, pattern: "PWNMETHOD"}
+      - {type: not_contains, target: map:auth-url.map, pattern: "PWNPREFIX"}
+      - {type: not_contains, target: map:auth-signin.map, pattern: "PWNPREFIX"}
+      - {type: not_contains, target: map:auth-extract-headers.map, pattern: "PWNOHDR"}
+
+  # ---- Admission wiring: WebhookRejectOrWarn denies at admission (shared macro) ----
+  test-haproxy-ingress-injection-admission-rejected:
+    description: A control character in a guarded value is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: poison
+            annotations:
+              haproxy-ingress.github.io/server-alias: "good.example.com\nPWNALIAS evil.example.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: poison.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would split the host map"}
+
+  # ---- Security sites: fail closed (fail() aborts the render); one per site ----
+  test-haproxy-ingress-secure-sni-injection-fails-closed:
+    description: A control character in secure-sni fails the render closed.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sec
+            annotations:
+              haproxy-ingress.github.io/secure-backends: "true"
+              haproxy-ingress.github.io/secure-sni: "svc\nPWNSNI"
+          spec: *secSpec
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would break the backend SNI directive"}
+
+  test-haproxy-ingress-secure-verify-hostname-injection-fails-closed:
+    description: A control character in secure-verify-hostname fails the render closed.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sec
+            annotations:
+              haproxy-ingress.github.io/secure-backends: "true"
+              haproxy-ingress.github.io/secure-verify-hostname: "host\nPWNVH"
+          spec: *secSpec
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would break the backend cert-verification directive"}
+
+  test-haproxy-ingress-ssl-ciphers-injection-fails-closed:
+    description: A control character in ssl-ciphers-backend fails the render closed.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sec
+            annotations:
+              haproxy-ingress.github.io/secure-backends: "true"
+              haproxy-ingress.github.io/ssl-ciphers-backend: "ECDHE-RSA-AES128-GCM-SHA256\nPWNCPH"
+          spec: *secSpec
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would break the backend ciphers directive"}
+
+  test-haproxy-ingress-ssl-cipher-suites-injection-fails-closed:
+    description: A control character in ssl-cipher-suites-backend fails the render closed.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sec
+            annotations:
+              haproxy-ingress.github.io/secure-backends: "true"
+              haproxy-ingress.github.io/ssl-cipher-suites-backend: "TLS_AES_256_GCM_SHA384\nPWNCPHS"
+          spec: *secSpec
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would break the backend ciphersuites directive"}
+
+  # ---- Load-bearing allow-through cases the guards must NOT reject ----
+  test-haproxy-ingress-guards-allow-legitimate-values:
+    description: A regex alias containing a backslash (mapkey allows it) and a space-separated cookie-keywords list still render — the guards reject only their context-breaking characters.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: legit
+            annotations:
+              haproxy-ingress.github.io/server-alias-regex: "^app\\w+$"
+              haproxy-ingress.github.io/affinity: "cookie"
+              haproxy-ingress.github.io/session-cookie-name: "SESS"
+              haproxy-ingress.github.io/session-cookie-keywords: "httponly secure"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: legit.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:host-regex.map, pattern: "app\\\\w"}
+      - {type: contains, target: haproxy.cfg, pattern: "cookie SESS insert indirect nocache dynamic httponly secure"}
+
+  test-haproxy-ingress-headers-value-escaped:
+    description: A headers value with a double quote, dollar and log-format percent renders escaped inside double quotes, so it cannot break out, expand an env var, or read request state.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hdr-esc
+            annotations:
+              haproxy-ingress.github.io/headers: 'X-Esc:a"b$c%[var(txn.foo)]'
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: hdr.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Esc "a\\"b\\\$c%%\[var\(txn\.foo\)\]" if'}
+
+  test-haproxy-ingress-auth-realm-escape-and-fail-closed:
+    description: An auth-realm double quote renders escaped inside its quoted literal, while a control character fails the route closed with 503 instead of a splittable directive.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {namespace: default, name: basic-auth-secret}
+          data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: realm-esc
+            annotations:
+              haproxy-ingress.github.io/auth-secret: "basic-auth-secret"
+              haproxy-ingress.github.io/auth-realm: 'Secure"Zone'
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: realm-esc.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: realm-inj
+            annotations:
+              haproxy-ingress.github.io/auth-secret: "basic-auth-secret"
+              haproxy-ingress.github.io/auth-realm: "Zone\nPWNREALM reject"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: realm-inj.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'auth realm "Secure\\"Zone" unless'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNREALM"}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
