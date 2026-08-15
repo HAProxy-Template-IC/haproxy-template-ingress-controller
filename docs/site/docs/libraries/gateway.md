@@ -690,7 +690,7 @@ A `http-request set-header X-API-Version "v2"` directive appears under the filte
 | `backendRefs[].namespace` | ⚠️ Partial | Not explicitly handled, likely defaults to route namespace |
 | `backendRefs[].port` | ✅ Supported | Service port number |
 | `backendRefs[].weight` | ✅ Supported | Traffic splitting with weighted distribution |
-| `backendRefs[].filters[]` | ⚠️ Partial | `RequestHeaderModifier` emitted per-backend (rule-scoped via `gw_rule_id`); other filter types not handled at the `backendRef` level |
+| `backendRefs[].filters[]` | ⚠️ Partial | `RequestHeaderModifier` and `ResponseHeaderModifier` emitted per-backend (rule-scoped via `gw_rule_id`); other filter types not handled at the `backendRef` level |
 | Multiple backends | ✅ Supported | Weighted traffic splitting using MULTIBACKEND qualifier |
 | Single backend | ✅ Supported | Optimized with BACKEND qualifier (avoids weighted logic) |
 | Omitted weight | ✅ Supported | Defaults to weight 1 |
@@ -1248,7 +1248,7 @@ TLSRoute and TCPRoute status is written on the `deployed` outcome only (see thei
 **Not implemented:**
 
 1. **ExtensionRef filter** — the general custom-filter extension mechanism (planned as the Gateway API equivalent of Ingress annotations). One narrow internal use exists: an `ExtensionRef` selecting SSL passthrough is honored.
-2. **Per-backend filters** (`backendRefs[].filters[]`) beyond `RequestHeaderModifier` — a `RequestHeaderModifier` on a `backendRef` **is** emitted per-backend (rule-scoped via `gw_rule_id`; see `test-httproute-backend-request-header-modifier`). The other filter types (ResponseHeaderModifier, RequestRedirect, URLRewrite, RequestMirror) apply at the rule level only.
+2. **Per-backend filters** (`backendRefs[].filters[]`) beyond the header modifiers — `RequestHeaderModifier` and `ResponseHeaderModifier` on a `backendRef` **are** emitted per-backend (rule-scoped via `gw_rule_id`; see `test-httproute-backend-request-header-modifier` and `test-httproute-backend-response-header-modifier`). The other filter types (RequestRedirect, URLRewrite, RequestMirror) apply at the rule level only.
 3. **Listener-specific HTTP route isolation** — `sectionName` drives `attachedRoutes` status counting, but HTTP/HTTPS routing itself isn't isolated per listener. (TLSRoute and TCPRoute do route per listener; see their sections.)
 
 **Implemented but not pinned by this library's `validationTests`:**

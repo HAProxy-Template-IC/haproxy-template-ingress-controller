@@ -1358,10 +1358,11 @@ templateSnippets:
         BackendServers - Generates HAProxy server lines from Kubernetes EndpointSlices.
 
         This macro handles the complete flow:
-        1. Resolve server slot count from parameters or defaults
+        1. Resolve the slot block size from parameters or defaults
         2. Look up the Service to find port name (for targetPort resolution)
         3. Fetch EndpointSlices and resolve actual pod ports
-        4. Build slot assignment map from current config (if available)
+        4. Size the slot pool: fit the endpoints plus headroom, keep the current
+           pool when it still fits (no reload), grow or shrink otherwise
         5. Assign endpoints to slots, preserving existing assignments
         6. Generate server lines with proper options
 
@@ -1371,12 +1372,21 @@ templateSnippets:
         enables zero-reload updates via HAProxy runtime API by keeping the same
         SRV_N slot for each pod IP:port combination across config changes.
 
+        Slot Pool Sizing:
+        Endpoints beyond the pool are never dropped. desired = endpoints +
+        max(extraContext.serverSlots.minFree, ceil(endpoints/4)), rounded up to a
+        multiple of the block size; the current pool is kept while it still fits
+        and is smaller than twice desired (hysteresis), so a rolling update or a
+        scale-up within the headroom is reload-free and a scale-down doesn't flap.
+
         Parameters:
           serviceName    - Service name to look up endpoints
-          maxServerSlots - Max slots (0 = use serverOpts.serverSlotsValue or default 10)
+          maxServerSlots - Slot block size (0 = serverOpts.serverSlotsValue, else
+                           extraContext.serverSlots.increment, default 1). Not a cap:
+                           a pool that outgrows its block is grown by another block.
           port           - Service port number (may differ from pod port via targetPort)
           serverOpts     - Options map:
-                             .serverSlotsValue - override slot count
+                             .serverSlotsValue - slot block size (scale-server-slots)
                              .flags[]          - server flags (e.g., "backup", "weight 10")
                              .podMaxconnValue  - per-server maxconn
           portName       - Port name for targetPort resolution (nil = auto-lookup)
@@ -1394,14 +1404,23 @@ templateSnippets:
       {% import "util-backend-servers-helpers" for BuildServerOptions %}
       {% macro BackendServers(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any, backendName any, namespace string) %}
         {%%
-          // ── 1. Resolve server slot count ──────────────────────────────────
-          // Priority: maxServerSlots param > serverOpts.serverSlotsValue > default (10)
-          var slots = 10
+          // ── 1. Resolve the slot block size ────────────────────────────────
+          // Priority: maxServerSlots param > serverOpts.serverSlotsValue >
+          // extraContext.serverSlots.increment > 1. haproxytech
+          // scale-server-slots semantics: the pool is provisioned in blocks
+          // of this size and grown by a block (one reload) when it fills.
+          var block = 0
           if maxServerSlots > 0 {
-            slots = maxServerSlots
+            block = maxServerSlots
           } else if v := serverOpts | dig("serverSlotsValue"); v != nil {
-            slots = toint(v)
+            block = toint(v)
           }
+          if block <= 0 {
+            block = toint(extraContext | dig("serverSlots", "increment") | fallback(1))
+          }
+          if block < 1 { block = 1 }
+          var minFree = toint(extraContext | dig("serverSlots", "minFree") | fallback(2))
+          if minFree < 0 { minFree = 0 }
 
           // ── 1b. Optional slot prefix + weight ─────────────────────────────
           // slotPrefix (default "SRV_") lets ONE backend host servers from
@@ -1551,7 +1570,38 @@ templateSnippets:
               func() any { return true })
           }
 
-          // ── 6. Build slot assignment map from current config ──────────────
+          // ── 6. Size the slot pool ─────────────────────────────────────────
+          // Never fewer slots than endpoints. Headroom covers a default
+          // rolling update (maxSurge 25%) and small scale-ups without a
+          // reload; the current pool is kept while it still fits and is under
+          // twice the desired size, so growth is a single reload per block and
+          // a scale-down only shrinks (one reload) once the pool is mostly idle.
+          var bkName = ""
+          if backendName != nil {
+            bkName = tostring(backendName)
+          }
+          var currentSlots = 0
+          if bkName != "" && !isNil(currentConfig) {
+            var bkServers = currentConfig.ServerIndex[bkName]
+            if bkServers != nil {
+              for serverName, _ := range bkServers {
+                if hasPrefix(serverName, slotPrefix) && toint(serverName[len(slotPrefix):]) > 0 {
+                  currentSlots++
+                }
+              }
+            }
+          }
+          var headroom = (len(endpoints) + 3) / 4
+          if headroom < minFree { headroom = minFree }
+          var desired = len(endpoints) + headroom
+          if desired % block != 0 { desired = desired + block - (desired % block) }
+          if desired < block { desired = block }
+          var slots = desired
+          if currentSlots > 0 && len(endpoints) <= currentSlots && currentSlots < 2*desired {
+            slots = currentSlots
+          }
+
+          // ── 6b. Build slot assignment map from current config ─────────────
           // Servers come from currentConfig.ServerIndex[bkName] — the upstream
           // value map `backend.Servers` is deliberately left nil by haptic's
           // parserconfig (see pkg/dataplane/parser/parserconfig/config.go).
@@ -1562,10 +1612,6 @@ templateSnippets:
           var existingSlots = map[string]int{}
           var usedSlots = map[int]bool{}
           var highestUsedSlot = 0
-          var bkName = ""
-          if backendName != nil {
-            bkName = tostring(backendName)
-          }
           if bkName != "" && !isNil(currentConfig) {
             var bkServers = currentConfig.ServerIndex[bkName]
             if bkServers != nil {

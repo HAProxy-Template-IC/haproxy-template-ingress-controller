@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"slices"
 	"sync"
 
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -107,6 +108,26 @@ type CoalescingHandler interface {
 	CoalescesOn() []string
 }
 
+// QueueCoalescingHandler is an optional refinement of CoalescingHandler for
+// components whose declared types are latest-wins across the WHOLE queue,
+// not just within an uninterrupted run. When CoalescesAcrossQueue reports
+// true, a coalescible event of a declared type supersedes any earlier queued
+// coalescible event of the same type wherever it sits, so a stream that
+// strictly alternates two declared types (render → resources.applied,
+// deploy → deployment.completed, …) still keeps the queue bounded by the
+// number of declared types instead of growing without limit while the
+// handler is slower than the arrival rate. Relative order of the surviving
+// entries is preserved; a non-coalescible event still separates nothing —
+// it simply keeps its place. Only declare this when the component's own
+// per-type semantics are "the newest event carries the complete state"; the
+// status applier is the canonical adopter (each event carries the full patch
+// set for its phase, and a 2048-deep alternating backlog was measured at
+// 6 GB of live heap on a 1,900-route churn).
+type QueueCoalescingHandler interface {
+	CoalescingHandler
+	CoalescesAcrossQueue() bool
+}
+
 // Base is a reusable event-loop implementation. It subscribes on
 // construction (so components are guaranteed to receive events published
 // after EventBus.Start()), wraps each dispatch in a recover, and supports
@@ -124,9 +145,11 @@ type Base struct {
 
 	// Mailbox state (only used when the handler is a CoalescingHandler
 	// with a non-empty CoalescesOn; see startMailbox).
-	mbMu     sync.Mutex
-	mbQueue  []mailboxEntry
-	mbNotify chan struct{}
+	mbMu    sync.Mutex
+	mbQueue []mailboxEntry
+	// mbAcrossQueue is the QueueCoalescingHandler opt-in, read once at Start.
+	mbAcrossQueue bool
+	mbNotify      chan struct{}
 }
 
 // mailboxEntry is one queued event plus how many earlier coalescible events
@@ -195,6 +218,9 @@ func (b *Base) Start(ctx context.Context) error {
 
 	if ch, ok := b.handler.(CoalescingHandler); ok {
 		if types := ch.CoalescesOn(); len(types) > 0 {
+			if qh, ok := b.handler.(QueueCoalescingHandler); ok {
+				b.mbAcrossQueue = qh.CoalescesAcrossQueue()
+			}
 			return b.startMailbox(ctx, types)
 		}
 	}
@@ -303,9 +329,11 @@ func (b *Base) mailboxDrain(ctx context.Context) (stopped bool) {
 	}
 }
 
-// mailboxEnqueue appends event to the mailbox queue, collapsing it into the
-// tail entry when both are coalescible events of the same declared type
-// (latest wins, superseded count carried for logging).
+// mailboxEnqueue appends event to the mailbox queue. A coalescible event of a
+// declared type supersedes the queued event it collapses with — the tail
+// entry when both are of the same type (latest wins, superseded count carried
+// for logging), or, for a QueueCoalescingHandler, the same-type entry anywhere
+// in the queue.
 func (b *Base) mailboxEnqueue(event busevents.Event, coalescedTypes map[string]struct{}) {
 	coalescible := false
 	if _, declared := coalescedTypes[event.EventType()]; declared {
@@ -315,27 +343,42 @@ func (b *Base) mailboxEnqueue(event busevents.Event, coalescedTypes map[string]s
 	}
 
 	b.mbMu.Lock()
-	if coalescible && len(b.mbQueue) > 0 {
-		tail := &b.mbQueue[len(b.mbQueue)-1]
-		if tail.event.EventType() == event.EventType() {
-			if tc, ok := tail.event.(busevents.CoalescibleEvent); ok && tc.Coalescible() {
-				tail.event = event
-				tail.superseded++
-				b.mbMu.Unlock()
-				b.mailboxNotify()
-				return
-			}
+	superseded := 0
+	if coalescible {
+		if i := b.mailboxSupersedeIndex(event.EventType()); i >= 0 {
+			superseded = b.mbQueue[i].superseded + 1
+			b.mbQueue = slices.Delete(b.mbQueue, i, i+1)
 		}
 	}
-	b.mbQueue = append(b.mbQueue, mailboxEntry{event: event})
+	b.mbQueue = append(b.mbQueue, mailboxEntry{event: event, superseded: superseded})
 	n := len(b.mbQueue)
 	b.mbMu.Unlock()
 
-	if n >= mailboxBacklogWarnFloor && n&(n-1) == 0 {
+	if superseded == 0 && n >= mailboxBacklogWarnFloor && n&(n-1) == 0 {
 		b.logger.Warn(b.name+" mailbox backlog growing — handler slower than event arrival",
 			"queue_len", n)
 	}
 	b.mailboxNotify()
+}
+
+// mailboxSupersedeIndex returns the index of the queued coalescible event a
+// new coalescible event of eventType supersedes: the tail when it is of the
+// same type, any same-type entry when the handler coalesces across the queue,
+// -1 otherwise. Called with mbMu held.
+func (b *Base) mailboxSupersedeIndex(eventType string) int {
+	for i := len(b.mbQueue) - 1; i >= 0; i-- {
+		queued := b.mbQueue[i].event
+		if queued.EventType() == eventType {
+			if qc, ok := queued.(busevents.CoalescibleEvent); ok && qc.Coalescible() {
+				return i
+			}
+			return -1
+		}
+		if !b.mbAcrossQueue {
+			return -1
+		}
+	}
+	return -1
 }
 
 // mailboxPop removes and returns the queue head.

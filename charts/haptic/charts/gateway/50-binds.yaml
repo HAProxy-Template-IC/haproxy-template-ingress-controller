@@ -150,7 +150,7 @@ templateSnippets:
   # arrives at the frontend, fails the allowlist check, and gets
   # rejected.
   frontends-600-gateway-tls-listener:
-    requires: [gateways, httproutes, tlsroutes]
+    requires: [gateways, httproutes, referencegrants, tlsroutes]
     template: |
       {%- var byPortRaw = shared.Get("gatewayTLSListenersByPort") %}
       {%- if byPortRaw == nil %}

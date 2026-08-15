@@ -90,7 +90,7 @@ templateSnippets:
 
       backend {{ beName }}
           mode tcp
-          {{ BackendServers(svcName, 10, svcPort, nil, svcPortName, beName, beNs) | indent(4) }}
+          {{ BackendServers(svcName, 0, svcPort, nil, svcPortName, beName, beNs) | indent(4) }}
           {%- end %}
         {%- end %}
       {%- end macro %}

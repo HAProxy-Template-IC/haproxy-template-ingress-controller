@@ -922,6 +922,17 @@ controller:
           # time your slowest legitimate client needs to send tune.bufsize bytes.
           waitTimeout: 10s
 
+        # Reserved server-slot pool sizing for every backend. A backend gets
+        # endpoints + max(minFree, ceil(endpoints/4)) slots, rounded up to a
+        # multiple of increment; endpoint changes that fit are runtime-only, a
+        # pool that fills is grown by a block on the next reload, and a pool
+        # is only shrunk once fewer than half its slots are needed. The
+        # scale-server-slots annotations override the block size per backend.
+        # See https://haproxy-haptic.org/docs/latest/libraries/haproxytech/#haproxyorgscale-server-slots
+        serverSlots:
+          increment: 1
+          minFree: 2
+
         # Template-library behavior for API-gateway features. Plugin execution
         # limits remain under spoaHub.plugins.api-gateway.
         apiGateway:
@@ -2402,9 +2413,9 @@ vector:
   # scrape parameter.
   #
   # This is the single biggest lever on scrape size, because in HAPTIC's model MAINT
-  # means "reserved slot with no backing pod". Backends render a fixed number of
-  # server slots so that scaling a Deployment needs no HAProxy reload, and the spare
-  # slots sit `disabled`. Each still emits a full metric set of zeros.
+  # means "reserved slot with no backing pod". Backends keep spare server slots so
+  # that scaling a Deployment within the headroom needs no HAProxy reload, and the
+  # spare slots sit `disabled`. Each still emits a full metric set of zeros.
   #
   # Measured on a real 2-pod fleet: 159 of 193 slots (82%) were empty placeholders,
   # accounting for 10,176 of 15,116 series (67%) and 1.15 MB of every 1.67 MB scrape.

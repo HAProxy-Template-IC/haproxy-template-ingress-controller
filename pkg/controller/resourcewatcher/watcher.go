@@ -59,6 +59,20 @@ type ResourceWatcherComponent struct {
 	logger    *slog.Logger
 }
 
+// Option configures New beyond its required arguments.
+type Option func(*options)
+
+type options struct {
+	selfWrites types.SelfWriteFilter
+}
+
+// WithSelfWriteFilter hands every watcher the filter that recognises this
+// controller's own writes, so an echoed status write refreshes the store
+// without triggering a reconciliation.
+func WithSelfWriteFilter(f types.SelfWriteFilter) Option {
+	return func(o *options) { o.selfWrites = f }
+}
+
 // New creates a new ResourceWatcherComponent.
 //
 // For each entry in cfg.WatchedResources, this creates a k8s.Watcher that:
@@ -75,7 +89,12 @@ func New(
 	k8sClient *client.Client,
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
+	opts ...Option,
 ) (*ResourceWatcherComponent, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	if cfg == nil {
 		return nil, errors.New("config is nil")
 	}
@@ -157,6 +176,7 @@ func New(
 			StoreType:        determineStoreType(watchedResource.Store),
 			CacheTTL:         cacheTTL,
 			DebounceInterval: watchedResource.GetDebounceInterval(),
+			SelfWrites:       o.selfWrites,
 
 			// OnChange publishes ResourceIndexUpdatedEvent
 			OnChange: func(store types.Store, changeStats types.ChangeStats) {

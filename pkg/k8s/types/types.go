@@ -336,6 +336,13 @@ type WatcherConfig struct {
 	// Optional: If not provided, no sync complete notification is sent.
 	OnSyncComplete OnSyncCompleteCallback
 
+	// SelfWrites, when set, identifies watch events that echo this controller's
+	// own writes (by resourceVersion). Such an event still refreshes the store
+	// but does not count as a change, so OnChange is not invoked for it.
+	//
+	// Optional: nil treats every event as a change.
+	SelfWrites SelfWriteFilter
+
 	// CallOnChangeDuringSync determines if OnChange is called during initial synchronization.
 	//
 	// If false (default), OnChange is suppressed until sync completes, and only OnSyncComplete

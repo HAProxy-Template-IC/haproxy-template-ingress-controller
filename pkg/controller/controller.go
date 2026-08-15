@@ -48,6 +48,7 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	k8stypes "gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
 	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
@@ -684,6 +685,10 @@ type componentSetup struct {
 	ErrGroup              *errgroup.Group // Tracks all background goroutines for graceful shutdown
 	LeaderState           *leaderCallbackState
 
+	// SelfWrites links the status applier (writer) to the resource watchers
+	// (readers) so a status write's own echo doesn't re-render.
+	SelfWrites *k8stypes.SelfWriteRegistry
+
 	// cleanups holds tear-down callbacks registered by helpers
 	// during setup. RunCleanups invokes them in reverse-registration
 	// order on iteration exit (mirrors `defer` semantics) so e.g. a
@@ -806,6 +811,7 @@ func setupComponents(
 	return &componentSetup{
 		Bus:                   bus,
 		Registry:              lifecycleRegistry,
+		SelfWrites:            k8stypes.NewSelfWriteRegistry(0),
 		MetricsComponent:      metricsComponent,
 		MetricsRegistry:       registry,
 		IntrospectionRegistry: introspectionRegistry,

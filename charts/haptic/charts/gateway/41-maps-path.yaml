@@ -93,7 +93,7 @@ templateSnippets:
       {%- end macro %}
 
   util-generate-path-regex-map-gateway:
-    requires: [httproutes]
+    requires: [httproutes, referencegrants]
     template: |
       {# Generate regex path map entries for HTTPRoute.
 
@@ -101,6 +101,7 @@ templateSnippets:
           macro takes typed `[]*resources.httproutes.T` directly. No
           GRPCRoute sibling. #}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- macro GeneratePathRegexMap(routes []*resources.httproutes.T) -%}
@@ -120,6 +121,7 @@ templateSnippets:
       {%- var firstBackendPort = toint(firstBackend.Port) %}
       {%- if firstBackendPort == 0 %}{%- firstBackendPort = 80 %}{%- end %}
       {%- var backend = map[string]any{"name": firstBackend.Name, "port": firstBackendPort} %}
+      {%- var backendValid = BackendRefValid("HTTPRoute", routeNs, firstBackend) == "true" %}
       {#- The empty-matches case synthesises the chart's "no matches
           → PathPrefix /" default. With typed rule.Matches we iterate
           the slice directly; if empty, we still need one synthetic
@@ -142,6 +144,7 @@ templateSnippets:
         "hostname": hostname,
         "pathValue": matchPathValue,
         "backend": backend,
+        "valid": backendValid,
       }) %}
       {%- end %}
       {%- end %}
@@ -151,14 +154,14 @@ templateSnippets:
       {%- if len(regexEntries) > 0 %}
       # HTTPRoute: {{ routeNs }}/{{ routeName }} ({{ len(regexEntries) }} regex paths)
       {% for _, entry := range regexEntries -%}
-      {{ MapKeyForHost(entry["hostname"]) }}{{ entry["pathValue"] }} {{ BackendNameGateway(route, entry["backend"]) }}
+      {{ MapKeyForHost(entry["hostname"]) }}{{ entry["pathValue"] }} {% if entry["valid"] == true %}{{ BackendNameGateway(route, entry["backend"]) }}{% else %}gw-invalid-backend{% end %}
       {% end -%}
       {%- end %}
       {%- end %}
       {%- end macro -%}
 
   util-sharded-path-regex-map-gateway:
-    requires: [httproutes]
+    requires: [httproutes, referencegrants]
     template: |
       {# Sharded regex path map generator for HTTPRoute. #}
       {%- import "util-generate-path-regex-map-gateway" for GeneratePathRegexMap -%}
@@ -199,7 +202,7 @@ templateSnippets:
       {{ GeneratePathMapEntries("PathPrefix", "/") }}
 
   map-path-regex-500-gateway:
-    requires: [httproutes]
+    requires: [httproutes, referencegrants]
     template: |
       {# Generate regex path map entries for HTTPRoute with RegularExpression type #}
       {%- import "util-sharded-path-regex-map-gateway" for ShardedPathRegexMap %}

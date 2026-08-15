@@ -1,11 +1,12 @@
 templateSnippets:
   util-generate-httproute-weighted-backend-map-gateway:
-    requires: [httproutes]
+    requires: [httproutes, referencegrants]
     template: |
       {# Generate weighted backend map entries for HTTPRoute.
           Typed sibling — formerly GenerateWeightedBackendMap with a
           polymorphic `routes []any` parameter. #}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- macro GenerateHTTPRouteWeightedBackendMap(routes []*resources.httproutes.T) -%}
       {%- for _, route := range routes %}
       {%- var routeNs = route.Metadata.Namespace %}
@@ -22,11 +23,13 @@ templateSnippets:
             {%- var backend = map[string]any{"name": backendRef.Name, "port": backendPort} %}
             {%- var weight = toint(backendRef.Weight) %}
             {%- if weight == 0 && dig(backendRef, "weight") == nil %}{%- weight = 1 %}{%- end %}
+            {%- var refValid = BackendRefValid("HTTPRoute", routeNs, backendRef) == "true" %}
             {%- for i := cumulative; i < cumulative + weight; i++ %}
               {%- weightedEntries = append(weightedEntries, map[string]any{
                 "index": i,
                 "routeKey": routeKey,
                 "backend": backend,
+                "valid": refValid,
               }) %}
             {%- end %}
             {%- cumulative = cumulative + weight %}
@@ -37,19 +40,20 @@ templateSnippets:
       {%- if len(weightedEntries) > 0 %}
       # HTTPRoute: {{ routeNs }}/{{ routeName }} (weighted rules)
       {% for _, entry := range weightedEntries -%}
-      {{ entry["index"] }}:{{ entry["routeKey"] }} {{ BackendNameGateway(route, entry["backend"]) }}
+      {{ entry["index"] }}:{{ entry["routeKey"] }} {% if entry["valid"] == true %}{{ BackendNameGateway(route, entry["backend"]) }}{% else %}gw-invalid-backend{% end %}
       {% end -%}
       {%- end %}
       {%- end %}
       {%- end macro -%}
 
   util-generate-grpcroute-weighted-backend-map-gateway:
-    requires: [grpcroutes]
+    requires: [grpcroutes, referencegrants]
     template: |
       {# Generate weighted backend map entries for GRPCRoute.
           Typed sibling of GenerateHTTPRouteWeightedBackendMap; body
           differs only in the `route` slice type. #}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- macro GenerateGRPCRouteWeightedBackendMap(routes []*resources.grpcroutes.T) -%}
       {%- for _, route := range routes %}
       {%- var routeNs = route.Metadata.Namespace %}
@@ -66,11 +70,13 @@ templateSnippets:
             {%- var backend = map[string]any{"name": backendRef.Name, "port": backendPort} %}
             {%- var weight = toint(backendRef.Weight) %}
             {%- if weight == 0 && dig(backendRef, "weight") == nil %}{%- weight = 1 %}{%- end %}
+            {%- var refValid = BackendRefValid("GRPCRoute", routeNs, backendRef) == "true" %}
             {%- for i := cumulative; i < cumulative + weight; i++ %}
               {%- weightedEntries = append(weightedEntries, map[string]any{
                 "index": i,
                 "routeKey": routeKey,
                 "backend": backend,
+                "valid": refValid,
               }) %}
             {%- end %}
             {%- cumulative = cumulative + weight %}
@@ -81,14 +87,14 @@ templateSnippets:
       {%- if len(weightedEntries) > 0 %}
       # GRPCRoute: {{ routeNs }}/{{ routeName }} (weighted rules)
       {% for _, entry := range weightedEntries -%}
-      {{ entry["index"] }}:{{ entry["routeKey"] }} {{ BackendNameGateway(route, entry["backend"]) }}
+      {{ entry["index"] }}:{{ entry["routeKey"] }} {% if entry["valid"] == true %}{{ BackendNameGateway(route, entry["backend"]) }}{% else %}gw-invalid-backend{% end %}
       {% end -%}
       {%- end %}
       {%- end %}
       {%- end macro -%}
 
   util-sharded-weighted-backend-map-gateway:
-    requires: [grpcroutes, httproutes]
+    requires: [grpcroutes, httproutes, referencegrants]
     template: |
       {# Per-Kind typed sharded weighted-backend-map wrappers.
           Each calls its Kind-specific Generate macro with the typed
@@ -120,7 +126,7 @@ templateSnippets:
       {%- end macro -%}
 
   map-weighted-backend-500-gateway:
-    requires: [grpcroutes, httproutes]
+    requires: [grpcroutes, httproutes, referencegrants]
     template: |
       {# Generate weighted backend map entries for HTTPRoute and
           GRPCRoute. Both kinds support multi-backendRef rules with

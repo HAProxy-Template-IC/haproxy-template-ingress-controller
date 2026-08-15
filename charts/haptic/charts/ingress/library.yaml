@@ -892,10 +892,6 @@ validationTests:
           server SRV_4 10.0.0.2:8080 check
           server SRV_5 192.0.2.1:1 disabled
           server SRV_6 192.0.2.1:1 disabled
-          server SRV_7 192.0.2.1:1 disabled
-          server SRV_8 192.0.2.1:1 disabled
-          server SRV_9 192.0.2.1:1 disabled
-          server SRV_10 192.0.2.1:1 disabled
     fixtures:
       services:
         - apiVersion: v1
@@ -957,10 +953,6 @@ validationTests:
           server SRV_4 10.0.0.6:8080 check
           server SRV_5 192.0.2.1:1 disabled
           server SRV_6 192.0.2.1:1 disabled
-          server SRV_7 192.0.2.1:1 disabled
-          server SRV_8 192.0.2.1:1 disabled
-          server SRV_9 192.0.2.1:1 disabled
-          server SRV_10 192.0.2.1:1 disabled
     fixtures:
       services:
         - apiVersion: v1
@@ -1004,6 +996,346 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"}
       - {type: contains, target: haproxy.cfg, pattern: "server SRV_5 10\\.0\\.0\\.2:8080"}
 
+  test-ingress-slot-pool-default-sizing:
+    description: |
+      Default pool: endpoints + max(minFree 2, ceil(n/4)) slots. One pod → 3 slots.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: pool-one, namespace: default}
+          spec: *specPortsPort
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: pool-one-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: pool-one
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+              targetRef: {kind: Pod, name: pool-one-pod-1}
+          ports:
+            - {port: 8080, protocol: TCP}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: slot-pool-default-sizing
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: pool-one.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: pool-one, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10\\.0\\.0\\.1:8080"}
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_3 192\\.0\\.2\\.1:1 .*disabled"}
+      - {type: match_count, target: haproxy.cfg, pattern: "guid srv:default_slot-pool-default-sizing_svc_pool-one_80:SRV_[0-9]+ ", expected: "3"}
+  test-ingress-slot-pool-grows-to-fit:
+    description: |
+      A backend never drops endpoints: 12 ready pods with no annotation get 12 servers plus ceil(12/4)=3 free slots.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: pool-twelve, namespace: default}
+          spec: *specPortsPort
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: pool-twelve-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: pool-twelve
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.1.1"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-1}
+            - addresses: ["10.0.1.2"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-2}
+            - addresses: ["10.0.1.3"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-3}
+            - addresses: ["10.0.1.4"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-4}
+            - addresses: ["10.0.1.5"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-5}
+            - addresses: ["10.0.1.6"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-6}
+            - addresses: ["10.0.1.7"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-7}
+            - addresses: ["10.0.1.8"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-8}
+            - addresses: ["10.0.1.9"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-9}
+            - addresses: ["10.0.1.10"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-10}
+            - addresses: ["10.0.1.11"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-11}
+            - addresses: ["10.0.1.12"]
+              targetRef: {kind: Pod, name: pool-twelve-pod-12}
+          ports:
+            - {port: 8080, protocol: TCP}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: slot-pool-grows-to-fit
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: pool-twelve.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: pool-twelve, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_12 10\\.0\\.1\\.12:8080"}
+      - {type: match_count, target: haproxy.cfg, pattern: "server SRV_[0-9]+ 10\\.0\\.1\\.[0-9]+:8080 guid srv:default_slot-pool-grows-to-fit_svc_pool-twelve_80:", expected: "12"}
+      - {type: match_count, target: haproxy.cfg, pattern: "guid srv:default_slot-pool-grows-to-fit_svc_pool-twelve_80:SRV_[0-9]+ ", expected: "15"}
+  test-ingress-slot-pool-annotation-is-block-size:
+    description: |
+      scale-server-slots is a block size (haproxytech semantics), not a cap: 6 pods with block 5 get 6 + 2 free rounded up to 10; nobody is dropped. Uses the native haproxy-haptic.org prefix (enabled by default) so every chart profile runs it.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: pool-block, namespace: default}
+          spec: *specPortsPort
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: pool-block-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: pool-block
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.2.1"]
+              targetRef: {kind: Pod, name: pool-block-pod-1}
+            - addresses: ["10.0.2.2"]
+              targetRef: {kind: Pod, name: pool-block-pod-2}
+            - addresses: ["10.0.2.3"]
+              targetRef: {kind: Pod, name: pool-block-pod-3}
+            - addresses: ["10.0.2.4"]
+              targetRef: {kind: Pod, name: pool-block-pod-4}
+            - addresses: ["10.0.2.5"]
+              targetRef: {kind: Pod, name: pool-block-pod-5}
+            - addresses: ["10.0.2.6"]
+              targetRef: {kind: Pod, name: pool-block-pod-6}
+          ports:
+            - {port: 8080, protocol: TCP}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: slot-pool-annotation-is-block-size
+            namespace: default
+            annotations:
+              haproxy-haptic.org/scale-server-slots: "5"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: pool-block.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: pool-block, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: match_count, target: haproxy.cfg, pattern: "server SRV_[0-9]+ 10\\.0\\.2\\.[0-9]+:8080 guid srv:default_slot-pool-annotation-is-block-size_svc_pool-block_80:", expected: "6"}
+      - {type: match_count, target: haproxy.cfg, pattern: "guid srv:default_slot-pool-annotation-is-block-size_svc_pool-block_80:SRV_[0-9]+ ", expected: "10"}
+  test-ingress-slot-pool-keeps-current-when-it-fits:
+    description: |
+      The current pool is kept while the endpoints still fit and it is under twice the desired size: 6 live slots, 3 pods (desired 5) → still 6 slots, no reload.
+    currentConfig: |
+      backend default_slot-pool-keeps-current-when-it-fits_svc_pool-keep_80
+          server SRV_1 10.0.3.1:8080 check
+          server SRV_2 10.0.3.2:8080 check
+          server SRV_3 192.0.2.1:1 disabled
+          server SRV_4 192.0.2.1:1 disabled
+          server SRV_5 192.0.2.1:1 disabled
+          server SRV_6 192.0.2.1:1 disabled
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: pool-keep, namespace: default}
+          spec: *specPortsPort
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: pool-keep-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: pool-keep
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.3.1"]
+              targetRef: {kind: Pod, name: pool-keep-pod-1}
+            - addresses: ["10.0.3.2"]
+              targetRef: {kind: Pod, name: pool-keep-pod-2}
+            - addresses: ["10.0.3.3"]
+              targetRef: {kind: Pod, name: pool-keep-pod-3}
+          ports:
+            - {port: 8080, protocol: TCP}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: slot-pool-keeps-current-when-it-fits
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: pool-keep.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: pool-keep, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10\\.0\\.3\\.1:8080"}
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_3 10\\.0\\.3\\.3:8080"}
+      - {type: match_count, target: haproxy.cfg, pattern: "guid srv:default_slot-pool-keeps-current-when-it-fits_svc_pool-keep_80:SRV_[0-9]+ ", expected: "6"}
+  test-ingress-slot-pool-shrinks-when-mostly-idle:
+    description: |
+      A pool at least twice the desired size shrinks: 8 live slots for 2 pods (desired 4) → 4 slots (7 would be kept).
+    currentConfig: |
+      backend default_slot-pool-shrinks-when-mostly-idle_svc_pool-shrink_80
+          server SRV_1 10.0.4.1:8080 check
+          server SRV_2 10.0.4.2:8080 check
+          server SRV_3 192.0.2.1:1 disabled
+          server SRV_4 192.0.2.1:1 disabled
+          server SRV_5 192.0.2.1:1 disabled
+          server SRV_6 192.0.2.1:1 disabled
+          server SRV_7 192.0.2.1:1 disabled
+          server SRV_8 192.0.2.1:1 disabled
+          server SRV_9 192.0.2.1:1 disabled
+          server SRV_10 192.0.2.1:1 disabled
+          server SRV_11 192.0.2.1:1 disabled
+          server SRV_12 192.0.2.1:1 disabled
+          server SRV_13 192.0.2.1:1 disabled
+          server SRV_14 192.0.2.1:1 disabled
+          server SRV_15 192.0.2.1:1 disabled
+          server SRV_16 192.0.2.1:1 disabled
+          server SRV_17 192.0.2.1:1 disabled
+          server SRV_18 192.0.2.1:1 disabled
+          server SRV_19 192.0.2.1:1 disabled
+          server SRV_20 192.0.2.1:1 disabled
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: pool-shrink, namespace: default}
+          spec: *specPortsPort
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: pool-shrink-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: pool-shrink
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.4.1"]
+              targetRef: {kind: Pod, name: pool-shrink-pod-1}
+            - addresses: ["10.0.4.2"]
+              targetRef: {kind: Pod, name: pool-shrink-pod-2}
+          ports:
+            - {port: 8080, protocol: TCP}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: slot-pool-shrinks-when-mostly-idle
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: pool-shrink.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: pool-shrink, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10\\.0\\.4\\.1:8080"}
+      - {type: contains, target: haproxy.cfg, pattern: "server SRV_2 10\\.0\\.4\\.2:8080"}
+      - {type: match_count, target: haproxy.cfg, pattern: "guid srv:default_slot-pool-shrinks-when-mostly-idle_svc_pool-shrink_80:SRV_[0-9]+ ", expected: "4"}
+  test-ingress-slot-pool-grows-past-current:
+    description: |
+      A pool that no longer fits grows by a block: 4 live slots, 5 pods → 5 + 2 free = 7 slots, every pod served.
+    currentConfig: |
+      backend default_slot-pool-grows-past-current_svc_pool-grow_80
+          server SRV_1 10.0.5.1:8080 check
+          server SRV_2 10.0.5.2:8080 check
+          server SRV_3 10.0.5.3:8080 check
+          server SRV_4 10.0.5.4:8080 check
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: pool-grow, namespace: default}
+          spec: *specPortsPort
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: pool-grow-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: pool-grow
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.5.1"]
+              targetRef: {kind: Pod, name: pool-grow-pod-1}
+            - addresses: ["10.0.5.2"]
+              targetRef: {kind: Pod, name: pool-grow-pod-2}
+            - addresses: ["10.0.5.3"]
+              targetRef: {kind: Pod, name: pool-grow-pod-3}
+            - addresses: ["10.0.5.4"]
+              targetRef: {kind: Pod, name: pool-grow-pod-4}
+            - addresses: ["10.0.5.5"]
+              targetRef: {kind: Pod, name: pool-grow-pod-5}
+          ports:
+            - {port: 8080, protocol: TCP}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: slot-pool-grows-past-current
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: pool-grow.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: pool-grow, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: match_count, target: haproxy.cfg, pattern: "server SRV_[0-9]+ 10\\.0\\.5\\.[0-9]+:8080 guid srv:default_slot-pool-grows-past-current_svc_pool-grow_80:", expected: "5"}
+      - {type: match_count, target: haproxy.cfg, pattern: "guid srv:default_slot-pool-grows-past-current_svc_pool-grow_80:SRV_[0-9]+ ", expected: "7"}
   test-ingress-endpoint-conditions-filter:
     description: |
       EndpointSlice entries with conditions.ready=false (pod starting up,
