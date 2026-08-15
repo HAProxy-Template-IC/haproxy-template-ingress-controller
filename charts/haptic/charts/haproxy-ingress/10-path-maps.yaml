@@ -25,6 +25,8 @@ templateSnippets:
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
@@ -45,7 +47,9 @@ templateSnippets:
         {%- for _, rule := range ingress.Spec.Rules %}
           {%- for _, path := range rule.Http.Paths %}
           {%- if path.PathType == "ImplementationSpecific" %}
-      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- var pathInj = ConfigInjectionKind(path.Path, "mapkey") -%}
+          {%- if pathInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " has a regex path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.") -}}{%- continue -%}{%- end -%}
+      {{ "\n" }}{{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
         {%- end %}
@@ -75,6 +79,8 @@ templateSnippets:
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
@@ -86,7 +92,9 @@ templateSnippets:
         {%- for _, rule := range ingress.Spec.Rules %}
           {%- for _, path := range rule.Http.Paths %}
           {%- if path.PathType == "ImplementationSpecific" %}
-      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- var pathInj = ConfigInjectionKind(path.Path, "mapkey") -%}
+          {%- if pathInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " has an exact path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.") -}}{%- continue -%}{%- end -%}
+      {{ "\n" }}{{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
         {%- end %}
@@ -115,6 +123,8 @@ templateSnippets:
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
@@ -126,12 +136,12 @@ templateSnippets:
         {%- for _, rule := range ingress.Spec.Rules %}
           {%- for _, path := range rule.Http.Paths %}
           {%- if path.PathType == "ImplementationSpecific" %}
-            {%- var pathValue = path.Path %}
-            {#- Ensure path ends with / for prefix matching -#}
-            {%- if pathValue != "" && !hasSuffix(pathValue, "/") %}
-              {%- pathValue = pathValue + "/" %}
-            {%- end %}
-      {{ MapKeyForHost(rule.Host) }}{{ pathValue }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- var pathInj = ConfigInjectionKind(path.Path, "mapkey") -%}
+          {%- if pathInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " has a prefix path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.") -}}{%- continue -%}{%- end -%}
+          {%- var pathValue = path.Path -%}
+          {#- Ensure path ends with / for prefix matching -#}
+          {%- if pathValue != "" && !hasSuffix(pathValue, "/") -%}{%- pathValue = pathValue + "/" -%}{%- end -%}
+      {{ "\n" }}{{ MapKeyForHost(rule.Host) }}{{ pathValue }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
         {%- end %}
@@ -163,6 +173,8 @@ templateSnippets:
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
@@ -174,7 +186,9 @@ templateSnippets:
         {%- for _, rule := range ingress.Spec.Rules %}
           {%- for _, path := range rule.Http.Paths %}
           {%- if path.PathType == "ImplementationSpecific" %}
-      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- var pathInj = ConfigInjectionKind(path.Path, "mapkey") -%}
+          {%- if pathInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " has a begin path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.") -}}{%- continue -%}{%- end -%}
+      {{ "\n" }}{{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
         {%- end %}

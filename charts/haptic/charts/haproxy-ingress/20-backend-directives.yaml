@@ -21,7 +21,10 @@ templateSnippets:
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#timeout
       #}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
         {%- var tConnect = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-connect"] %}
         {%- var tServer = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-server"] %}
         {%- var tQueue = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-queue"] %}
@@ -33,22 +36,40 @@ templateSnippets:
       # haproxy-ingress/backend-directives-timeouts
         {%- end %}
         {%- if tConnect != "" %}
+          {%- var injTC = ConfigInjectionKind(tConnect, "token") %}
+          {%- if injTC != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidTimeout", "Ingress " + key + " annotation 'haproxy-ingress.github.io/timeout-connect' contains " + injTC + "; the timeout is not applied. Remove whitespace, quotes and control characters.") -}}{%- else %}
       timeout connect {{ tConnect }}
+          {%- end %}
         {% end %}
         {%- if tServer != "" %}
+          {%- var injTS = ConfigInjectionKind(tServer, "token") %}
+          {%- if injTS != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidTimeout", "Ingress " + key + " annotation 'haproxy-ingress.github.io/timeout-server' contains " + injTS + "; the timeout is not applied. Remove whitespace, quotes and control characters.") -}}{%- else %}
       timeout server {{ tServer }}
+          {%- end %}
         {% end %}
         {%- if tQueue != "" %}
+          {%- var injTQ = ConfigInjectionKind(tQueue, "token") %}
+          {%- if injTQ != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidTimeout", "Ingress " + key + " annotation 'haproxy-ingress.github.io/timeout-queue' contains " + injTQ + "; the timeout is not applied. Remove whitespace, quotes and control characters.") -}}{%- else %}
       timeout queue {{ tQueue }}
+          {%- end %}
         {% end %}
         {%- if tTunnel != "" %}
+          {%- var injTT = ConfigInjectionKind(tTunnel, "token") %}
+          {%- if injTT != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidTimeout", "Ingress " + key + " annotation 'haproxy-ingress.github.io/timeout-tunnel' contains " + injTT + "; the timeout is not applied. Remove whitespace, quotes and control characters.") -}}{%- else %}
       timeout tunnel {{ tTunnel }}
+          {%- end %}
         {% end %}
         {%- if tHttpReq != "" %}
+          {%- var injTH = ConfigInjectionKind(tHttpReq, "token") %}
+          {%- if injTH != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidTimeout", "Ingress " + key + " annotation 'haproxy-ingress.github.io/timeout-http-request' contains " + injTH + "; the timeout is not applied. Remove whitespace, quotes and control characters.") -}}{%- else %}
       timeout http-request {{ tHttpReq }}
+          {%- end %}
         {% end %}
         {%- if tKeepAlive != "" %}
+          {%- var injTK = ConfigInjectionKind(tKeepAlive, "token") %}
+          {%- if injTK != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidTimeout", "Ingress " + key + " annotation 'haproxy-ingress.github.io/timeout-keep-alive' contains " + injTK + "; the timeout is not applied. Remove whitespace, quotes and control characters.") -}}{%- else %}
       timeout http-keep-alive {{ tKeepAlive }}
+          {%- end %}
         {% end %}
       {%- end -%}
 
@@ -136,6 +157,8 @@ templateSnippets:
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#health-check
       #}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -150,10 +173,16 @@ templateSnippets:
       # haproxy-ingress/backend-directives-health-checks
         {%- end %}
         {%- if checkUri != "" %}
+          {%- var injCU = ConfigInjectionKind(checkUri, "token") %}
+          {%- if injCU != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidHealthCheck", "Ingress " + key + " annotation 'haproxy-ingress.github.io/health-check-uri' contains " + injCU + "; the health check is not applied. Remove whitespace, quotes and control characters.") -}}{%- else %}
       option httpchk GET {{ checkUri }}
+          {%- end %}
         {%- end %}
         {%- if checkInterval != "" %}
+          {%- var injCI = ConfigInjectionKind(checkInterval, "token") %}
+          {%- if injCI != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidHealthCheck", "Ingress " + key + " annotation 'haproxy-ingress.github.io/backend-check-interval' contains " + injCI + "; the check interval is not applied. Remove whitespace, quotes and control characters.") -}}{%- else %}
           {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "inter " + checkInterval) %}
+          {%- end %}
         {%- end %}
         {%- if checkPort != "" %}
           {%- var val = toint(checkPort) %}
@@ -223,6 +252,7 @@ templateSnippets:
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#secure-backends
       #}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -263,6 +293,8 @@ templateSnippets:
           {%- if secureSni == "sni" || secureSni == "host" %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "sni req.hdr(host)") %}
           {%- else %}
+            {%- var injSni = ConfigInjectionKind(secureSni, "token") %}
+            {%- if injSni != "" %}{{- fail("Invalid value for annotation 'haproxy-ingress.github.io/secure-sni' on Ingress '" + key + "': contains " + injSni + " and would break the backend SNI directive. Remove whitespace, quotes and control characters.") -}}{%- end %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "sni str(" + secureSni + ")") %}
           {%- end %}
         {%- end %}
@@ -270,6 +302,8 @@ templateSnippets:
         {#- secure-verify-hostname -#}
         {%- var verifyHostname = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-verify-hostname"] %}
         {%- if verifyHostname != "" %}
+          {%- var injVH = ConfigInjectionKind(verifyHostname, "token") %}
+          {%- if injVH != "" %}{{- fail("Invalid value for annotation 'haproxy-ingress.github.io/secure-verify-hostname' on Ingress '" + key + "': contains " + injVH + " and would break the backend cert-verification directive. Remove whitespace, quotes and control characters.") -}}{%- end %}
           {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verifyhost " + verifyHostname) %}
         {%- end %}
 
@@ -339,9 +373,13 @@ templateSnippets:
         {%- var sslCipherSuites = ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-cipher-suites-backend"] %}
         {%- if sslEnabled %}
           {%- if sslCiphers != "" %}
+            {%- var injCph = ConfigInjectionKind(sslCiphers, "token") %}
+            {%- if injCph != "" %}{{- fail("Invalid value for annotation 'haproxy-ingress.github.io/ssl-ciphers-backend' on Ingress '" + key + "': contains " + injCph + " and would break the backend ciphers directive. Remove whitespace, quotes and control characters.") -}}{%- end %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ciphers " + sslCiphers) %}
           {%- end %}
           {%- if sslCipherSuites != "" %}
+            {%- var injCphS = ConfigInjectionKind(sslCipherSuites, "token") %}
+            {%- if injCphS != "" %}{{- fail("Invalid value for annotation 'haproxy-ingress.github.io/ssl-cipher-suites-backend' on Ingress '" + key + "': contains " + injCphS + " and would break the backend ciphersuites directive. Remove whitespace, quotes and control characters.") -}}{%- end %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ciphersuites " + sslCipherSuites) %}
           {%- end %}
         {%- end %}
@@ -395,6 +433,8 @@ templateSnippets:
         Generated HAProxy Config:
           cookie <name> <strategy> [indirect] [nocache] [dynamic] [domain <domain>] [attr "SameSite=<value>"]
       #}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -411,6 +451,16 @@ templateSnippets:
           {%- var domain = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-domain"] %}
           {%- var sameSite = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-same-site"] %}
           {%- var preserve = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-preserve"] %}
+          {#- keywords is a space-separated list, so guard each keyword as a token
+              rather than the whole string (a single token guard would reject the
+              legitimate spaces between keywords). -#}
+          {%- var cookieInj = ConfigInjectionKind(cookieName, "token") %}
+          {%- if cookieInj == "" && domain != "" %}{%- cookieInj = ConfigInjectionKind(domain, "token") %}{%- end %}
+          {%- if cookieInj == "" && keywords != "" %}
+            {%- for _, kw := range split(keywords, " ") %}
+              {%- if cookieInj == "" && kw != "" %}{%- cookieInj = ConfigInjectionKind(kw, "token") %}{%- end %}
+            {%- end %}
+          {%- end %}
 
           {#- Validate strategy -#}
           {%- if strategy != "insert" && strategy != "rewrite" && strategy != "prefix" %}
@@ -452,8 +502,10 @@ templateSnippets:
             {%- end %}
             {%- cookieDir = cookieDir + " attr \"SameSite=" + sameSite + "\"" %}
           {%- end %}
+          {%- if cookieInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidSessionCookie", "Ingress " + key + " has a session-cookie annotation value containing " + cookieInj + "; session affinity is not applied. Remove control characters, quotes and '#' from session-cookie-name/-keywords/-domain.") -}}{%- else %}
       # haproxy-ingress/session-affinity ({{ key }})
       {{ cookieDir }}
+          {%- end %}
         {%- end %}
       {%- end -%}
 
@@ -676,6 +728,8 @@ templateSnippets:
         server parameters, appended to the backend's default-server line. All
         are runtime-safe options.
       #}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -688,17 +742,26 @@ templateSnippets:
           {{- fail("Annotation 'haproxy-ingress.github.io/agent-check-port' is required to enable the agent check on Ingress '" + key + "'; agent-check-addr/-interval/-send have no effect without it.") -}}
         {%- end %}
         {%- if aPort != "" %}
-          {%- var agentFlags = "agent-check agent-port " + aPort %}
-          {%- if aAddr != "" %}
-            {%- agentFlags = agentFlags + " agent-addr " + aAddr %}
+          {%- var aSendStripped = strip(aSend) %}
+          {%- var agentInj = ConfigInjectionKind(aPort, "token") %}
+          {%- if agentInj == "" && aAddr != "" %}{%- agentInj = ConfigInjectionKind(aAddr, "token") %}{%- end %}
+          {%- if agentInj == "" && aInter != "" %}{%- agentInj = ConfigInjectionKind(aInter, "token") %}{%- end %}
+          {%- if agentInj == "" && aSend != "" %}{%- agentInj = ConfigInjectionKind(aSendStripped, "token") %}{%- end %}
+          {%- if agentInj != "" %}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAgentCheck", "Ingress " + key + " has an agent-check annotation value containing " + agentInj + "; the agent check is not applied. Remove whitespace, quotes and control characters.") -}}
+          {%- else %}
+            {%- var agentFlags = "agent-check agent-port " + aPort %}
+            {%- if aAddr != "" %}
+              {%- agentFlags = agentFlags + " agent-addr " + aAddr %}
+            {%- end %}
+            {%- if aInter != "" %}
+              {%- agentFlags = agentFlags + " agent-inter " + aInter %}
+            {%- end %}
+            {%- if aSend != "" %}
+              {%- agentFlags = agentFlags + " agent-send " + aSendStripped %}
+            {%- end %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), agentFlags) %}
           {%- end %}
-          {%- if aInter != "" %}
-            {%- agentFlags = agentFlags + " agent-inter " + aInter %}
-          {%- end %}
-          {%- if aSend != "" %}
-            {%- agentFlags = agentFlags + " agent-send " + strip(aSend) %}
-          {%- end %}
-          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), agentFlags) %}
         {%- end %}
       {%- end -%}
 

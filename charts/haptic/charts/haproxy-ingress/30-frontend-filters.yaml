@@ -140,6 +140,9 @@ templateSnippets:
           http-request set-header <name> <value> if <host-match>
       #}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -159,7 +162,11 @@ templateSnippets:
                   {%- if len(parts) >= 2 %}
                     {%- var headerName = trimSpace(parts[0]) %}
                     {%- var headerValue = trimSpace(join(parts[1:], ":")) %}
-      http-request set-header {{ headerName }} '{{ headerValue }}' if {{ HostMatchCondition(hosts) }}
+                    {%- var nameInj = ConfigInjectionKind(headerName, "token") %}
+                    {%- if nameInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidHeader", "Ingress " + key + " annotation 'haproxy-ingress.github.io/headers' has a header name containing " + nameInj + ", which would break the set-header directive; the header is not applied. Remove whitespace, quotes and control characters from the header name.") -}}{%- continue %}{%- end %}
+                    {%- var valueInj = ConfigInjectionKind(headerValue, "line") %}
+                    {%- if valueInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidHeader", "Ingress " + key + " annotation 'haproxy-ingress.github.io/headers' has a value for header '" + headerName + "' containing " + valueInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}{%- continue %}{%- end %}
+      http-request set-header {{ headerName }} "{{ EscapeLogFormatValue(headerValue) }}" if {{ HostMatchCondition(hosts) }}
                   {%- end %}
                 {%- end %}
               {%- end %}
