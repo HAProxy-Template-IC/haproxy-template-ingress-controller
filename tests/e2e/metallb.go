@@ -46,9 +46,8 @@ const metallbManifestURL = "https://raw.githubusercontent.com/metallb/metallb/" 
 // conformance suite expects Gateway.status.addresses to populate with
 // reachable IPs, which requires real LoadBalancer support.
 //
-// The address pool is derived dynamically from `docker network inspect kind`
-// — pinning a hardcoded range would break on any host whose Docker daemon
-// uses a different default subnet.
+// The address pool is derived from the configured kind Docker network;
+// pinning a range would break on daemons that allocate another subnet.
 //
 // Idempotent: re-running on a cluster that already has MetalLB installed
 // just re-applies the same manifests (no-op via SSA), so the standard
@@ -80,7 +79,7 @@ func installMetalLB(ctx context.Context) (context.Context, error) {
 	}
 
 	// Step 3: derive the IPv4 range from the kind Docker network.
-	addressRange, err := metalLBAddressRange(ctx)
+	addressRange, err := metalLBAddressRange(ctx, e2eCluster.DockerNetwork)
 	if err != nil {
 		return ctx, fmt.Errorf("derive metallb address range: %w", err)
 	}
@@ -139,11 +138,11 @@ spec:
 // configuration. We take the upper sliver (.200–.250 of the third
 // octet) to leave room for the kind nodes themselves, which Docker
 // allocates from the bottom of the subnet.
-func metalLBAddressRange(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "docker", "network", "inspect", "kind",
+func metalLBAddressRange(ctx context.Context, networkName string) (string, error) {
+	out, err := exec.CommandContext(ctx, "docker", "network", "inspect", networkName,
 		"--format", "{{json .IPAM.Config}}").Output()
 	if err != nil {
-		return "", fmt.Errorf("inspect kind docker network: %w", err)
+		return "", fmt.Errorf("inspect kind docker network %q: %w", networkName, err)
 	}
 	var configs []struct {
 		Subnet string `json:"Subnet"`
@@ -183,5 +182,5 @@ func metalLBAddressRange(ctx context.Context) (string, error) {
 		base := fmt.Sprintf("%d.%d.%d", ip4[0], ip4[1], thirdOctet)
 		return fmt.Sprintf("%s.200-%s.250", base, base), nil
 	}
-	return "", fmt.Errorf("no IPv4 subnet found on kind docker network")
+	return "", fmt.Errorf("no IPv4 subnet found on kind docker network %q", networkName)
 }

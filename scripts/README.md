@@ -7,6 +7,7 @@ Shell helpers used by developers and by `Makefile` targets. Everything here is m
 | [`start-dev-env.sh`](#start-dev-envsh) | Local Kind-based development environment | developers |
 | [`test-templates.sh`](#test-templatessh) | Run the chart's `validationTests` against a merged Helm render | developers, CI |
 | [`test-helm-defaults.sh`](#test-helm-defaultssh) | Validate the chart with default values | developers, CI |
+| [`bench-gateway-api.sh`](#bench-gateway-apish) | Run pinned upstream Gateway API controller benchmarks | developers, CI |
 | [`test-benchmark.sh`](#test-benchmarksh) | Go benchmark runner with consistent flags | developers |
 | [`generate-dev-ssl-cert.sh`](#generate-dev-ssl-certsh) | Self-signed SSL cert used by the dev environment | `start-dev-env.sh` |
 | [`source-hash.sh`](#source-hashsh) | Hash of controller build inputs (dev-env sync check) | `start-dev-env.sh status` |
@@ -56,6 +57,16 @@ Always prefer this over running `haptic-controller validate` against a library f
 ## test-helm-defaults.sh
 
 Renders the chart with default values and asserts key invariants — useful as a quick "does the chart still produce valid output after my change?" check. Runs in CI on every MR.
+
+## bench-gateway-api.sh
+
+Runs HAPTIC against the route propagation, route change, and route scale programs from Howard John's `gateway-api-bench`. The script checks out an exact upstream commit at runtime, builds its programs, and installs the pinned Gateway API `v1.4.0` experimental bundle rather than copying or approximating the workloads locally. Use the Make target from the repository root:
+
+```bash
+make bench-gateway-api
+```
+
+The default run executes all three self-paced upstream programs from a static sibling container in a fresh, ownership-tagged `haptic-gwbench-*` Kind cluster and dedicated Docker network. It parses raw workload logs and writes paired Prometheus values and source timestamps, stable pod, container, and supervised-child identities, resolved backend image digests, all-container load-balancer logs, HAPTIC live-data-plane and scale route-mutation/activity proof, and separate pod-cgroup and container resource summaries under `artifacts/gateway-api-bench/`. `runner-summary.json` separates measured HAPTIC gaps from invalid evidence; a complete negative measured result keeps the runner exit code at `0`, including a scale-readiness deadline backed by valid observations, while invalid or incomplete evidence fails the run. A readiness deadline has no steady resource summary. The public report remains a ballpark reference because its joined topology and result pipeline differ. Helm captures are redacted, and an exact-value sensitive live-Secret scan gates the artifact tree while excluding only controller-owned SSL auxiliary `path` metadata. The manual `gateway-api-benchmark-smoke` CI job runs all scenarios with 300 probe routes, 100 ms HAPTIC timings, and nested timeouts below the hosted-runner limit; it is integration smoke, not a Part 2 comparison. The full default run remains local. CI keeps raw output outside artifact collection and stages it only after the terminal trust verdict. See [Performance — Gateway API implementation benchmark](../docs/site/docs/operations/performance.md#gateway-api-implementation-benchmark) for the scenario scope, configuration, and comparison limits.
 
 ## test-benchmark.sh
 

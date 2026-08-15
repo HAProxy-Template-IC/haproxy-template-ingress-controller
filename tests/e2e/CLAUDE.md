@@ -83,7 +83,15 @@ KEEP_CLUSTER=true make test-e2e
 
 # Keep namespaces after failure for debugging
 KEEP_NAMESPACE=true make test-e2e
+
 ```
+
+The defaults remain `haptic-e2e`, `/tmp/haproxy-e2e-kubeconfig`, the `kind`
+Docker network, and host ports `31080`, `31443`, and `31404`. The custom-cluster
+variables are an internal seam for a caller that owns and verifies the Docker
+network. Use `make bench-gateway-api` for an isolated benchmark environment.
+`HAPTIC_E2E_GWAPI_CHANNEL=experimental` installs the experimental CRDs and
+enables the chart's matching experimental-field validation tests.
 
 ## CI
 

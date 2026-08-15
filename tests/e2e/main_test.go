@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -47,6 +48,7 @@ import (
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	devassets "gitlab.com/haproxy-haptic/haptic/scripts/dev-env-assets"
+	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
@@ -54,9 +56,14 @@ import (
 // Initialised in TestMain. Tests run via testEnv.Test(t, feature).
 var testEnv env.Environment
 
-// kubeconfigPath is the kubeconfig file the suite uses; it is isolated from
-// the developer's default kubeconfig to prevent accidental cluster access.
-const kubeconfigPath = "/tmp/haproxy-e2e-kubeconfig"
+var e2eCluster = e2ecluster.Default()
+
+// ClusterName is the kind cluster the e2e suite owns.
+var ClusterName = e2eCluster.ClusterName
+
+var kubeconfigPath = e2eCluster.KubeconfigPath
+
+var clusterCreated bool
 
 func init() {
 	// Register the HAProxyTemplateConfig CRD types with the global scheme so
@@ -80,6 +87,15 @@ func init() {
 // before running. The Makefile target `test-e2e` depends on
 // `docker-build-test` to build it.
 func TestMain(m *testing.M) {
+	var err error
+	e2eCluster, err = e2ecluster.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: cluster configuration: %v\n", err)
+		os.Exit(1)
+	}
+	ClusterName = e2eCluster.ClusterName
+	kubeconfigPath = e2eCluster.KubeconfigPath
+
 	if _, err := expectedControllerIdentity(); err != nil {
 		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
 		os.Exit(1)
@@ -280,6 +296,9 @@ func startSetupHeartbeat(ctx context.Context) {
 // suite's isolated kubeconfig path.
 func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluster.Provider) (context.Context, error) {
 	if os.Getenv("SKIP_CLUSTER_CREATE") == "true" {
+		if e2eCluster.RequireNew {
+			return ctx, fmt.Errorf("SKIP_CLUSTER_CREATE=true cannot use e2e isolation overrides")
+		}
 		// CI mode: cluster pre-created. Just record the kubeconfig.
 		kc := os.Getenv("KUBECONFIG")
 		if kc == "" {
@@ -300,14 +319,47 @@ func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluste
 			break
 		}
 	}
+	if clusterExists && e2eCluster.RequireNew {
+		return ctx, fmt.Errorf("isolated kind cluster %q already exists; choose a unique cluster name", ClusterName)
+	}
+	if e2eCluster.RequireNew {
+		if _, err := os.Lstat(kubeconfigPath); err == nil {
+			return ctx, fmt.Errorf("isolated kubeconfig path already exists: %s", kubeconfigPath)
+		} else if !os.IsNotExist(err) {
+			return ctx, fmt.Errorf("inspect isolated kubeconfig path: %w", err)
+		}
+	}
 
 	if !clusterExists {
 		opts := []kindcluster.CreateOption{
 			kindcluster.CreateWithWaitForReady(DefaultClusterCreateTimeout),
-			kindcluster.CreateWithRawConfig([]byte(e2eKindConfig)),
+			kindcluster.CreateWithRawConfig([]byte(e2eCluster.KindConfig())),
 		}
-		if err := provider.Create(ClusterName, opts...); err != nil {
-			return ctx, fmt.Errorf("create kind cluster %q: %w", ClusterName, err)
+		var createErr, cleanupErr error
+		if e2eCluster.RequireNew {
+			kindExportDir, err := os.MkdirTemp("", "haptic-e2e-kind-kubeconfig-")
+			if err != nil {
+				return ctx, fmt.Errorf("create kind kubeconfig staging directory: %w", err)
+			}
+			opts = append(opts, kindcluster.CreateWithKubeconfigPath(filepath.Join(kindExportDir, "config")))
+			createErr = provider.Create(ClusterName, opts...)
+			if createErr == nil {
+				clusterCreated = true
+			}
+			if err := os.RemoveAll(kindExportDir); err != nil {
+				cleanupErr = fmt.Errorf("remove kind kubeconfig staging directory: %w", err)
+			}
+		} else {
+			createErr = provider.Create(ClusterName, opts...)
+			if createErr == nil {
+				clusterCreated = true
+			}
+		}
+		if createErr != nil || cleanupErr != nil {
+			if createErr != nil {
+				createErr = fmt.Errorf("create kind cluster %q: %w", ClusterName, createErr)
+			}
+			return ctx, errors.Join(createErr, cleanupErr)
 		}
 		// Best-effort metrics-server so the rolling-restart failure snapshot's
 		// `kubectl top` capture has real utilization data. Non-fatal.
@@ -321,7 +373,7 @@ func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluste
 	if kindutil.IsDockerInDocker() {
 		kubeconfig = kindutil.PatchKubeconfigForDind(kubeconfig)
 	}
-	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0600); err != nil {
+	if err := e2eCluster.WriteKubeconfig([]byte(kubeconfig)); err != nil {
 		return ctx, fmt.Errorf("write kubeconfig: %w", err)
 	}
 	cfg.WithKubeconfigFile(kubeconfigPath)
@@ -493,9 +545,7 @@ func installCRDs(ctx context.Context) (context.Context, error) {
 // sigs.k8s.io/gateway-api is bumped in go.mod (job 15627486657).
 const defaultGatewayAPIVersion = consts.BundleVersion
 
-// installGatewayAPICRDs installs the upstream Gateway API standard-channel
-// CRDs (Gateway, HTTPRoute, GRPCRoute, etc.) so the chart's gateway library
-// can register watchers and HTTPRoute-based tests can run.
+// installGatewayAPICRDs installs the selected upstream Gateway API channel.
 //
 // HAPTIC_E2E_GWAPI_VERSION overrides the installed release — the nightly
 // gwapi-matrix CI job sets an old release tag (e.g. v1.1.0) to verify
@@ -510,31 +560,24 @@ func installGatewayAPICRDs(ctx context.Context) (context.Context, error) {
 	if version == "" {
 		version = defaultGatewayAPIVersion
 	}
-	return ctx, applyGatewayAPICRDs(ctx, version)
+	channel := os.Getenv("HAPTIC_E2E_GWAPI_CHANNEL")
+	return ctx, applyGatewayAPICRDs(ctx, version, channel)
 }
 
-// applyGatewayAPICRDs applies the standard-channel CRD bundle of the given
-// Gateway API version and waits for the core CRDs to be Established.
-// A version starting with "v" resolves to that release's standard-install
-// manifest; anything else is treated as a git ref of the upstream repo and
-// applied via kustomize (config/crd, the standard-channel base), which is
-// how unreleased refs like "main" ship their CRDs.
-func applyGatewayAPICRDs(ctx context.Context, version string) error {
+func applyGatewayAPICRDs(ctx context.Context, version, channel string) error {
+	args, err := e2ecluster.GatewayAPIInstallArgs(version, channel, kubeconfigPath)
+	if err != nil {
+		return err
+	}
 	// The CRD bundle (release manifest for a "v" version, kustomize base for a
 	// git ref) is fetched from GitHub, which intermittently 504s / times out at
 	// setup. A single failure there sinks the whole e2e or conformance job
 	// before any test runs, so retry a few times with linear backoff. exec.Cmd
 	// isn't reusable, so rebuild it each attempt.
 	newApply := func() *exec.Cmd {
-		if strings.HasPrefix(version, "v") {
-			url := fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/standard-install.yaml", version)
-			return exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", url)
-		}
-		ref := fmt.Sprintf("github.com/kubernetes-sigs/gateway-api/config/crd?ref=%s", version)
-		return exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-k", ref)
+		return exec.CommandContext(ctx, "kubectl", args...)
 	}
 	var out []byte
-	var err error
 	for attempt := 1; attempt <= 4; attempt++ {
 		if out, err = newApply().CombinedOutput(); err == nil {
 			break
@@ -547,7 +590,7 @@ func applyGatewayAPICRDs(ctx context.Context, version string) error {
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("install Gateway API CRDs (%s) after retries: %w (output: %s)", version, err, out)
+		return fmt.Errorf("install Gateway API CRDs (%s, %s) after retries: %w (output: %s)", version, channel, err, out)
 	}
 
 	// Single multi-arg `kubectl wait` — kubectl waits on all four CRDs in
@@ -736,6 +779,11 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		"--set", "haproxy.service.type=LoadBalancer",
 		"--timeout", DefaultHelmInstallTimeout.String(),
 	}
+	gatewayAPIArgs, err := e2ecluster.GatewayAPIHelmArgs(os.Getenv("HAPTIC_E2E_GWAPI_CHANNEL"))
+	if err != nil {
+		return ctx, fmt.Errorf("gateway API Helm channel: %w", err)
+	}
+	args = append(args, gatewayAPIArgs...)
 	identity, err := expectedControllerIdentity()
 	if err != nil {
 		return ctx, err
@@ -906,6 +954,9 @@ func teardownCluster(ctx context.Context, provider *kindcluster.Provider) (conte
 		return ctx, nil
 	}
 	if os.Getenv("KEEP_CLUSTER") != "false" {
+		return ctx, nil
+	}
+	if e2eCluster.RequireNew && !clusterCreated {
 		return ctx, nil
 	}
 	if err := provider.Delete(ClusterName, ""); err != nil {
@@ -1239,95 +1290,6 @@ func chartCRDDir() (string, error) {
 	}
 	return filepath.Join(root, "charts", "haptic", "crds"), nil
 }
-
-// e2eKindConfig is the kind cluster config the e2e suite uses. Distinct
-// from scripts/dev-env-assets/kind-config.yaml because the host ports are
-// shifted by 1000 (30080→31080, 30443→31443, 30404→31404) so kind-haptic-e2e
-// can coexist with the developer's interactive kind-haptic-dev cluster
-// (which already binds 30080/30443/30404). The container-side NodePorts
-// remain 30080/30443/30404 — that's what the chart configures.
-//
-// extraPortMappings expose only the chart-static NodePorts (HTTP / HTTPS /
-// stats). Conformance tests run as a sibling container on the kind docker
-// network (see Dockerfile.conformance-test + `make test-conformance`) so
-// they reach MetalLB-allocated LoadBalancer IPs directly without needing
-// every random NodePort exported to the host. The e2e Go suite still
-// dials via NodePort + DinD remap and only needs these three ports.
-//
-// DinD compatibility: networking.apiServerAddress, the "docker" certSAN, and
-// listenAddress on extraPortMappings are all required when this suite runs
-// inside GitLab's docker:dind service container. They are harmless on a
-// local developer's docker daemon (the API server still binds locally and
-// the extra cert SAN is unused), so the same config works in both
-// environments without a runtime branch.
-const e2eKindConfig = `kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-networking:
-  apiServerAddress: "0.0.0.0"
-nodes:
-  - role: control-plane
-    kubeadmConfigPatches:
-      - |
-        kind: InitConfiguration
-        nodeRegistration:
-          kubeletExtraArgs:
-            node-labels: "ingress-ready=true"
-    extraPortMappings:
-      - containerPort: 30080
-        hostPort: 31080
-        protocol: TCP
-        listenAddress: "0.0.0.0"
-      - containerPort: 30443
-        hostPort: 31443
-        protocol: TCP
-        listenAddress: "0.0.0.0"
-      - containerPort: 30404
-        hostPort: 31404
-        protocol: TCP
-        listenAddress: "0.0.0.0"
-kubeadmConfigPatches:
-  - |
-    kind: ClusterConfiguration
-    apiServer:
-      extraArgs:
-        enable-admission-plugins: NodeRestriction,MutatingAdmissionWebhook,ValidatingAdmissionWebhook
-  # Raise the kubelet's per-container log rotation cap (default 10Mi).
-  # The controller logs at DEBUG during e2e/conformance runs and the
-  # leader replica exceeds 10Mi well within one suite, after which
-  # "kubectl logs" (used by the CI after_script diagnostics capture)
-  # returns only the newest rotated file — job 15180387459's artifacts
-  # carried just ~7s of leader logs, none covering the failure window
-  # (issue #56). 200Mi buys roughly a minute at the observed ~3 MB/s.
-  #
-  # It is NOT sufficient on its own: kubectl logs serves only the CURRENT
-  # rotated file, so a run longer than that minute still loses its earlier
-  # history to this capture path. The CI after_script therefore also reads the
-  # rotated files directly off the node (/var/log/pods) into
-  # debug-logs/_suite/controller-full.log.gz — that, not this cap, is what
-  # makes a whole run retrievable.
-  - |
-    kind: KubeletConfiguration
-    containerLogMaxSize: 200Mi
-kubeadmConfigPatchesJSON6902:
-  # Both kubeadm config versions: kind applies the one matching the node's
-  # k8s version (v1beta3 for <= 1.35, v1beta4 for >= 1.36) and skips the other.
-  # The e2e suite uses kind's default 1.36 node (v1beta4); keep both so the
-  # SAN lands regardless of node version. Do not collapse to a single version.
-  - group: kubeadm.k8s.io
-    version: v1beta3
-    kind: ClusterConfiguration
-    patch: |
-      - op: add
-        path: /apiServer/certSANs/-
-        value: docker
-  - group: kubeadm.k8s.io
-    version: v1beta4
-    kind: ClusterConfiguration
-    patch: |
-      - op: add
-        path: /apiServer/certSANs/-
-        value: docker
-`
 
 // repoRoot walks up from the current working directory until it finds a
 // directory containing go.mod (the repo root).
