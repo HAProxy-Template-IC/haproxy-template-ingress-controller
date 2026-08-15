@@ -971,7 +971,7 @@ server SRV_{{ i }} 192.0.2.1:1 disabled
 
 **Benefit**: Endpoint changes update server addresses via runtime API without dropping connections.
 
-The slot count caps how many endpoints receive traffic: an endpoint beyond the last slot gets no server line and no traffic, with no error, warning, or Kubernetes Event. Size the slot count at or above the backend's maximum replica count, including any `HorizontalPodAutoscaler` ceiling.
+In this hand-written example the slot count is a hard cap: a third endpoint beyond `initial_slots` would get no server line. The bundled libraries' `BackendServers` macro doesn't cap — it sizes the pool to the endpoints plus headroom and grows it by a block (one reload) when it fills — so copy that pattern rather than a fixed count when you write your own backends: `slots = max(initial_slots, len(active_endpoints) + spare)`.
 
 !!! tip "Maximize Runtime API Usage"
     Keep server lines minimal - only `address:port` plus `enabled` or `disabled`. Place all other options (`check`, `proto h2`, SSL settings) in the `default-server` directive:

@@ -223,6 +223,7 @@ func createReconciliationComponents(
 		DynamicClient: k8sClient.DynamicClient(),
 		GVRResolver:   statusapplier.NewRestMapperResolver(gvrMapper),
 		Logger:        logger,
+		SelfWrites:    setup.SelfWrites,
 	})
 
 	resourceApplierComponent := newResourceApplier(crd, k8sClient, gvrMapper, setup.Bus, logger)

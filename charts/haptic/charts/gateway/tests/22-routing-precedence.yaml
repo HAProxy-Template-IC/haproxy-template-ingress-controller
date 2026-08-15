@@ -741,6 +741,83 @@ validationTests:
         pattern: "gtw_default_weight-zero-excludes_app-v2_80"
       - {type: not_contains, target: map:weighted-multi-backend.map, pattern: "app-v3-excluded"}
 
+  test-httproute-weight-invalid-ref-share-returns-500:
+    requires: [httproutes, referencegrants]
+    description: "Spec: the weight share of an invalid backendRef must return 500. A nonexistent Service listed FIRST must not steer its share to a placeholder backend (503) nor leak it to the valid sibling: the total counts every ref, its indices point at gw-invalid-backend, and no backend section is rendered for the missing Service."
+    fixtures:
+      services: *servicesServiceAppV1
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: mixed-route, namespace: default}
+          spec:
+            parentRefs:
+              - {name: gateway, namespace: default}
+            hostnames:
+              - mixed.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /app}
+                backendRefs:
+                  - {name: does-not-exist, port: 80, weight: 1}
+                  - {name: app-v1, port: 80, weight: 3}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:route-backend.map, pattern: "default_mixed-route_0 MULTIBACKEND:4:default_mixed-route_0"}
+      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^0:default_mixed-route_0 gw-invalid-backend$"}
+      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^1:default_mixed-route_0 gtw_default_mixed-route_app-v1_80$"}
+      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^3:default_mixed-route_0 gtw_default_mixed-route_app-v1_80$"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "backend gtw_default_mixed-route_does-not-exist_80"}
+      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_mixed-route_app-v1_80"}
+
+  test-httproute-weight-unpermitted-cross-namespace-ref-share-returns-500:
+    requires: [httproutes, referencegrants]
+    description: "A weighted cross-namespace backendRef without a ReferenceGrant must never receive traffic, even when it is listed first: its share goes to gw-invalid-backend and no backend section (with real servers) is rendered for it."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: app-v1, namespace: default}
+          spec: {ports: [{name: http, port: 80, targetPort: 8080}]}
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: secret-svc, namespace: other}
+          spec: {ports: [{name: http, port: 80, targetPort: 8080}]}
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: secret-svc-1
+            namespace: other
+            labels: {kubernetes.io/service-name: secret-svc}
+          addressType: IPv4
+          ports: [{name: http, port: 8080}]
+          endpoints:
+            - addresses: ["10.9.9.9"]
+              conditions: {ready: true}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: xns-route, namespace: default}
+          spec:
+            parentRefs:
+              - {name: gateway, namespace: default}
+            hostnames:
+              - xns.example.com
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /app}
+                backendRefs:
+                  - {name: secret-svc, namespace: other, port: 80, weight: 1}
+                  - {name: app-v1, port: 80, weight: 1}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:route-backend.map, pattern: "default_xns-route_0 MULTIBACKEND:2:default_xns-route_0"}
+      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^0:default_xns-route_0 gw-invalid-backend$"}
+      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^1:default_xns-route_0 gtw_default_xns-route_app-v1_80$"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "10.9.9.9"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "backend gtw_default_xns-route_secret-svc_80"}
+
   test-gateway-two-gateways-share-host-path:
     requires: [gatewayclasses, gateways, httproutes]
     description: Two Gateways sharing one hostname+path put both routes in one candidate set; the winner map must be keyed by the set the path map emits

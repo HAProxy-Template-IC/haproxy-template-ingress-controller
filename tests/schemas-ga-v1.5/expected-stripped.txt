@@ -14,6 +14,7 @@
 # removed in v1.5). Every field the annotated tests require exists in this
 # generation, so nothing field-strips.
 test-tcproute-basic-l4-forward
+test-tcproute-cross-namespace-backend-without-referencegrant-not-routed
 test-tcproute-multi-listener-single-backend
 test-tcproute-oldest-route-wins-port
 test-tcproute-orphan-sibling-does-not-drop-others

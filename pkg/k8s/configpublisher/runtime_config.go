@@ -16,6 +16,7 @@ package configpublisher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -66,7 +67,21 @@ func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *Publis
 	if err != nil {
 		return nil, err
 	}
+	if result == nil {
+		// retry.OnError reports a context cancellation as the last retriable
+		// error, which is nil when none preceded it, so an interrupted write
+		// would otherwise look like a success without a result.
+		return nil, fmt.Errorf("creating or updating runtime config: %w", interruptedErr(ctx))
+	}
 	return result, nil
+}
+
+// interruptedErr names why a retry loop ended without a result.
+func interruptedErr(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.New("interrupted")
 }
 
 // buildRuntimeConfig constructs a HAProxyCfg resource from the request.

@@ -416,7 +416,7 @@ templateSnippets:
   frontend-matchers-advanced-900-path-match:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {{- "" }}
       {# Reads txn.gw_rule_id, set by frontend-matchers-advanced-500-gateway. Non-stripping
          form: keeps the blank line before the section marker. #}
@@ -467,28 +467,8 @@ templateSnippets:
           {%- var routeNs = tostring(routeInfo | dig("route", "metadata", "namespace") | fallback("")) %}
           {%- var routeKind = tostring(routeInfo | dig("route", "kind") | fallback("HTTPRoute")) %}
           {%- for _, ref := range backendRefs %}
-            {%- var refMap any = ref %}
-            {%- var refGroup = refMap | dig_string("", "group") %}
-            {%- var refKind = refMap | dig_string("Service", "kind") %}
-            {%- if (refGroup == "" || refGroup == "core") && refKind == "Service" %}
-              {%- var refName = tostring(refMap | dig("name") | fallback("")) %}
-              {%- var refNs = tostring(refMap | dig("namespace") | fallback(routeNs)) %}
-              {%- var svc = resources.services.GetSingle(refNs, refName) %}
-              {%- if svc != nil %}
-                {#- Spec: a cross-namespace ref without a ReferenceGrant must not receive
-                    traffic — dropping it here routes the rule to gw-invalid-backend (500). -#}
-                {%- var refPermitted = true %}
-                {%- if refNs != routeNs %}
-                  {%- if ReferenceGrantPermitted(
-                        "gateway.networking.k8s.io", routeKind, routeNs,
-                        "", "Service", refNs, refName) != "true" %}
-                    {%- refPermitted = false %}
-                  {%- end %}
-                {%- end %}
-                {%- if refPermitted %}
-                  {%- validRefs = append(validRefs, ref) %}
-                {%- end %}
-              {%- end %}
+            {%- if BackendRefValid(routeKind, routeNs, ref) == "true" %}
+              {%- validRefs = append(validRefs, ref) %}
             {%- end %}
           {%- end %}
 
@@ -497,21 +477,26 @@ templateSnippets:
             {#- Spec wants 500 (not 503) when every backendRef is unresolvable;
                 gw-invalid-backend is the sink carrying `http-request return status 500`. -#}
             {%- qualifier = "BACKEND:gw-invalid-backend" %}
-          {%- else if len(validRefs) == 1 %}
+          {%- else if len(backendRefs) == 1 %}
             {%- var backendRef any = validRefs[0] %}
             {%- var backendName = "gtw_" + (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (backendRef | dig("name")) + "_" + (backendRef | dig("port")) %}
             {%- qualifier = "BACKEND:" + backendName %}
           {%- else %}
-            {#- Known approximation: in a mixed valid/invalid rule the invalid refs' traffic
-                share leaks to the valid ones instead of returning 500 for that share. -#}
+            {#- Spec: an invalid ref's weight share must return 500, so the total
+                counts every ref; the weighted map sends invalid shares to
+                gw-invalid-backend. -#}
             {%- var totalWeight = 0 %}
-            {%- for _, ref := range validRefs %}
+            {%- for _, ref := range backendRefs %}
               {%- var refMap any = ref %}
               {%- var weight = refMap | dig("weight") | fallback(1) %}
               {%- totalWeight = totalWeight + (weight) %}
             {%- end %}
-            {%- var routeKey = (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (routeInfo | dig("ruleIdx")) %}
-            {%- qualifier = "MULTIBACKEND:" + totalWeight + ":" + routeKey %}
+            {%- if totalWeight <= 0 %}
+              {%- qualifier = "BACKEND:gw-invalid-backend" %}
+            {%- else %}
+              {%- var routeKey = (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (routeInfo | dig("ruleIdx")) %}
+              {%- qualifier = "MULTIBACKEND:" + totalWeight + ":" + routeKey %}
+            {%- end %}
           {%- end %}
           {%- var riCg = tostring(routeInfo | dig("conflictGroup")) %}
           {%- var riScope = tostring(routeInfo | dig("route", "metadata", "namespace")) + "_" + tostring(routeInfo | dig("route", "metadata", "name")) + "_" %}

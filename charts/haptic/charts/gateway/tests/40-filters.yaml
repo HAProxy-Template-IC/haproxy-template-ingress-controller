@@ -368,6 +368,56 @@ validationTests:
         target: haproxy.cfg
         pattern: "backend gtw_default_br-route_backend-v1_8080[^a-zA-Z]+[^\\n]*\\n([^\\n]+\\n){0,5}[^\\n]*http-request set-header Backend \"backend-v1\""
 
+  test-httproute-backend-response-header-modifier:
+    requires: [gatewayclasses, gateways, httproutes]
+    description: HTTPRoute with per-backendRef ResponseHeaderModifier emits http-response directives in that backend only, gated on the rule id
+    fixtures:
+      gatewayclasses: *gatewayclassesGatewayclass
+      gateways: *gatewaysGatewayGw
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: backend, namespace: default}
+          spec:
+            ports:
+              - {name: http, port: 80, targetPort: 8080}
+              - {name: http-alt, port: 8080, targetPort: 8081}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: route, namespace: default}
+          spec:
+            hostnames: [route.example.com]
+            parentRefs:
+              - name: gw
+            rules:
+              - backendRefs:
+                  - name: backend
+                    port: 80
+                    filters:
+                      - type: ResponseHeaderModifier
+                        responseHeaderModifier:
+                          add:
+                            - {name: my-added-header, value: added-value}
+                          set:
+                            - {name: X-Set, value: set-value}
+                          remove: [X-Remove]
+              - backendRefs:
+                  - name: backend
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?s)backend gtw_default_route_backend_80\n.*?http-response add-header my-added-header "added-value" if \{ var\(txn.gw_rule_id\) -m str "default_route_0" \}.*?backend gtw_default_route_backend_8080'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?s)backend gtw_default_route_backend_80\n.*?http-response set-header X-Set "set-value" if \{ var\(txn.gw_rule_id\) -m str "default_route_0" \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?s)backend gtw_default_route_backend_80\n.*?http-response del-header X-Remove if \{ var\(txn.gw_rule_id\) -m str "default_route_0" \}'
+      - {type: match_count, target: haproxy.cfg, pattern: 'http-response add-header my-added-header', expected: "1"}
+
   test-httproute-cors-no-hostname:
     requires: [gatewayclasses, gateways, httproutes]
     requiresFields: [httproutes.spec.rules.filters.cors]

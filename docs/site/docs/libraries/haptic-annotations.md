@@ -88,7 +88,7 @@ Per-backend timeouts, load balancing, connection limits, health/agent checks, an
 | `haproxy-haptic.org/maxqueue-server` | ✅ Supported | Sets the per-server maximum queued connections via `maxqueue`. |
 | `haproxy-haptic.org/pod-maxconn` | ✅ Supported | Sets a cluster-wide connection budget, divided across the ready HAProxy pods and rounded up to a power of two, then applied as each server's `maxconn`. |
 | `haproxy-haptic.org/proxy-protocol` | ✅ Supported | Sends the PROXY protocol header to servers: `proxy`/`proxy-v1` emit `send-proxy`, and `proxy-v2`, `proxy-v2-ssl`, `proxy-v2-ssl-cn` emit the matching `send-proxy-v2` variant; any other value fails the render. |
-| `haproxy-haptic.org/scale-server-slots` | ✅ Supported | Overrides the number of reserved server slots the backend pre-allocates for runtime scaling. |
+| `haproxy-haptic.org/scale-server-slots` | ✅ Supported | Sets the block size of the backend's reserved server-slot pool (a provisioning unit, not a cap: the pool grows by a block on the next reload when it fills). Without it the pool is sized to the endpoints plus headroom. |
 | `haproxy-haptic.org/timeout-check` | ✅ Supported | Sets the check timeout via `timeout check`. |
 | `haproxy-haptic.org/timeout-connect` | ✅ Supported | Sets the connect timeout via `timeout connect`. |
 | `haproxy-haptic.org/timeout-http-request` | ✅ Supported | Sets the request timeout via `timeout http-request`. |

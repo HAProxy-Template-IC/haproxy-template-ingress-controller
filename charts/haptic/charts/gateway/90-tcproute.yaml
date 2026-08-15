@@ -98,9 +98,10 @@ templateSnippets:
   # any L7 selector). Routes are walked in resources.tcproutes.List()
   # order, which the store keeps stable.
   util-gateway-tcproute-analysis:
-    requires: [gateways, tcproutes]
+    requires: [gateways, referencegrants, tcproutes]
     template: |
       {%- import "util-resource-helpers" for ListenerName, ListenerProtocol %}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted %}
       {%%
         var _, _ = shared.ComputeIfAbsent("gateway_tcproute", func() any {
           var byPort = map[int]any{}
@@ -150,6 +151,11 @@ templateSnippets:
                 var brNs = br.Namespace
                 if brNs == "" { brNs = nsStr }
                 if resources.services.GetSingle(brNs, br.Name) == nil {
+                  continue
+                }
+                // A cross-namespace ref without a ReferenceGrant must not
+                // receive traffic (status reports RefNotPermitted).
+                if brNs != nsStr && ReferenceGrantPermitted("gateway.networking.k8s.io", "TCPRoute", nsStr, "", "Service", brNs, br.Name) != "true" {
                   continue
                 }
                 var brPort = toint(br.Port)
@@ -306,7 +312,7 @@ templateSnippets:
   # `502` ordinal keeps it after the ssl-passthrough TCP backends (501)
   # for stable output ordering.
   backends-502-gateway-tcproute:
-    requires: [gateways, tcproutes]
+    requires: [gateways, referencegrants, tcproutes]
     template: |
       {%- import "util-backend-servers" for BackendServers %}
       {{ render "util-gateway-tcproute-analysis" }}
@@ -345,7 +351,7 @@ templateSnippets:
           guid {{ make_guid("be", beName) }}
           mode tcp
           {%- if len(refs) <= 1 %}
-          {{ BackendServers(refName, 10, refPort, nil, nil, beName, refNs) | indent(4, false) }}
+          {{ BackendServers(refName, 0, refPort, nil, nil, beName, refNs) | indent(4, false) }}
           {%- else %}
           {# Weighted TCPRoute: several routable backendRefs. `balance
               roundrobin` honours per-server weights; each Service gets its
@@ -355,7 +361,7 @@ templateSnippets:
           balance roundrobin
           {%- for ri, r := range refs %}
           {%- var rm = r.(map[string]any) %}
-          {{ BackendServers(tostring(rm["name"]), 10, toint(rm["port"]), map[string]any{"slotPrefix": "SRV" + tostring(ri) + "_", "weight": toint(rm["weight"])}, nil, beName, tostring(rm["ns"])) | indent(4, false) }}
+          {{ BackendServers(tostring(rm["name"]), 0, toint(rm["port"]), map[string]any{"slotPrefix": "SRV" + tostring(ri) + "_", "weight": toint(rm["weight"])}, nil, beName, tostring(rm["ns"])) | indent(4, false) }}
           {%- end %}
           {%- end %}
           {%- end %}
@@ -378,7 +384,7 @@ templateSnippets:
   # (frontends-600) cannot collide because a port is single-protocol in
   # a Gateway, so a TCP listener and a TLS listener never share a port.
   frontends-700-gateway-tcp-listener:
-    requires: [gateways, tcproutes]
+    requires: [gateways, referencegrants, tcproutes]
     template: |
       {{ render "util-gateway-tcproute-analysis" }}
       {%- var dataRaw = shared.Get("gateway_tcproute") %}

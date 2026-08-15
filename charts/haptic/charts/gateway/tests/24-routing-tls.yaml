@@ -434,6 +434,55 @@ validationTests:
         target: haproxy.cfg
         pattern: "use_backend gtw_tls_default_tls-app_0 if .*ssl_fc_sni"
 
+  test-tlsroute-cross-namespace-backend-without-referencegrant-rejected:
+    requires: [gateways, referencegrants, tlsroutes]
+    description: "A TLSRoute passthrough backendRef in another namespace without a covering ReferenceGrant is unresolved: no use_backend for its SNI and no backend carrying the foreign pod address; the SNI stays claimed so the connection is rejected."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gw-tlsroute-xns, namespace: default, generation: 1}
+          spec: *specTls443
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata: {name: tls-xns, namespace: default, generation: 1}
+          spec:
+            parentRefs:
+              - name: gw-tlsroute-xns
+            hostnames:
+              - xns.example.com
+            rules:
+              - backendRefs:
+                  - {name: secret-tls, namespace: other, port: 8443}
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: secret-tls, namespace: other}
+          spec:
+            ports:
+              - port: 8443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: secret-tls-1
+            namespace: other
+            labels: {kubernetes.io/service-name: secret-tls}
+          addressType: IPv4
+          ports: [{port: 8443}]
+          endpoints:
+            - addresses: ["10.9.9.9"]
+              conditions: {ready: true}
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: 'use_backend gtw_tls_default_tls-xns_0'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '10\.9\.9\.9'}
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+tcp-request content reject if gw_default_gw_tlsroute_xns_listener_sni$'
+
   test-tlsroute-no-tls-listener:
     requires: [gateways, tlsroutes]
     description: "TLSRoute parented to an HTTP-only Gateway (no TLS listener) must NOT produce a TLSRoute backend. Mirrors conformance tlsroute-invalid-no-matching-listener for the HTTP / HTTPS case."

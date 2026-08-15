@@ -1,9 +1,10 @@
 templateSnippets:
   util-generate-httproute-backends-gateway:
-    requires: [gateways, httproutes]
+    requires: [gateways, httproutes, referencegrants]
     template: |
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
@@ -16,13 +17,11 @@ templateSnippets:
       {%- var backendRefs = rule.BackendRefs -%}
       {%- if len(backendRefs) > 0 %}
       {%- for _, backendRef := range backendRefs -%}
-      {#- Only core/v1 Service refs are routable; another kind would silently
-          match a same-named Service. Rules whose refs are all invalid are
-          routed to gw-invalid-backend (500) by the frontend matcher. -#}
-      {%- var refGroup = backendRef.Group -%}
-      {%- var refKind = backendRef.Kind -%}
-      {%- if refKind == "" %}{%- refKind = "Service" %}{%- end -%}
-      {%- if (refGroup != "" && refGroup != "core") || refKind != "Service" -%}
+      {#- Only a valid ref (core/v1 Service that exists, ReferenceGrant-covered)
+          gets a backend section; the frontend and the weighted map route every
+          other ref to gw-invalid-backend (500), so an unreachable section would
+          only cost config size and reload time. -#}
+      {%- if BackendRefValid("HTTPRoute", routeNs, backendRef) != "true" -%}
         {%- continue -%}
       {%- end -%}
       {%- var backendName = backendRef.Name -%}
@@ -362,44 +361,57 @@ templateSnippets:
         {%- end %}
         {#- One backend serves every rule that references this (service, port),
             so per-backendRef filters must be gated on txn.gw_rule_id or they
-            cross-bleed between rules. -#}
+            cross-bleed between rules. Rule-level filters run in the frontend,
+            so backendRef-level ones evaluated here take precedence per spec. -#}
         {%- var ruleIdxBe = 0 %}
         {%- for _, rl := range route.Spec.Rules %}
           {%- for _, bRef := range rl.BackendRefs %}
-            {%- if bRef.Name == backendName -%}
-            {%- if toint(bRef.Port) == toint(backendPort) %}
+            {%- var bRefNs = tostring(bRef.Namespace) %}
+            {%- if bRefNs == "" %}{%- bRefNs = tostring(routeNs) %}{%- end %}
+            {%- if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) && bRefNs == tostring(backendNs) %}
               {%- var ruleRouteIdBe = tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxBe) %}
               {%- for _, bf := range bRef.Filters %}
+                {%- var directive = "" %}
+                {%- var mod any = nil %}
                 {%- if bf.Type == "RequestHeaderModifier" %}
-                  {%- var mod = bf.RequestHeaderModifier %}
-                  {%- for _, h := range mod.Set %}
-                    {%- var hInj = ConfigInjectionKind(h.Value, "line") %}
+                  {%- directive = "http-request" %}
+                  {%- mod = bf.RequestHeaderModifier %}
+                {%- else if bf.Type == "ResponseHeaderModifier" %}
+                  {%- directive = "http-response" %}
+                  {%- mod = bf.ResponseHeaderModifier %}
+                {%- end %}
+                {%- if directive != "" && mod != nil %}
+                  {%- for _, h := range dig(mod, "set") | toSlice() %}
+                    {%- var hName = dig_string(h, "", "name") %}
+                    {%- var hVal = dig_string(h, "", "value") %}
+                    {%- var hInj = ConfigInjectionKind(hVal, "line") %}
                     {%- if hInj != "" %}
-                      {{- WebhookRejectOrWarn(route, "InvalidHeaderModifier", "HTTPRoute " + routeNs + "/" + routeName + " backendRef RequestHeaderModifier set-header value contains " + hInj + ", which would split the backend directive; the header is not applied. Remove control characters from the value.") -}}
+                      {{- WebhookRejectOrWarn(route, "InvalidHeaderModifier", "HTTPRoute " + routeNs + "/" + routeName + " backendRef " + bf.Type + " set-header value contains " + hInj + ", which would split the backend directive; the header is not applied. Remove control characters from the value.") -}}
                     {%- else %}
-        http-request set-header {{ h.Name }} "{{ EscapeLogFormatValue(h.Value) }}" if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+        {{ directive }} set-header {{ hName }} "{{ EscapeLogFormatValue(hVal) }}" if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
                     {%- end %}
                   {%- end %}
-                  {%- for _, h := range mod.Add %}
-                    {%- var hInj = ConfigInjectionKind(h.Value, "line") %}
+                  {%- for _, h := range dig(mod, "add") | toSlice() %}
+                    {%- var hName = dig_string(h, "", "name") %}
+                    {%- var hVal = dig_string(h, "", "value") %}
+                    {%- var hInj = ConfigInjectionKind(hVal, "line") %}
                     {%- if hInj != "" %}
-                      {{- WebhookRejectOrWarn(route, "InvalidHeaderModifier", "HTTPRoute " + routeNs + "/" + routeName + " backendRef RequestHeaderModifier add-header value contains " + hInj + ", which would split the backend directive; the header is not applied. Remove control characters from the value.") -}}
+                      {{- WebhookRejectOrWarn(route, "InvalidHeaderModifier", "HTTPRoute " + routeNs + "/" + routeName + " backendRef " + bf.Type + " add-header value contains " + hInj + ", which would split the backend directive; the header is not applied. Remove control characters from the value.") -}}
                     {%- else %}
-        http-request add-header {{ h.Name }} "{{ EscapeLogFormatValue(h.Value) }}" if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+        {{ directive }} add-header {{ hName }} "{{ EscapeLogFormatValue(hVal) }}" if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
                     {%- end %}
                   {%- end %}
-                  {%- for _, name := range mod.Remove %}
-        http-request del-header {{ name }} if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+                  {%- for _, name := range dig(mod, "remove") | toSlice() %}
+        {{ directive }} del-header {{ name }} if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
                   {%- end %}
                 {%- end %}
               {%- end %}
-            {%- end %}
             {%- end %}
           {%- end %}
           {%- ruleIdxBe = ruleIdxBe + 1 %}
         {%- end %}
       {%- end %}
-        {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, backendNs) | indent(2, true) -}}
+        {{ BackendServers(backendName, 0, backendPort, nil, nil, beKey, backendNs) | indent(2, true) -}}
       {%- end -%}
       {%- end -%}
       {%- end -%}
@@ -408,10 +420,11 @@ templateSnippets:
       {%- end macro -%}
 
   util-generate-grpcroute-backends-gateway:
-    requires: [gateways, grpcroutes]
+    requires: [gateways, grpcroutes, referencegrants]
     template: |
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- macro GenerateGRPCRouteBackends(routes []*resources.grpcroutes.T, dedupCategory string) -%}
         {%- _ = render "util-backendtlspolicies-contrib" default "" -%}
       {%- for _, route := range routes -%}
@@ -421,13 +434,11 @@ templateSnippets:
       {%- var backendRefs = rule.BackendRefs -%}
       {%- if len(backendRefs) > 0 %}
       {%- for _, backendRef := range backendRefs -%}
-      {#- Only core/v1 Service refs are routable; another kind would silently
-          match a same-named Service. Rules whose refs are all invalid are
-          routed to gw-invalid-backend (500) by the frontend matcher. -#}
-      {%- var refGroup = backendRef.Group -%}
-      {%- var refKind = backendRef.Kind -%}
-      {%- if refKind == "" %}{%- refKind = "Service" %}{%- end -%}
-      {%- if (refGroup != "" && refGroup != "core") || refKind != "Service" -%}
+      {#- Only a valid ref (core/v1 Service that exists, ReferenceGrant-covered)
+          gets a backend section; the frontend and the weighted map route every
+          other ref to gw-invalid-backend (500), so an unreachable section would
+          only cost config size and reload time. -#}
+      {%- if BackendRefValid("GRPCRoute", routeNs, backendRef) != "true" -%}
         {%- continue -%}
       {%- end -%}
       {%- var backendName = backendRef.Name -%}
@@ -680,7 +691,7 @@ templateSnippets:
           {%- end %}
         {%- end %}
       {%- end %}
-        {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, backendNs) | indent(2, true) -}}
+        {{ BackendServers(backendName, 0, backendPort, nil, nil, beKey, backendNs) | indent(2, true) -}}
       {%- end -%}
       {%- end -%}
       {%- end -%}
@@ -689,7 +700,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-sharded-gateway-backends:
-    requires: [gateways, grpcroutes, httproutes]
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {# first_seen() dedup is thread-safe, so shards render in parallel. #}
       {%- import "util-generate-httproute-backends-gateway" for GenerateHTTPRouteBackends -%}
@@ -741,7 +752,7 @@ templateSnippets:
           http-request return status 500
 
   backends-501-gateway-ssl-passthrough:
-    requires: [gateways, httproutes, tlsroutes]
+    requires: [gateways, httproutes, referencegrants, tlsroutes]
     template: |
       {%- import "util-backend-servers" for BackendServers -%}
       {{ render "util-gateway-ssl-passthrough" }}
@@ -775,7 +786,7 @@ templateSnippets:
       backend {{ biName }}
           guid {{ make_guid("be", biName) }}
           mode tcp
-          {{ BackendServers(refName, 10, refPort, nil, nil, biName, tostring(biNamespace)) | indent(4, false) }}
+          {{ BackendServers(refName, 0, refPort, nil, nil, biName, tostring(biNamespace)) | indent(4, false) }}
                   {%- generated = true %}
                 {%- end %}
               {%- end %}
@@ -800,7 +811,7 @@ templateSnippets:
       backend {{ biName }}
           guid {{ make_guid("be", biName) }}
           mode tcp
-          {{ BackendServers(refName, 10, refPort, nil, nil, biName, refNs) | indent(4, false) }}
+          {{ BackendServers(refName, 0, refPort, nil, nil, biName, refNs) | indent(4, false) }}
                     {%- generated = true %}
                   {%- end %}
                 {%- end %}

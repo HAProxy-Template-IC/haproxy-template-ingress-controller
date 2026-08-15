@@ -57,7 +57,8 @@ func setupResourceWatchers(
 	resourceNames = append(resourceNames, names.HAProxyPodsResourceType)
 
 	// Create ResourceWatcherComponent
-	resourceWatcher, err := resourcewatcher.New(cfg, k8sClient, setup.Bus, logger)
+	resourceWatcher, err := resourcewatcher.New(cfg, k8sClient, setup.Bus, logger,
+		resourcewatcher.WithSelfWriteFilter(setup.SelfWrites))
 	if err != nil {
 		return nil, fmt.Errorf("creating resource watcher: %w", err)
 	}

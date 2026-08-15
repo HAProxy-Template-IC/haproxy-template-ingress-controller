@@ -76,6 +76,7 @@ test-httproute-all-matchers
 test-httproute-backend-header-value-injection-admission-rejected
 test-httproute-backend-header-value-injection-reconcile-warns-and-skips
 test-httproute-backend-request-header-modifier
+test-httproute-backend-response-header-modifier
 test-httproute-cors-filter
 test-httproute-cors-no-hostname
 test-httproute-cors-wildcard-methods-echo
@@ -138,8 +139,10 @@ test-httproute-urlrewrite-replacefullpath-injection-admission-rejected
 test-httproute-urlrewrite-replacefullpath-injection-reconcile-warns-and-skips
 test-httproute-urlrewrite-replaceprefix-injection-admission-rejected
 test-httproute-weight-default
+test-httproute-weight-invalid-ref-share-returns-500
 test-httproute-weight-no-matches
 test-httproute-weight-two-backends
+test-httproute-weight-unpermitted-cross-namespace-ref-share-returns-500
 test-httproute-weight-zero-explicit-excludes
 test-httproute-weighted-with-matchers
 test-k8s-haproxy-service-gateway-listener-ports
@@ -159,11 +162,13 @@ test-listenerset-protocol-conflict
 test-listenerset-rendered-variant-includes-programmed-observed-generation
 test-proxy-protocol-passthrough-binds-on-ssl-tcp
 test-tcproute-basic-l4-forward
+test-tcproute-cross-namespace-backend-without-referencegrant-not-routed
 test-tcproute-multi-listener-single-backend
 test-tcproute-oldest-route-wins-port
 test-tcproute-orphan-sibling-does-not-drop-others
 test-tcproute-unattached-no-frontend
 test-tcproute-weighted-routing
+test-tlsroute-cross-namespace-backend-without-referencegrant-rejected
 test-tlsroute-hostname-intersection-multi-gateway
 test-tlsroute-hostname-mismatch
 test-tlsroute-invalid-backend-kind-no-attach

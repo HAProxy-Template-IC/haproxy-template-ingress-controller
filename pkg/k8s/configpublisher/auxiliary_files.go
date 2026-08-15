@@ -176,6 +176,11 @@ func createOrUpdateAuxResource[T interface{ GetName() string }](ctx context.Cont
 	if err != nil {
 		return "", err
 	}
+	if resultName == "" {
+		// See createOrUpdateRuntimeConfig: retry.OnError turns an interrupting
+		// context cancellation into a nil error when no retriable error preceded it.
+		return "", fmt.Errorf("creating or updating %s: %w", ops.kind, interruptedErr(ctx))
+	}
 	return resultName, nil
 }
 

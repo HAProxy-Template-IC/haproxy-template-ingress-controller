@@ -1295,7 +1295,7 @@ write_initial_metadata() {
             methodology_limits: [
               "public report results are joined multi-controller runs with shared status contention; this runner targets isolated HAPTIC",
               "probe and routechange logs are parsed directly instead of imported through the public VictoriaMetrics report pipeline",
-              "probe includes the upstream cold route-0 request",
+              "probe and routechange pre-create the exact upstream backend and wait for a ready endpoint, so route 0 measures propagation rather than backend pod start-up",
               "routechange adds a strict per-HAProxy backendRef ResponseHeaderModifier observer as a separate HAPTIC gate",
               "scale substitutes the HAPTIC target and adds HAPTIC readiness proof before a runner-defined 10-minute steady analysis window"
             ],
@@ -3110,6 +3110,94 @@ assert_upstream_backend_absent() {
     : > "$scenario_dir/upstream-backend-before.txt"
 }
 
+# extract_upstream_backend_manifest writes the backend Deployment+Service the
+# pinned upstream program applies (its Go `backendTemplate` constant) to a
+# file, byte-for-byte, so the runner never carries a transcribed copy.
+extract_upstream_backend_manifest() {
+    local program="$1"
+    local output="$2"
+    local source="${UPSTREAM_DIR}/tests/${program}/${program}.go"
+    [[ -f "$source" ]] || die "upstream program source not found: ${source}"
+    awk '/^const backendTemplate = `/ {capture = 1; next} capture && /^`/ {exit} capture' "$source" > "$output" || \
+        die "could not extract the upstream backend manifest from ${source}"
+    yq -o=json -I=0 '.' "$output" | jq -se '
+        length == 2 and
+        any(.[]; .kind == "Deployment" and .metadata.name == "backend") and
+        any(.[]; .kind == "Service" and .metadata.name == "backend")
+    ' >/dev/null || die "upstream backend manifest in ${source} is not the expected Deployment + Service pair"
+}
+
+# prewarm_upstream_backend applies the program's exact backend manifest ahead
+# of the program and waits until its pod is Ready and serving in the Service's
+# EndpointSlice. The upstream program then re-applies the identical manifest
+# (a no-op server-side apply), so the workload is unchanged; the difference is
+# that route 0's first request measures HAPTIC's route propagation instead of
+# the backend image pull and pod start-up (which cost ~6 s of 503s per cold
+# scenario). The published joined runs shared one long-lived backend across
+# tests, so this is the closer reproduction.
+prewarm_upstream_backend() {
+    local scenario_dir="$1"
+    local program="$2"
+    local manifest="$scenario_dir/upstream-backend-prewarm.yaml"
+    extract_upstream_backend_manifest "$program" "$manifest"
+    sha256sum "$manifest" | awk '{print $1}' > "$scenario_dir/upstream-backend-prewarm-sha256.txt"
+    local generation_before
+    generation_before="$(kubectl get haproxycfg "$HAPROXYCFG_NAME" -n "$RELEASE_NAMESPACE" \
+        -o jsonpath='{.metadata.generation}')" || die "could not read the HAProxyCfg generation before the prewarm"
+    [[ "$generation_before" =~ ^[0-9]+$ ]] || die "HAProxyCfg generation before the prewarm is not a number"
+    local apply_rc=0
+    run_logged "$scenario_dir/upstream-backend-prewarm-apply.log" \
+        "$scenario_dir/upstream-backend-prewarm-apply-exit-code.txt" \
+        kubectl apply --server-side --field-manager=haptic-gateway-api-bench -n default -f "$manifest" || apply_rc=$?
+    [[ $apply_rc -eq 0 ]] || die "could not pre-create the upstream backend fixture"
+    kubectl rollout status deployment/backend -n default --timeout=3m || \
+        die "upstream backend Deployment did not become available before ${program}"
+    local deadline=$((SECONDS + 120)) ready=false
+    while (( SECONDS < deadline )); do
+        if kubectl get endpointslices.discovery.k8s.io -n default -l kubernetes.io/service-name=backend -o json | jq -e '
+            [.items[].endpoints[]? | select(.conditions.ready == true and (.conditions.terminating // false) == false)] | length > 0
+        ' >/dev/null 2>&1; then
+            ready=true
+            break
+        fi
+        sleep 1
+    done
+    [[ "$ready" == "true" ]] || die "upstream backend Service has no ready endpoint before ${program}"
+    kubectl get pods -n default -l app=backend -o json > "$scenario_dir/upstream-backend-prewarm-pods.json" || \
+        die "could not inspect the pre-created upstream backend pod"
+    jq -e '(.items | length) == 1 and
+        any(.items[0].status.conditions[]?; .type == "Ready" and .status == "True")' \
+        "$scenario_dir/upstream-backend-prewarm-pods.json" >/dev/null || \
+        die "pre-created upstream backend is not exactly one Ready pod"
+    # A new pod normally changes the rendered configuration (the bundled chart
+    # maps pod IPs to names), and that update may still be in flight when the
+    # scenario captures its baseline. Wait for HAPTIC to publish and deploy a
+    # newer generation; a chart that renders nothing per pod simply lets the
+    # bounded wait expire, which is recorded but not an error.
+    local settle_rc=0 settled=true
+    poll_for_haproxycfg_converged "" "$scenario_dir/upstream-backend-prewarm-haproxycfg.json" \
+        "" $((SECONDS + 90)) "$DEFAULT_HAPROXYCFG_POLL_INTERVAL_SECONDS" \
+        "$scenario_dir/upstream-backend-prewarm-haproxycfg-report.json" "" "$generation_before" \
+        "" prewarm-settle-timeout || settle_rc=$?
+    if [[ $settle_rc -eq "$READINESS_RESULT_DEADLINE" ]]; then
+        settled=false
+    elif [[ $settle_rc -ne 0 ]]; then
+        die "could not observe the HAProxyCfg after the upstream backend prewarm"
+    fi
+    jq -n --arg program "$program" --arg sha "$(<"$scenario_dir/upstream-backend-prewarm-sha256.txt")" \
+        --argjson generation_before "$generation_before" --argjson settled "$settled" \
+        --slurpfile pods "$scenario_dir/upstream-backend-prewarm-pods.json" '
+        {program: $program, manifest_source: ("tests/" + $program + "/" + $program + ".go backendTemplate"),
+         manifest_sha256: $sha, applied_by: "runner, server-side apply; the upstream program re-applies the identical manifest",
+         pod: {name: $pods[0].items[0].metadata.name, uid: $pods[0].items[0].metadata.uid,
+               resource_version: $pods[0].items[0].metadata.resourceVersion},
+         haproxycfg_generation_before: $generation_before,
+         haproxycfg_advanced_and_converged: $settled,
+         reason: "route 0 measures propagation, not backend pod start-up", pass: true}
+    ' > "$scenario_dir/upstream-backend-prewarm.json"
+    record_event upstream-backend-prewarmed "$program"
+}
+
 capture_upstream_backend_identity() {
     local scenario_dir="$1"
     local resources="$scenario_dir/upstream-backend-before-cleanup.json"
@@ -4690,6 +4778,9 @@ run_probe() {
     capture_supervised_children "$scenario_dir/before"
     validate_supervised_child_baseline "$scenario_dir"
     capture_haproxycfg_baseline "$scenario_dir"
+    # After the baseline: cleanup deletes the backend again, and the
+    # post-scenario check expects the configuration back at this baseline.
+    prewarm_upstream_backend "$scenario_dir" probe
     local workload_start workload_end workload_duration expected_samples command_rc=0
     expected_samples=$((BENCH_PROBE_ROUTES * ${#GATEWAYS[@]}))
 
@@ -4853,6 +4944,7 @@ run_routechange() {
     capture_supervised_children "$scenario_dir/before"
     validate_supervised_child_baseline "$scenario_dir"
     capture_haproxycfg_baseline "$scenario_dir"
+    prewarm_upstream_backend "$scenario_dir" routechange
     local workload_start workload_end workload_duration reloads_before reloads_after reload_delta fleet_size
     reloads_before="$(snapshot_controller_counter haptic_haproxy_reloads_total "$scenario_dir/reloads-before")"
     start_routechange_tunnels "$scenario_dir"

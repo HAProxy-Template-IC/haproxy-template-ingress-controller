@@ -381,20 +381,20 @@ The base library provides reusable macros across several `util-*` snippets, impo
 | `CalculateShardCount(resourceCount, itemsPerShard)` | Computes `clamp(count / itemsPerShard, 1, 2*GOMAXPROCS)` |
 | `HostMatchCondition(hosts)` | Builds a host-match ACL condition (in `util-ingress-helpers`) |
 | `BuildServerOptions(serverOpts)` | Renders server-line option flags (in `util-backend-servers-helpers`) |
-| `BackendServers(serviceName, maxSlots, port, opts, portName, backendName, namespace)` | Generates the full server pool with reserved slots (in `util-backend-servers`) |
+| `BackendServers(serviceName, slotBlock, port, opts, portName, backendName, namespace)` | Generates the full server pool with reserved slots (in `util-backend-servers`); `slotBlock` is the provisioning block size, `0` = chart default |
 
 Usage:
 
 ```scriggo
 {%- import "util-backend-servers" for BackendServers %}
-{{ BackendServers(serviceName, 10, port, serverOpts, nil, backendKey, namespace) }}
+{{ BackendServers(serviceName, 0, port, serverOpts, nil, backendKey, namespace) }}
 ```
 
 ### Backend server pool
 
 The `util-backend-servers` snippet generates server lines with:
 
-- Pre-allocated server slots for dynamic scaling
+- Pre-allocated server slots for dynamic scaling — sized to the ready endpoints plus headroom (`max(2, ceil(n/4))` spare, tunable via `extraContext.serverSlots.minFree`/`.increment`), kept while they still fit, grown by a block on the next reload when they fill, shrunk once mostly idle; no endpoint is ever left without a `server` line
 - Health check configuration
 - Support for per-server options (`maxconn`, SSL, etc.)
 

@@ -34,10 +34,6 @@ validationTests:
           server SRV_4 10.0.0.2:8080 check
           server SRV_5 192.0.2.1:1 disabled
           server SRV_6 192.0.2.1:1 disabled
-          server SRV_7 192.0.2.1:1 disabled
-          server SRV_8 192.0.2.1:1 disabled
-          server SRV_9 192.0.2.1:1 disabled
-          server SRV_10 192.0.2.1:1 disabled
     fixtures:
       services:
         - apiVersion: v1
@@ -98,10 +94,6 @@ validationTests:
           server SRV_4 10.0.0.6:8080 check
           server SRV_5 192.0.2.1:1 disabled
           server SRV_6 192.0.2.1:1 disabled
-          server SRV_7 192.0.2.1:1 disabled
-          server SRV_8 192.0.2.1:1 disabled
-          server SRV_9 192.0.2.1:1 disabled
-          server SRV_10 192.0.2.1:1 disabled
     fixtures:
       services:
         - apiVersion: v1

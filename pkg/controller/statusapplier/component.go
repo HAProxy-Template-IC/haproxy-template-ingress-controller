@@ -80,6 +80,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	k8stypes "gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -161,6 +162,9 @@ type Component struct {
 	// checksumCache maps "namespace/name/gvr" to the SHA-256 of the last
 	// successfully applied patch payload. Used to skip redundant SSA calls.
 	checksumCache map[string]string
+
+	// selfWrites receives the resourceVersion of every applied patch (nil-safe).
+	selfWrites *k8stypes.SelfWriteRegistry
 }
 
 // Config contains configuration for creating a StatusApplier Component.
@@ -176,6 +180,11 @@ type Config struct {
 
 	// Logger is the structured logger.
 	Logger *slog.Logger
+
+	// SelfWrites records the resourceVersion of every applied patch so the
+	// watchers can refresh from the echoed event without re-rendering.
+	// Optional.
+	SelfWrites *k8stypes.SelfWriteRegistry
 }
 
 // New creates a new StatusApplier component.
@@ -193,6 +202,7 @@ func New(cfg *Config) *Component {
 		gvrResolver:   cfg.GVRResolver,
 		healthTracker: lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 		checksumCache: make(map[string]string),
+		selfWrites:    cfg.SelfWrites,
 	}
 	// Typed subscription (EventTypes, not a catch-all) — the bus prefilters
 	// by event type at publish, so the 50-event buffer holds ONLY events we
@@ -237,6 +247,14 @@ func (c *Component) CoalescesOn() []string {
 		events.EventTypeDeploymentSkipped,
 	}
 }
+
+// CoalescesAcrossQueue makes the latest-wins statement hold across the whole
+// mailbox, not just within a run: under churn the three types arrive strictly
+// alternating (render → resources.applied, deploy → deployment.completed), so
+// run-only collapsing never fired and the queue grew to 2048 full patch sets
+// (6 GB live heap on a 1,900-route churn). Each event carries the complete
+// patch set for its phase, so only the newest of each type matters.
+func (c *Component) CoalescesAcrossQueue() bool { return true }
 
 // HealthCheck returns nil if the component is healthy.
 func (c *Component) HealthCheck() error {
@@ -563,7 +581,7 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 	}
 
 	// Apply via SSA on the status subresource.
-	_, err = c.dynamicClient.Resource(gvr).Namespace(patch.Namespace).Patch(
+	applied, err := c.dynamicClient.Resource(gvr).Namespace(patch.Namespace).Patch(
 		ctx,
 		patch.Name,
 		types.ApplyPatchType,
@@ -601,6 +619,10 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 			err.Error(), IsRetriable(err),
 		))
 		return patchFailed
+	}
+
+	if applied != nil {
+		c.selfWrites.Record(gvr.GroupResource(), patch.Namespace, patch.Name, applied.GetResourceVersion())
 	}
 
 	// Update checksum cache on success. The cache has no per-key eviction —

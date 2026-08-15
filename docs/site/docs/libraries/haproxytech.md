@@ -1373,9 +1373,9 @@ server SRV_1 10.0.1.5:8080 enabled
 
 **Status**: ✅ Supported
 
-**Description**: Override the number of pre-allocated server slots for the backend. HAProxy reserves this many `server` lines so endpoints can be added or removed via the runtime API without a reload. Must be a positive integer — other values fail the render.
+**Description**: Set the block size the backend's server-slot pool is provisioned in. HAProxy keeps spare `server` lines (`disabled` placeholders) so endpoints can be added or removed through the runtime API without a reload; when the pool fills, HAPTIC grows it by another block on the next reload — the annotation is a provisioning unit, not a cap, and no endpoint is ever left without a `server` line. Same semantics as the haproxytech controller's annotation (whose default block is 42). Must be a positive integer — other values fail the render.
 
-**Default**: `10` slots (when the annotation is absent).
+**Default**: no fixed count. Without the annotation the pool is sized to fit: `endpoints + max(2, ceil(endpoints / 4))` slots (the headroom covers a default rolling update with `maxSurge: 25%` and small scale-ups without a reload), and HAPTIC keeps the current pool while the endpoints still fit and it's smaller than twice the size it would create from scratch, so a scale-down shrinks the pool only once it's mostly idle. Change the chart-wide defaults with `controller.config.templatingSettings.extraContext.serverSlots.increment` (block size, default `1`) and `.serverSlots.minFree` (minimum spare slots, default `2`).
 
 **Usage**:
 
@@ -1402,7 +1402,7 @@ spec:
 
 **Generated HAProxy Configuration**:
 
-With `scale-server-slots: "5"`, the backend pre-allocates five slots (`SRV_1`–`SRV_5`); active endpoints fill the leading slots and the rest stay reserved as disabled placeholders (RFC 5737 `192.0.2.1:1`):
+With `scale-server-slots: "5"` and one ready pod, the backend provisions one block of five slots (`SRV_1`–`SRV_5`); active endpoints fill the leading slots and the rest stay reserved as disabled placeholders (RFC 5737 `192.0.2.1:1`). A sixth pod grows the pool to ten slots on the next reload:
 
 ```haproxy
 default-server check
@@ -1413,8 +1413,8 @@ server SRV_4 192.0.2.1:1 disabled
 server SRV_5 192.0.2.1:1 disabled
 ```
 
-!!! warning "Size the slot count to your peak replica count"
-    Set the slot count to at least the backend's maximum expected replica count. When a backend has more ready endpoints than slots, the excess endpoints get no `server` line and receive no traffic — HAPTIC drops them silently, with no error, warning, or Event, and the render still succeeds. The default of 10 applies to every backend without this annotation, so a Deployment scaled past 10 ready pods starves the extra pods until you raise `scale-server-slots`.
+!!! note "When a reload happens"
+    Endpoint changes that fit the pool are runtime-only (no reload). Growing the pool — the block is full and another pod became ready — is one HAProxy reload, as is shrinking it after a large scale-down. Set the annotation to your usual replica ceiling if you want scale-ups to stay reload-free up to that count from the start.
 
 There's no fixed maximum — any positive integer is accepted. In practice the count is bounded by total config size and, when the shared-memory stats file is enabled (`haproxy.shmStats.maxObjects`, default 50000, shared across the whole config), the shm-stats object budget.
 

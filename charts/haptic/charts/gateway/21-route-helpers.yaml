@@ -254,6 +254,34 @@ templateSnippets:
         {%- end -%}
       {%- end macro -%}
 
+  util-backend-ref-valid:
+    requires: [referencegrants]
+    template: |
+      {# One validity verdict for a route backendRef, shared by the frontend
+          backend selector, the weighted map, and the backend generator, so a map
+          value never names a backend section that was not emitted. Valid means:
+          core/v1 Service, the Service exists, and a cross-namespace ref is
+          covered by a ReferenceGrant. Text-typed macro: compare == "true". #}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- macro BackendRefValid(routeKind string, routeNs string, ref any) -%}
+        {%- var refGroup = ref | dig_string("", "group") -%}
+        {%- var refKind = ref | dig_string("Service", "kind") -%}
+        {%- if (refGroup != "" && refGroup != "core") || refKind != "Service" -%}
+          false
+        {%- else -%}
+          {%- var refName = ref | dig_string("", "name") -%}
+          {%- var refNs = ref | dig_string(routeNs, "namespace") -%}
+          {%- if refNs == "" %}{%- refNs = routeNs %}{%- end -%}
+          {%- if resources.services.GetSingle(refNs, refName) == nil -%}
+            false
+          {%- else if refNs != routeNs && ReferenceGrantPermitted("gateway.networking.k8s.io", routeKind, routeNs, "", "Service", refNs, refName) != "true" -%}
+            false
+          {%- else -%}
+            true
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
   util-gw-mtls-blocked:
     requires: [gateways]
     template: |

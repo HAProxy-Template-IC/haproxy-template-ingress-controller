@@ -39,11 +39,13 @@ test-listenerset-protocol-conflict
 test-listenerset-rendered-variant-includes-programmed-observed-generation
 test-proxy-protocol-passthrough-binds-on-ssl-tcp
 test-tcproute-basic-l4-forward
+test-tcproute-cross-namespace-backend-without-referencegrant-not-routed
 test-tcproute-multi-listener-single-backend
 test-tcproute-oldest-route-wins-port
 test-tcproute-orphan-sibling-does-not-drop-others
 test-tcproute-unattached-no-frontend
 test-tcproute-weighted-routing
+test-tlsroute-cross-namespace-backend-without-referencegrant-rejected
 test-tlsroute-hostname-intersection-multi-gateway
 test-tlsroute-hostname-mismatch
 test-tlsroute-invalid-backend-kind-no-attach

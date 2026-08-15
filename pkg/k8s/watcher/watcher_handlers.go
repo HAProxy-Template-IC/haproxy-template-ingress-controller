@@ -184,6 +184,18 @@ func (w *Watcher) processUpdate(oldResource, resource *unstructured.Unstructured
 		"resource_version", resource.GetResourceVersion(),
 		"keys", keys)
 
+	// The store is fresh either way; only a change that isn't our own write
+	// echoing back is worth a reconcile.
+	if w.config.SelfWrites != nil && w.config.SelfWrites.IsSelfWrite(
+		w.config.GVR.GroupResource(), resource.GetNamespace(), resource.GetName(), resource.GetResourceVersion()) {
+		w.logger.Debug("Watcher update is this controller's own write; store refreshed without triggering",
+			"gvr", w.config.GVR.String(),
+			"name", resource.GetName(),
+			"namespace", resource.GetNamespace(),
+			"resource_version", resource.GetResourceVersion())
+		return
+	}
+
 	// Record change
 	w.debouncer.RecordUpdate()
 }

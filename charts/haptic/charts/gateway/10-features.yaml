@@ -31,7 +31,7 @@ templateSnippets:
       }) %}
 
   features-100-gateway-ssl-passthrough:
-    requires: [gateways, httproutes, tlsroutes]
+    requires: [gateways, httproutes, referencegrants, tlsroutes]
     template: |
       {# Register SSL passthrough backends with global feature registry. #}
       {{ render "util-gateway-ssl-passthrough" }}
