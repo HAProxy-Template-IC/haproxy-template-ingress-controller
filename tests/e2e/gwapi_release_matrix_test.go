@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
+	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 )
 
@@ -143,7 +144,7 @@ func TestGatewayAPIReleaseMatrix(t *testing.T) {
 			return ctx
 		}).
 		Assess("in-place upgrade to "+defaultGatewayAPIVersion+" converges without pod restart", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			if err := applyGatewayAPICRDs(ctx, defaultGatewayAPIVersion); err != nil {
+			if err := applyGatewayAPICRDs(ctx, defaultGatewayAPIVersion, e2ecluster.GatewayAPIChannelStandard); err != nil {
 				t.Fatalf("upgrade Gateway API CRDs: %v", err)
 			}
 

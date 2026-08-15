@@ -1,6 +1,6 @@
 .PHONY: help version lint lint-fix lint-chart lint-chart-ci audit check-all \
         test test-integration test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance test-ingress-conformance test-helm-defaults build-integration-test \
-        test-coverage test-integration-coverage test-coverage-combined bench \
+        test-coverage test-integration-coverage test-coverage-combined bench bench-gateway-api \
         build check-source-hash docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check \
         tidy vendor verify verify-generate generate clean fmt vet install-tools dev \
@@ -263,6 +263,12 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 
 test: ## Run tests
 	@echo "Running tests..."
+	python3 -m unittest \
+		scripts/tests/test_analyze_gateway_api_bench.py \
+		scripts/tests/test_analyze_gateway_api_children.py \
+		scripts/tests/test_analyze_gateway_api_resources.py \
+		scripts/tests/test_analyze_gateway_api_supervisor_logs.py
+	bash scripts/tests/test_bench_gateway_api.sh
 	# -coverpkg=./... (rather than a bare -cover) instruments the whole module
 	# for coverage, matching how the CI `test` job invokes gotestsum. Beyond
 	# unifying local and CI runs, it sidesteps a Go toolchain bug: with the
@@ -539,8 +545,10 @@ test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run
 		echo "$(HAPTIC_E2E_PROFILE) e2e profile without SPOA_TAG: building local spoa-hub:dev image"; \
 		$(MAKE) spoa-hub-image; \
 	fi
-	@echo "Note: This creates kind cluster 'haptic-e2e', helm-installs the chart, deploys fixtures."
+	@cluster_name="$${HAPTIC_E2E_CLUSTER_NAME:-haptic-e2e}"; \
+		echo "Note: This creates kind cluster '$$cluster_name', helm-installs the chart, deploys fixtures."
 	@echo "Environment variables:"
+	@echo "  HAPTIC_E2E_CLUSTER_NAME - Kind cluster name (default: haptic-e2e)"
 	@echo "  KEEP_CLUSTER        - Keep cluster after tests (default: true; set false to destroy)"
 	@echo "  KEEP_NAMESPACE      - Keep test namespaces after failure for debugging (default: false)"
 	@echo "  SKIP_CLUSTER_CREATE - CI mode: assume cluster already exists; skip kind create"
@@ -620,6 +628,9 @@ bench: ## Run benchmarks (usage: make bench PKG=./pkg/templating/ BENCH=Benchmar
 		-count=$${COUNT:-1} \
 		-timeout=$${TIMEOUT:-5m} \
 		$${PKG:-./...}
+
+bench-gateway-api: ## Run pinned Gateway API benchmark programs against HAPTIC
+	bash scripts/bench-gateway-api.sh
 
 ## Schema extraction (for offline validate)
 

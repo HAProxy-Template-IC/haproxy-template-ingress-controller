@@ -61,7 +61,7 @@ RUN . /etc/os-release \
        "${DEBIAN_SNAPSHOT}" "${VERSION_CODENAME}" >/etc/apt/sources.list \
     && apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends \
-       ca-certificates curl gnupg git make \
+       ca-certificates curl gnupg git make ripgrep \
        jq python3-pip nodejs npm \
        brotli gzip \
     && rm -rf /var/lib/apt/lists/*
@@ -177,4 +177,4 @@ RUN curl -fsSL -o /tmp/syft.tar.gz \
     && rm /tmp/syft.tar.gz
 
 # Verify installations
-RUN go version && haproxy -v && docker --version && docker buildx version && kind version && kubectl version --client && helm version && helm-min version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1 && ct version && helm unittest --help >/dev/null && kubeconform -v && goreleaser --version && cosign version && syft version && crane version && oras version && vale --version
+RUN go version && haproxy -v && docker --version && docker buildx version && kind version && kubectl version --client && helm version && helm-min version && yq --version && jq --version && rg --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1 && ct version && helm unittest --help >/dev/null && kubeconform -v && goreleaser --version && cosign version && syft version && crane version && oras version && vale --version

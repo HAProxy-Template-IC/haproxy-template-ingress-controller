@@ -25,12 +25,6 @@ import (
 // it creates its own kind cluster and helm-installs the chart. None of these
 // constants depend on scripts/start-dev-env.sh having been run.
 const (
-	// ClusterName is the kind cluster the e2e suite owns.
-	// The kubectl context is "kind-" + ClusterName. Distinct from the
-	// developer's interactive `kind-haptic-dev` cluster so the two don't
-	// collide.
-	ClusterName = "haptic-e2e"
-
 	// HelmReleaseName is the helm release name used to install the chart.
 	HelmReleaseName = "haptic"
 
