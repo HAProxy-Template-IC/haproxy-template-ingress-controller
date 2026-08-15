@@ -118,7 +118,7 @@ kubectl describe pod -n haptic <pod>   # read the Events and per-container State
 - **A container is in `Waiting` with `CrashLoopBackOff` or `ImagePullBackOff`**: the pod never starts, so it can't be Ready. Follow [Controller not starting](#controller-not-starting) for crashes, or [Image pull errors](#image-pull-errors) for pull failures.
 - **Every container is `Running` but the pod stays not Ready**: a readiness probe is failing. Branch by which pod:
     - **Controller pod** (`1/2`): the readiness probe hits `/healthz` on `controller.ports.healthz` (`8080` by default), which returns ready only once the controller has loaded a valid `HAProxyTemplateConfig` and rendered its first config. A render or config-load failure keeps it not Ready — check `kubectl logs -n haptic <pod>` for template or validation errors and follow [Invalid template syntax](#invalid-template-syntax). `/healthz` shares the `/debug/*` listener and is required by the probe (see [Debugging](./operations/debugging.md)).
-    - **HAProxy pod** (`3/4` on a default install, fewer with sidecars disabled): the HAProxy or Dataplane API container is up but not passing its probe. The controller also can't converge config onto an unreachable Dataplane API — follow [Can't connect to Dataplane API](#cannot-connect-to-dataplane-api).
+    - **HAProxy pod** (`3/4` on a default install, fewer with sidecars disabled): HAProxy's `/ready` probe is failing. Inspect the HAProxy logs and the activated config. Dataplane API, SPOA hub, and Vector child health doesn't control this probe; their supervisors log child failures. If configuration can't converge, follow [Can't connect to Dataplane API](#cannot-connect-to-dataplane-api).
 
 ### Controller running but not processing
 

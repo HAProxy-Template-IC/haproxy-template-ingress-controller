@@ -410,14 +410,17 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     fi
     for TEST in \
         test-haptic-rate-limit-shared-ip \
+        test-haptic-rate-limit-shared-ip-before-waf \
         test-haptic-rate-limit-shared-exact-consumer \
+        test-haptic-rate-limit-shared-strict-unavailable \
         test-haptic-rate-limit-shared-consumer-cache-route \
         test-haptic-rate-limit-shared-consumer-cache-requires-api-key \
         test-haptic-rate-limit-shared-consumer-cache-no-api-key-fails-closed \
         test-haptic-cache-shared-rate-limit-loopback \
         test-haptic-cache-autoscaling \
         test-haptic-rate-limit-shared-invalid-requests \
-        test-haptic-rate-limit-shared-invalid-period-zero; do
+        test-haptic-rate-limit-shared-invalid-period-zero \
+        test-haptic-rate-limit-shared-refill-horizon-too-long; do
         echo -e "${YELLOW}Shared rate-limit profile: ${TEST}...${NC}" >&2
         "$CONTROLLER_BIN" validate --file "$RATE_LIMIT_CONFIG" "${SCHEMA_DIR_ARGS[@]}" --test "$TEST" "$@" || FULL_RC=$?
         if [[ $FULL_RC -ne 0 ]]; then

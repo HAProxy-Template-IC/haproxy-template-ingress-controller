@@ -1,0 +1,161 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: haproxy pod disruption budget
+templates:
+  - haproxy-poddisruptionbudget.yaml
+tests:
+  - it: should preserve one HAProxy replica by default
+    asserts:
+      - isKind:
+          of: PodDisruptionBudget
+      - equal:
+          path: spec.maxUnavailable
+          value: 1
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/component"]
+          value: loadbalancer
+
+  - it: should use the HAProxy deployment name and common metadata
+    set:
+      commonLabels:
+        environment: production
+      commonAnnotations:
+        team: edge
+    asserts:
+      - matchRegex:
+          path: metadata.name
+          pattern: ".*-haproxy$"
+      - equal:
+          path: metadata.labels.environment
+          value: production
+      - equal:
+          path: metadata.annotations.team
+          value: edge
+
+  - it: should not render when the HAProxy fleet is external
+    set:
+      haproxy.enabled: false
+      haproxy.replicaCount: 0
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should still validate staged budget values for an external fleet
+    set:
+      haproxy.enabled: false
+      haproxy.podDisruptionBudget.maxUnavailable: "1"
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.podDisruptionBudget.maxUnavailable must be a non-negative integer."
+
+  - it: should allow disabling the budget
+    set:
+      haproxy.replicaCount: 0
+      haproxy.podDisruptionBudget.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should allow zero voluntary disruptions for a single static replica
+    set:
+      haproxy.replicaCount: 1
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 0
+
+  - it: should allow an explicit zero budget for a single static replica
+    set:
+      haproxy.replicaCount: 1
+      haproxy.podDisruptionBudget.maxUnavailable: 0
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 0
+
+  - it: should reject an unknown budget field
+    set:
+      haproxy.podDisruptionBudget.minAvailable: 1
+    asserts:
+      - failedTemplate:
+          errorMessage: 'haproxy.podDisruptionBudget contains unknown field "minAvailable". Valid fields: enabled, maxUnavailable.'
+
+  - it: should reject a non-map budget
+    set:
+      haproxy.podDisruptionBudget: disabled
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.podDisruptionBudget must be a map."
+
+  - it: should reject a non-boolean enabled value
+    set:
+      haproxy.podDisruptionBudget.enabled: "yes"
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.podDisruptionBudget.enabled must be a boolean."
+
+  - it: should reject a string maxUnavailable
+    set:
+      haproxy.podDisruptionBudget.maxUnavailable: "1"
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.podDisruptionBudget.maxUnavailable must be a non-negative integer."
+
+  - it: should reject a negative maxUnavailable
+    set:
+      haproxy.podDisruptionBudget.maxUnavailable: -1
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.podDisruptionBudget.maxUnavailable must be a non-negative integer."
+
+  - it: should reject a static budget that permits the minimum fleet to disappear
+    set:
+      haproxy.replicaCount: 1
+      haproxy.podDisruptionBudget.maxUnavailable: 1
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.podDisruptionBudget.maxUnavailable must be smaller than the minimum HAProxy replica count, so voluntary disruptions preserve at least one load balancer."
+
+  - it: should use the KEDA minimum when autoscaling is enabled
+    set:
+      haproxy.replicaCount: 10
+      haproxy.keda.enabled: true
+      haproxy.keda.minReplicaCount: 1
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 0
+
+  - it: should reject an explicit budget that permits the KEDA minimum to disappear
+    set:
+      haproxy.replicaCount: 10
+      haproxy.keda.enabled: true
+      haproxy.keda.minReplicaCount: 1
+      haproxy.podDisruptionBudget.maxUnavailable: 1
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.podDisruptionBudget.maxUnavailable must be smaller than the minimum HAProxy replica count, so voluntary disruptions preserve at least one load balancer."
+
+  - it: should allow a budget below the KEDA minimum
+    set:
+      haproxy.replicaCount: 1
+      haproxy.keda.enabled: true
+      haproxy.keda.minReplicaCount: 3
+      haproxy.podDisruptionBudget.maxUnavailable: 2
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 2
+
+  - it: should reject a non-integer static replica count
+    set:
+      haproxy.replicaCount: "2"
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.replicaCount must be a non-negative integer."
+
+  - it: should reject a non-integer KEDA minimum
+    set:
+      haproxy.keda.minReplicaCount: "2"
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.keda.minReplicaCount must be a non-negative integer."

@@ -758,6 +758,7 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 			"--set", "cache.varnish.enabled=true",
 			"--set", "cache.varnish.replicas=1",
 			"--set", "cache.varnish.podDisruptionBudget.enabled=false",
+			"--set", "cache.haproxy.responseTimeoutMs=500",
 			"--set", fmt.Sprintf("haproxy.service.http.port=%d", ChartHAProxyServiceHTTPPort))
 		fmt.Fprintf(os.Stderr, "e2e: cache shard — enabling Varnish with HAProxy Service port %d and kindnet policy enforcement\n", ChartHAProxyServiceHTTPPort)
 	}

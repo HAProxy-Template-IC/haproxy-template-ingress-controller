@@ -34,7 +34,14 @@ validationTests:
       - {type: contains, target: map:rate-limit.map, pattern: "default/rl-ip 100 60 100 lease ip"}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request send-spoe-group spoa-hub check-ratelimit-group"
+        pattern: "http-request send-spoe-group spoa-hub-check-ratelimit check-ratelimit-group"
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - "set-var\\(txn.rl_rule_invalid\\).*txn.rl_period"
+          - "set-var\\(txn.rl_rule_invalid\\).*txn.rl_keyspec.*ip consumer"
+          - "set-var\\(txn.denied_by\\) str\\(rate_limit_shared_invalid\\)"
+          - "send-spoe-group spoa-hub-check-ratelimit check-ratelimit-group"
       - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 429 hdr Retry-After"}
       - type: contains
         target: haproxy.cfg
@@ -72,8 +79,8 @@ validationTests:
       - type: match_order
         target: haproxy.cfg
         patterns:
-          - "send-spoe-group spoa-hub check-ratelimit-group if .*txn\\.rl_keyspec.* ip"
-          - "send-spoe-group spoa-hub check-request-group"
+          - "send-spoe-group spoa-hub-check-ratelimit check-ratelimit-group if .*txn\\.rl_keyspec.* ip"
+          - "send-spoe-group spoa-hub-check-request check-request-group"
 
   test-haptic-rate-limit-shared-exact-consumer:
     _helm_skip_test: '{{ if not .Values.rateLimit.shared.enabled }}true{{ end }}'
@@ -109,12 +116,48 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "haptic/shared-rate-limit consumer \\(default/rl-exact\\)"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "set-var\\(txn.denied_by\\) str\\(rate_limit_shared_unavailable\\) if .*var\\(txn.rl_mode\\) -m str exact.*!\\{ var\\(txn.hub.rate_limit.allowed\\) -m found \\}"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "deny deny_status 429 hdr Retry-After 1 if .*var\\(txn.rl_mode\\) -m str exact.*!\\{ var\\(txn.hub.rate_limit.allowed\\) -m found \\}"
       - type: match_order
         target: haproxy.cfg
         description: consumer quota dispatch must use the identity established by native authentication
         patterns:
           - "set-var\\(txn\\.haptic_consumer\\).*haptic-apikeys-default-api-keys\\.map"
-          - "send-spoe-group spoa-hub check-ratelimit-group if .*txn\\.rl_keyspec.* consumer"
+          - "send-spoe-group spoa-hub-check-ratelimit check-ratelimit-group if .*txn\\.rl_keyspec.* consumer"
+
+  test-haptic-rate-limit-shared-strict-unavailable:
+    _helm_skip_test: '{{ if not .Values.rateLimit.shared.enabled }}true{{ end }}'
+    description: strict shared rate limiting denies a missing verdict in every mode
+    extraContext:
+      rateLimit:
+        shared:
+          failClosed: true
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-strict
+            annotations:
+              haproxy-haptic.org/rate-limit-requests: "50"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rl-strict.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "set-var\\(txn.denied_by\\) str\\(rate_limit_shared_unavailable\\) if .*!\\{ var\\(txn.hub.rate_limit.allowed\\) -m found \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "deny deny_status 429 hdr Retry-After 1 if .*!\\{ var\\(txn.hub.rate_limit.allowed\\) -m found \\}"
 
   test-haptic-rate-limit-shared-consumer-cache-route:
     _helm_skip_test: '{{ if not (and .Values.cache.varnish.enabled .Values.rateLimit.shared.enabled) }}true{{ end }}'
@@ -162,13 +205,13 @@ validationTests:
       # non-cached consumer route keeps its backend dispatch undoubled.
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request send-spoe-group spoa-hub check-ratelimit-group if \\{ var\\(txn\\.rl_limit\\) -m found \\} \\{ var\\(txn\\.rl_keyspec\\) -m str consumer \\} \\{ var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-enable\\.map\\) -m found \\}"
+        pattern: "http-request send-spoe-group spoa-hub-check-ratelimit check-ratelimit-group if \\{ var\\(txn\\.rl_limit\\) -m found \\} \\{ var\\(txn\\.rl_keyspec\\) -m str consumer \\} !\\{ var\\(txn\\.rl_rule_invalid\\) -m bool \\} \\{ var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-enable\\.map\\) -m found \\}"
       - type: match_order
         target: haproxy.cfg
         description: identity (860) before dispatch (863) before the cache switch (865)
         patterns:
           - "set-var\\(txn\\.haptic_consumer\\).*haptic-apikeys-default-api-keys\\.map"
-          - "send-spoe-group spoa-hub check-ratelimit-group if .*txn\\.rl_keyspec.* consumer .*haptic-cache-enable"
+          - "send-spoe-group spoa-hub-check-ratelimit check-ratelimit-group if .*txn\\.rl_keyspec.* consumer .*haptic-cache-enable"
           - "use_backend varnish_cache"
       - type: not_contains
         target: haproxy.cfg
@@ -283,6 +326,30 @@ validationTests:
                 http: *httpRoot
     assertions:
       - {type: contains, target: rendering_error, pattern: "Must be greater than zero"}
+
+  test-haptic-rate-limit-shared-refill-horizon-too-long:
+    _helm_skip_test: '{{ if not .Values.rateLimit.shared.enabled }}true{{ end }}'
+    description: a rule whose refill horizon exceeds the plugin state TTL is rejected
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-long-horizon
+            annotations:
+              haproxy-haptic.org/rate-limit-requests: "10"
+              haproxy-haptic.org/rate-limit-period: "1h"
+              haproxy-haptic.org/rate-limit-burst: "20"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rl-long-horizon.example.com
+                http: *httpRoot
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Ingress default/rl-long-horizon has a shared rate-limit refill horizon above 3600 seconds"
 
   test-haptic-rate-limit-shared-requires-opt-in:
     _helm_skip_test: '{{ if .Values.rateLimit.shared.enabled }}true{{ end }}'

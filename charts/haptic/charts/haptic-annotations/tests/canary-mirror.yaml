@@ -307,10 +307,10 @@ validationTests:
         pattern: "http-request wait-for-body time 10s if \\{ req\\.hdr\\(content-length\\) -m found \\} !\\{ var\\(txn\\.backend_name\\),map\\(.*request-buffering\\.map,on\\) -m str off \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(https\\|mirror.internal:8443\\|50000\\|3;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str mirror.example.com \\}"
+        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(https\\|mirror.internal:8443\\|2000\\|0;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str mirror.example.com \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "send-spoe-group spoa-hub mirror-group if \\{ var\\(txn.gw_mirror_targets\\) -m found \\}"
+        pattern: "send-spoe-group spoa-hub-mirror mirror-group if \\{ var\\(txn.gw_mirror_targets\\) -m found \\}"
 
   # Five mirror-target Ingresses. Each appends its own entry to the per-request
   # txn.gw_mirror_targets list; the SPOE config stays a single static `mirror`
@@ -406,7 +406,7 @@ validationTests:
       # Each of the five Ingresses appended its own entry, host-gated.
       - type: contains
         target: haproxy.cfg
-        pattern: 'str\(http\|sink-a:9000\|50000\|3;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.host\) -m str a\.example\.com \}'
+        pattern: 'str\(http\|sink-a:9000\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.host\) -m str a\.example\.com \}'
       - type: contains
         target: haproxy.cfg
-        pattern: 'str\(http\|sink-e:9000\|50000\|3;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.host\) -m str e\.example\.com \}'
+        pattern: 'str\(http\|sink-e:9000\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.host\) -m str e\.example\.com \}'

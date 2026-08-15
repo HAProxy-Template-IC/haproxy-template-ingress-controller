@@ -3,6 +3,7 @@
 #   - util-auth-validate-header-name      (header-name token guard)
 #   - util-spoa-hub-enabled                (one-line truthiness gate)
 #   - features-spoa-hub                    (file-registration entry point)
+#   - status-extra-050-spoa-hub-health     (loopback child-watchdog endpoint)
 #   - backends-100-spoa-hub                (backend spoa-hub block)
 
 templateSnippets:
@@ -47,6 +48,13 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
+  status-extra-050-spoa-hub-health:
+    template: |
+      {%- if (render "util-spoa-hub-enabled") == "true" %}
+      http-request return status 204 if { path /spoa-hub-child-health } { dst 127.0.0.0/8 } { srv_is_up(spoa-hub/hub) }
+      http-request return status 424 if { path /spoa-hub-child-health } { dst 127.0.0.0/8 }
+      {%- end %}
+
   backends-100-spoa-hub:
     template: |
       {%- if (render "util-spoa-hub-enabled") == "true" %}
@@ -63,7 +71,9 @@ templateSnippets:
       {%- var spopSupported = semver_gte(hapVersion, "3.1") %}
       backend spoa-hub
           mode {%- if modeSpopRequested == "true" && spopSupported %} spop{%- else %} tcp{%- end %}
+          option spop-check
           timeout connect 5s
+          timeout check 500ms
           timeout server  {{ extraContext | dig("spoaHub", "haproxy", "timeoutIdle") | fallback("5m") }}
-          server hub {{ extraContext | dig("spoaHub", "haproxy", "socketPath") | fallback("/run/spoa/hub.sock") }} pool-low-conn 0 pool-max-conn {{ extraContext | dig("spoaHub", "haproxy", "poolMaxConn") | fallback(100) }} pool-purge-delay {{ extraContext | dig("spoaHub", "haproxy", "poolPurgeDelay") | fallback("30s") }}
+          server hub {{ extraContext | dig("spoaHub", "haproxy", "socketPath") | fallback("/run/spoa/hub.sock") }} check inter 1s fastinter 500ms downinter 1s fall 2 rise 2 pool-low-conn 0 pool-max-conn {{ extraContext | dig("spoaHub", "haproxy", "poolMaxConn") | fallback(100) }} pool-purge-delay {{ extraContext | dig("spoaHub", "haproxy", "poolPurgeDelay") | fallback("30s") }}
       {%- end %}

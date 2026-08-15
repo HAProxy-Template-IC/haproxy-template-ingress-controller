@@ -64,8 +64,7 @@ guard that lives only here would not protect a hand-written CR.
   {{- fail "vector.enabled must be a boolean." -}}
 {{- end -}}
 {{- if $v.enabled -}}
-  {{- /* sizeMetricsPort is validated even when unused: an invalid one would
-         otherwise crash-loop the sidecar the moment request_size comes back. */ -}}
+  {{- /* Validate the dormant port too, before request_size activates its child listener. */ -}}
   {{- $ports := dict "metricsPort" ($v.metricsPort | int) -}}
   {{- $_ := set $ports "sizeMetricsPort" ($v.sizeMetricsPort | int) -}}
   {{- $hubPort := include "haptic.spoaHub.metricsPort" . -}}
@@ -124,11 +123,8 @@ guard that lives only here would not protect a hand-written CR.
   {{- if not (kindIs "bool" $v.excludeMaintServerMetrics) -}}
     {{- fail (printf "vector.excludeMaintServerMetrics must be a boolean, got %v." $v.excludeMaintServerMetrics) -}}
   {{- end -}}
-  {{- /* Validate the exclusion patterns. An invalid or quote-bearing regex reaches
-         the rendered vector config and fails its load — which crash-loops the
-         sidecar, so it has to be caught here. VRL uses the Rust regex crate and
-         Go uses RE2; both are RE2-family, so a pattern Go rejects would not have
-         worked there either. */ -}}
+  {{- /* Reject exclusion patterns that Vector cannot load; Go and VRL accept the
+         same regular-expression family. */ -}}
   {{- if not (kindIs "map" ($v.excludeMetrics | default dict)) -}}
     {{- fail "vector.excludeMetrics must be a map of named exclusions, each with `pattern` and `enabled`. It was a list until 0.2.0; a list is replaced wholesale by Helm, so disabling one exclusion meant restating every other and silently losing any added later." -}}
   {{- end -}}
@@ -175,13 +171,10 @@ guard that lives only here would not protect a hand-written CR.
            escapes needed for a combined pattern do not survive Helm's parser. */ -}}
     {{- range $bad := (list "'" "\"" "\\" "\n" "\r") -}}
       {{- if contains $bad $ps -}}
-        {{- fail (printf "vector.excludeMetrics pattern %q contains a quote, backslash or newline. Patterns are embedded in a VRL r'...' literal in the rendered config, so those characters would break vector's config load and crash-loop the sidecar." $ps) -}}
+        {{- fail (printf "vector.excludeMetrics pattern %q contains a quote, backslash or newline. Patterns are embedded in a VRL r'...' literal in the rendered config, so those characters would break vector's config load and keep log and metric export unavailable." $ps) -}}
       {{- end -}}
     {{- end -}}
-    {{- /* Compile check. MUST be mustRegexMatch: sprig's plain regexMatch does
-           `match, _ := regexp.MatchString(...)` — it DISCARDS the compile error and
-           returns false, so `regexMatch $ps ""` validated nothing at all and an
-           uncompilable pattern rendered clean, then crash-looped the sidecar. */ -}}
+    {{- /* mustRegexMatch surfaces compile errors; regexMatch discards them. */ -}}
     {{- $_ := mustRegexMatch $ps "" -}}
     {{- /* families are exact metric names appended to HAProxy's scrape URL as
            `metrics=-<name>`, so they never reach vector's parser — that is what
@@ -270,8 +263,7 @@ true
 {{- end -}}
 {{- end -}}
 
-{{/* Mirrored in the Scriggo library: a hand-written CR bypasses Helm, and a bad
-value fails vector's config load and crash-loops the sidecar. */}}
+{{/* Mirrored in the Scriggo library because a hand-written CR bypasses Helm. */}}
 {{- define "haptic.vector.validateRequestMetrics" -}}
 {{- $rm := .Values.vector.requestMetrics | default dict -}}
 {{- if not (kindIs "map" $rm) -}}

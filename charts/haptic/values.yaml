@@ -696,7 +696,7 @@ controller:
         #
         # Template libraries contribute feature fields through the log-fields-*
         # extension point, each gated on that feature actually being configured:
-        # WAF verdicts, rate-limit outcome, cache HIT/MISS, TLS version, the
+        # WAF verdicts, rate-limit outcome, cache HIT/MISS/STALE, TLS version, the
         # authenticated consumer, and `denied_by`, which names the gate that
         # blocked a request. See
         # https://haproxy-haptic.org/docs/latest/haproxy-deployment/#access-logging
@@ -954,7 +954,7 @@ controller:
           # reload, a restart, a timeout. Default false: the request is ALLOWED.
           # A WAF reduces risk, it does not establish identity, so a blip in our
           # own sidecar must not refuse traffic that did nothing wrong. Either
-          # way the event is counted (haptic_degraded_total{control="waf"} and
+          # way the event is counted (haptic_degraded_waf_total and
           # the waf_degraded access-log field), so a WAF that is silently not
           # inspecting stays visible.
           #
@@ -1241,6 +1241,11 @@ haproxy:
     dataplane: 5555  # Dataplane API (for controller communication)
   # Number of HAProxy replicas
   replicaCount: 2
+  # Preserve at least one ready HAProxy pod during voluntary disruptions.
+  podDisruptionBudget:
+    enabled: true
+    # Null derives 0 for a one-pod minimum fleet and 1 otherwise.
+    maxUnavailable: null
   # HAProxy image configuration
   # Tag defaults to the patch version from haproxyPatchVersions (community) or
   # haproxyEnterprisePatchVersions (enterprise) for the selected haproxyVersion.
@@ -1626,6 +1631,9 @@ cache:
     # Bounded-load consistent hashing: cap any one shard's share to this factor
     # of the mean (prevents a hot key pinning a pod). 0 disables.
     hashBalanceFactor: 150
+    # Inactivity timeout on the Varnish hop. Before response headers, a failed
+    # GET/HEAD retries directly; a response already in flight can't be replayed.
+    responseTimeoutMs: 2000
   varnish:
     # Deploy the Varnish tier and emit the cache routing/backend. Off by default.
     enabled: false
@@ -1697,16 +1705,11 @@ cache:
 # whole HAProxy fleet.
 rateLimit:
   shared:
-    # What happens when the SPOA hub or rate-limit plugin cannot answer — a
-    # reload, a restart, a timeout. Default false: the request is ALLOWED. A rate
-    # limit protects the origin from abuse, and turning an internal blip into
-    # 429s sheds legitimate traffic for a reason the client cannot act on.
-    # Either way the event is counted (haptic_denied_total, and the
-    # rate_limit_unavailable access-log field), so a limiter that is silently not
-    # limiting stays visible.
-    #
-    # Set true only where letting a caller past the budget is worse than refusing
-    # them — a contractual cap rather than DoS protection.
+    # Runtime dependency policy. False falls back from Valkey to the plugin's
+    # per-sidecar limiter; if the hub/plugin cannot answer, HAProxy allows the
+    # request. Both paths set rate_limit_degraded. True denies when the store or
+    # plugin cannot answer. Lease mode still spends an existing local lease
+    # before applying either store-failure policy.
     failClosed: false
     # Enables the native shared rate-limit annotations and auto-enables the
     # spoaHub.plugins.rate-limit plugin. Off by default; annotations fail the
@@ -1735,11 +1738,10 @@ rateLimit:
       # scaling requires slot management and is left to BYO Redis/Valkey
       # platforms.
       replicas: 3
-      # Keep Valkey below the container memory limit under high-cardinality
-      # traffic. Every rate-limit key has a TTL, so volatile-ttl evicts expiring
-      # limiter keys instead of OOM-killing the pod.
+      # Keep Valkey below the container memory limit without silently resetting
+      # active budgets. Memory pressure becomes an explicit store error.
       maxMemory: 96mb
-      maxMemoryPolicy: volatile-ttl
+      maxMemoryPolicy: noeviction
       sentinel:
         port: 26379
         quorum: 2
@@ -1772,12 +1774,10 @@ rateLimit:
         limits:
           memory: 128Mi
     # Bring-your-own shared store, used with managedStore.enabled=false
-    # (setting both is rejected). The chart generates the rate-limit plugin's
-    # store_url (one URL) or store_urls (several URLs, intentionally sharding
-    # keys across independent stores) from this list, so the tuned defaults in
-    # spoaHub.plugins.rate-limit.params stay untouched.
+    # (setting both is rejected). Supply one HA endpoint: the plugin's circuit
+    # breaker spans all configured URLs, so the chart rejects sharding here.
     externalStore:
-      # Redis/Valkey/Sentinel/Cluster URLs, e.g.
+      # One Redis/Valkey/Sentinel/Cluster URL, e.g.
       #   - redis://my-valkey.my-namespace.svc:6379
       urls: []
 
@@ -1972,12 +1972,10 @@ spoaHub:
     modeSpop: true
     timeoutHello: 2s
     timeoutIdle: 5m
-    # HAProxy's outer SPOE processing deadline. Null derives it from the
-    # largest enabled message budget plus timeoutProcessingMarginMs. A message
-    # budget is the sum of timeouts for all plugins that handle that message,
-    # which safely covers dependency stages while unrelated plugins do not
-    # inflate one another. An explicit duration is accepted only when it is at
-    # least that derived minimum.
+    # HAProxy's outer SPOE processing deadline. Null derives each message
+    # engine's deadline from that message's plugin budget plus
+    # timeoutProcessingMarginMs. An explicit duration applies to every engine
+    # and must cover every enabled message's budget plus the margin.
     timeoutProcessing: null
     # Scheduling/serialization margin between the hub's plugin deadline and
     # HAProxy's outer SPOE deadline.
@@ -2148,8 +2146,13 @@ spoaHub:
       # synchronous SPOE-arg parsing and a tokio spawn — microseconds —
       # so the ack is back to HAProxy long before this hits. The actual
       # HTTP roundtrip to the mirror backend is governed by the plugin's
-      # own `timeout_ms` (under `params:` below) and never blocks HAProxy.
+      # per-target budget below and never blocks HAProxy.
       timeoutMs: 50
+      # Bound fire-and-forget work independently of application backend
+      # timeouts. A dead mirror target must release shared hub capacity quickly
+      # and must not amplify load through retries.
+      targetTimeoutMs: 2000
+      targetRetries: 0
       # A single static `mirror` message that fans out to every target.
       # The chart never grows this list: each mirror source (Gateway
       # RequestMirror filters, mirror-target Ingress annotations) appends
@@ -2164,17 +2167,6 @@ spoaHub:
       # Mirror plugin runtime knobs (1:1 with PluginConfig in
       # haproxy-spoa-hub-plugin-mirror/src/config.rs).
       params: |
-        # timeout_ms: omitted on purpose. The plugin default (60_000ms in
-        # v0.5.0+) is the safety net for a target entry that doesn't carry
-        # a per-target timeout; each frontend mirror source encodes the
-        # per-target timeout (derived from the chart-wide `timeout server`)
-        # into its arg_targets entry, so the relevant value is per-route,
-        # not plugin-wide. A tight plugin-wide `timeout_ms` here would only
-        # mask the per-target value when the entry field is absent for some
-        # other reason — counter-productive. Operators who want a tight
-        # uniform mirror timeout should set
-        # `controller.config.haproxy.timeouts.server` (which the per-target
-        # derivation reads from), not this knob.
         max_body_bytes = 1048576
         request_concurrency = 1024
         verify_tls = false
@@ -2196,17 +2188,20 @@ spoaHub:
       # fallback is not a shared fleet budget.
       enabled: '{{ .Values.rateLimit.shared.enabled }}'
       # The plugin's default lease mode is a local in-memory token-bucket
-      # check. The shared store is touched only on bounded/coalesced background
-      # refresh work, not on every request. Keep the SPOE timeout tight:
-      # if the hub/plugin is overloaded, annotated routes should fail closed
-      # quickly instead of adding a long request tail under DoS.
-      # max_keys bounds local key cardinality; once capacity eviction happens,
-      # newly inserted keys wait for a shared lease instead of receiving a fresh
-      # optimistic local batch.
+      # check. The shared store handles bounded/coalesced background refreshes
+      # and a coalesced synchronous borrow when a cold or depleted pool needs
+      # tokens, not every steady-state request. Keep the SPOE timeout tight so an
+      # overloaded hub cannot add a long request tail under DoS. The chart maps
+      # rateLimit.shared.failClosed to the store-failure policy.
+      # max_keys separately bounds the lease and emergency registries, so each
+      # can hold this many entries. An explicit store-failure policy gives new
+      # lease keys no optimistic batch: they borrow from Valkey before applying
+      # the fallback. At emergency capacity, the default dependency policy allows
+      # untracked and marks the request degraded.
       # Exact mode (rate-limit-algorithm: gcra) does one synchronous store
       # round-trip per request; store_timeout_ms below is intentionally very
-      # low so exact mode can return a fail-closed verdict before the hub drops
-      # the plugin result. Keep public-edge DoS limits on the default lease
+      # low so it can switch to the configured dependency policy before the hub
+      # drops the plugin result. Keep public-edge DoS limits on the default lease
       # mode; exact mode is for low-volume contractual budgets.
       timeoutMs: 50
       messages: ["check-ratelimit"]
@@ -2214,24 +2209,22 @@ spoaHub:
       # Per-operation shared-store timeout. Exact `gcra` mode waits on this
       # path for every request, so keep it short on public edges and tune it to
       # measured Redis/Valkey round-trip and failover behavior. The chart owns
-      # the generated `store_timeout_ms` TOML key and rejects a duplicate in
-      # params below.
+      # the generated `store_timeout_ms` and `ttl_ms` TOML keys and rejects
+      # duplicates in params below. ttl_ms uses the plugin's one-hour maximum;
+      # the annotation library rejects rules with a longer refill horizon.
       storeOperationTimeoutMs: 10
       # Runtime knobs (1:1 with PluginConfig in
       # haproxy-spoa-hub-plugin-rate-limit/src/config.rs). The chart owns the
-      # generated store endpoint lines — rateLimit.shared.managedStore injects
+      # generated fail_open, store_failure_mode, invalid_rule_fail_open, and
+      # store endpoint lines. failClosed controls store failure, malformed rules
+      # always deny, and rateLimit.shared.managedStore injects
       # the Sentinel store_url, rateLimit.shared.externalStore.urls injects
-      # store_url/store_urls for BYO stores — and rejects a manual
-      # store_url/store_urls here so overriding this scalar can never drop or
+      # one store_url for a BYO store — and rejects a manual store_url/store_urls
+      # here so overriding this scalar can never drop or
       # duplicate the store wiring.
       params: |
-        # HAPTIC validates every annotation-derived rule before rendering. If a
-        # malformed rule still reaches the plugin, fail closed as defense in
-        # depth instead of silently bypassing the configured limit.
-        fail_open = false
         sync_interval_ms = 200
         low_water_percent = 20
-        ttl_ms = 60000
         breaker_threshold = 3
         breaker_cooldown_ms = 5000
         max_keys = 50000
@@ -2463,14 +2456,19 @@ vector:
       requires: cache.varnish.enabled
       field: cache_uncacheable_reason
       kind: enum
-      values: ["content_type_excluded", "too_large", "set_cookie", "status_not_cacheable"]
+      values: ["content_type_excluded", "too_large", "set_cookie", "status_not_cacheable", "origin_refused_sharing"]
       metric: cache_uncacheable_total
       tag: reason
-    # Requests ALLOWED because a non-identity control could not be consulted —
-    # the hub reloading, a plugin timing out. Not a denial, so denied_by is
-    # unset and haptic_denied_total does not see these: without their own
-    # counters a control that has silently stopped protecting anything looks
-    # exactly like one with nothing to report.
+    cacheDegraded:
+      enabled: true
+      requires: cache.varnish.enabled
+      field: cache_degraded
+      kind: numeric
+      metric: degraded_cache_total
+    # Requests for which a non-identity control could not be consulted. An open
+    # policy allows them; a strict policy also sets denied_by. Without separate
+    # counters, a control that stopped answering looks like one with nothing to
+    # report.
     rateLimitDegraded:
       enabled: true
       field: rate_limit_degraded
@@ -2481,6 +2479,11 @@ vector:
       field: waf_degraded
       kind: numeric
       metric: degraded_waf_total
+    schemaDegraded:
+      enabled: true
+      field: schema_degraded
+      kind: numeric
+      metric: degraded_schema_total
     # Which control rejected a request. The `*_unavailable` reasons are the ones
     # to alert on: they mean a control could not reach its dependency and shed
     # legitimate traffic rather than a client hitting a limit it was given.
@@ -2489,7 +2492,7 @@ vector:
       enabled: true
       field: denied_by
       kind: enum
-      values: ["api_key", "api_key_unavailable", "backend_tls_unavailable", "basic_auth", "basic_auth_unavailable", "body_too_large", "cache_origin_internal_backend", "consumer_groups", "consumer_groups_unavailable", "content_type", "external_auth", "gw_sni_host_mismatch", "hmac", "hmac_unavailable", "jwt_algorithm", "jwt_audience", "jwt_expired", "jwt_issuer", "jwt_key_unavailable", "jwt_not_yet_valid", "jwt_required_claim", "jwt_signature", "jwt_unavailable", "method_not_allowed", "mtls_unavailable", "rate_limit_connections", "rate_limit_consumer_unavailable", "rate_limit_local", "rate_limit_shared", "rate_limit_shared_unavailable", "required_header", "schema_body_incomplete", "schema_body_too_large", "schema_duplicate_content_length", "schema_invalid", "schema_no_content_length", "schema_unavailable", "schema_unsupported_media_type", "waf", "waf_body_chunked", "waf_body_content_type", "waf_body_duplicate_content_length", "waf_body_incomplete", "waf_body_too_large", "waf_policy_unavailable", "waf_status_400", "waf_status_413", "waf_unavailable"]
+      values: ["api_key", "api_key_unavailable", "backend_tls_unavailable", "basic_auth", "basic_auth_unavailable", "body_too_large", "cache_origin_internal_backend", "consumer_groups", "consumer_groups_unavailable", "content_type", "external_auth", "gw_sni_host_mismatch", "hmac", "hmac_unavailable", "jwt_algorithm", "jwt_audience", "jwt_expired", "jwt_issuer", "jwt_key_unavailable", "jwt_not_yet_valid", "jwt_required_claim", "jwt_signature", "jwt_unavailable", "method_not_allowed", "mtls_unavailable", "rate_limit_connections", "rate_limit_consumer_unavailable", "rate_limit_local", "rate_limit_shared", "rate_limit_shared_invalid", "rate_limit_shared_unavailable", "required_header", "schema_body_incomplete", "schema_body_too_large", "schema_duplicate_content_length", "schema_invalid", "schema_no_content_length", "schema_unavailable", "schema_unsupported_media_type", "waf", "waf_body_chunked", "waf_body_content_type", "waf_body_duplicate_content_length", "waf_body_incomplete", "waf_body_too_large", "waf_policy_unavailable", "waf_status_400", "waf_status_413", "waf_unavailable"]
       metric: denied_total
       tag: reason
 
@@ -2522,7 +2525,7 @@ vector:
   # themselves if you turn that off — each is superseded by a family it emits.
   #
   # Patterns may not contain quotes, backslashes or newlines: they are embedded in
-  # the rendered vector config, and an invalid one would crash-loop the sidecar.
+  # the rendered Vector config; an invalid one keeps its supervised child unavailable.
   #
   # A MAP, keyed by name, not a list: Helm replaces a list wholesale, so turning
   # one exclusion off would mean restating every other one and silently
@@ -2671,8 +2674,8 @@ vector:
   # 15,116 series, 1.67 MB) and is right for THAT fleet — roughly 4,940 series
   # after `noMaint`. It does not survive a large one, which is how the sidecar
   # came to be OOMKilled on the scale tier: kernel `constraint=CONSTRAINT_MEMCG`,
-  # anon-rss 258568kB, on a container whose death takes the pod out of the
-  # Service.
+  # anon-rss 258568kB. That whole-container restart briefly removed the pod from
+  # the Service.
   #
   # 1Gi is the realistic-fleet default, matching HAProxy. It is NOT a universal
   # answer: metric generation and the access-log source add load on top of the
@@ -2680,14 +2683,12 @@ vector:
   # Size it against your own exported series count, and prefer cutting
   # cardinality (`noMaint`, `excludeMetrics`) over buying memory.
   #
-  # Under-sizing this is an AVAILABILITY bug, not a metrics one: the container
-  # carries a readinessProbe, so when it dies the whole HAProxy pod goes NotReady
-  # and leaves the Service, and the data path black-holes while HAProxy itself is
-  # healthy and serving.
+  # Under-sizing can still affect availability. The supervisor recovers an exited
+  # or unresponsive Vector child without changing HAProxy readiness, but a
+  # whole-container OOM restarts the container and can briefly make the pod NotReady.
   #
-  # requests = limits, matching the HAProxy container: a container that gates the
-  # pod's Service membership should not be the first one evicted under node
-  # pressure.
+  # requests = limits, matching the HAProxy container, reduces the chance that
+  # Vector is selected first under node memory pressure.
   #
   # Raise BOTH together with `haproxy.resources` for a larger fleet. The biggest
   # lever in the other direction is cardinality — see `noMaint` and

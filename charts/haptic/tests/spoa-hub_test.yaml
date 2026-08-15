@@ -183,14 +183,9 @@ tests:
     set:
       spoaHub.plugins.fingerprinting.enabled: true
     asserts:
-      - contains:
-          path: spec.template.spec.containers[?(@.name == "spoa-hub")].args
-          content: --config
-          any: true
-      - contains:
-          path: spec.template.spec.containers[?(@.name == "spoa-hub")].args
-          content: /etc/haproxy/general/spoa-hub-config.toml
-          any: true
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name == "spoa-hub")].args[0]
+          pattern: '/usr/local/bin/haproxy-spoa-hub --config /etc/haproxy/general/spoa-hub-config\.toml'
 
   - it: should render the spoa-hub ConfigMap when a plugin is enabled
     template: spoa-hub-configmap.yaml
@@ -274,6 +269,32 @@ tests:
       - matchRegex:
           path: data["config.toml"]
           pattern: 'store_timeout_ms = 10'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'ttl_ms = 3600000'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'fail_open = true'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'invalid_rule_fail_open = false'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'store_failure_mode = "local"'
+
+  - it: should configure the rate-limit plugin to fail closed when requested
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.failClosed: true
+      rateLimit.shared.managedStore.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'fail_open = false'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'store_failure_mode = "closed"'
 
   - it: should reject the former controller-owned shared rate-limit path
     template: haproxytemplateconfig.yaml
@@ -304,7 +325,7 @@ tests:
           path: data["config.toml"]
           pattern: 'store_url = "redis://my-valkey\.my-namespace\.svc:6379"'
 
-  - it: should inject several external store URLs as store_urls
+  - it: should reject external store sharding as one failure domain
     template: spoa-hub-configmap.yaml
     set:
       rateLimit.shared.enabled: true
@@ -313,9 +334,16 @@ tests:
         - redis://shard-a.svc:6379
         - redis://shard-b.svc:6379
     asserts:
-      - matchRegex:
-          path: data["config.toml"]
-          pattern: 'store_urls = \["redis://shard-a\.svc:6379", "redis://shard-b\.svc:6379"\]'
+      - failedTemplate:
+          errorMessage: "rateLimit.shared.externalStore.urls accepts one endpoint. Multiple URLs share one plugin circuit breaker, so one failed shard disables all shards. Use one HA Redis/Valkey/Sentinel/Cluster endpoint."
+
+  - it: should reject an empty scalar in place of the external store URL list
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.externalStore.urls: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "rateLimit.shared.externalStore.urls must be a list of Redis/Valkey URLs."
 
   - it: should fail when the managed store and an external store are both configured
     template: spoa-hub-configmap.yaml
@@ -334,7 +362,6 @@ tests:
       rateLimit.shared.enabled: true
       rateLimit.shared.managedStore.enabled: false
       spoaHub.plugins.rate-limit.params: |
-        fail_open = false
         store_url = "redis://my-valkey.my-namespace.svc:6379"
     asserts:
       - failedTemplate:
@@ -370,6 +397,16 @@ tests:
           path: data["config.toml"]
           pattern: 'store_url = "redis-sentinel://.*haptic-rl-store-sentinel\.[^.]+\.svc:26379/0\?sentinelServiceName=haptic-rate-limit'
 
+  - it: should reject managed Valkey eviction policies
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+      rateLimit.shared.managedStore.maxMemoryPolicy: volatile-ttl
+    asserts:
+      - failedTemplate:
+          errorMessage: "rateLimit.shared.managedStore.maxMemoryPolicy must be noeviction. Evicting a limiter key resets its budget; set maxMemoryPolicy: noeviction."
+
   - it: should render shared rate-limit timeout knobs
     template: spoa-hub-configmap.yaml
     set:
@@ -396,7 +433,40 @@ tests:
     asserts:
       - matchRegex:
           path: data["config.toml"]
-          pattern: '(?s)store_timeout_ms = 10\nstore_url = .*\n\[plugins.params.custom\]'
+          pattern: '(?s)fail_open = true\ninvalid_rule_fail_open = false\nstore_failure_mode = "local"\nstore_timeout_ms = 10\nttl_ms = 3600000\nstore_url = .*\n\[plugins.params.custom\]'
+
+  - it: should reject duplicate managed rate-limit fail-open params
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+      spoaHub.plugins.rate-limit.params: |
+        fail_open = false
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.rate-limit.params must not define fail_open, store_failure_mode, or invalid_rule_fail_open. rateLimit.shared.failClosed owns store failures; malformed rules always deny."
+
+  - it: should reject duplicate managed rate-limit store failure mode
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+      spoaHub.plugins.rate-limit.params: |
+        store_failure_mode = "open"
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.rate-limit.params must not define fail_open, store_failure_mode, or invalid_rule_fail_open. rateLimit.shared.failClosed owns store failures; malformed rules always deny."
+
+  - it: should reject duplicate managed rate-limit invalid-rule policy
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+      spoaHub.plugins.rate-limit.params: |
+        invalid_rule_fail_open = true
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.rate-limit.params must not define fail_open, store_failure_mode, or invalid_rule_fail_open. rateLimit.shared.failClosed owns store failures; malformed rules always deny."
 
   - it: should reject duplicate managed rate-limit store timeout params
     template: spoa-hub-configmap.yaml
@@ -408,6 +478,17 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: "spoaHub.plugins.rate-limit.params must not define store_timeout_ms; spoaHub.plugins.rate-limit.storeOperationTimeoutMs is its single owner."
+
+  - it: should reject duplicate managed rate-limit state TTL params
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+      spoaHub.plugins.rate-limit.params: |
+        ttl_ms = 60000
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.rate-limit.params must not define ttl_ms; the chart fixes it at the plugin's 3600000 ms maximum and the native annotation library validates its rules against that horizon."
 
   - it: should fail invalid shared rate-limit plugin timeout
     template: spoa-hub-configmap.yaml
@@ -560,8 +641,46 @@ tests:
       - contains:
           path: spec.templatingSettings.extraContext.spoaHub.haproxy.messages
           content: get-fingerprint
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.mirror.targetTimeoutMs
+          value: 2000
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.mirror.targetRetries
+          value: 0
 
-  - it: should derive HAProxy processing timeout from the slowest enabled plugin
+  - it: should surface an overridden bounded mirror target budget
+    template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      spoaHub.plugins.mirror.targetTimeoutMs: 750
+      spoaHub.plugins.mirror.targetRetries: 1
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.mirror.targetTimeoutMs
+          value: 750
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.mirror.targetRetries
+          value: 1
+
+  - it: should reject an unbounded mirror target timeout
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.mirror.targetTimeoutMs: 60001
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.mirror.targetTimeoutMs must resolve to an integer between 1 and 60000."
+
+  - it: should reject excessive mirror target retries
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.mirror.targetRetries: 11
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.mirror.targetRetries must resolve to an integer between 0 and 10."
+
+  - it: should derive an independent HAProxy timeout for each SPOE message
     template: haproxytemplateconfig.yaml
     documentSelector:
       path: metadata.name
@@ -572,6 +691,12 @@ tests:
       - equal:
           path: spec.templatingSettings.extraContext.spoaHub.haproxy.timeoutProcessing
           value: 6100ms
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.messageTimeouts["auth-request"]
+          value: 6100ms
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.messageTimeouts.mirror
+          value: 150ms
 
   - it: should accept an explicit HAProxy processing timeout above all plugin deadlines
     template: haproxytemplateconfig.yaml
@@ -584,6 +709,9 @@ tests:
     asserts:
       - equal:
           path: spec.templatingSettings.extraContext.spoaHub.haproxy.timeoutProcessing
+          value: 7s
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.messageTimeouts.mirror
           value: 7s
 
   - it: should reject an explicit HAProxy processing timeout below a plugin deadline
@@ -611,6 +739,9 @@ tests:
     asserts:
       - equal:
           path: spec.templatingSettings.extraContext.spoaHub.haproxy.timeoutProcessing
+          value: 150ms
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.messageTimeouts.shared-check
           value: 150ms
 
   - it: should reject zero hub worker threads instead of treating zero as unset

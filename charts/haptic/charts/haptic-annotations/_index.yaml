@@ -103,7 +103,7 @@ templatingSettings:
           imagePullPolicy: IfNotPresent
           replicas: 3
           maxMemory: 96mb
-          maxMemoryPolicy: volatile-ttl
+          maxMemoryPolicy: noeviction
           resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 128Mi}}
           sentinel:
             masterName: haptic-rate-limit

@@ -69,8 +69,8 @@ tests:
   # excludeMetrics guards. These cover the Helm path, which is what every normal
   # install goes through; the Scriggo copies in charts/vector/library.yaml only matter
   # for a hand-written HAProxyTemplateConfig CR. Every pattern below reaches the
-  # rendered vector config verbatim, and a bad one fails vector's config LOAD —
-  # i.e. it crash-loops the sidecar rather than degrading, so the render must refuse.
+  # rendered Vector config verbatim, so the render must reject a bad one before
+  # the supervised child loses log and metric export.
   - it: should reject an uncompilable exclusion pattern
     template: haproxytemplateconfig.yaml
     set:
@@ -122,7 +122,7 @@ tests:
           pattern: "^haproxy_'"
     asserts:
       - failedTemplate:
-          errorMessage: 'vector.excludeMetrics pattern "^haproxy_''" contains a quote, backslash or newline. Patterns are embedded in a VRL r''...'' literal in the rendered config, so those characters would break vector''s config load and crash-loop the sidecar.'
+          errorMessage: 'vector.excludeMetrics pattern "^haproxy_''" contains a quote, backslash or newline. Patterns are embedded in a VRL r''...'' literal in the rendered config, so those characters would break vector''s config load and keep log and metric export unavailable.'
 
   - it: should reject a families entry that its own pattern would not match
     template: haproxytemplateconfig.yaml

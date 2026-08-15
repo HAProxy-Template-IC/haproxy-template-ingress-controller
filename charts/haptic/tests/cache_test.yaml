@@ -36,6 +36,27 @@ tests:
           path: spec.templatingSettings.extraContext.cache.haproxy.hashBalanceFactor
           value: 175
 
+  - it: should surface the Varnish response deadline from the canonical path
+    template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      cache.varnish.enabled: true
+      cache.haproxy.responseTimeoutMs: 1250
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.cache.haproxy.responseTimeoutMs
+          value: 1250
+
+  - it: should reject a non-positive Varnish response deadline
+    template: haproxytemplateconfig.yaml
+    set:
+      cache.haproxy.responseTimeoutMs: 0
+    asserts:
+      - failedTemplate:
+          errorMessage: "cache.haproxy.responseTimeoutMs must be a positive integer in milliseconds."
+
   - it: should reject unknown staged cache fields while disabled
     template: haproxytemplateconfig.yaml
     set:

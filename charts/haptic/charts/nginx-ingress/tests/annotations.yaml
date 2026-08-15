@@ -1358,10 +1358,10 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(https\\|mirror.example.com:443\\|50000\\|3;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str mirror-app.example.com \\}"
+        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(https\\|mirror.example.com:443\\|2000\\|0;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str mirror-app.example.com \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "send-spoe-group spoa-hub mirror-group if \\{ var\\(txn.gw_mirror_targets\\) -m found \\}"
+        pattern: "send-spoe-group spoa-hub-mirror mirror-group if \\{ var\\(txn.gw_mirror_targets\\) -m found \\}"
       - type: contains
         target: haproxy.cfg
         pattern: "http-request wait-for-body time 10s if \\{ req\\.hdr\\(content-length\\) -m found \\} !\\{ var\\(txn\\.backend_name\\),map\\(.*request-buffering\\.map,on\\) -m str off \\}"
@@ -1409,10 +1409,10 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(http\\|mirror-a.example.com:80\\|50000\\|3;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str shared.example.com \\}"
+        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(http\\|mirror-a.example.com:80\\|2000\\|0;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str shared.example.com \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(http\\|mirror-b.example.com:80\\|50000\\|3;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str shared.example.com \\}"
+        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(http\\|mirror-b.example.com:80\\|2000\\|0;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str shared.example.com \\}"
       - {type: not_contains, target: haproxy.cfg, pattern: "mirror-2-group"}
 
   test-nginx-ingress-mirror-target-hostless-rejected:

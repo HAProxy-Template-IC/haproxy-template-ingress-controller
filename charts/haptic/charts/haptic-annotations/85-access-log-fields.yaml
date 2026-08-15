@@ -42,7 +42,7 @@ templateSnippets:
 
         cache is Varnish's own X-Cache header, captured into a transaction
         variable by backends-870-haptic-varnish-cache (a log-format cannot fetch
-        response headers). HIT/MISS per request is the only place the cache
+        response headers). HIT/MISS/STALE per request is the only place the cache
         effectiveness of a specific route is visible.
 
         cache_age is Varnish's Age header: how many seconds old the served object
@@ -67,6 +67,7 @@ templateSnippets:
       %(cache)[var(txn.cache_status)]
       %(cache_age)[var(txn.cache_age)]
       %(cache_uncacheable_reason)[var(txn.cache_uncacheable_reason)]
+      %(cache_degraded)[var(txn.cache_degraded)]
       %(app_backend)[var(txn.backend_name)]
       {%- end %}
 

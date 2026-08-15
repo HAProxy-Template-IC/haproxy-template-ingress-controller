@@ -658,36 +658,45 @@ validate-helm-libraries:
           cp dist/controller_linux_arm_7/haptic-controller binary-context/linux/arm/v7/
         fi
       fi
-    # Build and push Docker images for each HAProxy version IN PARALLEL.
-    # The `multiarch` buildx builder uses the docker-container driver and
-    # serves concurrent buildctl requests; the 4 builds share the same Go
-    # binary input layer (no rebuild) and only differ in their HAProxy base.
-    # `set -o pipefail` inside the subshell preserves docker exit codes
-    # past the sed prefix; the parent loop tracks each PID so a single
-    # build failure fails the whole job.
+    # Retry failed variants after fan-in; concurrent GitLab pushes can race blob visibility.
+    # https://gitlab.com/gitlab-org/gitlab/-/issues/422262
     - |
-      pids=""
+      set -o pipefail
+      build_snapshot_image() {
+        local haproxy_version="$1"
+        local tag="${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}-haproxy${haproxy_version}"
+        echo "Starting build: ${tag}"
+        docker buildx build \
+          --platform "${PLATFORMS}" \
+          --build-arg HAPROXY_VERSION="${haproxy_version}" \
+          --build-arg GIT_COMMIT="${CI_COMMIT_SHORT_SHA}" \
+          --build-arg GIT_TAG="${SNAPSHOT_TAG}" \
+          --build-context binary=binary-context \
+          --target runtime \
+          --tag "${tag}" \
+          --push \
+          . 2>&1 | sed "s|^|[hp${haproxy_version}] |"
+      }
+
+      builds=""
       for HAPROXY_VERSION in 3.0 3.1 3.2 3.3 3.4; do
-        TAG="${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}-haproxy${HAPROXY_VERSION}"
-        echo "Starting build: ${TAG}"
-        (
-          set -o pipefail
-          docker buildx build \
-            --platform "${PLATFORMS}" \
-            --build-arg HAPROXY_VERSION="${HAPROXY_VERSION}" \
-            --build-arg GIT_COMMIT="${CI_COMMIT_SHORT_SHA}" \
-            --build-arg GIT_TAG="${SNAPSHOT_TAG}" \
-            --build-context binary=binary-context \
-            --target runtime \
-            --tag "${TAG}" \
-            --push \
-            . 2>&1 | sed "s|^|[hp${HAPROXY_VERSION}] |"
-        ) &
-        pids="${pids} $!"
+        build_snapshot_image "${HAPROXY_VERSION}" &
+        builds="${builds} $!:${HAPROXY_VERSION}"
       done
+
+      retry_versions=""
+      for build in ${builds}; do
+        pid="${build%%:*}"
+        HAPROXY_VERSION="${build#*:}"
+        if ! wait "${pid}"; then
+          retry_versions="${retry_versions} ${HAPROXY_VERSION}"
+        fi
+      done
+
       failed=0
-      for pid in ${pids}; do
-        wait "${pid}" || failed=1
+      for HAPROXY_VERSION in ${retry_versions}; do
+        echo "Retrying failed build serially: haproxy${HAPROXY_VERSION}"
+        build_snapshot_image "${HAPROXY_VERSION}" || failed=1
       done
       [ "${failed}" -eq 0 ]
     # Create default tag if requested (points to haproxy3.4)

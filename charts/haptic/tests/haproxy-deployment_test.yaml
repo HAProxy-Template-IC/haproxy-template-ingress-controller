@@ -24,11 +24,48 @@ tests:
           path: spec.template.spec.containers[0].name
           value: haproxy
 
-  - it: should have dataplane container
+  - it: should supervise dataplane without owning pod readiness
     asserts:
       - equal:
-          path: spec.template.spec.containers[1].name
-          value: dataplane
+          path: spec.template.spec.containers[?(@.name=="dataplane")].command
+          value: ["/bin/sh", "-c"]
+      - isNull:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].readinessProbe
+      - isNull:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].livenessProbe
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: 'trap _shutdown TERM INT'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: 'GET /v2/info HTTP/1\.0'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: '_watch_child "\$_child_pid" &'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: '(?s)_watch_startup_grace_seconds=120.*_health_seen=0.*if \[ "\$_health_seen" -eq 1 \] \|\| \[ "\$_watch_runtime_seconds" -ge "\$_watch_startup_grace_seconds" \]'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: 'kill -TERM "\$_watched_pid"'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: 'kill -KILL "\$_watched_pid"'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: '(?m)^  /usr/local/bin/dataplaneapi -f /etc/haproxy/dataplaneapi\.yaml &$'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: 'config updates are unavailable; restarting in \$\{_backoff\}s'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: '_child_runtime_seconds=\$\(\( \$\(date \+%s\) - _child_started_epoch_seconds \)\)'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: 'if \[ "\$_child_runtime_seconds" -ge 60 \]; then\s+_backoff=1'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: 'if \[ "\$_backoff" -gt 30 \]; then _backoff=30; fi'
 
   - it: should derive the Enterprise repository and binary path from one series
     set:
@@ -85,20 +122,63 @@ tests:
             containerPort: 8404
             protocol: TCP
 
-  - it: should declare a named metrics port on the spoa-hub sidecar
+  - it: should supervise the SPOA hub and keep its named metrics port
     set:
       spoaHub.enabled: true
       spoaHub.hub.metricsAddr: "0.0.0.0:9095"
     asserts:
       - equal:
-          path: spec.template.spec.containers[2].name
-          value: spoa-hub
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].command
+          value: ["/bin/sh", "-c"]
+      - isNull:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].readinessProbe
+      - isNull:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].livenessProbe
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: '(?m)^  /usr/local/bin/haproxy-spoa-hub --config /etc/haproxy/general/spoa-hub-config\.toml &$'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: 'GET /spoa-hub-child-health HTTP/1\.0'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: "' child-health 8404"
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: 'HTTP/\*" 424 "\*\) exit 1'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: '_watch_child "\$_child_pid" &'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: 'kill -KILL "\$_watched_pid"'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: 'SPOA processing is unavailable; restarting in \$\{_backoff\}s'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: '_child_runtime_seconds=\$\(\( \$\(date \+%s\) - _child_started_epoch_seconds \)\)'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: 'if \[ "\$_child_runtime_seconds" -ge 60 \]; then\s+_backoff=1'
       - contains:
-          path: spec.template.spec.containers[2].ports
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].ports
           content:
             name: metrics
             containerPort: 9095
             protocol: TCP
+
+  - it: should probe SPOA child health on the configured stats port
+    set:
+      spoaHub.enabled: true
+      haproxy.ports.stats: 9999
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: "' child-health 9999"
+      - notMatchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: '/dev/tcp/127\.0\.0\.1/8404'
 
   - it: should omit the sidecar metrics port when metricsAddr is empty
     set:
@@ -106,7 +186,10 @@ tests:
       spoaHub.hub.metricsAddr: ""
     asserts:
       - notExists:
-          path: spec.template.spec.containers[2].ports
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].ports
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          pattern: 'GET /spoa-hub-child-health HTTP/1\.0'
 
   - it: should set replica count from values
     set:
@@ -131,7 +214,7 @@ tests:
   - it: should drop all capabilities for dataplane container
     asserts:
       - contains:
-          path: spec.template.spec.containers[1].securityContext.capabilities.drop
+          path: spec.template.spec.containers[?(@.name=="dataplane")].securityContext.capabilities.drop
           content: ALL
 
   - it: should include loadbalancer component label
@@ -214,12 +297,18 @@ tests:
       haproxy.sidecars:
         - name: log-collector
           image: fluent/fluent-bit:latest
+          readinessProbe:
+            exec:
+              command: ["true"]
     asserts:
       - contains:
           path: spec.template.spec.containers
           content:
             name: log-collector
             image: fluent/fluent-bit:latest
+            readinessProbe:
+              exec:
+                command: ["true"]
 
   # Lifecycle hooks
   - it: should include lifecycle hooks when specified

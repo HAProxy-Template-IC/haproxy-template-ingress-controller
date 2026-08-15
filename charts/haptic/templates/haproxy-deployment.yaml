@@ -82,12 +82,7 @@ spec:
       {{- if or $haproxy.initContainers $spoaHubEnabled $vectorEnabled }}
       initContainers:
         {{- if $vectorEnabled }}
-        # Seed general/vector.yaml before the vector sidecar starts, for the same
-        # reason as the spoa-hub copy below: vector exits non-zero on a missing
-        # --config, so without this the sidecar CrashLoopBackOffs until HAPTIC's
-        # first push lands. HAPTIC then overwrites this file via the dataplane API
-        # and vector's --watch-config reloads it (verified: the watch fires on the
-        # write-then-atomic-rename pattern the dataplane uses).
+        # Seed the config before the Vector sidecar starts.
         - name: vector-bootstrap-copy
           image: {{ $haproxyImage }}
           imagePullPolicy: {{ $haproxy.image.pullPolicy }}
@@ -109,16 +104,7 @@ spec:
               readOnly: true
         {{- end }}
         {{- if $spoaHubEnabled }}
-        # Bootstrap copy for the spoa-hub config. Kubernetes guarantees
-        # init containers run to completion before regular containers
-        # start, so by the time the haproxy + spoa-hub containers come
-        # up, /etc/haproxy/general/spoa-hub-config.toml exists. Without
-        # this ordering the spoa-hub sidecar can race the haproxy
-        # container's init shell and crash on a missing config file —
-        # CrashLoopBackOff resolves on retry once the cp lands, but
-        # produces noisy startup events. HAPTIC's controller will
-        # later overwrite this file via the dataplane API; the hub's
-        # file-watch detects the change and gracefully reloads.
+        # Seed the config before the SPOA hub sidecar starts.
         - name: spoa-hub-bootstrap-copy
           image: {{ $haproxyImage }}
           imagePullPolicy: {{ $haproxy.image.pullPolicy }}
@@ -250,8 +236,7 @@ spec:
             # Shared with the vector sidecar. HAProxy's `log <path>` target is a
             # UNIX datagram sender, so it needs write access to the socket vector
             # creates here. Note a datagram sender gets NO error when nothing is
-            # listening — records are silently dropped, which is why the vector
-            # bootstrap config binds the socket before HAProxy starts.
+            # listening — records are silently dropped until Vector binds it.
             - name: vector-socket
               mountPath: {{ include "haptic.vector.socketDir" . }}
             {{- end }}
@@ -420,8 +405,42 @@ spec:
                   - app
               EOF
 
-              # Start Dataplane API
-              exec {{ include "haptic.haproxy.dataplanebin" . }} -f /etc/haproxy/dataplaneapi.yaml
+              _child_name='Dataplane API'
+              _child_impact='config updates are unavailable'
+              _child_health() {
+                if timeout "$_watch_timeout_seconds" /usr/bin/bash -c '
+                  exec 3<>"/dev/tcp/127.0.0.1/$1" || exit 1
+                  printf "GET /v2/info HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3
+                  IFS= read -r _status <&3 || exit 1
+                  case "$_status" in HTTP/*) exit 0;; *) exit 1;; esac
+                ' child-health {{ $ports.dataplane }}; then
+                  return 0
+                fi
+                return 1
+              }
+              {{ include "haptic.childSupervisor.shellFunctions" . | nindent 14 }}
+
+              _backoff=1
+              while true; do
+                _child_started_epoch_seconds=$(date +%s)
+                {{ include "haptic.haproxy.dataplanebin" . }} -f /etc/haproxy/dataplaneapi.yaml &
+                _child_pid=$!
+                _start_watchdog
+                wait "$_child_pid"
+                _status=$?
+                _stop_watchdog
+                _child_pid=
+                _child_runtime_seconds=$(( $(date +%s) - _child_started_epoch_seconds ))
+                if [ "$_child_runtime_seconds" -ge 60 ]; then
+                  _backoff=1
+                fi
+                echo "WARNING: Dataplane API exited with status ${_status}; config updates are unavailable; restarting in ${_backoff}s"
+                sleep "$_backoff"
+                if [ "$_backoff" -lt 30 ]; then
+                  _backoff=$((_backoff * 2))
+                  if [ "$_backoff" -gt 30 ]; then _backoff=30; fi
+                fi
+              done
           ports:
             - name: dataplane
               containerPort: {{ $ports.dataplane }}
@@ -441,16 +460,6 @@ spec:
               mountPath: /var/lib/dataplaneapi
             - name: dataplane-tmp
               mountPath: /tmp
-          livenessProbe:
-            tcpSocket:
-              port: dataplane
-            initialDelaySeconds: 15
-            periodSeconds: 10
-          readinessProbe:
-            tcpSocket:
-              port: dataplane
-            initialDelaySeconds: 10
-            periodSeconds: 5
           resources:
             {{- toYaml $dataplane.resources | nindent 12 }}
 
@@ -467,27 +476,56 @@ spec:
           {{- $metricsPort := include "haptic.spoaHub.metricsPort" $ }}
           {{- if $metricsPort }}
           ports:
-            # Named so a PodMonitor can reference it by name; prometheus-operator
-            # only builds targets from declared container ports (a bare
-            # targetPort on an undeclared port is silently never scraped).
             - name: metrics
               containerPort: {{ $metricsPort }}
               protocol: TCP
           {{- end }}
+          command: ["/bin/sh", "-c"]
           args:
-            # Hub config lives in HAProxy's general-storage dir so the
-            # dataplane API can write to it. Mounted into this container
-            # at /etc/haproxy/ (the haproxy-runtime emptyDir, no
-            # subPath — see the volumeMounts comment below for why
-            # subPath is incompatible with the hub's file-watch).
-            # The hub binary's file-watch (introduced in
-            # haproxy-spoa-hub v0.5.x via the file-watch-and-reload-
-            # metrics MR) attaches to the parent of this --config
-            # path, so HAPTIC overwriting the file via the dataplane
-            # API triggers a graceful reload without needing a SIGHUP.
-            # See docs/adr/0007 for the full architecture.
-            - --config
-            - /etc/haproxy/general/spoa-hub-config.toml
+            - |
+              _child_name='SPOA hub'
+              _child_impact='SPOA processing is unavailable'
+              _child_health() {
+                timeout "$_watch_timeout_seconds" /usr/bin/bash -c '
+                    exec 3<>"/dev/tcp/127.0.0.1/$1" || exit 2
+                    printf "GET /spoa-hub-child-health HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3
+                    IFS= read -r _status <&3 || exit 1
+                    case "$_status" in
+                      HTTP/*" 204 "*) exit 0;;
+                      HTTP/*" 424 "*) exit 1;;
+                      *) exit 2;;
+                    esac
+                  ' child-health {{ $ports.stats }}
+                _probe_status=$?
+                case "$_probe_status" in
+                  0) return 0;;
+                  1) return 1;;
+                  *) return 2;;
+                esac
+              }
+              {{ include "haptic.childSupervisor.shellFunctions" . | nindent 14 }}
+
+              _backoff=1
+              while true; do
+                _child_started_epoch_seconds=$(date +%s)
+                /usr/local/bin/haproxy-spoa-hub --config /etc/haproxy/general/spoa-hub-config.toml &
+                _child_pid=$!
+                _start_watchdog
+                wait "$_child_pid"
+                _status=$?
+                _stop_watchdog
+                _child_pid=
+                _child_runtime_seconds=$(( $(date +%s) - _child_started_epoch_seconds ))
+                if [ "$_child_runtime_seconds" -ge 60 ]; then
+                  _backoff=1
+                fi
+                echo "WARNING: SPOA hub exited with status ${_status}; SPOA processing is unavailable; restarting in ${_backoff}s"
+                sleep "$_backoff"
+                if [ "$_backoff" -lt 30 ]; then
+                  _backoff=$((_backoff * 2))
+                  if [ "$_backoff" -gt 30 ]; then _backoff=30; fi
+                fi
+              done
           securityContext:
             {{- toYaml $spoaHub.securityContext | nindent 12 }}
           resources:
@@ -556,95 +594,87 @@ spec:
             # memory limit has to cover.
             - name: MALLOC_ARENA_MAX
               value: "2"
-          # Unlink a stale socket before starting. Vector does NOT unlink an
-          # existing UNIX datagram socket — it panics with EADDRINUSE — and the
-          # socket lives on an emptyDir that SURVIVES a container restart. So
-          # once this container restarts for any reason it can never come back:
-          # it trips over the socket it created itself, every time. Worse, the
-          # panic unwinds into a graceful shutdown, so the container exits 0
-          # ("Completed") and a fatal error reads as a clean exit.
-          #
-          # This must live in the container command, not the init container:
-          # init containers do not re-run on a container restart, which is
-          # exactly when the stale socket is there.
-          #
-          # Reproduced and fixed against vector 0.57.0: second start without
-          # this → running=false, exit=0, AddrInUse; with it → starts clean and
-          # re-creates the socket. An in-process --watch-config reload does not
-          # re-bind an unchanged source, so the reload path needs nothing.
+          # Vector does not unlink its UNIX socket after an exit, so each child
+          # start removes the stale path before binding it again.
           command: ["/bin/sh", "-c"]
           args:
-            # --watch-config makes vector reload when HAPTIC pushes a new config
-            # through the dataplane API. Verified against 0.57.0 that the watch
-            # fires for the write-then-atomic-rename pattern the dataplane uses,
-            # so the default (inotify) watcher is sufficient — no --watch-config-method poll.
-            #
-            # `exec` so vector becomes PID 1 of the container and receives
-            # SIGTERM directly on shutdown, instead of the shell swallowing it.
             - |
-              rm -f '{{ $vector.socketPath }}'
-              # Wait for the config instead of dying without it. The init container
-              # seeds a bootstrap copy, but the dataplane's general-file sync can
-              # transiently prune it as an orphan until a reconcile includes it —
-              # and during a controller rollout there is a leaderless window where
-              # no reconcile happens at all. Vector treats a missing --config as
-              # fatal, so that window turned into CrashLoopBackOff, whose backoff
-              # then delayed recovery well past the config actually arriving
-              # (observed: 4 restarts before it came back).
-              #
-              # Waiting keeps the container alive and quiet until there is
-              # something to load. Readiness is unaffected: it gates on the
-              # exporter, which only the RENDERED config declares, so the pod still
-              # stays out of the Service until the real config is live.
-              # Deliberately unbounded, but NOT silent. Exiting instead would put us
-              # straight back in CrashLoopBackOff, whose backoff is what made the
-              # transient case slow to recover — so waiting is the point. The risk
-              # is the opposite failure: if the config never arrives (a persistent
-              # sync problem, not the transient window), the container would sit
-              # Running-but-NotReady with one repeating line, which is easy to miss.
-              #
-              # So the message escalates once past the transient window. The pod is
-              # also NotReady throughout — the readiness probe on the metrics port
-              # never passes — so kube-state-metrics alerting sees it regardless of
-              # whether anyone reads the log.
-              _waited=0
-              while [ ! -s /etc/haproxy/general/vector.yaml ]; do
-                if [ "$_waited" -lt 30 ]; then
-                  echo "waiting for /etc/haproxy/general/vector.yaml (not pushed yet; ${_waited}s)"
-                else
-                  echo "WARNING: still no /etc/haproxy/general/vector.yaml after ${_waited}s — HAPTIC has not pushed the vector config; this pod stays NotReady until it does. Check the controller is Ready and holds the leader lease."
+              _child_name='Vector'
+              _child_impact='access-log and merged-metric export are unavailable'
+              _child_health() {
+                if ! command -v grep >/dev/null 2>&1; then
+                  return 2
                 fi
-                _waited=$((_waited + 2))
-                sleep 2
+                if ! grep -q '^[[:space:]]*type:[[:space:]]*prometheus_exporter' /etc/haproxy/general/vector.yaml; then
+                  return 2
+                fi
+                if timeout "$_watch_timeout_seconds" /usr/bin/bash -c '
+                  exec 3<>"/dev/tcp/127.0.0.1/$1" || exit 1
+                  printf "HEAD /metrics HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3
+                  IFS= read -r _status <&3 || exit 1
+                  case "$_status" in HTTP/*) exit 0;; *) exit 1;; esac
+                ' child-health {{ $vector.metricsPort | int }}; then
+                  return 0
+                fi
+                return 1
+              }
+              {{ include "haptic.childSupervisor.shellFunctions" . | nindent 14 }}
+
+              _backoff=1
+              while true; do
+                rm -f '{{ $vector.socketPath }}'
+                # The config can be pruned until the first leader reconcile.
+                _waited=0
+                while [ ! -s /etc/haproxy/general/vector.yaml ]; do
+                  if [ "$_waited" -lt 30 ]; then
+                    echo "waiting for /etc/haproxy/general/vector.yaml (not pushed yet; ${_waited}s)"
+                  else
+                    echo "WARNING: still no /etc/haproxy/general/vector.yaml after ${_waited}s — access-log export is unavailable. Check the controller is Ready and holds the leader lease."
+                  fi
+                  _waited=$((_waited + 2))
+                  sleep 2
+                done
+
+                _child_started_epoch_seconds=$(date +%s)
+                /usr/bin/vector --watch-config --watch-config-method poll --watch-config-poll-interval-seconds 2 --config /etc/haproxy/general/vector.yaml &
+                _child_pid=$!
+                _start_watchdog
+                # The socket proves the watcher is armed; HUP closes the preceding read/watch race.
+                _sync_waited=0
+                while [ ! -S '{{ $vector.socketPath }}' ] && [ "$_sync_waited" -lt "$_watch_startup_grace_seconds" ]; do
+                  if ! kill -0 "$_child_pid" 2>/dev/null; then
+                    break
+                  fi
+                  sleep 1
+                  _sync_waited=$((_sync_waited + 1))
+                done
+                if [ -S '{{ $vector.socketPath }}' ] && kill -0 "$_child_pid" 2>/dev/null; then
+                  kill -HUP "$_child_pid"
+                fi
+                wait "$_child_pid"
+                _status=$?
+                _stop_watchdog
+                _child_pid=
+                _child_runtime_seconds=$(( $(date +%s) - _child_started_epoch_seconds ))
+                if [ "$_child_runtime_seconds" -ge 60 ]; then
+                  _backoff=1
+                fi
+                echo "WARNING: Vector exited with status ${_status}; access-log and merged-metric export are unavailable; restarting in ${_backoff}s"
+                sleep "$_backoff"
+                if [ "$_backoff" -lt 30 ]; then
+                  _backoff=$((_backoff * 2))
+                  if [ "$_backoff" -gt 30 ]; then _backoff=30; fi
+                fi
               done
-              exec /usr/bin/vector --watch-config --config /etc/haproxy/general/vector.yaml
           ports:
-            # Named so the PodMonitor can reference it: prometheus-operator only
-            # builds targets from declared container ports, so a bare targetPort
-            # on an undeclared port is silently never scraped.
             - name: vector-metrics
               containerPort: {{ $vector.metricsPort | int }}
               protocol: TCP
             {{- if include "haptic.vector.sizeExporterEnabled" . }}
-            {{- /* Own exporter: one `buckets` list per sink. Name is 12 chars; a
-                   port name is capped at 15. */}}
             - name: vector-sizes
               containerPort: {{ $vector.sizeMetricsPort | int }}
               protocol: TCP
             {{- end }}
-          # Ready only once HAPTIC's rendered config has been pushed AND reloaded:
-          # the exporter that serves this port exists only in the rendered config,
-          # never in the bootstrap ConfigMap. Same shape as HAProxy's /ready gate.
-          #
-          # Deliberately NO livenessProbe on this port — before the first push
-          # nothing listens, so a liveness probe would kill the container in a loop
-          # and it would never survive long enough to receive the config.
-          readinessProbe:
-            httpGet:
-              path: /metrics
-              port: vector-metrics
-            initialDelaySeconds: 5
-            periodSeconds: 5
           securityContext:
             {{- toYaml $vector.securityContext | nindent 12 }}
           resources:
@@ -653,8 +683,8 @@ spec:
             # Whole-volume mount, NOT `subPath` — kubelet implements subPath as an
             # isolated bind-mount that does not propagate inotify events, so
             # --watch-config would never fire and vector would sit on the bootstrap
-            # config forever (never becoming Ready). Same trap as the spoa-hub's
-            # file-watch, documented at length in its volumeMounts above.
+            # config forever. Same trap as the spoa-hub's file-watch, documented
+            # at length in its volumeMounts above.
             - name: general-storage
               mountPath: /etc/haproxy/general
               readOnly: true
@@ -671,7 +701,6 @@ spec:
             {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
         {{- end }}
-
         {{- with $haproxy.sidecars }}
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}

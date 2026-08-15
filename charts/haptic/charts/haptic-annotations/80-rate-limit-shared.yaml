@@ -11,13 +11,13 @@
 #   haproxy-haptic.org/rate-limit-period      window (HAProxy duration; default 1s) — shared with 24-rate-limiting.yaml
 #   haproxy-haptic.org/rate-limit-burst       burst allowance (default = requests)
 #   haproxy-haptic.org/rate-limit-key         ip (default) | consumer
-#   haproxy-haptic.org/rate-limit-algorithm   token-bucket (default) | gcra (exact, fails closed)
+#   haproxy-haptic.org/rate-limit-algorithm   token-bucket (default) | gcra (exact)
 #
 # The chart opt-in (`rateLimit.shared.enabled=true`) must be set or
 # using rate-limit-requests fails the render. A shared store is required for
 # fleet-wide enforcement; the chart can deploy HA Valkey with Sentinel via
 # `rateLimit.shared.managedStore.enabled=true`, or operators can provide their own
-# Redis/Valkey URLs under rateLimit.shared.externalStore.urls.
+# HA Redis/Valkey endpoint under rateLimit.shared.externalStore.urls.
 #
 # This fragment produces the rate-limit.map that the spoa-hub library parses at
 # frontend priority 020. Source-IP rules dispatch at priority 025 before Coraza;
@@ -76,14 +76,17 @@ templateSnippets:
             {%- end -%}
             {%- burst = b -%}
           {%- end -%}
+          {%- var horizonS = (burst | float64()) * periodS / (n | float64()) -%}
+          {%- if horizonS > 3600.0 -%}
+            {{- fail("Ingress " + key + " has a shared rate-limit refill horizon above 3600 seconds, which the bundled plugin cannot retain safely. Reduce rate-limit-period or rate-limit-burst.") -}}
+          {%- end -%}
           {#- key dimension: ip (default) or consumer (txn.haptic_consumer). -#}
           {%- var keyspec = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-key"] -%}
           {%- if keyspec == "" -%}{%- keyspec = "ip" -%}{%- end -%}
           {%- if keyspec != "ip" && keyspec != "consumer" -%}
             {{- fail("Invalid value '" + keyspec + "' for annotation 'haproxy-haptic.org/rate-limit-key' on Ingress '" + key + "'. Expected 'ip' or 'consumer'.") -}}
           {%- end -%}
-          {#- algorithm → plugin mode: gcra = exact (fails closed);
-              token-bucket = lease (default, fails static). -#}
+          {#- algorithm → plugin mode: gcra = exact; token-bucket = lease. -#}
           {%- var algo = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-algorithm"] -%}
           {%- if algo == "" -%}{%- algo = "token-bucket" -%}{%- end -%}
           {%- var mode = "lease" -%}
@@ -97,9 +100,8 @@ templateSnippets:
 
   # Consumer-keyed quotas must run after native API-key/JWT backend rules have
   # established txn.haptic_consumer. Attach the SPOE filter only to backends
-  # that opt into this key mode, then reuse the same fail-closed dispatcher as
-  # the pre-WAF source-IP path. The source IP remains the documented fallback
-  # for routes without an authenticated consumer identity.
+  # that opt into this key mode, then reuse the frontend's dispatcher. Routes
+  # without an authenticated consumer identity fall back to source IP.
   backend-directives-807-haptic-shared-rate-limit-consumer:
     template: |
       {%- import "util-spoa-rate-limit-dispatch" for DispatchSharedRateLimit %}
@@ -115,7 +117,7 @@ templateSnippets:
           {%- var messages = toStringSlice(messagesAny) -%}
           {%- if messages contains "check-ratelimit" %}
       # haptic/shared-rate-limit consumer ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
-      filter spoe engine spoa-hub config {{ pathResolver.GetPath("spoe.conf", "file") }}
+      filter spoe engine spoa-hub-check-ratelimit config {{ pathResolver.GetPath("spoe.conf", "file") }}
       {{ DispatchSharedRateLimit("consumer", "") }}
           {%- end -%}
         {%- end -%}
@@ -213,7 +215,7 @@ k8sResources:
         var img = extraContext | dig("rateLimit", "shared", "managedStore", "image") | fallback("valkey/valkey:9.1.1-alpine") | tostring()
         var imagePullPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "imagePullPolicy") | fallback("IfNotPresent") | tostring()
         var maxMemory = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemory") | fallback("96mb") | tostring()
-        var maxMemoryPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemoryPolicy") | fallback("volatile-ttl") | tostring()
+        var maxMemoryPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemoryPolicy") | fallback("noeviction") | tostring()
         var cpuReq = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "requests", "cpu") | fallback("50m") | tostring()
         var memReq = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "requests", "memory") | fallback("128Mi") | tostring()
         var memLim = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "limits", "memory") | fallback("128Mi") | tostring()

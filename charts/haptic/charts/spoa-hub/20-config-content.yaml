@@ -252,42 +252,23 @@ templateSnippets:
 
   spoe-conf-content:
     template: |
-      {# The SPOE message set is static — one message per enabled plugin,
-          from the values-declared union (extraContext.spoaHub.haproxy.messages).
-          The mirror plugin uses a single `mirror` message that fans out to
-          every target for the request (arg_targets carries a per-request
-          list), so adding or removing a mirror target never changes this
-          file — see spoe-message-mirror-body and the frontend mirror
-          snippets that append to txn.gw_mirror_targets. #}
       {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
-      [spoa-hub]
+      {%- var messageTimeouts = extraContext | dig("spoaHub", "haproxy", "messageTimeouts") | fallback(map[string]any{}) %}
+      {%- var defaultProcessingTimeout = extraContext | dig("spoaHub", "haproxy", "timeoutProcessing") | fallback("500ms") %}
+      {%- for _, msg := range messages %}
+      [spoa-hub-{{ msg }}]
 
-      spoe-agent spoa-hub-agent
-      {%- if len(messages) > 0 %}
-          groups
-            {%- for _, msg := range messages -%}
-              {{ " " + msg + "-group" }}
-            {%- end %}
-      {%- end %}
+      spoe-agent spoa-hub-{{ msg }}-agent
+          groups {{ msg }}-group
           option var-prefix       hub
           option pipelining
           option async
           timeout hello      {{ extraContext | dig("spoaHub", "haproxy", "timeoutHello") | fallback("2s") }}
           timeout idle       {{ extraContext | dig("spoaHub", "haproxy", "timeoutIdle") | fallback("5m") }}
-          timeout processing {{ extraContext | dig("spoaHub", "haproxy", "timeoutProcessing") | fallback("500ms") }}
+          timeout processing {{ messageTimeouts | dig(msg) | fallback(defaultProcessingTimeout) }}
           use-backend spoa-hub
       {{ render_glob "spoe-agents-*" }}
-      {# Per-message SPOE-message bodies. Each known plugin message
-          gets its canonical body via a literal `render`; everything
-          else falls back to a minimal stub so HAProxy accepts the
-          group's reference. This dispatch is hard-coded because the
-          Scriggo fork's `render` requires a string literal — adding
-          a new plugin with a real body means adding a branch here.
-          The leading blank line before each block is required: the
-          HAProxy SPOE config parser uses blank lines as block
-          separators. #}
-      {%- for _, msg := range messages %}
 
       {% if msg == "check-auth" -%}
       {{ render "spoe-message-check-auth-body" }}
@@ -303,12 +284,6 @@ templateSnippets:
       spoe-message {{ msg }}
           args ip=src req_id=unique-id
       {%- end %}
-      {%- end %}
-
-      {#- Per-message group definitions. Each message becomes a singleton
-          group (`<msg>-group`) so frontends can trigger it explicitly
-          via `http-request send-spoe-group spoa-hub-agent <msg>-group`. -#}
-      {%- for _, msg := range messages %}
 
       spoe-group {{ msg }}-group
           messages {{ msg }}
@@ -443,17 +418,16 @@ templateSnippets:
   #   - burst  (optional) — the bucket depth (max instantaneous burst).
   #     Defaults to `limit` in the plugin when absent/empty.
   #   - mode   (optional) — `exact` selects the synchronous GCRA path
-  #     (exact, fails closed) for money/contract limits; anything else
-  #     (the default) uses the low-latency lease path (fails static on a
-  #     store outage). Sourced from rate-limit-mode.map.
+  #     for money/contract limits; anything else uses the low-latency
+  #     lease path. Sourced from rate-limit-mode.map.
   #
   # `cost` is intentionally omitted (the plugin defaults it to 1).
   #
   # The hub prefixes plugin output variables with the plugin name
   # (rate_limit.*); HAProxy exposes them under the spoa-hub engine namespace
-  # as txn.hub.rate_limit.{allowed (bool), limit, remaining, reset,
-  # retry_after (uint32)}. The dispatcher in
-  # The source-IP frontend and authenticated-consumer backend dispatchers deny
+  # as txn.hub.rate_limit.{allowed, degraded, accounted}; accounted verdicts
+  # also carry limit, remaining, reset, and retry_after.
+  # Source-IP frontend and authenticated-consumer backend dispatchers deny
   # 429 on !allowed and publish the X-RateLimit-* / Retry-After headers.
   spoe-message-check-ratelimit-body:
     template: |-

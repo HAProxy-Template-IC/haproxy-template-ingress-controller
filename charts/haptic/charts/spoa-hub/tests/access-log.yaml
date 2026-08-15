@@ -110,6 +110,9 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: '%\(schema_outcome\)\[var\(txn\.hub\.api_gateway\.outcome\)\]'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(schema_degraded\)\[var\(txn\.schema_degraded\)\]'
       - type: match_order
         target: haproxy.cfg
         patterns:
@@ -118,35 +121,57 @@ validationTests:
         description: >-
           The marker carries the gate's own condition and precedes it — `deny`
           ends rule processing, so a marker placed after would never run.
-      # A limiter that cannot answer no longer denies: the request is allowed and
-      # the event recorded. Denying on an internal blip sheds legitimate traffic
-      # for a reason the client cannot act on.
+      # A missing plugin verdict fails open by default in both modes.
       - type: not_contains
         target: haproxy.cfg
-        pattern: 'http-request deny deny_status 429 hdr Retry-After 1 if .*!\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
-        description: >-
-          No verdict must not produce a 429 under the default posture.
+        pattern: 'http-request deny deny_status 429 hdr Retry-After 1 if .*\{ var\(txn\.rl_mode\) -m str exact \} !\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 429 hdr Retry-After 1 if \{ var\(txn\.rl_limit\) -m found \} \{ var\(txn\.rl_keyspec\) -m str [a-z]+ \} !\{ var\(txn\.rl_rule_invalid\) -m bool \} !\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.rate_limit_degraded\) str\(1\) if .*!\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}'
-      # Suppressing the unavailable-429 is only half of fail-open. An unset
-      # verdict also satisfies `!{ ... -m bool }`, so without `-m found` the
-      # decision deny below 429s exactly the requests this posture lets through.
-      # The WAF shipped that bug because its test asserted only the first half.
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request deny deny_status 429 hdr Retry-After %\[var\(txn\.hub\.rate_limit\.retry_after\)\] if .* \{ var\(txn\.hub\.rate_limit\.allowed\) -m found \} !\{ var\(txn\.hub\.rate_limit\.allowed\) -m bool \}'
+        pattern: 'http-request set-var\(txn\.rate_limit_degraded\) str\(1\) if .*\{ var\(txn\.hub\.rate_limit\.degraded\) -m bool \}'
+      - type: match_order
+        target: haproxy.cfg
+        description: >-
+          A v0.2 denial has no degraded/accounted fields; v0.3 overrides its
+          limited default from the explicit fields.
+        patterns:
+          - 'unset-var\(txn\.rl_verdict_class\)'
+          - 'set-var\(txn\.rl_verdict_class\) str\(limited\) if .*\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \} !\{ var\(txn\.hub\.rate_limit\.allowed\) -m bool \}'
+          - 'set-var\(txn\.rl_verdict_class\) str\(fallback-limited\) if \{ var\(txn\.rl_verdict_class\) -m str limited \} \{ var\(txn\.hub\.rate_limit\.degraded\) -m bool \} \{ var\(txn\.hub\.rate_limit\.accounted\) -m bool \}'
+          - 'set-var\(txn\.rl_verdict_class\) str\(unavailable\) if \{ var\(txn\.rl_verdict_class\) -m str limited \} \{ var\(txn\.hub\.rate_limit\.degraded\) -m bool \} !\{ var\(txn\.hub\.rate_limit\.accounted\) -m bool \}'
+          - 'set-var\(txn\.rl_verdict_class\) str\(invalid\) if \{ var\(txn\.rl_verdict_class\) -m str limited \} \{ var\(txn\.hub\.rate_limit\.degraded\) -m found \} !\{ var\(txn\.hub\.rate_limit\.degraded\) -m bool \} !\{ var\(txn\.hub\.rate_limit\.accounted\) -m bool \}'
+          - 'set-var\(txn\.denied_by\) str\(rate_limit_shared\) if \{ var\(txn\.rl_verdict_class\) -m str limited \}'
+          - 'set-var\(txn\.denied_by\) str\(rate_limit_shared_unavailable\) if \{ var\(txn\.rl_verdict_class\) -m str fallback-limited unavailable \}'
+          - 'set-var\(txn\.denied_by\) str\(rate_limit_shared_invalid\) if \{ var\(txn\.rl_verdict_class\) -m str invalid \}'
+          - 'deny deny_status 429 hdr Retry-After %\[var\(txn\.hub\.rate_limit\.retry_after\)\] if \{ var\(txn\.rl_verdict_class\) -m str limited fallback-limited \}'
+          - 'deny deny_status 429 hdr Retry-After 1 if \{ var\(txn\.rl_verdict_class\) -m str unavailable invalid \}'
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  http-request unset-var\(txn\.rl_verdict_class\)$', expected: "3"}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  http-request set-var\(txn\.rl_verdict_class\) str\(limited\)', expected: "3"}
       - type: not_contains
         target: haproxy.cfg
-        pattern: 'deny deny_status 429 hdr Retry-After %\[var\(txn\.hub\.rate_limit\.retry_after\)\] if \{ var\(txn\.rl_limit\) -m found \} \{ var\(txn\.rl_keyspec\) -m str [a-z]+ \} !\{ var\(txn\.hub\.rate_limit\.allowed\) -m bool \}'
+        pattern: 'set-var\(txn\.rl_verdict_class\) str\(limited\) if \{ var\(txn\.rl_limit\) -m found \} \{ var\(txn\.rl_keyspec\) -m str [a-z]+ \} !\{ var\(txn\.hub\.rate_limit\.allowed\) -m bool \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-after-response set-header X-RateLimit-Remaining %\[var\(txn\.hub\.rate_limit\.remaining\)\] if .*\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \} !\{ var\(txn\.hub\.rate_limit\.degraded\) -m found \} !\{ var\(txn\.hub\.rate_limit\.accounted\) -m found \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-after-response set-header X-RateLimit-Remaining %\[var\(txn\.hub\.rate_limit\.remaining\)\] if .*\{ var\(txn\.hub\.rate_limit\.accounted\) -m bool \}'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s*http-after-response set-header X-RateLimit-Remaining .*\{ var\(txn\.hub\.rate_limit\.allowed\) -m found \}$'
       # The variable is worthless if it never reaches a log line: this is the
       # only signal that a control silently stopped protecting anything.
       - type: contains
         target: haproxy.cfg
         pattern: '%\(rate_limit_degraded\)\[var\(txn\.rate_limit_degraded\)\]'
         description: >-
-          Allowed, but never silently: this feeds the access log and the counter,
-          so a limiter that is not limiting is visible.
+          A store fallback or missing verdict feeds the access log and counter
+          for either lease or exact mode.
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.denied_by\) str\(external_auth\) if \{ var\(txn\.auth_url\) -m found \}'
@@ -187,9 +212,7 @@ validationTests:
 
   test-spoa-hub-rate-limit-fail-closed-opt-in:
     description: >-
-      rateLimit.shared.failClosed restores denying on a missing verdict, for
-      operators enforcing a contractual cap where letting a caller past the
-      budget is worse than refusing them. Off by default.
+      rateLimit.shared.failClosed makes every mode deny a missing verdict.
     extraContext:
       rateLimit: {shared: {enabled: true, failClosed: true}}
       spoaHub:

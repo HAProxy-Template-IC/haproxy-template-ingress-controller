@@ -71,8 +71,9 @@ func resolveAccessLogContainer(ctx context.Context, t *testing.T) string {
 	return accessLogContainerName
 }
 
-// readHAProxyAccessLog returns the access-log stdout across all HAProxy pods,
-// from `since` onwards. That stdout IS the access log in this chart
+// readHAProxyAccessLog returns the access-log stdout from `since` onwards. With
+// no pod argument it reads every HAProxy pod; otherwise it reads only the named
+// pods. That stdout IS the access log in this chart
 // (`log ... format raw`), so it is the only place the emitted log record can be
 // observed — the chart's validationTests can prove the log-format directive
 // renders, but not that HAProxy produces a parseable record from it.
@@ -82,11 +83,14 @@ func resolveAccessLogContainer(ctx context.Context, t *testing.T) string {
 // and schema tests driving traffic in parallel) this test's own record scrolled
 // out of a 500-line tail before the poll observed it, and the test failed while
 // the feature was fine.
-func readHAProxyAccessLog(ctx context.Context, t *testing.T, since time.Time) (string, error) {
+func readHAProxyAccessLog(ctx context.Context, t *testing.T, since time.Time, pods ...string) (string, error) {
 	t.Helper()
 	container := resolveAccessLogContainer(ctx, t)
+	if len(pods) == 0 {
+		pods = listHAProxyPods(t)
+	}
 	var all strings.Builder
-	for _, pod := range listHAProxyPods(t) {
+	for _, pod := range pods {
 		cmd := exec.CommandContext(ctx, "kubectl",
 			"--kubeconfig", kubeconfigPath,
 			"-n", ControllerNamespace,
@@ -116,6 +120,13 @@ func findAccessLogRecord(ctx context.Context, t *testing.T, since time.Time, mar
 	})
 }
 
+func findAccessLogRecordInPod(ctx context.Context, t *testing.T, pod string, since time.Time, marker string) map[string]any {
+	t.Helper()
+	return findAccessLogRecordWhere(ctx, t, since, "path "+marker+" in pod "+pod, func(rec map[string]any) bool {
+		return rec["path"] == marker
+	}, pod)
+}
+
 // findAccessLogRecordWhere waits for an access-log record matching want and
 // returns it decoded. desc names what was being waited for in the failure
 // message.
@@ -124,7 +135,7 @@ func findAccessLogRecord(ctx context.Context, t *testing.T, since time.Time, mar
 // messages are not JSON, by design), but a JSON-looking line that fails to parse
 // fails the test — that is what truncation at `len` or a leftover syslog prefix
 // would look like.
-func findAccessLogRecordWhere(ctx context.Context, t *testing.T, since time.Time, desc string, want func(map[string]any) bool) map[string]any {
+func findAccessLogRecordWhere(ctx context.Context, t *testing.T, since time.Time, desc string, want func(map[string]any) bool, pods ...string) map[string]any {
 	t.Helper()
 	var found map[string]any
 	var rawLine string
@@ -139,7 +150,7 @@ func findAccessLogRecordWhere(ctx context.Context, t *testing.T, since time.Time
 	droppedBefore, haveCounter := haproxyDroppedLogsTotal(ctx, t)
 
 	err := testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
-		logs, err := readHAProxyAccessLog(c, t, since)
+		logs, err := readHAProxyAccessLog(c, t, since, pods...)
 		if err != nil {
 			return false, err
 		}

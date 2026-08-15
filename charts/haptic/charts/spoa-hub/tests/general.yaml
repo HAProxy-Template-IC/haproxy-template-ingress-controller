@@ -76,12 +76,17 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "backend spoa-hub"}
       - {type: contains, target: haproxy.cfg, pattern: "mode spop"}
       - {type: contains, target: haproxy.cfg, pattern: "server hub /run/spoa/hub.sock"}
-      - {type: contains, target: haproxy.cfg, pattern: "filter spoe engine spoa-hub config"}
+      - {type: contains, target: haproxy.cfg, pattern: "filter spoe engine spoa-hub-check-auth config"}
+      - {type: contains, target: haproxy.cfg, pattern: "option spop-check"}
+      - {type: contains, target: haproxy.cfg, pattern: "timeout check 500ms"}
+      - {type: contains, target: haproxy.cfg, pattern: "server hub /run/spoa/hub.sock check inter 1s fastinter 500ms downinter 1s fall 2 rise 2"}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request return status 204 if { path /spoa-hub-child-health } { dst 127.0.0.0/8 } { srv_is_up\\(spoa-hub/hub\\) }"}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request return status 424 if { path /spoa-hub-child-health } { dst 127.0.0.0/8 }"}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request send-spoe-group spoa-hub check-auth-group"
+        pattern: "http-request send-spoe-group spoa-hub-check-auth check-auth-group"
       - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 401"}
-      - {type: contains, target: file:spoe.conf, pattern: "spoe-agent spoa-hub-agent"}
+      - {type: contains, target: file:spoe.conf, pattern: "spoe-agent spoa-hub-check-auth-agent"}
       - {type: contains, target: file:spoe.conf, pattern: "groups check-auth-group"}
       - {type: contains, target: file:spoe.conf, pattern: "spoe-message check-auth"}
       - {type: contains, target: file:spoe.conf, pattern: "args auth_url=var\\(txn.auth_url\\)"}

@@ -1008,14 +1008,15 @@ evade the WAF has already achieved more than the evasion. Designing the
 degraded path around them costs every honest caller and buys little.
 
 **Failing open is not failing silently.** Every allowed-because-unavailable
-request sets a `txn.<control>_unavailable` variable, which reaches the access log
-and a counter. A control that is silently not protecting anything is the worst
-outcome of all, and the metric is what stops it being silent. If you add a
-fail-open path without a signal, you have not applied this rule.
+event must reach an access-log field or a component metric. Missing SPOA
+verdicts set `txn.<control>_degraded`; a plugin that returns an explicit
+store-failure verdict records its own outcome counter. If you add a fail-open
+path without a signal, you have not applied this rule.
 
 **Offer the strict posture, do not impose it.** Operators enforcing a contractual
 cap may genuinely prefer denial. `rateLimit.shared.failClosed` is the shape:
-default open, opt-in strict, both pinned by tests.
+default Valkey-to-local degradation and open on a missing plugin verdict, opt-in
+strict, both pinned by tests.
 
 Provenance: the shared rate limiter denied on a missing SPOA verdict, so a single
 HAProxy reload returned 429 to a caller who was nowhere near their budget. It was

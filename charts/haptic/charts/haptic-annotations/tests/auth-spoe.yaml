@@ -234,7 +234,7 @@ validationTests:
       - {type: contains, target: map:auth-method.map, pattern: "default/protected POST"}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request send-spoe-group spoa-hub check-auth-group"
+        pattern: "http-request send-spoe-group spoa-hub-check-auth check-auth-group"
       # Security: a client-supplied copy of the pass-through header is stripped
       # before the auth value is set, so it can't survive when the auth reply
       # omits the header (identity/privilege-escalation guard).
