@@ -660,6 +660,9 @@ validate-helm-libraries:
       fi
     # Retry failed variants after fan-in; concurrent GitLab pushes can race blob visibility.
     # https://gitlab.com/gitlab-org/gitlab/-/issues/422262
+    # --provenance=false: BuildKit >= 0.32 pushes attestations as OCI artifacts
+    # whose subject may not exist yet; gitlab.com rejects the index with
+    # "blob unknown to registry" (moby/buildkit#7007). Nothing consumes it.
     - |
       set -o pipefail
       build_snapshot_image() {
@@ -674,6 +677,7 @@ validate-helm-libraries:
           --build-context binary=binary-context \
           --target runtime \
           --tag "${tag}" \
+          --provenance=false \
           --push \
           . 2>&1 | sed "s|^|[hp${haproxy_version}] |"
       }
@@ -1193,6 +1197,7 @@ mirror-ingress-conformance-image:
     # so we strip in CI before passing as a build-arg.
     - SPOA_TAG="${SPOA_TAG#v}"  # bash context: strip release-tag leading v (no-op for snapshot tags)
     - HUB_TAG="${SPOA_HUB_VERSION#v}"
+    # --provenance=false: see the controller image build (moby/buildkit#7007).
     - |
       docker buildx build \
         --platform "${PLATFORMS}" \
@@ -1203,6 +1208,7 @@ mirror-ingress-conformance-image:
         --label "org.opencontainers.image.version=${SPOA_TAG}" \
         --tag "${SPOA_IMAGE}:${SPOA_TAG}" \
         --metadata-file metadata.json \
+        --provenance=false \
         --push \
         -f Dockerfile.spoa-hub \
         .
@@ -1786,7 +1792,7 @@ test-acceptance:
           echo "=== spoa-hub: $pod (previous) ===" >> debug-logs/_suite/spoa-hub.log
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub --previous >> debug-logs/_suite/spoa-hub.log 2>&1 || true
           echo "=== spoa-hub config.toml: $pod ===" >> debug-logs/_suite/spoa-hub-config.log
-          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c spoa-hub -- cat /etc/haproxy-spoa-hub/config.toml >> debug-logs/_suite/spoa-hub-config.log 2>&1 || true
+          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c spoa-hub -- cat /etc/haproxy/general/spoa-hub-config.toml >> debug-logs/_suite/spoa-hub-config.log 2>&1 || true
           echo "=== vector: $pod (current) ===" >> debug-logs/_suite/vector.log
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c vector >> debug-logs/_suite/vector.log 2>&1 || true
           echo "=== vector: $pod (previous) ===" >> debug-logs/_suite/vector.log
