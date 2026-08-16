@@ -1,7 +1,6 @@
 suite: vector sidecar
 templates:
   - haproxy-deployment.yaml
-  - vector-podmonitor.yaml
   - haproxy-networkpolicy.yaml
 tests:
   - it: should render a supervised sidecar without owning pod readiness
@@ -156,36 +155,6 @@ tests:
             containerPort: 9598
             protocol: TCP
 
-  - it: should scrape both exporters from one PodMonitor
-    template: vector-podmonitor.yaml
-    set:
-      vector.podMonitor.enabled: true
-    asserts:
-      - equal:
-          path: spec.podMetricsEndpoints[0].port
-          value: vector-metrics
-      - equal:
-          path: spec.podMetricsEndpoints[1].port
-          value: vector-sizes
-      # Both endpoints take the same scrape settings, so tuning `interval` never
-      # requires knowing there are two.
-      - equal:
-          path: spec.podMetricsEndpoints[1].interval
-          value: 30s
-
-  - it: should declare one PodMonitor endpoint when the sizes exporter is off
-    template: vector-podmonitor.yaml
-    set:
-      vector.podMonitor.enabled: true
-      vector.requestMetrics.enabled: false
-    asserts:
-      - lengthEqual:
-          path: spec.podMetricsEndpoints
-          count: 1
-      - equal:
-          path: spec.podMetricsEndpoints[0].port
-          value: vector-metrics
-
   - it: should let Prometheus reach the vector exporters in restrictive mode
     template: haproxy-networkpolicy.yaml
     set:
@@ -195,9 +164,8 @@ tests:
             matchLabels:
               app: prometheus
     asserts:
-      # With the sidecar on, HAProxy's own /metrics answers over loopback only,
-      # so allowing 8404 alone leaves Prometheus with nothing reachable to
-      # scrape — and nothing reports it, the scrape just never succeeds.
+      # HAProxy's exporter and vector's are separate targets on separate ports;
+      # a policy that opens only 8404 silently loses every vector series.
       - contains:
           path: spec.ingress[?(@.ports[0].port==8404)].ports
           content:

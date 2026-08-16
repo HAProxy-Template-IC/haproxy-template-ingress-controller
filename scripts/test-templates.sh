@@ -718,32 +718,36 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         "declared by an earlier target" \
         --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"a":{"ring":{"name":"dup","address":"127.0.0.1:6514"}},"b":{"ring":{"name":"dup","address":"127.0.0.1:6515"}}}'
     run_helm_failure_guard \
-        "Vector excludeMetrics guard: reject the pre-0.2.0 list format" \
-        "must be a map of named exclusions" \
-        --set-json 'vector.excludeMetrics=["^haproxy_foo_"]'
-    run_helm_failure_guard \
-        "Vector excludeMetrics guard: reject an unknown field on an entry" \
-        "unknown field" \
-        --set-json 'vector.excludeMetrics={"serverBackendMax":{"enable":true}}'
-    run_helm_failure_guard \
-        "Vector excludeMetrics guard: reject an enabled entry with no pattern" \
-        "is enabled but has no" \
-        --set-json 'vector.excludeMetrics={"mine":{"enabled":true}}'
-    run_helm_failure_guard \
-        "Vector excludeMetrics guard: reject a non-boolean enabled" \
-        "must be a boolean" \
-        --set-json 'vector.excludeMetrics={"mine":{"enabled":"yes","pattern":"^x"}}'
-    run_helm_failure_guard \
-        "Vector excludeMetrics guard: reject a family outside its own pattern" \
-        "does not match that entry" \
-        --set-json 'vector.excludeMetrics={"mine":{"enabled":true,"pattern":"^haproxy_foo_","families":["haproxy_bar_baz"]}}'
-    run_helm_failure_guard \
-        "Vector excludeMetrics guard: reject a family that is not a bare metric name" \
-        "is not a bare metric name" \
-        --set-json 'vector.excludeMetrics={"mine":{"enabled":true,"pattern":"^haproxy_","families":["haproxy_x%"]}}'
-    run_helm_success_guard \
-        "Vector excludeMetrics guard: a disabled entry needs no valid pattern" \
+        "Vector migration guard: vector.excludeMetrics names its new home" \
+        "vector.excludeMetrics moved to controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics" \
         --set-json 'vector.excludeMetrics={"backendHttpCompression":{"enabled":false}}'
+    run_helm_failure_guard \
+        "Vector migration guard: vector.podMonitor names its new home" \
+        "vector.podMonitor moved to haproxy.monitoring.podMonitor" \
+        --set vector.podMonitor.enabled=true
+    run_helm_failure_guard \
+        "Prometheus exporter guard: reject an unknown field on an entry" \
+        "unknown field" \
+        --set-json 'controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics={"serverBackendMax":{"enable":true}}'
+    run_helm_failure_guard \
+        "Prometheus exporter guard: reject an enabled entry with no families" \
+        "is enabled but lists no" \
+        --set-json 'controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics={"mine":{"enabled":true}}'
+    run_helm_failure_guard \
+        "Prometheus exporter guard: reject a non-boolean enabled" \
+        "must be a boolean" \
+        --set-json 'controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics={"mine":{"enabled":"yes","families":["haproxy_x"]}}'
+    run_helm_failure_guard \
+        "Prometheus exporter guard: reject a family that is not a bare metric name" \
+        "is not a bare metric name" \
+        --set-json 'controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics={"mine":{"enabled":true,"families":["haproxy_x%"]}}'
+    run_helm_failure_guard \
+        "Prometheus exporter guard: reject a regex pattern carried over from vector.excludeMetrics" \
+        "filters by exact name only" \
+        --set-json 'controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics={"mine":{"enabled":true,"pattern":"^haproxy_"}}'
+    run_helm_success_guard \
+        "Prometheus exporter guard: a disabled entry needs no families" \
+        --set-json 'controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics={"backendHttpCompression":{"enabled":false}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject an out-of-range log line length" \
         "accessLog.maxLineBytes must be an integer between 1024 and 65535." \

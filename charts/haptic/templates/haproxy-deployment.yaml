@@ -574,24 +574,18 @@ spec:
         {{- if $vectorEnabled }}
         {{- $vector := .Values.vector }}
         # Vector sidecar: receives the HAProxy access log over a UNIX datagram
-        # socket and re-exports HAProxy's + the hub's Prometheus metrics together
-        # with its own on a single port, so Prometheus scrapes one target per pod.
+        # socket, derives the request metrics from it, and re-exports the hub's
+        # Prometheus metrics with its own. HAProxy's exporter is scraped directly.
         - name: vector
           image: {{ include "haptic.vector.image" . }}
           imagePullPolicy: {{ $vector.image.pullPolicy }}
           env:
             # Vector links plain glibc malloc (no jemalloc — verified against
             # 0.57.0), so it gets glibc's default of up to 8 x ncores per-thread
-            # arenas. Each scrape parses the whole HAProxy exposition in a burst
-            # and frees it again, and freed chunks stay in whichever arena they
-            # came from rather than going back to the OS — so peak RSS grows with
-            # arena count, not with what vector actually holds.
-            #
-            # Measured on an 825-backend fleet, same 163k retained series:
-            # default arenas 1570 MiB peak / 949 MiB steady, ARENA_MAX=2 gives
-            # 1400 / 916. Costs a little allocator contention across vector's
-            # worker threads; buys ~11% of the peak, which is the number the
-            # memory limit has to cover.
+            # arenas, and freed chunks stay in whichever arena they came from
+            # rather than going back to the OS — peak RSS grows with arena count.
+            # Measured on an 825-backend fleet: ARENA_MAX=2 bought ~11% of the
+            # peak for a little allocator contention across the worker threads.
             - name: MALLOC_ARENA_MAX
               value: "2"
           # Vector does not unlink its UNIX socket after an exit, so each child

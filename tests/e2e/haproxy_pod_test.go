@@ -56,12 +56,6 @@ func podJSONPath(ctx context.Context, pod, expr string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-func curlStatus(ctx context.Context, pod, url string) (string, error) {
-	out, err := execInHAProxyPod(ctx, pod, "haproxy",
-		"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", url)
-	return strings.TrimSpace(out), err
-}
-
 func apiProxyGet(ctx context.Context, pod string, port int, path string) (string, error) {
 	cmd := exec.CommandContext(ctx, "kubectl",
 		"--kubeconfig", kubeconfigPath,

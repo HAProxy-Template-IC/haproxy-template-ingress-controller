@@ -150,8 +150,11 @@ objects such as resources/securityContext; the apiserver owns those schemas.
 {{- if not (kindIs "map" $spoa) -}}
   {{- fail "spoaHub must be a map." -}}
 {{- end -}}
+{{- if hasKey $spoa "monitoring" -}}
+  {{- fail "spoaHub.monitoring moved to haproxy.monitoring: one PodMonitor (haproxy.monitoring.podMonitor) now scrapes every metrics endpoint on the HAProxy pod — HAProxy's exporter, vector's endpoints and, without vector, the hub's. Same podMonitor fields." -}}
+{{- end -}}
 {{- range $field := keys $spoa -}}
-  {{- if not (has $field (list "enabled" "image" "resources" "hub" "haproxy" "plugins" "securityContext" "extraVolumeMounts" "monitoring")) -}}
+  {{- if not (has $field (list "enabled" "image" "resources" "hub" "haproxy" "plugins" "securityContext" "extraVolumeMounts")) -}}
     {{- fail (printf "spoaHub contains unknown field %q." $field) -}}
   {{- end -}}
 {{- end -}}

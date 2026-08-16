@@ -42,7 +42,8 @@ exit 1
 // TestVectorSidecar covers the parts of the vector wiring that only a live
 // cluster can establish. The chart's validationTests prove the config renders;
 // they cannot prove that HAProxy's datagrams arrive, that the pushed config
-// actually reached the sidecar, or that the metrics restriction behaves both ways.
+// actually reached the sidecar, or that HAProxy's exporter applies the chart's
+// query defaults on the pod IP while honouring a scraper's own query.
 //
 // Deliberately NOT t.Parallel(): the restart assess kills the Vector child of a
 // shared HAProxy pod. Export briefly stops while the supervisor recovers it, so a
@@ -51,7 +52,7 @@ func TestVectorSidecar(t *testing.T) {
 	var pod string
 	var pods []string
 
-	feature := features.New("Vector sidecar: log transport, merged metrics, loopback-only exporter").
+	feature := features.New("Vector sidecar: log transport, vector metrics, direct HAProxy exporter").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			pods = listHAProxyPods(t)
 			if len(pods) == 0 {
@@ -85,69 +86,53 @@ func TestVectorSidecar(t *testing.T) {
 			}
 			return ctx
 		}).
-		Assess("each endpoint carries HAProxy's and Vector's metrics together", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			// The point of fronting the endpoints: haproxy_* (re-exported) and
-			// vector_* (internal) on a single port.
+		Assess("vector's endpoint carries its own series and not HAProxy's", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			// Fetched through the API server proxy, which reaches the pod IP exactly
 			// as Prometheus does via the PodMonitor — so this asserts the real scrape
-			// path, not just that something is listening on loopback.
+			// path. haproxy_* must NOT be here: re-exporting it was 90% of vector's
+			// memory at scale, and Prometheus scrapes HAProxy's exporter directly.
 			for _, candidate := range pods {
-				var body string
-				err := testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
-					out, err := apiProxyGet(c, candidate, VectorMetricsPort, "metrics")
-					if err != nil {
-						return false, nil
-					}
-					body = out
-					return strings.Contains(body, "haproxy_") && strings.Contains(body, "vector_"), nil
-				})
+				body, err := apiProxyGet(ctx, candidate, VectorMetricsPort, "metrics")
 				if err != nil {
-					t.Fatalf("merged /metrics on pod %s never carried both metric families: %v (got %d bytes)",
-						candidate, err, len(body))
+					t.Fatalf("scraping vector's /metrics on pod %s: %v", candidate, err)
 				}
-				// haproxy_* can only be there if vector reached HAProxy's exporter over
-				// loopback, so this doubles as proof the loopback side of the gate works.
-				for _, want := range []string{"haproxy_", "vector_"} {
-					if !strings.Contains(body, want) {
-						t.Errorf("merged /metrics on pod %s is missing %q series", candidate, want)
-					}
+				if !strings.Contains(body, "vector_") {
+					t.Errorf("vector's /metrics on pod %s is missing its own vector_ series", candidate)
+				}
+				if strings.Contains(body, "\nhaproxy_") {
+					t.Errorf("vector's /metrics on pod %s still re-exports haproxy_ series", candidate)
 				}
 			}
 			return ctx
 		}).
-		Assess("HAProxy answers /metrics on loopback only, while the probes stay on the pod IP", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			// The gate is on `dst` (the address connected TO) rather than on the bind,
-			// because /healthz and /ready share this listener and the kubelet probes
-			// the POD IP. Binding to loopback would make every probe fail. Both
-			// directions are asserted, because only checking the allowed one would
-			// pass even if the restriction did nothing.
-			loop, err := curlStatus(ctx, pod, "http://127.0.0.1:8404/metrics")
+		Assess("HAProxy's exporter answers on the pod IP with the chart's query defaults, and honours a scraper's own", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			// Through the API server proxy, i.e. from outside the pod, exactly as
+			// Prometheus reaches it. The chart's set-query default must have applied:
+			// haproxy_backend_agg_check_status is excluded by extraContext.prometheusExporter
+			// (haproxy_backend_status, which is not, proves the exposition is real).
+			body, err := apiProxyGet(ctx, pod, HAProxyStatsPort, "metrics")
 			if err != nil {
-				t.Fatalf("probing /metrics over loopback: %v", err)
+				t.Fatalf("scraping HAProxy's /metrics on the pod IP: %v", err)
 			}
-			if loop != "200" {
-				t.Errorf("/metrics must answer over loopback — that is how vector scrapes it; got HTTP %s", loop)
+			if !strings.Contains(body, "\nhaproxy_backend_status") {
+				t.Fatalf("HAProxy's /metrics on the pod IP carries no haproxy_backend_status series (got %d bytes)", len(body))
+			}
+			if strings.Contains(body, "haproxy_backend_agg_check_status") {
+				t.Errorf("HAProxy's /metrics on the pod IP still exposes haproxy_backend_agg_check_status, so the chart's default query was not applied")
+			}
+			// A scraper's own query wins wholesale: asking for exactly the excluded
+			// family gets it, so an operator can always reach the raw exposition.
+			own, err := apiProxyGet(ctx, pod, HAProxyStatsPort, "metrics?metrics=haproxy_backend_agg_check_status")
+			if err != nil {
+				t.Fatalf("scraping HAProxy's /metrics with a scraper-side query: %v", err)
+			}
+			if !strings.Contains(own, "haproxy_backend_agg_check_status") {
+				t.Errorf("a scraper-side ?metrics= query did not override the chart's default (got %d bytes)", len(own))
 			}
 
-			ip, err := podJSONPath(ctx, pod, "{.status.podIP}")
-			if err != nil || ip == "" {
-				t.Fatalf("resolving pod IP: %v (ip=%q)", err, ip)
-			}
-			// Falls through to the status frontend's default when use-service does not
-			// fire, which answers 503 — assert "not 200" rather than a specific code so
-			// the test tracks the restriction, not HAProxy's choice of fall-through.
-			viaPodIP, err := curlStatus(ctx, pod, fmt.Sprintf("http://%s:8404/metrics", ip))
-			if err != nil {
-				t.Fatalf("probing /metrics via the pod IP: %v", err)
-			}
-			if viaPodIP == "200" {
-				t.Errorf("/metrics is still answerable on the pod IP (%s), so the dst gate did not apply", ip)
-			}
-
-			// The probes must keep working on the pod IP or the pod never goes Ready.
-			// Checked through the API server proxy, i.e. from outside the pod.
+			// The probes share this listener and must keep working on the pod IP.
 			for _, probe := range []struct{ path, want string }{{"healthz", "OK"}, {"ready", "READY"}} {
-				out, err := apiProxyGet(ctx, pod, 8404, probe.path)
+				out, err := apiProxyGet(ctx, pod, HAProxyStatsPort, probe.path)
 				if err != nil {
 					t.Fatalf("/%s must stay reachable on the pod IP for the kubelet's probes: %v", probe.path, err)
 				}
@@ -235,7 +220,7 @@ func TestVectorSidecar(t *testing.T) {
 					return false, nil
 				}
 				recoveredPID, metrics = pid, body
-				return strings.Contains(metrics, "haproxy_") && strings.Contains(metrics, "vector_"), nil
+				return strings.Contains(metrics, "vector_"), nil
 			})
 			if err != nil {
 				socketState, _ := execInHAProxyPod(ctx, pod, "haproxy", "sh", "-c",

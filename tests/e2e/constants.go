@@ -77,12 +77,17 @@ const (
 	// tier scrapes it per-pod via the apiserver pod proxy.
 	ControllerMetricsPort = 9090
 
-	// VectorMetricsPort is the merged Prometheus endpoint the vector sidecar
-	// serves on every HAProxy pod (matches the chart's vector.metricsPort
-	// default). It carries vector's own series plus HAProxy's re-exported
-	// ones, so haproxy_* counters are read from here, exactly as the
-	// PodMonitor scrapes them.
+	// VectorMetricsPort is the Prometheus endpoint the vector sidecar serves
+	// on every HAProxy pod (matches the chart's vector.metricsPort default):
+	// vector's own series, the log-derived and request metrics, and the hub's
+	// re-exported ones. haproxy_* is NOT here — Prometheus scrapes HAProxy's
+	// exporter directly on HAProxyStatsPort, and so does the suite.
 	VectorMetricsPort = 9598
+
+	// HAProxyStatsPort is HAProxy's status frontend (matches the chart's
+	// haproxy.ports.stats default): /healthz, /ready and the Prometheus
+	// exporter on /metrics, answering on the pod IP.
+	HAProxyStatsPort = 8404
 
 	// DebugServiceName is the Service the chart provisions for the
 	// controller's debug + metrics endpoints. Named after the helm release

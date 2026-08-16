@@ -15,19 +15,6 @@ tests:
       - failedTemplate:
           errorMessage: 'vector.socketPath must be inside a subdirectory, not directly at the filesystem root, got "/haproxy.sock". The chart mounts the socket''s parent directory as a shared emptyDir in both the haproxy and vector containers, so a parent of "/" would shadow their root filesystems. Use something like /run/vector/haproxy.sock.'
 
-  - it: should refuse the combination that silently stops all scraping
-    template: haproxytemplateconfig.yaml
-    set:
-      spoaHub.enabled: true
-      spoaHub.monitoring.podMonitor.enabled: true
-      # vector.podMonitor.enabled left at its false default — with the sidecar on
-      # the chart skips the spoaHub PodMonitor, so this pair means NOTHING scrapes
-      # haproxy_* or spoa_* and nothing says so. A live cluster was in exactly this
-      # state; the render must refuse it rather than lose the metrics quietly.
-    asserts:
-      - failedTemplate:
-          errorMessage: 'spoaHub.monitoring.podMonitor.enabled=true has no effect while vector.enabled=true: the chart skips that PodMonitor because the vector sidecar re-exports both the hub''s and HAProxy''s metrics on one endpoint. Set vector.podMonitor.enabled=true to scrape the merged endpoint (recommended), or set vector.enabled=false to keep scraping the hub directly. Leaving it as-is would silently stop every haproxy_* and spoa_* scrape.'
-
   - it: should reject shell metacharacters in socketPath
     template: haproxytemplateconfig.yaml
     set:
@@ -66,181 +53,47 @@ tests:
       - failedTemplate:
           errorMessage: 'vector.image.tag must be pinned to an explicit tag so a silent upstream bump can''t change the log pipeline under a running fleet.'
 
-  # excludeMetrics guards. These cover the Helm path, which is what every normal
-  # install goes through; the Scriggo copies in charts/vector/library.yaml only matter
-  # for a hand-written HAProxyTemplateConfig CR. Every pattern below reaches the
-  # rendered Vector config verbatim, so the render must reject a bad one before
-  # the supervised child loses log and metric export.
-  - it: should reject an uncompilable exclusion pattern
+  # Moved keys. Each fails with its destination rather than as an unknown field,
+  # so an operator's old values file tells them what to rename.
+  - it: should name the new home when vector.excludeMetrics is still set
     template: haproxytemplateconfig.yaml
     set:
       vector.excludeMetrics:
-        broken:
-          enabled: true
-          pattern: ^haproxy_((
-    asserts:
-      # Regression guard on a real hole: this was written with sprig's plain
-      # regexMatch, which does `match, _ := regexp.MatchString(...)` and DISCARDS
-      # the compile error — so the check passed anything and this pattern rendered
-      # clean. Only mustRegexMatch surfaces it.
-      - failedTemplate:
-          errorPattern: 'error parsing regexp: missing closing \)'
-
-  - it: should reject an enabled exclusion with no pattern
-    template: haproxytemplateconfig.yaml
-    set:
-      vector.excludeMetrics:
-        empty:
-          enabled: true
-          pattern: ""
+        serverBackendMax:
+          enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: 'vector.excludeMetrics.empty is enabled but has no `pattern`.'
+          errorPattern: 'vector\.excludeMetrics moved to controller\.config\.templatingSettings\.extraContext\.prometheusExporter\.excludeMetrics'
 
-  - it: should reject an exclusion entry that omits enabled
+  - it: should name the new home when vector.excludeMaintServerMetrics is still set
     template: haproxytemplateconfig.yaml
     set:
-      # An entry without the flag would pass every other check and then be skipped
-      # by the resolution loop — excluding nothing, silently. The operator who
-      # wrote it believes their exclusion is live, so this must be an error and
-      # not a default.
-      vector.excludeMetrics:
-        mine:
-          pattern: ^haproxy_x
+      vector.excludeMaintServerMetrics: false
     asserts:
       - failedTemplate:
-          errorPattern: 'vector\.excludeMetrics\.mine has no .enabled.'
+          errorPattern: 'vector\.excludeMaintServerMetrics moved to controller\.config\.templatingSettings\.extraContext\.prometheusExporter\.excludeMaintServers'
 
-  - it: should reject an exclusion pattern carrying a quote
+  - it: should name the new home when vector.podMonitor is still set
     template: haproxytemplateconfig.yaml
     set:
-      # Patterns are emitted inside a VRL r'...' literal, so a single quote breaks
-      # out of it and corrupts the config vector is about to load.
-      vector.excludeMetrics:
-        quoted:
-          enabled: true
-          pattern: "^haproxy_'"
+      vector.podMonitor.enabled: true
     asserts:
       - failedTemplate:
-          errorMessage: 'vector.excludeMetrics pattern "^haproxy_''" contains a quote, backslash or newline. Patterns are embedded in a VRL r''...'' literal in the rendered config, so those characters would break vector''s config load and keep log and metric export unavailable.'
+          errorPattern: 'vector\.podMonitor moved to haproxy\.monitoring\.podMonitor'
 
-  - it: should reject a families entry that its own pattern would not match
+  - it: should name the new home when spoaHub.monitoring is still set
     template: haproxytemplateconfig.yaml
     set:
-      # families is passed to HAProxy as metrics=-<name> and pattern runs in vector.
-      # If a name isn't matched by its own pattern the two stages disagree: the
-      # family is dropped at the source while the filter that is supposed to be
-      # authoritative never mentions it.
-      vector.excludeMetrics:
-        drifted:
-          enabled: true
-          pattern: ^haproxy_x
-          families:
-            - haproxy_y
+      spoaHub.monitoring.podMonitor.enabled: true
     asserts:
       - failedTemplate:
-          errorPattern: 'families entry "haproxy_y" does not match that entry''s own pattern'
-
-  - it: should reject excludeMetrics that is not a map
-    template: haproxytemplateconfig.yaml
-    set:
-      vector.excludeMetrics: ^haproxy_server_max_
-    asserts:
-      - failedTemplate:
-          errorPattern: 'vector\.excludeMetrics must be a map of named exclusions'
-
-  - it: should reject the pre-0.2.0 list form with a message naming the replacement
-    template: haproxytemplateconfig.yaml
-    set:
-      # The shape an operator carries over from an older values.yaml. Helm would
-      # otherwise accept the list silently and the render would exclude nothing.
-      vector.excludeMetrics:
-        - ^haproxy_(server|backend)_max_
-    asserts:
-      - failedTemplate:
-          errorPattern: 'vector\.excludeMetrics must be a map of named exclusions'
-
-  - it: should accept the shipped defaults and pass them to the render context
-    template: haproxytemplateconfig.yaml
-    documentSelector:
-      path: metadata.name
-      value: haptic-config
-    asserts:
-      # The library reads them from here, so this is the seam between the two.
-      - equal:
-          path: spec.templatingSettings.extraContext.vector.excludeMetrics
-          value:
-            - ^haproxy_backend_agg_check_status$
-            - ^haproxy_backend_agg_server_check_status$
-            - ^haproxy_backend_http_cache_
-            - ^haproxy_(server_backup|backend_backup_servers)$
-            # The two requires-gated entries. Both are superseded by a
-            # requestMetrics family, and both disappear from this list when that
-            # feature is off — pinned in its own test below.
-            - ^haproxy_(backend_http_requests_total|backend_http_responses_total|frontend_http_responses_total)$
-            - ^haproxy_(backend|server)_(connect|queue|response|total)_time_average_seconds$
-            - ^haproxy_(server|backend)_max_
-      # haproxy_backend_agg_server_status is deliberately NOT excluded. With
-      # excludeMaintServerMetrics on, agg_server_status{state="MAINT"} is the only
-      # remaining free-slot census, so excluding it would remove the signal rather
-      # than de-duplicate it. Pinned so it can't drift back in unnoticed.
-      - notContains:
-          path: spec.templatingSettings.extraContext.vector.excludeMetrics
-          content: ^haproxy_backend_agg_server_status$
-      # backendHttpCompression ships DISABLED: response compression is on by
-      # default, so these series carry real traffic. Excluding them would make
-      # the one feature you cannot observe the one that is always on.
-      - notContains:
-          path: spec.templatingSettings.extraContext.vector.excludeMetrics
-          content: ^haproxy_backend_http_comp_
-      - equal:
-          path: spec.templatingSettings.extraContext.vector.excludeMaintServerMetrics
-          value: true
-
-  - it: should pass every excluded family to the source-side scrape list
-    template: haproxytemplateconfig.yaml
-    documentSelector:
-      path: metadata.name
-      value: haptic-config
-    asserts:
-      # families is what becomes metrics=-<name> on the scrape URL, which is the
-      # half that actually cuts vector's peak RSS (the pattern filter runs after
-      # the whole exposition is already parsed into events).
-      - lengthEqual:
-          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          count: 31
-      - contains:
-          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          content: haproxy_backend_http_cache_hits_total
-
-  - it: should let one exclusion be disabled without disturbing the others
-    template: haproxytemplateconfig.yaml
-    documentSelector:
-      path: metadata.name
-      value: haptic-config
-    set:
-      # The entire point of the map shape. Against the old list, turning one off
-      # meant restating every other entry — and silently inheriting none of the
-      # exclusions added in a later release.
-      vector.excludeMetrics.backendHttpCache.enabled: false
-    asserts:
-      - notContains:
-          path: spec.templatingSettings.extraContext.vector.excludeMetrics
-          content: ^haproxy_backend_http_cache_
-      - contains:
-          path: spec.templatingSettings.extraContext.vector.excludeMetrics
-          content: ^haproxy_backend_agg_check_status$
-      # ...and its two families leave the source-side list with it.
-      - lengthEqual:
-          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          count: 29
+          errorPattern: 'spoaHub\.monitoring moved to haproxy\.monitoring'
 
   # Trace-export guards. Both live in HELM rather than in the Scriggo render, and
   # that placement is the point: a validationTest legitimately pins individual
-  # extraContext keys (test-status-frontend-prometheus-exporter sets
-  # `vector: null`), so the same cross-key check at render time would fail the LOAD
-  # GATE on a good config and crash-loop the controller instead of refusing an
-  # install.
+  # extraContext keys, so the same cross-key check at render time would fail the
+  # LOAD GATE on a good config and crash-loop the controller instead of refusing
+  # an install.
   - it: should refuse an OTLP endpoint without the vector sidecar
     template: haproxytemplateconfig.yaml
     set:
@@ -291,16 +144,6 @@ tests:
       - equal:
           path: spec.templatingSettings.extraContext.vector.omitEmptyLogFields
           value: true
-
-  - it: should reject a non-boolean excludeMaintServerMetrics
-    template: haproxytemplateconfig.yaml
-    set:
-      # A string reaches the render as truthy, so "false" would enable the very
-      # filter the operator was trying to switch off.
-      vector.excludeMaintServerMetrics: "false"
-    asserts:
-      - failedTemplate:
-          errorMessage: 'vector.excludeMaintServerMetrics must be a boolean, got false.'
 
   - it: should bind the hub metrics on loopback with vector on and pod-routable with it off
     template: haproxytemplateconfig.yaml
@@ -438,45 +281,6 @@ tests:
       - equal:
           path: spec.templatingSettings.extraContext.vector.requestMetrics.prefix
           value: nginx_ingress_controller
-
-  - it: should exclude the superseded HAProxy families while request metrics are on
-    template: haproxytemplateconfig.yaml
-    documentSelector:
-      path: metadata.name
-      value: haptic-config
-    asserts:
-      - contains:
-          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          content: haproxy_backend_response_time_average_seconds
-      - contains:
-          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          content: haproxy_backend_http_responses_total
-      # Per-server, and the request metrics carry no server dimension — so this
-      # one has no replacement and must survive.
-      - notContains:
-          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          content: haproxy_server_http_responses_total
-
-  - it: should restore the superseded families when request metrics are off
-    template: haproxytemplateconfig.yaml
-    documentSelector:
-      path: metadata.name
-      value: haptic-config
-    set:
-      # `requires` exists for exactly this: without it, turning the replacement
-      # off would drop the originals with nothing standing in for them.
-      vector.requestMetrics.enabled: false
-    asserts:
-      - notContains:
-          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          content: haproxy_backend_response_time_average_seconds
-      - notContains:
-          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          content: haproxy_backend_http_responses_total
-      # A group without `requires` is unaffected either way.
-      - contains:
-          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          content: haproxy_backend_backup_servers
 
   - it: should reject a bucket boundary below the exporter's precision
     template: haproxytemplateconfig.yaml
