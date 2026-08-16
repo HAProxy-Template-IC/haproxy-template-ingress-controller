@@ -106,6 +106,34 @@ the process listens somewhere else.
 {{- range $field := keys $routingHeaders -}}{{- if ne $field "enabled" -}}{{- fail (printf "controller.config.templatingSettings.extraContext.diagnostics.routingHeaders contains unknown field %q. Valid field: enabled." $field) -}}{{- end -}}{{- end -}}
 {{- if not (kindIs "bool" $routingHeaders.enabled) -}}{{- fail "controller.config.templatingSettings.extraContext.diagnostics.routingHeaders.enabled must be a boolean." -}}{{- end -}}
 
+{{- /* Prometheus exporter query defaults. Structure is checked here so
+       `helm install` fails fast; base.yaml's util-prometheus-exporter-query
+       repeats it for the CR path. */ -}}
+{{- $pe := $extraContext.prometheusExporter | default dict -}}
+{{- if not (kindIs "map" $pe) -}}{{- fail "controller.config.templatingSettings.extraContext.prometheusExporter must be a map." -}}{{- end -}}
+{{- range $field := keys $pe -}}{{- if not (has $field (list "excludeMaintServers" "excludeMetrics")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.prometheusExporter contains unknown field %q. Valid fields: excludeMaintServers, excludeMetrics." $field) -}}{{- end -}}{{- end -}}
+{{- if and (hasKey $pe "excludeMaintServers") (not (kindIs "bool" $pe.excludeMaintServers)) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.prometheusExporter.excludeMaintServers must be a boolean, got %q." (toString $pe.excludeMaintServers)) -}}{{- end -}}
+{{- $peEx := $pe.excludeMetrics | default dict -}}
+{{- if not (kindIs "map" $peEx) -}}{{- fail "controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics must be a map of named exclusions, each with `enabled` and `families`." -}}{{- end -}}
+{{- range $name := (keys $peEx | sortAlpha) -}}
+  {{- $ex := get $peEx $name -}}
+  {{- if not (kindIs "map" $ex) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.%s must be a map with `enabled` and `families`." $name) -}}{{- end -}}
+  {{- if hasKey $ex "pattern" -}}{{- fail (printf "controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.%s has a `pattern`. HAProxy's exporter filters by exact name only, so list the families instead." $name) -}}{{- end -}}
+  {{- range $field := keys $ex -}}{{- if not (has $field (list "enabled" "families" "requires")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.%s contains unknown field %q. Valid fields: enabled, families, requires." $name $field) -}}{{- end -}}{{- end -}}
+  {{- /* Required, not defaulted: an entry that forgets it would sit inert. */ -}}
+  {{- if not (hasKey $ex "enabled") -}}{{- fail (printf "controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.%s has no `enabled`. It is required, so that an entry cannot sit inert and silently exclude nothing — set `enabled: false` to keep it and turn it off." $name) -}}{{- end -}}
+  {{- if not (kindIs "bool" $ex.enabled) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.%s.enabled must be a boolean." $name) -}}{{- end -}}
+  {{- if and (hasKey $ex "requires") (not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$" ($ex.requires | toString))) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.%s.requires must be a dotted extraContext path such as `vector.requestMetrics.enabled`, got %q." $name $ex.requires) -}}{{- end -}}
+  {{- if not $ex.enabled -}}{{- continue -}}{{- end -}}
+  {{- if not (kindIs "slice" ($ex.families | default list)) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.%s.families must be a list of exact metric names." $name) -}}{{- end -}}
+  {{- if eq (len ($ex.families | default list)) 0 -}}{{- fail (printf "controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.%s is enabled but lists no `families`." $name) -}}{{- end -}}
+  {{- /* HAProxy IGNORES an unknown name silently, and set-query takes a log-format
+         string, so anything but a bare name is refused. */ -}}
+  {{- range $fam := $ex.families -}}
+    {{- if not (regexMatch "^[a-zA-Z_][a-zA-Z0-9_]*$" ($fam | toString)) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.%s.families entry %q is not a bare metric name. It becomes HAProxy's `metrics=-<name>` scrape parameter, where anything else is ignored silently or corrupts the query." $name ($fam | toString)) -}}{{- end -}}
+  {{- end -}}
+{{- end -}}
+
 {{- /* Access log. The same checks exist Scriggo-side in base.yaml's
        util-log-format-http, because the HAProxyTemplateConfig CR is a
        first-class API that bypasses Helm entirely. */ -}}

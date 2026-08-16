@@ -1,0 +1,132 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: prometheus exporter value guards
+# Renders ONLY haproxytemplateconfig.yaml, where the extraContext.prometheusExporter
+# checks in _controller.tpl run. The library resolves the map at render time; this
+# is the Helm-side fail-fast copy of the same rules.
+templates:
+  - haproxytemplateconfig.yaml
+tests:
+  - it: should pass the shipped defaults to the render context unchanged
+    template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    asserts:
+      # The library resolves `enabled` and `requires` itself, so the map reaches
+      # it as written — this is the seam between the two.
+      - equal:
+          path: spec.templatingSettings.extraContext.prometheusExporter.excludeMaintServers
+          value: true
+      - equal:
+          path: spec.templatingSettings.extraContext.prometheusExporter.excludeMetrics.serverBackendMax.enabled
+          value: true
+      - equal:
+          path: spec.templatingSettings.extraContext.prometheusExporter.excludeMetrics.requestTimingAverages.requires
+          value: vector.requestMetrics.enabled
+      # backendHttpCompression ships DISABLED: response compression is on by
+      # default, so these series carry real traffic.
+      - equal:
+          path: spec.templatingSettings.extraContext.prometheusExporter.excludeMetrics.backendHttpCompression.enabled
+          value: false
+      # haproxy_backend_agg_server_status is deliberately NOT excluded: with
+      # excludeMaintServers on it is the only remaining free-slot census.
+      - notContains:
+          path: spec.templatingSettings.extraContext.prometheusExporter.excludeMetrics.backendAggServerCheckStatus.families
+          content: haproxy_backend_agg_server_status
+
+  - it: should let one exclusion be disabled without disturbing the others
+    template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      # The entire point of the map shape: against a list, turning one off meant
+      # restating every other entry.
+      controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.backendHttpCache.enabled: false
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.prometheusExporter.excludeMetrics.backendHttpCache.enabled
+          value: false
+      - equal:
+          path: spec.templatingSettings.extraContext.prometheusExporter.excludeMetrics.backendAggCheckStatus.enabled
+          value: true
+      - lengthEqual:
+          path: spec.templatingSettings.extraContext.prometheusExporter.excludeMetrics.backendHttpCache.families
+          count: 2
+
+  - it: should reject a families entry that is not a bare metric name
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics:
+        bad:
+          enabled: true
+          families:
+            - "haproxy_x,-haproxy_y"
+    asserts:
+      # HAProxy ignores an unknown name silently and set-query takes a log-format
+      # string, so anything but a bare name must be refused, not passed through.
+      - failedTemplate:
+          errorPattern: 'excludeMetrics\.bad\.families entry "haproxy_x,-haproxy_y" is not a bare metric name'
+
+  - it: should reject an exclusion entry that omits enabled
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics:
+        mine:
+          families: [haproxy_backend_status]
+    asserts:
+      - failedTemplate:
+          errorPattern: 'excludeMetrics\.mine has no `enabled`'
+
+  - it: should reject an enabled exclusion with no families
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics:
+        empty:
+          enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: 'excludeMetrics\.empty is enabled but lists no `families`'
+
+  - it: should reject a pattern with a message naming families
+    template: haproxytemplateconfig.yaml
+    set:
+      # The shape carried over from vector.excludeMetrics, where a regex ran in
+      # vector. HAProxy's exporter has no regex filter.
+      controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics:
+        legacy:
+          enabled: true
+          pattern: '^haproxy_(server|backend)_max_'
+    asserts:
+      - failedTemplate:
+          errorPattern: 'excludeMetrics\.legacy has a `pattern`\. HAProxy.s exporter filters by exact name only'
+
+  - it: should reject a non-boolean excludeMaintServers
+    template: haproxytemplateconfig.yaml
+    set:
+      # A string reaches the render as truthy, so "false" would enable the very
+      # filter the operator was trying to switch off.
+      controller.config.templatingSettings.extraContext.prometheusExporter.excludeMaintServers: "false"
+    asserts:
+      - failedTemplate:
+          errorPattern: 'prometheusExporter\.excludeMaintServers must be a boolean'
+
+  - it: should reject an unknown prometheusExporter field
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.prometheusExporter.noMaint: true
+    asserts:
+      - failedTemplate:
+          errorPattern: 'prometheusExporter contains unknown field "noMaint"'
+
+  - it: should reject a requires that is not a dotted path
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics:
+        gated:
+          enabled: true
+          requires: "vector.requestMetrics['enabled']"
+          families: [haproxy_backend_status]
+    asserts:
+      - failedTemplate:
+          errorPattern: 'excludeMetrics\.gated\.requires must be a dotted extraContext path'

@@ -2470,34 +2470,93 @@ templateSnippets:
 
   status-extra-100-prometheus-exporter:
     template: |
-      {# With the vector sidecar enabled, vector is the only thing that should
-          reach this exporter: it scrapes 127.0.0.1 from inside the pod and
-          re-exports everything on its own port, so /metrics has no reason to be
-          answerable from the pod IP.
-
-          The gate is on `dst` (the address the client connected TO), not on the
-          bind, because this frontend ALSO serves /healthz and /ready for the
-          kubelet's probes — and the kubelet connects to the POD IP. Binding this
-          listener to loopback would make every probe fail and the pod would never
-          become Ready. Conditioning the exporter instead keeps the probes
-          reachable while /metrics answers only over loopback (a request from the
-          pod IP falls through to the frontend's 404).
-
-          `extraContext.vector` is present only when the sidecar is enabled, so its
-          presence is the switch — but an explicit `vector.enabled: false` also
-          turns it off, and that is the form a validationTest must use.
-          `vector: null` no longer works: per-test extraContext deep-merges into
-          the global one, so a null leaf does not clear the operator's subtree
-          the way a wholesale replacement used to. #}
-      {# Parenthesised: the pipe binds looser than `!=`, so the unparenthesised
-          form pipes extraContext into the comparison and fails to compile. #}
-      {%- var vecCfg = extraContext | dig("vector") -%}
-      {%- var vectorOn = vecCfg != nil && (vecCfg | dig("enabled") | fallback(true)) == true -%}
-      {%- if vectorOn %}
-      http-request use-service prometheus-exporter if { path /metrics } { dst 127.0.0.0/8 }
-      {%- else %}
-      http-request use-service prometheus-exporter if { path /metrics }
+      {# The exclusion policy is applied HERE, not by the scraper, so every
+          scraper gets it — the chart's PodMonitor and a hand-written job alike.
+          A scraper that sends its own query keeps it (`!{ query -m found }`), so
+          `/metrics?` returns the unfiltered exposition. Verified on 3.0 and 3.4. #}
+      {%- _ = render "util-prometheus-exporter-query" -%}
+      {%- var exporterQuery = shared.Get("prometheusExporterQuery").(string) -%}
+      {%- if exporterQuery != "" %}
+      http-request set-query "{{ exporterQuery }}" if { path /metrics } !{ query -m found }
       {%- end %}
+      http-request use-service prometheus-exporter if { path /metrics }
+
+  util-prometheus-exporter-query:
+    template: |-
+      {#-
+        Resolves extraContext.prometheusExporter into the query string HAProxy's
+        exporter applies to a scrape that sends none, in shared["prometheusExporterQuery"]:
+          excludeMaintServers: bool          -> no-maint
+          excludeMetrics.<name>:             -> metrics=-<family>,...
+            enabled: bool (required), families: [exact names], requires: dotted
+            extraContext path that must be truthy (the family replacing this one
+            is actually emitted).
+        Re-validated here because a hand-written CR bypasses Helm: HAProxy drops
+        an unknown name silently, and set-query takes a log-format string.
+      -#}
+      {%- var _, _ = shared.ComputeIfAbsent("prometheusExporterQuery", func() any {
+        var pe = extraContext | dig("prometheusExporter") | fallback(map[string]any{})
+        var params = []string{}
+        var noMaintRaw = pe | dig("excludeMaintServers")
+        if noMaintRaw != nil {
+          var noMaint, isBool = noMaintRaw.(bool)
+          if !isBool {
+            fail("extraContext.prometheusExporter.excludeMaintServers must be a boolean, got '" + tostring(noMaintRaw) + "'. A quoted 'false' is truthy here and would silently enable HAProxy's ?no-maint filter.")
+          }
+          if noMaint { params = append(params, "no-maint") }
+        }
+        var excludes = pe | dig("excludeMetrics") | fallback(map[string]any{})
+        var exMap, isMap = excludes.(map[string]any)
+        if !isMap {
+          fail("extraContext.prometheusExporter.excludeMetrics must be a map of named exclusions, each with `enabled` and `families`.")
+        }
+        var seen = map[string]bool{}
+        var negFams = []any{}
+        for _, name := range keys(exMap) {
+          var ex, exIsMap = exMap[name].(map[string]any)
+          if !exIsMap {
+            fail("extraContext.prometheusExporter.excludeMetrics." + name + " must be a map with `enabled` and `families`.")
+          }
+          for _, field := range keys(ex) {
+            if field != "enabled" && field != "families" && field != "requires" {
+              fail("extraContext.prometheusExporter.excludeMetrics." + name + " contains unknown field '" + field + "'. Valid fields: enabled, families, requires. HAProxy's exporter filters by exact family name, so a `pattern` has no effect here.")
+            }
+          }
+          var en, hasEnabled = ex["enabled"]
+          if !hasEnabled {
+            fail("extraContext.prometheusExporter.excludeMetrics." + name + " has no `enabled`. It is required, so that an entry cannot sit inert and silently exclude nothing — set `enabled: false` to keep it and turn it off.")
+          }
+          var enBool, enIsBool = en.(bool)
+          if !enIsBool {
+            fail("extraContext.prometheusExporter.excludeMetrics." + name + ".enabled must be a boolean.")
+          }
+          if !enBool { continue }
+          var req = ex | dig_string("", "requires")
+          if req != "" {
+            if !regex_search(req, "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$") {
+              fail("extraContext.prometheusExporter.excludeMetrics." + name + ".requires must be a dotted extraContext path such as `vector.requestMetrics.enabled`, got '" + req + "'.")
+            }
+            var cur any = extraContext
+            for _, seg := range split(req, ".") { cur = dig(cur, seg) }
+            if not cur { continue }
+          }
+          var fams = ex | dig("families") | fallback([]any{}) | toSlice()
+          if len(fams) == 0 {
+            fail("extraContext.prometheusExporter.excludeMetrics." + name + " is enabled but lists no `families`, so it would sit inert and exclude nothing.")
+          }
+          for _, f := range fams {
+            var fs = tostring(f)
+            if !regex_search(fs, "^[a-zA-Z_][a-zA-Z0-9_]*$") {
+              fail("extraContext.prometheusExporter.excludeMetrics." + name + ".families entry '" + fs + "' is not a bare metric name, so HAProxy would silently drop it or corrupt the scrape query. Use the exact family name.")
+            }
+            if seen[fs] { continue }
+            seen[fs] = true
+            negFams = append(negFams, "-" + fs)
+          }
+        }
+        if len(negFams) > 0 { params = append(params, "metrics=" + join(sort_strings(negFams), ",")) }
+        return join(params, "&")
+      }) -%}
 
   global-top:
     template: |
@@ -3248,29 +3307,118 @@ validationTests:
 
   test-status-frontend-prometheus-exporter:
     description: >-
-      Status frontend exposes the Prometheus exporter on /metrics, reachable from
-      any address when no vector sidecar fronts it.
+      Status frontend exposes the Prometheus exporter on /metrics from any address
+      and applies the exclusion policy as the default scrape query: no-maint,
+      the enabled families sorted and de-duplicated, an entry whose `requires`
+      path is off left out.
     fixtures: {}
-    # Pinned rather than inherited so this keeps covering the unconditional form
-    # even though the chart now ships vector.enabled=true; the loopback-gated
-    # form has its own test in the vector library.
-    #
-    # `enabled: false`, never `vector: null`: per-test extraContext deep-merges
-    # into the global one, so a null leaf leaves the operator's sidecar enabled.
-    # The load gate is fail-closed, so getting this wrong crash-loops the
-    # controller rather than showing a red test.
-    extraContext: {vector: {enabled: false}}
+    extraContext:
+      prometheusExporter:
+        excludeMaintServers: true
+        excludeMetrics:
+          __replace__: true
+          maxima: {enabled: true, families: [haproxy_server_max_sessions, haproxy_backend_max_sessions, haproxy_server_max_sessions]}
+          off: {enabled: false, families: [haproxy_backend_status]}
+          gated: {enabled: true, requires: vector.requestMetrics.enabled, families: [haproxy_backend_http_requests_total]}
+      vector: {requestMetrics: {enabled: false}}
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
         # (?m) so `$` anchors to end-of-LINE; without it Go's `$` means end of the
         # whole config and the assertion can never match.
+        pattern: '(?m)^  http-request set-query "no-maint&metrics=-haproxy_backend_max_sessions,-haproxy_server_max_sessions" if \{ path /metrics \} !\{ query -m found \}$'
+      - type: contains
+        target: haproxy.cfg
         pattern: '(?m)^  http-request use-service prometheus-exporter if \{ path /metrics \}$'
       - type: not_contains
         target: haproxy.cfg
         pattern: '(?m)^  http-request use-service prometheus-exporter if .*dst 127\.0\.0\.0/8.*$'
-        description: Without the sidecar the exporter must stay reachable from the pod IP for a direct Prometheus scrape
+        description: The exporter answers on the pod IP; Prometheus scrapes it directly
+
+  test-status-frontend-prometheus-exporter-requires-on:
+    description: An exclusion whose `requires` extraContext path is truthy joins the default query
+    fixtures: {}
+    extraContext:
+      prometheusExporter:
+        excludeMaintServers: false
+        excludeMetrics:
+          __replace__: true
+          gated: {enabled: true, requires: vector.requestMetrics.enabled, families: [haproxy_backend_http_requests_total]}
+      vector: {requestMetrics: {enabled: true}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^  http-request set-query "metrics=-haproxy_backend_http_requests_total" if \{ path /metrics \} !\{ query -m found \}$'
+
+  test-status-frontend-prometheus-exporter-no-policy:
+    description: With every exclusion off there is no default query — the exporter answers unfiltered
+    fixtures: {}
+    extraContext:
+      prometheusExporter:
+        excludeMaintServers: false
+        excludeMetrics: {__replace__: true}
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^  http-request set-query '
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^  http-request use-service prometheus-exporter if \{ path /metrics \}$'
+
+  test-status-frontend-prometheus-exporter-rejects-bad-family:
+    description: A family that is not a bare metric name would corrupt the scrape query, so the render refuses it
+    fixtures: {}
+    extraContext:
+      prometheusExporter:
+        excludeMetrics:
+          __replace__: true
+          bad: {enabled: true, families: ["haproxy_x,-haproxy_y"]}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'excludeMetrics\.bad\.families entry .haproxy_x,-haproxy_y. is not a bare metric name'
+
+  test-status-frontend-prometheus-exporter-rejects-empty-families:
+    description: An enabled exclusion with no families would sit inert, so it is refused
+    fixtures: {}
+    extraContext:
+      prometheusExporter:
+        excludeMetrics:
+          __replace__: true
+          inert: {enabled: true}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'excludeMetrics\.inert is enabled but lists no `families`'
+
+  test-status-frontend-prometheus-exporter-rejects-pattern:
+    description: A regex `pattern` carried over from vector.excludeMetrics has no effect in HAProxy's exporter, so it is refused
+    fixtures: {}
+    extraContext:
+      prometheusExporter:
+        excludeMetrics:
+          __replace__: true
+          legacy: {enabled: true, pattern: '^haproxy_(server|backend)_max_', families: [haproxy_server_max_sessions]}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "excludeMetrics\\.legacy contains unknown field 'pattern'"
+
+  test-status-frontend-prometheus-exporter-rejects-missing-enabled:
+    description: An exclusion without `enabled` would sit inert, so it is refused rather than ignored
+    fixtures: {}
+    extraContext:
+      prometheusExporter:
+        excludeMetrics:
+          __replace__: true
+          inert: {families: [haproxy_backend_status]}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'excludeMetrics\.inert has no `enabled`'
 
   test-guid-directives:
     description: GUIDs are present on frontends, backends, and default_backend

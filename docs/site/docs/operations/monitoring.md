@@ -13,7 +13,7 @@ The controller's `haptic_*` metrics cover:
 - Leader election for HA deployments
 
 !!! note "Two metric sources"
-    Most of this guide is about the **controller's** metrics — the `haptic_*` family on port `9090`, which describe reconciliation, deployment, and leader-election health. HAProxy itself exposes a *separate* Prometheus endpoint on port `8404` carrying live traffic, backend health, and response-code data — see [HAProxy Data-Plane Metrics](#haproxy-data-plane-metrics). The chart's bundled `ServiceMonitor`/`PodMonitor` scrape the controller only.
+    Most of this guide is about the **controller's** metrics — the `haptic_*` family on port `9090`, which describe reconciliation, deployment, and leader-election health. HAProxy itself exposes a *separate* Prometheus endpoint on port `8404` carrying live traffic, backend health, and response-code data — see [HAProxy Data-Plane Metrics](#haproxy-data-plane-metrics). The controller's bundled `ServiceMonitor`/`PodMonitor` scrape the controller only; the HAProxy pod has its own (`haproxy.monitoring.podMonitor`).
 
 ## Enabling metrics
 
@@ -387,26 +387,25 @@ Every metric above comes from the **controller** (`haptic_*`, port `9090`) — t
 
 The bundled config enables HAProxy's built-in [Prometheus exporter](https://github.com/haproxy/haproxy/tree/master/addons/promex) on the status frontend (port `8404`, path `/metrics`) by default — it's served from the always-on `status-extra-100-prometheus-exporter` snippet, so no extra flag is required.
 
-!!! warning "The chart's ServiceMonitor and PodMonitor don't scrape HAProxy"
-    Both bundled monitors collect the controller's `haptic_*` metrics only: the `PodMonitor` selects `app.kubernetes.io/component: controller`, and the `ServiceMonitor` scrapes the `metrics` port (`9090`) that only the controller Service exposes. Neither targets an HAProxy pod. Use the Vector `PodMonitor` below, or add your own scrape.
+!!! warning "The controller's ServiceMonitor and PodMonitor don't scrape HAProxy"
+    Both collect the controller's `haptic_*` metrics only: the `PodMonitor` selects `app.kubernetes.io/component: controller`, and the `ServiceMonitor` scrapes the `metrics` port (`9090`) that only the controller Service exposes. Neither targets an HAProxy pod. Use `haproxy.monitoring.podMonitor` below, or add your own scrape.
 
 ### Where to scrape
 
-Which endpoint carries `haproxy_*` depends on whether the [Vector sidecar](../haproxy-deployment.md#vector-sidecar) is running. It's enabled by default.
+Prometheus scrapes HAProxy's exporter directly on every HAProxy pod, port `8404`, path `/metrics`. The exporter answers on the pod IP whether or not the [Vector sidecar](../haproxy-deployment.md#vector-sidecar) is running — the sidecar carries its own series, the request metrics and the SPOA hub's, never HAProxy's.
 
-**With the sidecar (`vector.enabled: true`, the default).** Vector scrapes HAProxy over loopback and re-exports everything on its own ports, so Prometheus collects one target per pod instead of one per container. HAProxy's own `/metrics` answers **only** over `127.0.0.0/8` in this mode, so a scrape aimed at `8404` from outside the pod returns nothing.
-
-Turn on the bundled `PodMonitor`:
+Turn on the bundled `PodMonitor` for the HAProxy pod:
 
 ```yaml
-vector:
-  podMonitor:
-    enabled: true
+haproxy:
+  monitoring:
+    podMonitor:
+      enabled: true
 ```
 
-It declares both endpoints: `vector-metrics` (`9598`) carrying `haproxy_*`, `spoa_*`, `vector_*` and the request counter and duration histograms, and `vector-sizes` (`9599`) carrying the byte-size histograms. The second endpoint exists only while a size family is enabled, and both use the same `interval`, `scrapeTimeout` and relabeling settings.
+It declares one endpoint per metrics port the pod exposes: `stats` (`8404`, `haproxy_*`), and with the sidecar on `vector-metrics` (`9598`, `vector_*`, `spoa_*` and the request counter and duration histograms) plus `vector-sizes` (`9599`, the byte-size histograms, only while a size family is enabled). With the sidecar off and the SPOA hub on it scrapes the hub's `metrics` port directly instead. Every endpoint uses the same `interval`, `scrapeTimeout` and relabeling settings.
 
-**Without the sidecar (`vector.enabled: false`).** Scrape HAProxy's exporter directly, either with a `ServiceMonitor` against the HAProxy Service's `stats` port:
+Without the operator, scrape the same ports yourself — a `ServiceMonitor` against the HAProxy Service's `stats` port:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -423,7 +422,7 @@ spec:
       path: /metrics
 ```
 
-or with a plain Prometheus job that keeps HAProxy pods and their `8404` container port:
+or a plain Prometheus job that keeps HAProxy pods and their `8404` container port (add `9598` and `9599` to the regex to collect the sidecar's series too):
 
 ```yaml
 scrape_configs:
@@ -438,6 +437,8 @@ scrape_configs:
         regex: "8404"
         action: keep
 ```
+
+No scrape parameters are needed in either case: HAProxy applies the chart's exclusion policy itself, as the query of a scrape that sends none (see below).
 
 ### Key queries
 
@@ -456,8 +457,8 @@ sum by (proxy) (haproxy_backend_active_servers) == 0
 
 The full metric set is HAProxy's own, not HAPTIC's — see the [HAProxy Prometheus exporter reference](https://github.com/haproxy/haproxy/tree/master/addons/promex) for every exposed series and its labels.
 
-!!! note "Some families are dropped before they reach Prometheus"
-    With the sidecar on, `vector.excludeMetrics` drops HAProxy's since-boot maxima and its 1024-connection rolling averages, and — while [request metrics](#request-metrics) are enabled — `haproxy_backend_http_requests_total`, `haproxy_backend_http_responses_total` and `haproxy_frontend_http_responses_total`, which those metrics supersede with an exact status code and far more dimensions. `haproxy_server_http_responses_total` is kept: it's per-server, and the request metrics carry no server dimension. See [Chart values reference](../reference.md#vector-sidecar) to turn any of it back on.
+!!! note "Some families are left out of the exposition"
+    HAProxy applies `extraContext.prometheusExporter` as the default query of every scrape: `?no-maint` omits the empty reserved-slot servers (`excludeMaintServers`), and `excludeMetrics` names the families it leaves out — HAProxy's since-boot maxima, its 1024-connection rolling averages and, while [request metrics](#request-metrics) are enabled, `haproxy_backend_http_requests_total`, `haproxy_backend_http_responses_total` and `haproxy_frontend_http_responses_total`, which those metrics supersede with an exact status code and far more dimensions. `haproxy_server_http_responses_total` is kept: it's per-server, and the request metrics carry no server dimension. A scraper that sends its own query keeps it, so `curl 'http://<pod>:8404/metrics?'` returns the unfiltered exposition. See [Chart values reference](../reference.md#prometheus-exporter) to turn any of it back on.
 
 ## Request metrics
 
@@ -555,7 +556,7 @@ Bucket boundaries are the other multiplier — `durationBuckets` and `sizeBucket
 **A backstop runs by default.** `requestMetrics.cardinalityLimit` caps how many distinct values any one label may take, at 500 per metric. Past that, the offending label is dropped from new series and they collapse onto one — request totals stay correct, and only that dimension is lost. It protects against a label going unbounded despite the design: a route matched by regex, a Host header an attacker controls, a path template with an id in it. The state is in memory and resets when the sidecar restarts, so treat a tripped limit as something to fix rather than a solution.
 
 !!! warning "The access log is lossy under back-pressure"
-    These metrics are counted from access-log records, not in the data path, so they report fewer requests than were served whenever HAProxy drops records — see [The access log is lossy under back-pressure](../haproxy-deployment.md#the-access-log-is-lossy-under-back-pressure). Keep the `HAProxyAccessLogRecordsDropped` alert on. If you need a request count that stays exact through a drop, set `vector.excludeMetrics.httpRequestCounters.enabled: false` to keep HAProxy's own counters alongside these.
+    These metrics are counted from access-log records, not in the data path, so they report fewer requests than were served whenever HAProxy drops records — see [The access log is lossy under back-pressure](../haproxy-deployment.md#the-access-log-is-lossy-under-back-pressure). Keep the `HAProxyAccessLogRecordsDropped` alert on. If you need a request count that stays exact through a drop, set `extraContext.prometheusExporter.excludeMetrics.httpRequestCounters.enabled: false` to keep HAProxy's own counters alongside these.
 
 A route that receives no requests for over a minute drops out of the exposition and its counter restarts from zero when traffic returns. `rate()` and `increase()` handle the reset, and it keeps idle routes from accumulating series.
 

@@ -222,7 +222,7 @@ Four differences to expect:
 - **Two scrape ports, not one.** Byte sizes and latencies can't share one set of
   histogram buckets, so the size families are exported on `9599` and everything
   else on `9598`. The bundled `PodMonitor` declares both — set
-  `vector.podMonitor.enabled: true`.
+  `haproxy.monitoring.podMonitor.enabled: true`.
 - **No `canary` label.** HAPTIC has no per-request canary marker. PromQL
   `{canary=""}`, which the stock dashboards use, matches a series without the
   label, so those queries are unaffected.
@@ -247,8 +247,8 @@ Four differences to expect:
     They report fewer requests than were served whenever HAProxy drops log records under back-pressure. Keep
     the `HAProxyAccessLogRecordsDropped` alert on. If a request count has to stay
     exact through a drop, set
-    `vector.excludeMetrics.httpRequestCounters.enabled: false` to keep HAProxy's
-    own counters alongside these.
+    `extraContext.prometheusExporter.excludeMetrics.httpRequestCounters.enabled: false`
+    to keep HAProxy's own counters alongside these.
 
 ### Annotation support
 

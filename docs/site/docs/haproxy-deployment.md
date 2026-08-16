@@ -508,45 +508,45 @@ the HAProxy container, and Vector prints them to stdout. To send them somewhere
 else, override the rendered config as shown in
 [Change the destination or the whole format](#change-the-destination-or-the-whole-format).
 
-**It merges the metrics endpoints.** Vector scrapes HAProxy's Prometheus exporter
-and — when the sidecar is enabled — the SPOA hub's metrics over loopback from
-inside the pod, then re-exports both alongside its own on one port
-(`vector.metricsPort`, default `9598`). Prometheus therefore scrapes one target per
-pod instead of two:
-
-```yaml
-vector:
-  podMonitor:
-    enabled: true
-```
-
 **It derives per-request metrics from the log.** One counter and six histograms,
 dimensioned by route rather than request URI, with the upstream call split into
 connect, headers and full response — signals HAProxy's own exporter doesn't offer.
-See [Request metrics](operations/monitoring.md#request-metrics).
+See [Request metrics](operations/monitoring.md#request-metrics). They're exported
+on `vector.metricsPort` (default `9598`) together with Vector's own series; the
+two byte-size histograms go to a second port (`vector.sizeMetricsPort`, default
+`9599`), because Vector's exporter takes one set of histogram buckets per sink and
+bytes and seconds are different domains. That port exists only while a size
+family is enabled.
 
-The two byte-size histograms are exported on a second port
-(`vector.sizeMetricsPort`, default `9599`), because Vector's exporter takes one
-set of histogram buckets per sink and bytes and seconds are different domains.
-That port exists only while a size family is enabled, and the same `PodMonitor`
-declares both endpoints.
+**It re-exports the SPOA hub's metrics.** Vector scrapes the hub over loopback
+from inside the pod and serves its `spoa_*` series on the same `9598` endpoint, so
+the hub can keep its loopback bind (`spoaHub.hub.metricsAddr: auto` resolves to
+`127.0.0.1:9095` while the sidecar is on, `0.0.0.0:9095` when it's off).
 
-Because Vector reaches both endpoints over loopback, neither needs to answer on the
-pod IP, and the chart binds them accordingly:
+HAProxy's own Prometheus exporter is **not** re-exported: Prometheus scrapes it
+directly on the `stats` port (`8404`), where HAProxy applies the chart's
+exclusion policy itself — see [Where to scrape](operations/monitoring.md#where-to-scrape).
+Measured standalone at 2,500 backends, re-exporting it was 1.3 GB steady and
+2.3 GB peak of the sidecar's memory; scraped directly, the same sidecar idles at
+146 MB.
 
-| | `vector.enabled=true` | `vector.enabled=false` |
+One `PodMonitor` covers every endpoint on the pod:
+
+```yaml
+haproxy:
+  monitoring:
+    podMonitor:
+      enabled: true
+```
+
+| Endpoint | `vector.enabled=true` | `vector.enabled=false` |
 |---|---|---|
-| HAProxy `/metrics` | answered only for connections arriving on `127.0.0.0/8` | answered on any address |
-| Hub `/metrics` (`spoaHub.hub.metricsAddr: auto`) | `127.0.0.1:9095` | `0.0.0.0:9095` |
-| Prometheus scrapes | `vector.podMonitor` (`9598`, plus `9599` while a size family is on) | `spoaHub.monitoring.podMonitor` (two targets) |
+| HAProxy `/metrics` (`stats`, `8404`) | scraped directly | scraped directly |
+| Vector (`9598`, plus `9599` while a size family is on) | scraped | absent |
+| Hub `/metrics` (`spoaHub.hub.metricsAddr: auto`) | via Vector, hub stays on `127.0.0.1:9095` | scraped directly on `0.0.0.0:9095` |
 
-HAProxy's `/healthz` and `/ready` stay reachable on the pod IP in both cases — the
-kubelet's probes connect there, so only the exporter is restricted, not the
-listener.
-
-Set `vector.enabled=false` to remove the sidecar and restore the previous
-behaviour exactly: HAProxy logs to its own stdout and Prometheus scrapes HAProxy
-and the hub directly.
+Set `vector.enabled=false` to remove the sidecar: HAProxy logs to its own stdout
+and Prometheus scrapes HAProxy and the hub directly.
 
 #### How the config reaches it
 

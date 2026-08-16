@@ -214,7 +214,7 @@ governance:
       path: metadata.annotations['x']
 ```
 
-**Add a per-entry `enabled` only when the chart itself ships entries** the operator may need to switch off (`governance.rules`, `vector.excludeMetrics`) — and then **require** it, so a typo fails the render instead of leaving the entry inert. When the chart ships an empty map, **presence is the enable**; a second flag creates exactly the inert-catalog trap `docs/site/docs/reference.md` rules out for `waf.policies.*` ("there is no second enable flag that can leave a configured catalog inert"). `accessLog.targets` and `waf.policies.configMapRefs` follow that shape; `waf.policies.inline` is the original.
+**Add a per-entry `enabled` only when the chart itself ships entries** the operator may need to switch off (`governance.rules`, `extraContext.prometheusExporter.excludeMetrics`) — and then **require** it, so a typo fails the render instead of leaving the entry inert. When the chart ships an empty map, **presence is the enable**; a second flag creates exactly the inert-catalog trap `docs/site/docs/reference.md` rules out for `waf.policies.*` ("there is no second enable flag that can leave a configured catalog inert"). `accessLog.targets` and `waf.policies.configMapRefs` follow that shape; `waf.policies.inline` is the original.
 
 **Where the render wants an ordered list, resolve the map with sorted `keys()`** — chart-side in `haproxytemplateconfig.yaml`, or snippet-side. Map iteration is unordered, so without the sort the rendered config churns between renders and every downstream consumer sees a spurious change.
 
@@ -228,7 +228,7 @@ governance:
 - **Scalar-value lists**, where the list *is* the value: `governance.exemptNamespaces`, `waf.policies.inline.<n>.allowedMethods`, `crsSettings.allowedRequestContentTypes`, `spoaHub.haproxy.messages`, `haproxyService.loadBalancerSourceRanges`.
 - **Lists inside a document that must round-trip through a non-Helm source.** `waf.policies.inline.<n>.ruleExclusions` is authored identically in `values.yaml`, a trusted ConfigMap catalog and a self-service catalog; only the first is Helm-merged, so a keyed map buys nothing and costs parity.
 
-Chart-generated projections already fronted by a values.yaml keyed map (`vector.excludeMetrics`, `spoaHub.plugins`, `haproxyService.ports`) are already correct — the operator never edits the list.
+Chart-generated projections already fronted by a values.yaml keyed map (`spoaHub.plugins`, `haproxyService.ports`) are already correct — the operator never edits the list.
 
 ### Split-library directories
 

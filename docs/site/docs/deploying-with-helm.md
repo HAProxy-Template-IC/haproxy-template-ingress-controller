@@ -39,9 +39,9 @@ The chart deploys:
 - **`HAProxyTemplateLibrary` custom resources** -- one per enabled `controller.templateLibraries.*` entry, each carrying that library's snippets, templating settings, maps, files, and tests
 - **IngressClass** and **GatewayClass** -- routing API integration for Ingress and Gateway API resources
 - **RBAC**, **NetworkPolicy**, and **ServiceAccount** -- permissions and network security
-- **Vector sidecar** (on by default) -- receives the HAProxy access log over a Unix datagram socket and re-exports HAProxy's, the SPOA hub's, and its own Prometheus metrics on one port
+- **Vector sidecar** (on by default) -- receives the HAProxy access log over a Unix datagram socket, derives per-request metrics from it, and re-exports the SPOA hub's Prometheus metrics with its own; HAProxy's exporter is scraped directly
 - **Pre-rollout validation hook** and **CRD upgrade hook** (both on by default) -- `pre-install`/`pre-upgrade` Jobs that run `haptic-controller preflight` against your values and server-side apply the bundled CRDs, so a bad configuration or a stale CRD schema fails the release instead of the running fleet
-- Optional **ServiceMonitor** -- Prometheus integration for metrics scraping
+- Optional **ServiceMonitor** and **PodMonitors** -- Prometheus integration for the controller and the HAProxy pods
 - Optional **admission webhook** -- validates watched resources (Ingress, HTTPRoute, …) before they're admitted
 
 New to HAPTIC? [Getting Started](getting-started.md) walks through a first install and a sample app, end to end.

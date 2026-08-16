@@ -191,7 +191,8 @@ func findAccessLogRecordWhere(ctx context.Context, t *testing.T, since time.Time
 }
 
 // haproxyDroppedLogsTotal sums haproxy_process_dropped_logs_total across the
-// HAProxy pods, read through the same merged vector endpoint Prometheus scrapes.
+// HAProxy pods, read from HAProxy's own exporter on the stats port, the same
+// endpoint Prometheus scrapes.
 // The bool reports whether the series was found at all, so a scrape failure is
 // never mistaken for "zero drops". Measured behaviour, HAProxy 3.4.2: with the
 // receiver not draining, 3000 requests delivered 167 records and this counter
@@ -201,7 +202,7 @@ func haproxyDroppedLogsTotal(ctx context.Context, t *testing.T) (float64, bool) 
 	var total float64
 	var seen bool
 	for _, pod := range listHAProxyPods(t) {
-		body, err := apiProxyGet(ctx, pod, VectorMetricsPort, "metrics")
+		body, err := apiProxyGet(ctx, pod, HAProxyStatsPort, "metrics")
 		if err != nil {
 			continue
 		}

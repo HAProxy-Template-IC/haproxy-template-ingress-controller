@@ -1,0 +1,222 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: haproxy podmonitor
+templates:
+  - haproxy-podmonitor.yaml
+tests:
+  - it: should not render when disabled (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should scrape HAProxy's exporter and both vector exporters with the sidecar on
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PodMonitor
+      - isAPIVersion:
+          of: monitoring.coreos.com/v1
+      - equal:
+          path: spec.selector.matchLabels['app.kubernetes.io/component']
+          value: loadbalancer
+      # HAProxy first: it is the endpoint every configuration has.
+      - equal:
+          path: spec.podMetricsEndpoints[0].port
+          value: stats
+      - equal:
+          path: spec.podMetricsEndpoints[1].port
+          value: vector-metrics
+      - equal:
+          path: spec.podMetricsEndpoints[2].port
+          value: vector-sizes
+      # No scrape params: HAProxy applies the exclusion policy itself, so a
+      # hand-written job gets the same exposition as this PodMonitor.
+      - isNull:
+          path: spec.podMetricsEndpoints[0].params
+      # Every endpoint takes the same settings, so tuning `interval` never
+      # requires knowing how many there are.
+      - equal:
+          path: spec.podMetricsEndpoints[2].interval
+          value: 30s
+
+  - it: should drop the sizes endpoint when no size family is enabled
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      vector.requestMetrics.enabled: false
+    asserts:
+      - lengthEqual:
+          path: spec.podMetricsEndpoints
+          count: 2
+      - equal:
+          path: spec.podMetricsEndpoints[1].port
+          value: vector-metrics
+
+  - it: should scrape only HAProxy with the sidecar off and no hub
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      vector.enabled: false
+      # The hub is on by default (a bundled plugin enables it), so switch it off
+      # explicitly to get the bare-HAProxy shape.
+      spoaHub.enabled: false
+    asserts:
+      - lengthEqual:
+          path: spec.podMetricsEndpoints
+          count: 1
+      - equal:
+          path: spec.podMetricsEndpoints[0].port
+          value: stats
+
+  - it: should scrape the hub directly only when vector is off (auto resolves pod-routable)
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      vector.enabled: false
+      spoaHub.enabled: true
+    asserts:
+      - lengthEqual:
+          path: spec.podMetricsEndpoints
+          count: 2
+      - equal:
+          path: spec.podMetricsEndpoints[0].port
+          value: stats
+      - equal:
+          path: spec.podMetricsEndpoints[1].port
+          value: metrics
+
+  - it: should leave the hub to vector's re-export when both are on
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      spoaHub.enabled: true
+    asserts:
+      # stats + vector-metrics + vector-sizes; the hub is reached over loopback
+      # by vector, so a direct hub endpoint would double every spoa_* series.
+      - lengthEqual:
+          path: spec.podMetricsEndpoints
+          count: 3
+      - notContains:
+          path: spec.podMetricsEndpoints
+          content:
+            port: metrics
+          any: true
+
+  - it: should fail rendering when an EXPLICIT loopback hub metricsAddr is scraped directly
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      vector.enabled: false
+      spoaHub.enabled: true
+      # Explicit, because the `auto` default resolves to 0.0.0.0 whenever vector
+      # is off — precisely so this guard stops firing for the common case. It
+      # still has to fire for an operator who pins loopback by hand.
+      spoaHub.hub.metricsAddr: "127.0.0.1:9095"
+    asserts:
+      - failedTemplate:
+          errorPattern: 'requires spoaHub\.hub\.metricsAddr to be a non-loopback bind'
+
+  - it: should fail rendering on an expanded IPv6 loopback hub metricsAddr
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      vector.enabled: false
+      spoaHub.enabled: true
+      spoaHub.hub.metricsAddr: "[0:0:0:0:0:0:0:1]:9095"
+    asserts:
+      - failedTemplate:
+          errorPattern: 'requires spoaHub\.hub\.metricsAddr to be a non-loopback bind'
+
+  - it: should render on a bind-all IPv6 hub address without flagging it as loopback
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      vector.enabled: false
+      spoaHub.enabled: true
+      spoaHub.hub.metricsAddr: "[::]:9095"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.podMetricsEndpoints[1].port
+          value: metrics
+
+  - it: should render on routable IPv6 addresses that a lossy zero-strip would mistake for loopback
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      vector.enabled: false
+      spoaHub.enabled: true
+      # [1::] and [10::] both reduce to "1" once brackets, colons and zeros are
+      # stripped — the shape the guard used to check.
+      spoaHub.hub.metricsAddr: "[1::]:9095"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.podMetricsEndpoints[1].port
+          value: metrics
+
+  - it: should render on [10::] too
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      vector.enabled: false
+      spoaHub.enabled: true
+      spoaHub.hub.metricsAddr: "[10::]:9095"
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: should fail rendering on the compressed-with-leading-zero and padded IPv6 loopback spelling
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      vector.enabled: false
+      spoaHub.enabled: true
+      spoaHub.hub.metricsAddr: "[0::0001]:9095"
+    asserts:
+      - failedTemplate:
+          errorPattern: 'requires spoaHub\.hub\.metricsAddr to be a non-loopback bind'
+
+  - it: should fail rendering on an IPv4-mapped IPv6 loopback
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      vector.enabled: false
+      spoaHub.enabled: true
+      spoaHub.hub.metricsAddr: "[::ffff:127.0.0.1]:9095"
+    asserts:
+      - failedTemplate:
+          errorPattern: 'requires spoaHub\.hub\.metricsAddr to be a non-loopback bind'
+
+  - it: should not scrape a loopback hub bind while vector fronts it
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      spoaHub.enabled: true
+      spoaHub.hub.metricsAddr: "127.0.0.1:9095"
+    asserts:
+      # Not a dead target: with vector on there is no direct hub endpoint.
+      - hasDocuments:
+          count: 1
+      - notContains:
+          path: spec.podMetricsEndpoints
+          content:
+            port: metrics
+          any: true
+
+  - it: should apply interval, timeout, labels and relabelings to every endpoint
+    set:
+      haproxy.monitoring.podMonitor.enabled: true
+      haproxy.monitoring.podMonitor.interval: 15s
+      haproxy.monitoring.podMonitor.scrapeTimeout: 5s
+      haproxy.monitoring.podMonitor.labels:
+        release: kube-prometheus-stack
+      haproxy.monitoring.podMonitor.metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: haproxy_server_check_status
+          action: drop
+    asserts:
+      - equal:
+          path: metadata.labels.release
+          value: kube-prometheus-stack
+      - equal:
+          path: spec.podMetricsEndpoints[0].interval
+          value: 15s
+      - equal:
+          path: spec.podMetricsEndpoints[0].scrapeTimeout
+          value: 5s
+      - equal:
+          path: spec.podMetricsEndpoints[1].metricRelabelings[0].regex
+          value: haproxy_server_check_status

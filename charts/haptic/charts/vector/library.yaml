@@ -36,14 +36,9 @@ files:
         var socketPath = vec | dig_string("/run/vector/haproxy.sock", "socketPath")
         var metricsPort = vec | dig("metricsPort") | fallback(9598)
         var scrapeSecs = vec | dig("scrapeIntervalSecs") | fallback(15)
-        var statsPort = vec | dig("haproxyStatsPort") | fallback(0)
         var hubPort = vec | dig("spoaHubMetricsPort") | fallback(0)
         var dataDir = vec | dig_string("/var/lib/vector", "dataDir")
-        var excludes = vec | dig("excludeMetrics") | fallback([]any{}) | toSlice()
       %%}
-      {#- Source-side twin of `excludes`: never parsed, so it cuts the scrape
-          burst, not just retention. See values.yaml vector.excludeMetrics. -#}
-      {%- var excludeFams = vec | dig("excludeMetricFamilies") | fallback([]any{}) | toSlice() -%}
       {# Endpoint lives under extraContext.tracing, not vector: it describes the
           deployment's tracing setup. Empty = no span pipeline. #}
       {# vector interpolates a field into a tag with its own {{...}} syntax, which
@@ -147,51 +142,6 @@ files:
         {%- end -%}
         {%- omitEmpty = omitEmptyBool -%}
       {%- end -%}
-      {%- var noMaintRaw = vec | dig("excludeMaintServerMetrics") -%}
-      {%- var noMaint = true -%}
-      {%- if noMaintRaw != nil -%}
-        {%- var noMaintBool, isBool = noMaintRaw.(bool) -%}
-        {%- if !isBool -%}
-          {%- fail("extraContext.vector.excludeMaintServerMetrics must be a boolean, got '" + tostring(noMaintRaw) + "'. A quoted 'false' is truthy here and would silently enable HAProxy's ?no-maint filter.") -%}
-        {%- end -%}
-        {%- noMaint = noMaintBool -%}
-      {%- end -%}
-      {#- Reject characters that break the VRL literal; a hand-written CR bypasses Helm. -#}
-      {%- for _, pat := range excludes -%}
-        {%- var ps = tostring(pat) -%}
-        {%- if ps == "" -%}
-          {%- fail("extraContext.vector.excludeMetrics contains an empty pattern; an empty regex matches every metric name and would drop the entire exposition.") -%}
-        {%- end -%}
-        {%- if regex_search(ps, "['\"\n\r\\\\]") -%}
-          {%- fail("extraContext.vector.excludeMetrics pattern '" + ps + "' contains a quote, backslash or newline. Patterns are embedded in a VRL r'...' literal, so those characters would break vector's config load and keep log and metric export unavailable.") -%}
-        {%- end -%}
-        {#- Compile check. Note the argument order: regex_search(subject, pattern),
-            so the operator's string goes SECOND to be compiled as the pattern —
-            passing it first (as above, for the charset test) compiles nothing.
-            regex_search calls env.Fatal on an uncompilable pattern. -#}
-        {%- var _ = regex_search("", ps) -%}
-      {%- end -%}
-      {#- Re-validated here because a hand-written CR bypasses Helm: HAProxy drops
-          an unknown name silently and one '%' blanks the whole scrape. -#}
-      {%- var scrapeParams = []string{} -%}
-      {%- if noMaint -%}
-        {%- scrapeParams = append(scrapeParams, "no-maint") -%}
-      {%- end -%}
-      {%- var negFams = []string{} -%}
-      {%- for _, f := range excludeFams -%}
-        {%- var fs = tostring(f) -%}
-        {%- if !regex_search(fs, "^[a-zA-Z_][a-zA-Z0-9_]*$") -%}
-          {%- fail("extraContext.vector.excludeMetricFamilies entry '" + fs + "' is not a bare metric name, so HAProxy would silently drop it or blank the scrape. Use the exact family name.") -%}
-        {%- end -%}
-        {%- negFams = append(negFams, "-" + fs) -%}
-      {%- end -%}
-      {%- if len(negFams) > 0 -%}
-        {%- scrapeParams = append(scrapeParams, "metrics=" + join(negFams, ",")) -%}
-      {%- end -%}
-      {%- var haproxyScrapeQuery = "" -%}
-      {%- if len(scrapeParams) > 0 -%}
-        {%- haproxyScrapeQuery = "?" + join(scrapeParams, "&") -%}
-      {%- end -%}
       {#- Mirror of haptic.vector.validateValues in _vector.tpl. Duplicated on
           purpose: the HAProxyTemplateConfig CR is a first-class API that bypasses
           Helm, so a Helm-only guard protects nothing for a hand-written CR. -#}
@@ -222,36 +172,14 @@ files:
           socket_file_mode: 0o666
           decoding:
             codec: bytes
-      {%- if toint(statsPort) > 0 %}
-
-        {# NO instance_tag on purpose: it stamps the SCRAPED target onto every
-            series — "127.0.0.1:8404", identical on every pod — and Prometheus adds
-            its own `instance` from the pod target anyway, so vector's copy lands as
-            `exported_instance`. Measured: 393 KB across 15116 series.
-
-            honor_labels DOES stay: it preserves the labels HAProxy set (proxy,
-            server, code, state), which every dashboard and rule matches on. #}
-        # Re-export HAProxy's exporter, so Prometheus scrapes one endpoint per pod.
-      {%- if noMaint %}
-        #
-        {# In HAPTIC's model MAINT means "reserved slot with no backing pod", which
-            on a measured fleet was 67% of the series. vector rewrites this URL as
-            `?no-maint=`; verified that `?no-maint`, `?no-maint=` and `?no-maint=1`
-            filter identically. Rationale: values.yaml vector.excludeMaintServerMetrics. #}
-        #
-      {%- end %}
-        haproxy_metrics:
-          type: prometheus_scrape
-          endpoints:
-            - http://127.0.0.1:{{ toint(statsPort) }}/metrics{{ haproxyScrapeQuery }}
-          scrape_interval_secs: {{ toint(scrapeSecs) }}
-          honor_labels: true
-      {%- end %}
       {%- if toint(hubPort) > 0 %}
 
-        {# Same for the spoa-hub sidecar's metrics (spoa_*, plugin_coraza_*).
-           honor_labels keeps the hub's own label set intact so existing
-           dashboards and recording rules keep matching. #}
+        {# Re-export the spoa-hub sidecar's metrics (spoa_*, plugin_coraza_*):
+           per plugin, not per backend, so unlike HAProxy's exporter this does not
+           grow with the fleet. honor_labels keeps the hub's own label set intact.
+           NO instance_tag on purpose: it stamps the scraped target onto every
+           series, identical on every pod, and Prometheus adds its own `instance`
+           from the pod target anyway. #}
         spoa_hub_metrics:
           type: prometheus_scrape
           endpoints:
@@ -263,7 +191,7 @@ files:
         vector_metrics:
           type: internal_metrics
 
-      {%- if len(excludes) > 0 || omitEmpty || otlpEndpoint != "" || len(logMetrics) > 0 || rmOn %}
+      {%- if omitEmpty || otlpEndpoint != "" || len(logMetrics) > 0 || rmOn %}
 
       transforms:
       {%- end %}
@@ -391,43 +319,6 @@ files:
         {%- end %}
       {%- end %}
       {%- end %}
-      {%- if len(excludes) > 0 %}
-        {# Operator-controlled metric-name regexes, validated before this point. #}
-        # Drop metric families before they are re-exported.
-        metrics_filtered:
-          type: filter
-        {%- var primaryInputs = []string{} %}
-        {%- if toint(statsPort) > 0 %}{% primaryInputs = append(primaryInputs, "haproxy_metrics") %}{% end %}
-        {%- if toint(hubPort) > 0 %}{% primaryInputs = append(primaryInputs, "spoa_hub_metrics") %}{% end %}
-        {%- primaryInputs = append(primaryInputs, "vector_metrics") %}
-        {%- for _, k := range keys(logMetrics) %}{% primaryInputs = append(primaryInputs, k + "_metric") %}{% end %}
-        {%- for _, i := range rmCoreInputs %}{% primaryInputs = append(primaryInputs, i) %}{% end %}
-          inputs: [{{ join(primaryInputs, ", ") }}]
-          condition:
-            type: vrl
-            source: |
-              !match_any(string!(.name), [
-        {%- for _, pat := range excludes %}
-                r'{{ tostring(pat) }}',
-        {%- end %}
-              ])
-        {%- if len(rmSizeInputs) > 0 %}
-
-        {# excludeMetrics is documented as matching any metric name, so the sizes
-           branch needs the same filter or it is a silent exception. #}
-        size_metrics_filtered:
-          type: filter
-          inputs: [{{ join(rmSizeInputs, ", ") }}]
-          condition:
-            type: vrl
-            source: |
-              !match_any(string!(.name), [
-          {%- for _, pat := range excludes %}
-                r'{{ tostring(pat) }}',
-          {%- end %}
-              ])
-        {%- end %}
-      {%- end %}
 
       sinks:
         {# For now the access log just goes to stdout, so `kubectl logs -c vector`
@@ -460,14 +351,12 @@ files:
               content-type: application/json
       {%- end %}
 
-        # The primary merged scrape target, absent from the bootstrap config.
+        # The primary scrape target, absent from the bootstrap config. HAProxy's
+        # own exporter is NOT re-exported here: Prometheus scrapes it directly
+        # (see status-extra-100-prometheus-exporter in the base library).
         metrics:
           type: prometheus_exporter
-      {%- if len(excludes) > 0 %}
-          inputs: [metrics_filtered]
-      {%- else %}
         {%- var sinkInputs = []string{} %}
-        {%- if toint(statsPort) > 0 %}{% sinkInputs = append(sinkInputs, "haproxy_metrics") %}{% end %}
         {%- if toint(hubPort) > 0 %}{% sinkInputs = append(sinkInputs, "spoa_hub_metrics") %}{% end %}
         {%- for _, k := range keys(logMetrics) %}{% sinkInputs = append(sinkInputs, k + "_metric") %}{% end %}
         {%- for _, i := range rmCoreInputs %}{% sinkInputs = append(sinkInputs, i) %}{% end %}
@@ -476,7 +365,6 @@ files:
         {%- for _, i := range sinkInputs %}
             - {{ i }}
         {%- end %}
-      {%- end %}
           address: 0.0.0.0:{{ toint(metricsPort) }}
       {#- Per-SINK in vector, no per-metric override — which is why the size
           histograms get their own exporter below. -#}
@@ -489,14 +377,10 @@ files:
         # Byte-size histograms only; same PodMonitor, second endpoint.
         metrics_sizes:
           type: prometheus_exporter
-        {%- if len(excludes) > 0 %}
-          inputs: [size_metrics_filtered]
-        {%- else %}
           inputs:
           {%- for _, i := range rmSizeInputs %}
             - {{ i }}
           {%- end %}
-        {%- end %}
           address: 0.0.0.0:{{ toint(vec | dig("sizeMetricsPort") | fallback(9599)) }}
           buckets: {{ bucketList("sizeBuckets") }}
       {%- end %}
@@ -956,14 +840,13 @@ validationTests:
       - {type: contains, target: file:vector.yaml, pattern: 'rate_limit_shared_unavailable'}
 
   test-vector-config-rendered:
-    description: Vector config renders with the log socket, both scrape sources, and the exporter
+    description: Vector config renders with the log socket, the hub scrape source, and the exporter
     fixtures: {}
     extraContext:
       vector:
         socketPath: /run/vector/haproxy.sock
         metricsPort: 9598
         scrapeIntervalSecs: 15
-        haproxyStatsPort: 8404
         spoaHubMetricsPort: 9101
         dataDir: /var/lib/vector
     assertions:
@@ -982,14 +865,22 @@ validationTests:
         description: >-
           Byte passthrough, not JSON decoding — the global log target carries
           non-JSON process messages alongside JSON access records
-      - type: contains
+      - type: not_contains
         target: file:vector.yaml
-        pattern: 'http://127\.0\.0\.1:8404/metrics'
-        description: Must re-export HAProxy's exporter
+        pattern: 'haproxy_metrics|127\.0\.0\.1:8404'
+        description: >-
+          HAProxy's exporter is not re-exported — Prometheus scrapes it directly.
+          Measured at 2,500 backends: the re-export was 1.3 GB of vector's 1.4 GB
       - type: contains
         target: file:vector.yaml
         pattern: 'http://127\.0\.0\.1:9101/metrics'
         description: Must re-export the spoa-hub's metrics
+      - type: not_contains
+        target: file:vector.yaml
+        # The KEY form, not the bare word: the surrounding comment explains why the
+        # option is absent, and a substring match would find that comment instead.
+        pattern: '(?m)^\s+instance_tag:'
+        description: instance_tag stamps the scraped target onto every series, identical on every pod
       - type: contains
         target: file:vector.yaml
         pattern: 'address: 0\.0\.0\.0:9598'
@@ -997,48 +888,7 @@ validationTests:
       - type: contains
         target: file:vector.yaml
         pattern: 'type: prometheus_exporter'
-        description: Rendered config must expose the merged metrics endpoint
-
-  test-vector-metric-exclusions:
-    description: excludeMetrics renders a filter transform, and the exporter reads from it
-    fixtures: {}
-    extraContext:
-      vector:
-        socketPath: /run/vector/haproxy.sock
-        metricsPort: 9598
-        scrapeIntervalSecs: 15
-        haproxyStatsPort: 8404
-        spoaHubMetricsPort: 9101
-        dataDir: /var/lib/vector
-        excludeMetrics:
-          - '^haproxy_(server|backend)_max_'
-          - '^haproxy_backend_agg_'
-    assertions:
-      - {type: haproxy_valid, description: HAProxy config must still be valid}
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'type: filter'
-        description: A filter transform must be emitted
-      - type: contains
-        target: file:vector.yaml
-        pattern: 'inputs: \[metrics_filtered\]'
-        description: >-
-          The exporter must read from the FILTER, not the raw sources — otherwise the
-          transform renders but drops nothing
-      - type: contains
-        target: file:vector.yaml
-        pattern: "r'\\^haproxy_\\(server\\|backend\\)_max_'"
-        description: Each pattern must reach the VRL condition
-      - type: not_contains
-        target: file:vector.yaml
-        # The KEY form, not the bare word: the surrounding comment explains why the
-        # option is absent, and a substring match would find that comment instead —
-        # an assertion that can never fail.
-        pattern: '(?m)^\s+instance_tag:'
-        description: >-
-          instance_tag stamps the scraped target onto every series (identical on every
-          pod, and shadowed by Prometheus's own instance label) — 393 KB per scrape on
-          a real fleet
+        description: Rendered config must expose the metrics endpoint
 
   test-vector-otlp-span-pipeline:
     _helm_skip_test: '{{ if not (dig "tracing" "otlp" "endpoint" "" (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end }}'
@@ -1054,7 +904,7 @@ validationTests:
           # otherwise fail the not_contains below — on load, which crash-loops
           # the controller on a perfectly good config.
           clusterName: ""
-      vector: { socketPath: /run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15, haproxyStatsPort: 0, spoaHubMetricsPort: 0, dataDir: /var/lib/vector, excludeMetrics: [] }
+      vector: { socketPath: /run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15, spoaHubMetricsPort: 0, dataDir: /var/lib/vector }
     assertions:
       - type: haproxy_valid
       - {type: contains, target: file:vector.yaml, pattern: '(?m)^\s+spans:'}
@@ -1114,7 +964,7 @@ validationTests:
     # controller.
     extraContext:
       tracing: {otlp: {endpoint: ""}}
-      vector: { socketPath: /run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15, haproxyStatsPort: 0, spoaHubMetricsPort: 0, dataDir: /var/lib/vector, excludeMetrics: [] }
+      vector: { socketPath: /run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15, spoaHubMetricsPort: 0, dataDir: /var/lib/vector }
     assertions:
       - type: haproxy_valid
       - {type: not_contains, target: file:vector.yaml, pattern: 'otlp_traces'}
@@ -1131,10 +981,8 @@ validationTests:
         socketPath: /run/vector/haproxy.sock
         metricsPort: 9598
         scrapeIntervalSecs: 15
-        haproxyStatsPort: 0
         spoaHubMetricsPort: 0
         dataDir: /var/lib/vector
-        excludeMetrics: []
         omitEmptyLogFields: true
     assertions:
       - {type: haproxy_valid, description: HAProxy config must still be valid}
@@ -1175,10 +1023,8 @@ validationTests:
         socketPath: /run/vector/haproxy.sock
         metricsPort: 9598
         scrapeIntervalSecs: 15
-        haproxyStatsPort: 0
         spoaHubMetricsPort: 0
         dataDir: /var/lib/vector
-        excludeMetrics: []
         omitEmptyLogFields: false
     assertions:
       - {type: haproxy_valid, description: HAProxy config must still be valid}
@@ -1208,131 +1054,27 @@ validationTests:
         pattern: 'omitEmptyLogFields must be a boolean'
         description: Scriggo treats any non-empty string as truthy, so the CR path needs the type check too
 
-  test-vector-no-maint-scrape-parameter:
-    description: excludeMaintServerMetrics appends ?no-maint to the HAProxy scrape URL
+  test-vector-exporter-reads-sources-directly:
+    description: The exporter reads its sources directly — no metric-name filter sits between them
     fixtures: {}
     extraContext:
       vector:
         socketPath: /run/vector/haproxy.sock
         metricsPort: 9598
         scrapeIntervalSecs: 15
-        haproxyStatsPort: 8404
-        # Non-zero on purpose, so the hub endpoint is actually rendered and the
-        # "must not leak onto the hub" assertion below has something to match.
-        spoaHubMetricsPort: 9101
-        dataDir: /var/lib/vector
-        excludeMetrics: []
-        # Pinned: per-test extraContext deep-merges, so the chart's default
-        # family list would otherwise land in the URL this test anchors on.
-        excludeMetricFamilies: []
-        excludeMaintServerMetrics: true
-    assertions:
-      - {type: haproxy_valid, description: HAProxy config must still be valid}
-      - type: contains
-        target: file:vector.yaml
-        # Anchored to the endpoint LINE and to the port, so a stray `?no-maint`
-        # elsewhere in the file (a comment, the hub endpoint) cannot satisfy it.
-        pattern: '(?m)^\s+- http://127\.0\.0\.1:8404/metrics\?no-maint$'
-        description: >-
-          Drops MAINT-state servers at the source. In HAPTIC's model MAINT means an
-          empty reserved slot; on a real fleet that was 10,176 of 15,116 series (67%)
-      - type: not_contains
-        target: file:vector.yaml
-        # The hub exposes no reserved-slot concept, so the parameter must not leak
-        # onto its endpoint — it would be a meaningless query string there.
-        pattern: '(?m)^\s+- http://127\.0\.0\.1:9101/metrics\?no-maint$'
-        description: The parameter is HAProxy-specific and must not reach the hub endpoint
-
-  test-vector-no-maint-disabled-keeps-every-slot:
-    description: excludeMaintServerMetrics=false scrapes the plain endpoint
-    fixtures: {}
-    extraContext:
-      vector:
-        socketPath: /run/vector/haproxy.sock
-        metricsPort: 9598
-        scrapeIntervalSecs: 15
-        haproxyStatsPort: 8404
         spoaHubMetricsPort: 0
         dataDir: /var/lib/vector
-        excludeMetrics: []
-        # Pinned: per-test extraContext deep-merges, so the chart's default
-        # family list would otherwise land in the URL this test anchors on.
-        excludeMetricFamilies: []
-        excludeMaintServerMetrics: false
-    assertions:
-      - {type: haproxy_valid, description: HAProxy config must still be valid}
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^\s+- http://127\.0\.0\.1:8404/metrics$'
-        description: Plain endpoint, so operators who alert on a drained server keep it
-      - type: not_contains
-        target: file:vector.yaml
-        pattern: 'no-maint'
-        description: >-
-          Nothing may mention it — not even a rendered comment, or the opt-out would
-          look applied while the URL says otherwise
-
-  test-vector-no-exclusions-skips-the-transform:
-    description: With no exclusions the exporter reads the sources directly — no dead transform
-    fixtures: {}
-    extraContext:
-      vector:
-        socketPath: /run/vector/haproxy.sock
-        metricsPort: 9598
-        scrapeIntervalSecs: 15
-        haproxyStatsPort: 8404
-        spoaHubMetricsPort: 0
-        dataDir: /var/lib/vector
-        excludeMetrics: []
     assertions:
       - {type: haproxy_valid, description: HAProxy config must still be valid}
       # Named, not `type: filter`: the request-metrics pipeline uses filters for
-      # its validity gates, and those are unrelated to exclusions.
+      # its validity gates.
       - type: not_contains
         target: file:vector.yaml
         pattern: 'metrics_filtered:'
-        description: No exclusion filter, on either branch, when there is nothing to drop
       - type: contains
         target: file:vector.yaml
-        pattern: '- haproxy_metrics'
-        description: The exporter reads the scrape source directly
-
-  test-vector-no-maint-must-be-a-real-boolean:
-    description: A quoted "false" is rejected rather than silently enabling ?no-maint
-    fixtures: {}
-    extraContext:
-      vector:
-        socketPath: /run/vector/haproxy.sock
-        metricsPort: 9598
-        scrapeIntervalSecs: 15
-        haproxyStatsPort: 8404
-        # The STRING, not the boolean. Scriggo's `if` treats any non-empty string as
-        # truthy, so without a type check this would enable the very filter the
-        # operator was switching off — and a hand-written CR bypasses the Helm guard.
-        excludeMaintServerMetrics: "false"
-    assertions:
-      - type: contains
-        target: rendering_error
-        pattern: 'excludeMaintServerMetrics must be a boolean'
-        description: >-
-          Fails loudly instead of inverting the operator's intent, mirroring the
-          Helm-side guard for the CR path
-
-  test-vector-exclusion-pattern-must-not-carry-quotes:
-    description: A pattern with a quote is rejected at render time
-    fixtures: {}
-    extraContext:
-      vector:
-        socketPath: /run/vector/haproxy.sock
-        metricsPort: 9598
-        scrapeIntervalSecs: 15
-        excludeMetrics:
-          - "bad'pattern"
-    assertions:
-      - type: contains
-        target: rendering_error
-        pattern: 'contains a quote, backslash or newline'
-        description: A quote breaks the VRL literal and keeps Vector export unavailable.
+        pattern: '(?s)metrics:\s+type: prometheus_exporter\s+inputs:(\s+- [A-Za-z_]+)*\s+- vector_metrics'
+        description: The exporter reads vector's own metrics directly
 
   test-vector-config-no-spoa-hub:
     description: Without a hub metrics port, no dangling spoa_hub scrape source or input is emitted
@@ -1342,7 +1084,6 @@ validationTests:
         socketPath: /run/vector/haproxy.sock
         metricsPort: 9598
         scrapeIntervalSecs: 15
-        haproxyStatsPort: 8404
         # Explicit 0, not omitted: a test's extraContext MERGES over the _global
         # baseline, so leaving this out inherits the chart's real hub port and the
         # not_contains below would test nothing.
@@ -1358,8 +1099,8 @@ validationTests:
           log a connection error every scrape_interval forever
       - type: contains
         target: file:vector.yaml
-        pattern: 'http://127\.0\.0\.1:8404/metrics'
-        description: HAProxy's exporter must still be re-exported
+        pattern: '- vector_metrics'
+        description: The exporter still carries vector's own metrics
 
   test-access-log-target-vector-socket:
     description: >-
@@ -1389,37 +1130,6 @@ validationTests:
           Nothing should still be logging to stdout — a second target would double
           every record once vector re-emits to its own stdout
 
-  test-vector-metrics-loopback-only:
-    description: >-
-      With the sidecar enabled, HAProxy answers /metrics only over loopback (vector
-      scrapes it from inside the pod), while /healthz and /ready stay reachable
-      from the pod IP for the kubelet's probes.
-    fixtures: {}
-    extraContext:
-      vector:
-        socketPath: /run/vector/haproxy.sock
-        metricsPort: 9598
-        scrapeIntervalSecs: 15
-        haproxyStatsPort: 8404
-        spoaHubMetricsPort: 0
-    assertions:
-      - type: haproxy_valid
-        description: The dst ACL must pass HAProxy's config check
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request use-service prometheus-exporter if \{ path /metrics \} \{ dst 127\.0\.0\.0/8 \}'
-        description: >-
-          Gated on dst (the address connected TO), not on the bind — binding this
-          listener to loopback would break the kubelet probes on the same port
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request return status 200 content-type text/plain string "READY" if \{ path /ready \}'
-        description: /ready must stay unconditional or the pod never becomes Ready
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request return status 200 content-type text/plain string "OK" if \{ path /healthz \}'
-        description: /healthz must stay unconditional for the liveness probe
-
   test-vector-socket-path-must-be-absolute:
     description: A relative socketPath is rejected at render time
     fixtures: {}
@@ -1429,40 +1139,6 @@ validationTests:
         target: rendering_error
         pattern: 'socketPath must be an absolute path'
         description: HAProxy resolves a relative log path against default-path origin
-
-  test-vector-source-side-metric-exclusions:
-    description: >-
-      excludeMetricFamilies becomes HAProxy's own metrics=-<name> scrape filter,
-      so the excluded families never reach vector's parser. Distinct from
-      excludeMetrics, which filters after the parse and so cuts only retention.
-    fixtures: {}
-    extraContext:
-      vector:
-        socketPath: /run/vector/haproxy.sock
-        metricsPort: 9598
-        scrapeIntervalSecs: 15
-        haproxyStatsPort: 8404
-        spoaHubMetricsPort: 9101
-        dataDir: /var/lib/vector
-        excludeMetrics: []
-        excludeMetricFamilies:
-          - haproxy_backend_agg_check_status
-          - haproxy_server_max_queue
-        excludeMaintServerMetrics: true
-    assertions:
-      - type: haproxy_valid
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?m)^\s+- http://127\.0\.0\.1:8404/metrics\?no-maint&metrics=-haproxy_backend_agg_check_status,-haproxy_server_max_queue$'
-        description: >-
-          Each family is negated with a leading '-' and joined with commas onto
-          HAProxy's own scrape URL, after ?no-maint.
-      - type: not_contains
-        target: file:vector.yaml
-        # HAProxy-specific: the hub exposes no such filter, and an unknown query
-        # string there would be meaningless.
-        pattern: '(?m)^\s+- http://127\.0\.0\.1:9101/metrics\?'
-        description: The source-side filter must not leak onto the spoa-hub endpoint
 
   test-vector-log-derived-metrics-registry:
     description: >-
@@ -1475,10 +1151,8 @@ validationTests:
         socketPath: /run/vector/haproxy.sock
         metricsPort: 9598
         scrapeIntervalSecs: 15
-        haproxyStatsPort: 8404
         spoaHubMetricsPort: 0
         dataDir: /var/lib/vector
-        excludeMetrics: []
         logMetrics:
           __replace__: true
           cacheStatus:
@@ -1536,10 +1210,8 @@ validationTests:
         socketPath: /run/vector/haproxy.sock
         metricsPort: 9598
         scrapeIntervalSecs: 15
-        haproxyStatsPort: 8404
         spoaHubMetricsPort: 0
         dataDir: /var/lib/vector
-        excludeMetrics: []
         logMetrics: {__replace__: true, bad: {enabled: true, field: something, kind: enum, metric: bad_total}}
     assertions:
       - type: contains
@@ -1555,8 +1227,6 @@ validationTests:
       vector:
         metricsPort: 9598
         sizeMetricsPort: 9599
-        haproxyStatsPort: 8404
-        excludeMetrics: []
         logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true
@@ -1629,8 +1299,6 @@ validationTests:
       vector:
         metricsPort: 9598
         sizeMetricsPort: 9599
-        haproxyStatsPort: 8404
-        excludeMetrics: []
         logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true
@@ -1700,8 +1368,6 @@ validationTests:
       vector:
         metricsPort: 9598
         sizeMetricsPort: 9599
-        haproxyStatsPort: 8404
-        excludeMetrics: []
         logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true
@@ -1752,9 +1418,6 @@ validationTests:
       vector:
         metricsPort: 9598
         sizeMetricsPort: 9599
-        haproxyStatsPort: 8404
-        excludeMetrics:
-          - '^haproxy_backend_max_'
         logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true
@@ -1777,23 +1440,18 @@ validationTests:
         pattern: '(?s)request_metrics_guard:\s+type: tag_cardinality_limit\s+inputs: \[request_metrics_core, request_metrics_connect\]'
       - {type: contains, target: file:vector.yaml, pattern: 'value_limit: 250'}
       - {type: contains, target: file:vector.yaml, pattern: 'limit_exceeded_action: drop_event'}
-      # With exclusions configured, both branches route through a filter — the
-      # sizes branch included. Without its own filter an operator's exclusion
-      # pattern would silently apply to every metric except the size families.
+      # Both sinks read the guards, the sizes branch included.
       - type: contains
         target: file:vector.yaml
-        pattern: '(?s)metrics_filtered:\s+type: filter\s+inputs: \[[^\]]*request_metrics_guard[^\]]*\]'
+        pattern: '(?s)metrics:\s+type: prometheus_exporter\s+inputs:(\s+- [A-Za-z_]+)*\s+- request_metrics_guard'
       - type: contains
         target: file:vector.yaml
-        pattern: '(?s)size_metrics_filtered:\s+type: filter\s+inputs: \[request_metrics_size_guard\]'
-      - type: contains
-        target: file:vector.yaml
-        pattern: '(?s)metrics_sizes:\s+type: prometheus_exporter\s+inputs: \[size_metrics_filtered\]'
-      # The guard applies to these metrics only: honor_labels on the HAProxy
-      # re-export means its label set is already bounded and must stay intact.
+        pattern: '(?s)metrics_sizes:\s+type: prometheus_exporter\s+inputs:\s+- request_metrics_size_guard'
+      # The guard applies to these metrics only: the hub re-export's label set is
+      # already bounded and must stay intact.
       - type: not_contains
         target: file:vector.yaml
-        pattern: '(?s)tag_cardinality_limit[\s\S]{0,300}haproxy_metrics'
+        pattern: '(?s)tag_cardinality_limit[\s\S]{0,300}spoa_hub_metrics'
         description: Guarding the re-export would rewrite labels dashboards match on
 
   test-vector-request-metrics-disabled:
@@ -1805,8 +1463,6 @@ validationTests:
       vector:
         metricsPort: 9598
         sizeMetricsPort: 9599
-        haproxyStatsPort: 8404
-        excludeMetrics: []
         logMetrics: {__replace__: true}
         requestMetrics: {enabled: false}
     assertions:
@@ -1825,8 +1481,6 @@ validationTests:
       vector:
         metricsPort: 9598
         sizeMetricsPort: 9599
-        haproxyStatsPort: 8404
-        excludeMetrics: []
         logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true
@@ -1850,8 +1504,6 @@ validationTests:
       vector:
         metricsPort: 9598
         sizeMetricsPort: 9599
-        haproxyStatsPort: 8404
-        excludeMetrics: []
         requestMetrics:
           enabled: true
           prefix: haptic_ingress_controller
@@ -1873,8 +1525,6 @@ validationTests:
       vector:
         metricsPort: 9598
         sizeMetricsPort: 9599
-        haproxyStatsPort: 8404
-        excludeMetrics: []
         logMetrics: {__replace__: true}
         requestMetrics:
           enabled: true

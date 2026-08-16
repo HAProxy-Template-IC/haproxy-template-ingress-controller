@@ -54,10 +54,22 @@ guard that lives only here would not protect a hand-written CR.
 {{- end -}}
 {{- /* `global` is Helm's, not the operator's: naming the subchart `vector` makes
        Helm inject .Values.vector.global into its values namespace. */ -}}
+{{- /* Moved keys fail with the destination, not as "unknown field": HAProxy's
+       exporter is scraped directly since the re-export was removed, and one
+       PodMonitor now covers every endpoint on the HAProxy pod. */ -}}
+{{- if hasKey $v "excludeMetrics" -}}
+  {{- fail "vector.excludeMetrics moved to controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics: HAProxy applies the exclusions itself, and Prometheus scrapes its exporter directly instead of through vector. Entries keep their names, `enabled`, `families` and `requires`; `pattern` was dropped — the exporter filters by exact family name." -}}
+{{- end -}}
+{{- if hasKey $v "excludeMaintServerMetrics" -}}
+  {{- fail "vector.excludeMaintServerMetrics moved to controller.config.templatingSettings.extraContext.prometheusExporter.excludeMaintServers: HAProxy applies ?no-maint itself, for every scraper." -}}
+{{- end -}}
+{{- if hasKey $v "podMonitor" -}}
+  {{- fail "vector.podMonitor moved to haproxy.monitoring.podMonitor: one PodMonitor now scrapes every metrics endpoint on the HAProxy pod — HAProxy's exporter (stats port), vector's endpoints and, without vector, the hub's. Same fields (enabled, interval, scrapeTimeout, labels, relabelings, metricRelabelings)." -}}
+{{- end -}}
 {{- range $field := keys $v -}}
   {{- if eq $field "global" -}}{{- continue -}}{{- end -}}
-  {{- if not (has $field (list "enabled" "image" "metricsPort" "sizeMetricsPort" "socketPath" "scrapeIntervalSecs" "excludeMetrics" "excludeMaintServerMetrics" "omitEmptyLogFields" "logMetrics" "requestMetrics" "resources" "securityContext" "podMonitor" "extraVolumeMounts")) -}}
-    {{- fail (printf "vector contains unknown field %q. Valid fields: enabled, image, metricsPort, sizeMetricsPort, socketPath, scrapeIntervalSecs, excludeMetrics, excludeMaintServerMetrics, omitEmptyLogFields, logMetrics, requestMetrics, resources, securityContext, podMonitor, extraVolumeMounts." $field) -}}
+  {{- if not (has $field (list "enabled" "image" "metricsPort" "sizeMetricsPort" "socketPath" "scrapeIntervalSecs" "omitEmptyLogFields" "logMetrics" "requestMetrics" "resources" "securityContext" "extraVolumeMounts")) -}}
+    {{- fail (printf "vector contains unknown field %q. Valid fields: enabled, image, metricsPort, sizeMetricsPort, socketPath, scrapeIntervalSecs, omitEmptyLogFields, logMetrics, requestMetrics, resources, securityContext, extraVolumeMounts." $field) -}}
   {{- end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $v.enabled) -}}
@@ -113,112 +125,14 @@ guard that lives only here would not protect a hand-written CR.
   {{- if eq (dir ($v.socketPath | toString)) "/" -}}
     {{- fail (printf "vector.socketPath must be inside a subdirectory, not directly at the filesystem root, got %q. The chart mounts the socket's parent directory as a shared emptyDir in both the haproxy and vector containers, so a parent of \"/\" would shadow their root filesystems. Use something like /run/vector/haproxy.sock." $v.socketPath) -}}
   {{- end -}}
-  {{- /* Same reason as excludeMaintServerMetrics: a truthy-looking string like
-         "false" would silently enable the transform. */ -}}
+  {{- /* A truthy-looking string like "false" would silently enable the transform. */ -}}
   {{- if not (kindIs "bool" $v.omitEmptyLogFields) -}}
     {{- fail (printf "vector.omitEmptyLogFields must be a boolean, got %v." $v.omitEmptyLogFields) -}}
-  {{- end -}}
-  {{- /* Not a string: it becomes a scrape-URL suffix, and a truthy-looking string
-         like "false" would silently enable the filter. */ -}}
-  {{- if not (kindIs "bool" $v.excludeMaintServerMetrics) -}}
-    {{- fail (printf "vector.excludeMaintServerMetrics must be a boolean, got %v." $v.excludeMaintServerMetrics) -}}
-  {{- end -}}
-  {{- /* Reject exclusion patterns that Vector cannot load; Go and VRL accept the
-         same regular-expression family. */ -}}
-  {{- if not (kindIs "map" ($v.excludeMetrics | default dict)) -}}
-    {{- fail "vector.excludeMetrics must be a map of named exclusions, each with `pattern` and `enabled`. It was a list until 0.2.0; a list is replaced wholesale by Helm, so disabling one exclusion meant restating every other and silently losing any added later." -}}
-  {{- end -}}
-  {{- range $name, $ex := ($v.excludeMetrics | default dict) -}}
-    {{- if not (kindIs "map" $ex) -}}
-      {{- fail (printf "vector.excludeMetrics.%s must be a map with `pattern` and `enabled`, got %T." $name $ex) -}}
-    {{- end -}}
-    {{- range $field, $_ := $ex -}}
-      {{- if not (has $field (list "enabled" "pattern" "families" "requires")) -}}
-        {{- fail (printf "vector.excludeMetrics.%s contains unknown field %q. Valid fields: enabled, pattern, families, requires." $name $field) -}}
-      {{- end -}}
-    {{- end -}}
-    {{- /* An exclusion whose replacement is off would drop a family with nothing
-           standing in for it. Resolved via haptic.vector.valuePath. */ -}}
-    {{- if hasKey $ex "requires" -}}
-      {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$" ($ex.requires | toString)) -}}
-        {{- fail (printf "vector.excludeMetrics.%s.requires must be a dotted values path such as `vector.requestMetrics.enabled`, got %q." $name $ex.requires) -}}
-      {{- end -}}
-    {{- end -}}
-    {{- /* `enabled` is required, not defaulted. Defaulting it to false means an
-           operator who adds `mine: {pattern: ...}` and forgets the flag gets a
-           silently inert entry: it passes validation, is skipped by the
-           resolution loop, and nothing is ever excluded. The doc says an entry
-           needs `pattern` and `enabled`, so say so at render time. */ -}}
-    {{- if not (hasKey $ex "enabled") -}}
-      {{- fail (printf "vector.excludeMetrics.%s has no `enabled`. It is required, so that an entry cannot sit inert and silently exclude nothing — set `enabled: false` to keep it and turn it off." $name) -}}
-    {{- end -}}
-    {{- if not (kindIs "bool" $ex.enabled) -}}
-      {{- fail (printf "vector.excludeMetrics.%s.enabled must be a boolean." $name) -}}
-    {{- end -}}
-    {{- /* An entry disabled by an operator override keeps its (unused) pattern,
-           so only validate what will actually be rendered. */ -}}
-    {{- if not $ex.enabled -}}
-      {{- continue -}}
-    {{- end -}}
-    {{- if not $ex.pattern -}}
-      {{- fail (printf "vector.excludeMetrics.%s is enabled but has no `pattern`." $name) -}}
-    {{- end -}}
-    {{- $ps := $ex.pattern | toString -}}
-    {{- if eq (trim $ps) "" -}}
-      {{- fail "vector.excludeMetrics contains an empty pattern. An empty regex matches every metric name and would drop the entire exposition." -}}
-    {{- end -}}
-    {{- /* Checked character by character rather than with one escaped regex: the
-           escapes needed for a combined pattern do not survive Helm's parser. */ -}}
-    {{- range $bad := (list "'" "\"" "\\" "\n" "\r") -}}
-      {{- if contains $bad $ps -}}
-        {{- fail (printf "vector.excludeMetrics pattern %q contains a quote, backslash or newline. Patterns are embedded in a VRL r'...' literal in the rendered config, so those characters would break vector's config load and keep log and metric export unavailable." $ps) -}}
-      {{- end -}}
-    {{- end -}}
-    {{- /* mustRegexMatch surfaces compile errors; regexMatch discards them. */ -}}
-    {{- $_ := mustRegexMatch $ps "" -}}
-    {{- /* families are exact metric names appended to HAProxy's scrape URL as
-           `metrics=-<name>`, so they never reach vector's parser — that is what
-           makes them cut the parse burst rather than only retention.
-           They are an OPTIMISATION: `pattern` is authoritative and still drops
-           anything missing here, one stage later. Two guards:
-             1. every name must match its own entry's pattern, so the two cannot
-                drift and a stale list cannot quietly exclude something else;
-             2. charset, because HAProxy IGNORES an unknown name silently, and a
-                '%' starts a percent-escape that corrupts the whole parameter —
-                measured: one stray '%' took a 204,914-series scrape down to 3. */ -}}
-    {{- if not (kindIs "slice" ($ex.families | default list)) -}}
-      {{- fail (printf "vector.excludeMetrics.%s.families must be a list of exact metric names." $name) -}}
-    {{- end -}}
-    {{- range $fam := ($ex.families | default list) -}}
-      {{- $fs := $fam | toString -}}
-      {{- if not (mustRegexMatch "^[a-zA-Z_][a-zA-Z0-9_]*$" $fs) -}}
-        {{- fail (printf "vector.excludeMetrics.%s.families entry %q is not a bare metric name. It is sent to HAProxy as a scrape-URL parameter, where anything else is either ignored silently or corrupts the parameter." $name $fs) -}}
-      {{- end -}}
-      {{- if not (mustRegexMatch $ps $fs) -}}
-        {{- fail (printf "vector.excludeMetrics.%s.families entry %q does not match that entry's own pattern %q. families is an optimisation for pattern, so a name outside it would be excluded at the source without pattern ever agreeing." $name $fs $ps) -}}
-      {{- end -}}
-    {{- end -}}
   {{- end -}}
   {{- if lt ($v.scrapeIntervalSecs | int) 1 -}}
     {{- fail (printf "vector.scrapeIntervalSecs must be a positive integer, got %v." $v.scrapeIntervalSecs) -}}
   {{- end -}}
   {{- include "haptic.vector.validateRequestMetrics" . -}}
-  {{- /* Refuse the combination that silently stops all scraping. With the sidecar
-         on, the chart skips the spoaHub PodMonitor (vector fronts both endpoints)
-         — so if vector's own PodMonitor is off, an operator who HAD working hub +
-         HAProxy scraping loses every haproxy_* and spoa_* series on upgrade, with
-         nothing failing to tell them. Exactly the state a live cluster was in
-         before this guard existed. Failing the render is loud and one line to
-         resolve either way. */ -}}
-  {{- /* Gated on the hub actually being DEPLOYED, not just on the flag. spoaHub.enabled
-         auto-derives from plugins.*.enabled and defaults to null, so a values file can
-         carry monitoring.podMonitor.enabled=true with no plugins on — the hub never
-         renders, its PodMonitor never rendered either, and nothing is lost. Failing
-         that configuration would be a false positive. Mirrors the same predicate
-         spoa-hub-podmonitor.yaml itself uses. */ -}}
-  {{- if and (include "haptic.spoaHub.enabled" .) .Values.spoaHub.monitoring.podMonitor.enabled (not $v.podMonitor.enabled) -}}
-    {{- fail "spoaHub.monitoring.podMonitor.enabled=true has no effect while vector.enabled=true: the chart skips that PodMonitor because the vector sidecar re-exports both the hub's and HAProxy's metrics on one endpoint. Set vector.podMonitor.enabled=true to scrape the merged endpoint (recommended), or set vector.enabled=false to keep scraping the hub directly. Leaving it as-is would silently stop every haproxy_* and spoa_* scrape." -}}
-  {{- end -}}
   {{- if eq (trim ($v.image.tag | toString)) "" -}}
     {{- fail "vector.image.tag must be pinned to an explicit tag so a silent upstream bump can't change the log pipeline under a running fleet." -}}
   {{- end -}}
@@ -243,9 +157,9 @@ true
 {{- end -}}
 
 {{/*
-Walk a dotted .Values path; emit "true" when truthy. Backs `requires` on both
-logMetrics and excludeMetrics. Here, not in the library, because the flags live
-in values rather than extraContext.
+Walk a dotted .Values path; emit "true" when truthy. Backs `requires` on
+logMetrics. Here, not in the library, because the flags live in values rather
+than extraContext.
 
 Usage: include "haptic.vector.valuePath" (dict "root" $.Values "path" "a.b.c")
 */}}

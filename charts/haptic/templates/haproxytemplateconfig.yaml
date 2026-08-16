@@ -438,8 +438,8 @@ spec:
   {{- $_ := set $extraContext "haproxyVersion" .Values.haproxyVersion }}
 
   {{- /* Vector sidecar: project only the render-facing settings (the root-level
-         vector.* value also builds a container, a ConfigMap and a PodMonitor, which
-         is what justifies it living at the root — see charts/CLAUDE.md). */ -}}
+         vector.* value also builds a container and a ConfigMap, which is what
+         justifies it living at the root — see charts/CLAUDE.md). */ -}}
   {{- include "haptic.vector.validateValues" . }}
   {{- if .Values.vector.enabled }}
     {{- $hubMetricsPort := include "haptic.spoaHub.metricsPort" . }}
@@ -447,30 +447,6 @@ spec:
     {{- if and (include "haptic.spoaHub.enabled" .) (ne (trim $hubMetricsPort) "") }}
       {{- $hubScrape = $hubMetricsPort | int }}
     {{- end }}
-    {{- /* Resolve the named exclusions to the flat pattern list the render
-           consumes. The MAP is the operator surface — Helm merges maps key by
-           key, so `excludeMetrics.<name>.enabled: false` disables exactly one
-           without restating the rest. The render only ever needs the patterns
-           that are on. Sorted so the rendered config is deterministic: Helm map
-           iteration order is not. */ -}}
-    {{- /* On an exclusion, `requires` means "the family replacing this one is
-           actually emitted" — else disabling it drops the originals too. */ -}}
-    {{- $vectorExcludePatterns := list }}
-    {{- $vectorExcludeFamilies := list }}
-    {{- range $name := (keys (.Values.vector.excludeMetrics | default dict) | sortAlpha) }}
-      {{- $ex := index $.Values.vector.excludeMetrics $name }}
-      {{- $on := $ex.enabled }}
-      {{- if and $on (hasKey $ex "requires") }}
-        {{- $on = eq (include "haptic.vector.valuePath" (dict "root" $.Values "path" ($ex.requires | toString))) "true" }}
-      {{- end }}
-      {{- if $on }}
-        {{- $vectorExcludePatterns = append $vectorExcludePatterns ($ex.pattern | toString) }}
-        {{- range $fam := ($ex.families | default list) }}
-          {{- $vectorExcludeFamilies = append $vectorExcludeFamilies ($fam | toString) }}
-        {{- end }}
-      {{- end }}
-    {{- end }}
-    {{- $vectorExcludeFamilies = $vectorExcludeFamilies | sortAlpha | uniq }}
     {{- /* Log-derived metrics. An entry may name a `requires` values path — a
            metric can only work if whatever emits its access-log field is on, and
            rendering a transform that can never match costs a regex per record.
@@ -519,11 +495,7 @@ spec:
           "metricsPort" (.Values.vector.metricsPort | int)
           "sizeMetricsPort" (.Values.vector.sizeMetricsPort | int)
           "scrapeIntervalSecs" (.Values.vector.scrapeIntervalSecs | int)
-          "haproxyStatsPort" (.Values.haproxy.ports.stats | int)
           "spoaHubMetricsPort" $hubScrape
-          "excludeMetrics" $vectorExcludePatterns
-          "excludeMetricFamilies" $vectorExcludeFamilies
-          "excludeMaintServerMetrics" .Values.vector.excludeMaintServerMetrics
           "omitEmptyLogFields" .Values.vector.omitEmptyLogFields
           "logMetrics" $vectorLogMetrics
           "requestMetrics" $vectorRequestMetrics

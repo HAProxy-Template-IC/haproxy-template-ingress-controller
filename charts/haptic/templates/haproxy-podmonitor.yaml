@@ -1,0 +1,76 @@
+{{/*
+PodMonitor for the HAProxy pod: every metrics endpoint it exposes, one target
+each. HAProxy's exporter is scraped directly — its query defaults (no-maint,
+metrics=-...) are applied by HAProxy itself, so no `params` here (see
+extraContext.prometheusExporter). The hub is scraped directly only without
+vector; with vector on, vector re-exports it over loopback.
+*/}}
+{{- $pm := .Values.haproxy.monitoring.podMonitor }}
+{{- if $pm.enabled }}
+{{- $ports := list "stats" }}
+{{- $hubDirect := and (include "haptic.spoaHub.enabled" .) (not .Values.vector.enabled) }}
+{{- if $hubDirect }}
+{{- $addr := include "haptic.spoaHub.metricsAddrEffective" . }}
+{{- /* Loopback guard: a PodMonitor scrapes the pod IP, so a hub bound to
+       loopback is a dead target. IPv4 127/8, and an IPv6 host whose groups are
+       all zero except a final 1 in any spelling ([::1], [0::1], [::0001],
+       [0:0:0:0:0:0:0:1]) or the IPv4-mapped [::ffff:127.x]. Not a lossy strip:
+       [1::] and [10::] are routable and must pass. metricsAddr is validated as
+       a numeric IP upstream, so hostnames can't reach here. */}}
+{{- $v6host := trimSuffix "]" (trimPrefix "[" (regexFind "\\[[0-9A-Fa-f:.]+\\]" $addr)) }}
+{{- $v6Loopback := and (ne $v6host "") (or (regexMatch "^(0{1,4}:){0,7}(:{1,2})?(0{1,4}:)*0{0,3}1$" $v6host) (regexMatch "(?i)::ffff:127\\." $v6host)) }}
+{{- if or (eq (trim $addr) "") (regexMatch "^127\\." $addr) $v6Loopback }}
+{{- fail "haproxy.monitoring.podMonitor.enabled=true scrapes the spoa-hub directly (vector.enabled=false), which requires spoaHub.hub.metricsAddr to be a non-loopback bind Prometheus can reach from outside the pod (127.0.0.1:9095 is loopback-only). Set spoaHub.hub.metricsAddr to \"0.0.0.0:9095\" (or a pod-routable address), or leave it on \"auto\"." }}
+{{- end }}
+{{- $ports = append $ports "metrics" }}
+{{- end }}
+{{- if .Values.vector.enabled }}
+{{- $ports = append $ports "vector-metrics" }}
+{{- if include "haptic.vector.sizeExporterEnabled" . }}
+{{- $ports = append $ports "vector-sizes" }}
+{{- end }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "haptic.fullname" . }}-haproxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+    {{- with $pm.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "haptic.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: loadbalancer
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  podMetricsEndpoints:
+  {{- /* prometheus-operator only builds targets from declared container ports,
+         so every entry is a NAMED port. All take the same settings. */ -}}
+  {{- range $port := $ports }}
+    - port: {{ $port }}
+      path: /metrics
+      {{- with $pm.interval }}
+      interval: {{ . }}
+      {{- end }}
+      {{- with $pm.scrapeTimeout }}
+      scrapeTimeout: {{ . }}
+      {{- end }}
+      {{- with $pm.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $pm.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- end }}
+{{- end }}
