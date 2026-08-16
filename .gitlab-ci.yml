@@ -2595,6 +2595,7 @@ nightly-scale:
     # install raise the controller memory limit (RSS budget must be
     # measured, not masked by a 512Mi OOM kill) and pin INFO logging.
     HAPTIC_E2E_SCALE: "1"
+    HAPTIC_E2E_DPAPI_DEBUG: "1"
     TEST_RUN_PATTERN: TestScale
   script:
     - make test-e2e

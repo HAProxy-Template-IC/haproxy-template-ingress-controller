@@ -184,6 +184,15 @@ spec:
               echo reload|socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock
               EOF
               chmod +x /etc/haproxy/reload.sh
+              # dataplaneapi validate_cmd wrapper. The dataplane hands the
+              # transaction file over in DATAPLANEAPI_TRANSACTION_FILE (no
+              # argument substitution, no shell), so the command must be a
+              # script that reads it. -dr: a DNS failure is not a config error.
+              cat > /etc/haproxy/validate.sh <<'EOF'
+              #!/bin/sh
+              exec {{ $haproxyBin }} -dr -c -f "$DATAPLANEAPI_TRANSACTION_FILE"
+              EOF
+              chmod +x /etc/haproxy/validate.sh
               {{- $memReq := dig "requests" "memory" "" $haproxy.resources }}
               exec {{ $haproxyBin }} -dr -W -db{{ if $memReq }} -m {{ include "haptic.memoryToMB" $memReq }}{{ end }} -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
           env:
@@ -387,9 +396,7 @@ spec:
                   # haproxy.dataplane.validateConfig=false a no-op and leaving
                   # the default haproxy -c running on every endpoint push.
                   {{- if $dataplane.validateConfig }}
-                  # -dr skips DNS resolution failures during validation so the
-                  # config isn't rejected when DNS is temporarily unavailable.
-                  validate_cmd: {{ $haproxyBin }} -dr -c -f %s
+                  validate_cmd: /etc/haproxy/validate.sh
                   {{- else }}
                   validate_cmd: /bin/true
                   {{- end }}

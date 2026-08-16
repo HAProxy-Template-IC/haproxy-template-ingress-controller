@@ -67,6 +67,28 @@ tests:
           path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
           pattern: 'if \[ "\$_backoff" -gt 30 \]; then _backoff=30; fi'
 
+  - it: should skip dataplane-side validation by default
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: '(?m)^\s+validate_cmd: /bin/true$'
+
+  - it: should validate through a wrapper that reads the transaction file from the environment when validateConfig is on
+    set:
+      haproxy.dataplane.validateConfig: true
+    asserts:
+      # The dataplane passes the transaction file in DATAPLANEAPI_TRANSACTION_FILE
+      # and substitutes nothing, so a bare `haproxy -c -f %s` fails every push.
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: '(?m)^\s+validate_cmd: /etc/haproxy/validate\.sh$'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name=="haproxy")].args[0]
+          pattern: '(?m)^exec /usr/local/sbin/haproxy -dr -c -f "\$DATAPLANEAPI_TRANSACTION_FILE"$'
+      - notMatchRegex:
+          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
+          pattern: 'validate_cmd: .*%s'
+
   - it: should derive the Enterprise repository and binary path from one series
     set:
       haproxyVersion: "3.2"

@@ -702,7 +702,7 @@ The controller renders the user-facing HAProxy Service from these values (the ba
 | `haproxy.dataplane.resources.requests.memory` | string | `256Mi` | Dataplane sidecar memory request (Guaranteed QoS — limits.memory matches) |
 | `haproxy.dataplane.resources.limits.memory` | string | `256Mi` | Dataplane sidecar memory limit |
 | `haproxy.dataplane.extraEnv` | list | `[]` | Extra env vars for the dataplane sidecar; `GOMAXPROCS` here overrides the auto-calculation from CPU/memory limits |
-| `haproxy.dataplane.validateConfig` | bool | `false` | Run a server-side `haproxy -c` against each transaction. The controller already validates locally, so server-side validation is redundant; enable for double-validation when extra safety is required |
+| `haproxy.dataplane.validateConfig` | bool | `false` | Run a server-side `haproxy -c` against each transaction (through `/etc/haproxy/validate.sh`, which reads the transaction file the Dataplane API passes in `DATAPLANEAPI_TRANSACTION_FILE`). The controller already validates locally, so server-side validation is redundant; enable for double-validation when extra safety is required |
 | `haproxy.dataplane.debugSocketPath` | string | `""` | Unix socket path for runtime profiling of the dataplane sidecar (sets `debug_socket_path` in `dataplaneapi.yaml`) |
 | `haproxy.dataplane.aclFormat` | string | `""` | Apache Common Log Format override for the dataplane API access log. Empty leaves the dataplane API's built-in default in place; set this to a format with timing fields (for example `%{us}T` microseconds, `%D` milliseconds) to surface per-request publish-step latency in the access log |
 

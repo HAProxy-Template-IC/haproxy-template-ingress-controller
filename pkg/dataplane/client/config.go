@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	v30 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v30"
 	v30ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v30ee"
@@ -384,7 +385,9 @@ func (c *DataplaneClient) postHAProxyConfiguration(ctx context.Context, config s
 		v32eeVerP, v31eeVerP, v30eeVerP = nil, nil, nil
 	}
 
-	return c.Dispatch(ctx, CallFunc[*http.Response]{
+	trace := newPushTrace()
+	ctx = trace.context(ctx)
+	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {
 			return c.PostHAProxyConfigurationWithTextBody(ctx, &v33.PostHAProxyConfigurationParams{
 				Version: v33VerP, SkipReload: skipReload, ForceReload: forceReload, SkipVersion: skipVersion, XRuntimeActions: runtimeActions,
@@ -421,6 +424,13 @@ func (c *DataplaneClient) postHAProxyConfiguration(ctx context.Context, config s
 			}, config)
 		},
 	})
+	// A push that stalls or fails gets its phase timings logged: which side
+	// went quiet is otherwise invisible from a bare "context canceled".
+	if err != nil || time.Since(trace.start) > slowPushThreshold {
+		c.logger.Warn("Configuration push slow or failed",
+			append([]any{"endpoint", c.Endpoint.URL, "pod", c.Endpoint.PodName}, trace.attrs(len(config), err)...)...)
+	}
+	return resp, err
 }
 
 // ReloadStatus represents the status of a HAProxy reload operation.

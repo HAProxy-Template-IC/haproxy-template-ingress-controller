@@ -815,7 +815,7 @@ validationTests:
       - {type: contains, target: map:route-backend.map, pattern: "default_xns-route_0 MULTIBACKEND:2:default_xns-route_0"}
       - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^0:default_xns-route_0 gw-invalid-backend$"}
       - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^1:default_xns-route_0 gtw_default_xns-route_app-v1_80$"}
-      - {type: not_contains, target: haproxy.cfg, pattern: "10.9.9.9"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "10\\.9\\.9\\.9"}
       - {type: not_contains, target: haproxy.cfg, pattern: "backend gtw_default_xns-route_secret-svc_80"}
 
   test-gateway-two-gateways-share-host-path:
