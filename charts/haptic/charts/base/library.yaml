@@ -3551,6 +3551,18 @@ validationTests:
         target: rendering_error
         pattern: 'excludeMetrics\.inert has no `enabled`'
 
+  test-render-plan-no-route-backends:
+    description: >-
+      With no routing resource the config still carries base's own registered
+      backend, and no placeholder line survives assembly.
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: "@haptic:"}
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^backend default_backend$.*?^\s+guid be:default_backend$'
+
   test-guid-directives:
     description: GUIDs are present on frontends, backends, and default_backend
     fixtures:
@@ -3576,6 +3588,11 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "guid fe:status"}
       - {type: contains, target: haproxy.cfg, pattern: "guid fe:http_frontend"}
       - {type: contains, target: haproxy.cfg, pattern: "guid be:default_backend"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "@haptic:"}
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^backend http-h1-loopback$.*?^\s+mode tcp$.*?^\s+server loopback unix@/etc/haproxy/http-h1-frontend\.sock send-proxy-v2$'
+        description: The loopback backends are registered sections, spliced back where the token stood.
       - {type: not_contains, target: haproxy.cfg, pattern: "tune\\.ssl\\.default-dh-param"}
       - type: contains
         target: haproxy.cfg

@@ -709,6 +709,52 @@ k8sResources:
       {%- end %}
 
 validationTests:
+  test-render-plan-many-backends-leave-no-tokens:
+    description: >-
+      Every generated backend is registered and spliced back in place: the
+      sections are complete and no placeholder line reaches HAProxy.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: shop-svc, namespace: default}
+          spec:
+            ports: [{name: http, port: 80, targetPort: 8080}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {name: plan-a, namespace: default}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: a.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: shop-svc, port: {number: 80}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {name: plan-b, namespace: default}
+          spec:
+            ingressClassName: haproxy
+            defaultBackend: {service: {name: shop-svc, port: {number: 80}}}
+            rules:
+              - host: b.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: echo, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: "@haptic:"}
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^backend default_plan-a_svc_shop-svc_http$.*?^\s+guid be:default_plan-a_svc_shop-svc_http$.*?^\s+default-server check$.*?^\s+server SRV_1 '
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_plan-b_svc_echo_80"}
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_plan-b_svc_shop-svc_http"}
+
   test-ingress-duplicate-backend-different-ports:
     description: Ingress with multiple paths to same service but different ports (tests deduplication)
     fixtures:
