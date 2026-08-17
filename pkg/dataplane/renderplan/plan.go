@@ -82,7 +82,7 @@ type Backend struct {
 	Name          string       `json:"name"`
 	Profile       string       `json:"profile,omitempty"`
 	Mode          string       `json:"mode,omitempty"`
-	Guid          string       `json:"guid,omitempty"`
+	GUID          string       `json:"guid,omitempty"`
 	Balance       string       `json:"balance,omitempty"`
 	HashType      string       `json:"hashType,omitempty"`
 	Shape         string       `json:"shape"`
@@ -103,7 +103,7 @@ type Server struct {
 	Port     int          `json:"port"`
 	Weight   int          `json:"weight,omitempty"`
 	Disabled bool         `json:"disabled,omitempty"`
-	Guid     string       `json:"guid,omitempty"`
+	GUID     string       `json:"guid,omitempty"`
 	Comment  string       `json:"comment,omitempty"`
 	Extra    []KeywordArg `json:"extra,omitempty"`
 }
@@ -163,8 +163,12 @@ type ServerAddr struct {
 func (p *Plan) Canonical() []byte {
 	clone := *p
 	clone.ID = ""
-	// Every field is a JSON-safe value type, so marshalling cannot fail.
-	encoded, _ := json.Marshal(&clone)
+	encoded, err := json.Marshal(&clone)
+	if err != nil {
+		// Only a new field that is not JSON-safe can get here, and digesting a
+		// partial encoding would make two different plans compare equal.
+		panic(fmt.Sprintf("renderplan: encoding the plan failed: %v", err))
+	}
 	return encoded
 }
 
@@ -177,12 +181,13 @@ func (p *Plan) ComputeID() {
 // read as `currentConfig`.
 func (p *Plan) CurrentConfig() CurrentConfig {
 	index := make(map[string]map[string]ServerAddr, len(p.Backends))
-	for name, backend := range p.Backends {
-		if len(backend.Servers) == 0 {
+	for name := range p.Backends {
+		declared := p.Backends[name].Servers
+		if len(declared) == 0 {
 			continue
 		}
-		servers := make(map[string]ServerAddr, len(backend.Servers))
-		for _, server := range backend.Servers {
+		servers := make(map[string]ServerAddr, len(declared))
+		for _, server := range declared {
 			port := int64(server.Port)
 			servers[server.Name] = ServerAddr{Address: server.Address, Port: &port}
 		}

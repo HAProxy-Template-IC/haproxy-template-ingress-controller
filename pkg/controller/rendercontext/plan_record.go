@@ -48,7 +48,7 @@ func backendFromRecord(record map[string]any) (renderplan.Backend, error) {
 	backend := renderplan.Backend{
 		Name:          dec.str("name"),
 		Mode:          dec.str("mode"),
-		Guid:          dec.str("guid"),
+		GUID:          dec.str("guid"),
 		Balance:       dec.str("balance"),
 		HashType:      dec.str("hashType"),
 		Shape:         dec.strOr("shape", renderplan.ShapeStructural),
@@ -61,17 +61,17 @@ func backendFromRecord(record map[string]any) (renderplan.Backend, error) {
 	if err := dec.err; err != nil {
 		return renderplan.Backend{}, err
 	}
-	if err := validateBackend(backend); err != nil {
+	if err := validateBackend(&backend); err != nil {
 		return renderplan.Backend{}, err
 	}
 
 	backend.BodyDigest = renderplan.DigestString(strings.Join(body, "\n"))
 	backend.CommentsDigest = renderplan.DigestString(strings.Join(comments, "\n"))
-	backend.RecordDigest = recordDigest(backend)
+	backend.RecordDigest = recordDigest(&backend)
 	return backend, nil
 }
 
-func validateBackend(backend renderplan.Backend) error {
+func validateBackend(backend *renderplan.Backend) error {
 	if backend.Name == "" {
 		return fmt.Errorf("planRegistry.Backend: %q is required", "name")
 	}
@@ -97,11 +97,16 @@ func validateBackend(backend renderplan.Backend) error {
 // recordDigest is the digest of the declared record. Only the digests derived
 // from it are excluded, so the body and comments still take part through their
 // own digests.
-func recordDigest(backend renderplan.Backend) string {
-	backend.RecordDigest = ""
-	backend.TextDigest = ""
-	// Every field is a JSON-safe value type, so marshalling cannot fail.
-	encoded, _ := json.Marshal(backend)
+func recordDigest(backend *renderplan.Backend) string {
+	record := *backend
+	record.RecordDigest = ""
+	record.TextDigest = ""
+	encoded, err := json.Marshal(&record)
+	if err != nil {
+		// Only a new field that is not JSON-safe can get here, and digesting a
+		// partial encoding would make two different backends compare equal.
+		panic(fmt.Sprintf("planRegistry: encoding the backend record failed: %v", err))
+	}
 	return renderplan.Digest(encoded)
 }
 
@@ -121,16 +126,16 @@ func newRecordDecoder(macro string, record map[string]any, allowed []string) *re
 			continue
 		}
 		if suggestion := nearestKey(key, allowed); suggestion != "" {
-			dec.fail("unknown key %q (did you mean %q?)", key, suggestion)
+			dec.failf("unknown key %q (did you mean %q?)", key, suggestion)
 			break
 		}
-		dec.fail("unknown key %q, valid keys are %s", key, strings.Join(allowed, ", "))
+		dec.failf("unknown key %q, valid keys are %s", key, strings.Join(allowed, ", "))
 		break
 	}
 	return dec
 }
 
-func (d *recordDecoder) fail(format string, args ...any) {
+func (d *recordDecoder) failf(format string, args ...any) {
 	d.adopt(fmt.Errorf("%s: %s", d.macro, fmt.Sprintf(format, args...)))
 }
 
@@ -152,7 +157,7 @@ func (d *recordDecoder) strOr(key, fallback string) string {
 	}
 	text, ok := value.(string)
 	if !ok {
-		d.fail("%q must be a string, got %T", key, value)
+		d.failf("%q must be a string, got %T", key, value)
 		return fallback
 	}
 	return text
@@ -171,14 +176,14 @@ func (d *recordDecoder) strSlice(key string) []string {
 		for _, element := range typed {
 			text, ok := element.(string)
 			if !ok {
-				d.fail("%q must contain strings, got %T", key, element)
+				d.failf("%q must contain strings, got %T", key, element)
 				return nil
 			}
 			lines = append(lines, text)
 		}
 		return lines
 	default:
-		d.fail("%q must be a list of strings, got %T", key, value)
+		d.failf("%q must be a list of strings, got %T", key, value)
 		return nil
 	}
 }
@@ -195,12 +200,12 @@ func (d *recordDecoder) intVal(key string) int {
 		return int(typed)
 	case float64:
 		if typed != float64(int(typed)) {
-			d.fail("%q must be a whole number, got %v", key, typed)
+			d.failf("%q must be a whole number, got %v", key, typed)
 			return 0
 		}
 		return int(typed)
 	default:
-		d.fail("%q must be a number, got %T", key, value)
+		d.failf("%q must be a number, got %T", key, value)
 		return 0
 	}
 }
@@ -212,7 +217,7 @@ func (d *recordDecoder) boolVal(key string) bool {
 	}
 	flag, ok := value.(bool)
 	if !ok {
-		d.fail("%q must be a bool, got %T", key, value)
+		d.failf("%q must be a bool, got %T", key, value)
 		return false
 	}
 	return flag
@@ -232,14 +237,14 @@ func (d *recordDecoder) records(key string) []map[string]any {
 		for _, element := range typed {
 			entry, ok := element.(map[string]any)
 			if !ok {
-				d.fail("%q must contain maps, got %T", key, element)
+				d.failf("%q must contain maps, got %T", key, element)
 				return nil
 			}
 			nested = append(nested, entry)
 		}
 		return nested
 	default:
-		d.fail("%q must be a list of maps, got %T", key, value)
+		d.failf("%q must be a list of maps, got %T", key, value)
 		return nil
 	}
 }
@@ -258,7 +263,7 @@ func (d *recordDecoder) servers(key string) []renderplan.Server {
 			Port:     nested.intVal("port"),
 			Weight:   nested.intVal("weight"),
 			Disabled: nested.boolVal("disabled"),
-			Guid:     nested.str("guid"),
+			GUID:     nested.str("guid"),
 			Comment:  nested.str("comment"),
 			Extra:    nested.keywords("extra"),
 		})
@@ -284,7 +289,7 @@ func (d *recordDecoder) keywords(key string) []renderplan.KeywordArg {
 			return nil
 		}
 		if keyword.Name == "" {
-			d.fail("%q needs a keyword name", key)
+			d.failf("%q needs a keyword name", key)
 			return nil
 		}
 		keywords = append(keywords, keyword)

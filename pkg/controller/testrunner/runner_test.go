@@ -30,7 +30,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -843,15 +843,18 @@ func TestRunner_RunTests_WithCurrentConfig(t *testing.T) {
 			Engine: "scriggo",
 		},
 		HAProxyConfig: v1alpha1.HAProxyConfig{
-			// Template checks len(currentConfig.Backends) > 0 to detect if config is available
+			// Template checks len(currentConfig.ServerIndex) > 0 to detect if config is available
 			// Note: Scriggo converts (*T)(nil) declaration to a zero-value struct, so isNil() doesn't work
 			Template: `global
   maxconn 1000
 
 # Previous backends from currentConfig:
-{%- if len(currentConfig.Backends) > 0 %}
-{%- for _, backend := range currentConfig.Backends %}
-# Previous backend: {{ backend.Name }}
+{%- if len(currentConfig.ServerIndex) > 0 %}
+{%- if currentConfig.ServerIndex["my-backend-1"] != nil %}
+# Previous backend: my-backend-1
+{%- end %}
+{%- if currentConfig.ServerIndex["my-backend-2"] != nil %}
+# Previous backend: my-backend-2
 {%- end %}
 {%- else %}
 # No currentConfig available (first deployment)
@@ -899,7 +902,7 @@ backend my-backend-2
 
 	// Need to provide the currentConfig type declaration for Scriggo
 	additionalDeclarations := map[string]any{
-		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+		"currentConfig": (*renderplan.CurrentConfig)(nil),
 	}
 	engine, err := templating.New(templates, &templating.Options{EntryPoints: []string{"haproxy.cfg"}, Declarations: additionalDeclarations})
 	require.NoError(t, err)
@@ -947,12 +950,12 @@ func TestRunner_RunTests_WithoutCurrentConfig(t *testing.T) {
 			Engine: "scriggo",
 		},
 		HAProxyConfig: v1alpha1.HAProxyConfig{
-			// Template checks len(currentConfig.Backends) > 0 to detect if config is available
+			// Template checks len(currentConfig.ServerIndex) > 0 to detect if config is available
 			// Note: Scriggo converts (*T)(nil) declaration to a zero-value struct, so isNil() doesn't work
 			Template: `global
   maxconn 1000
 
-{%- if len(currentConfig.Backends) > 0 %}
+{%- if len(currentConfig.ServerIndex) > 0 %}
 # Has previous config
 {%- else %}
 # First deployment - no previous config
@@ -991,7 +994,7 @@ func TestRunner_RunTests_WithoutCurrentConfig(t *testing.T) {
 	}
 
 	additionalDeclarations := map[string]any{
-		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+		"currentConfig": (*renderplan.CurrentConfig)(nil),
 	}
 	engine, err := templating.New(templates, &templating.Options{EntryPoints: []string{"haproxy.cfg"}, Declarations: additionalDeclarations})
 	require.NoError(t, err)
