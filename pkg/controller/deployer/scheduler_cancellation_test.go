@@ -32,7 +32,7 @@ func TestDeployLoopCancelledBeforeImmediatelyDuePendingDoesNotPublish(t *testing
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	initLoopChannels(s)
-	s.scheduleOrQueue(ctx, "config", nil, nil, oneEndpoint(), "config_validation", "correlation", nil, true, "checksum")
+	s.scheduleOrQueue(ctx, "config", nil, nil, oneEndpoint(), "config_validation", "correlation", nil, true, "checksum", nil, "")
 
 	cancel()
 	go s.runDeployLoop(ctx)

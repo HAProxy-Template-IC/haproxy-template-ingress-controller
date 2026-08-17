@@ -15,6 +15,7 @@
 package configpublisher
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -128,6 +129,37 @@ func TestBuildPodStatus(t *testing.T) {
 		}
 		result := buildPodStatus(update)
 		assert.Empty(t, result.LastError)
+	})
+
+	t.Run("plan fields are carried through", func(t *testing.T) {
+		update := &DeploymentStatusUpdate{
+			PodName:       "pod-1",
+			AppliedPlanID: "plan-applied",
+			RunningPlanID: "plan-running",
+			Mode:          "runtime",
+			Reasons:       []string{"servers changed"},
+		}
+		result := buildPodStatus(update)
+
+		assert.Equal(t, "plan-applied", result.AppliedPlanID)
+		assert.Equal(t, "plan-running", result.RunningPlanID)
+		assert.Equal(t, "runtime", result.Mode)
+		assert.Equal(t, []string{"servers changed"}, result.Reasons)
+	})
+
+	t.Run("reasons are truncated to the CRD limit", func(t *testing.T) {
+		reasons := make([]string, maxPodStatusReasons+3)
+		for i := range reasons {
+			reasons[i] = fmt.Sprintf("reason-%d", i)
+		}
+		update := &DeploymentStatusUpdate{PodName: "pod-1", Reasons: reasons}
+
+		result := buildPodStatus(update)
+
+		// MaxItems rejects the whole status write, so the writer truncates.
+		require.Len(t, result.Reasons, maxPodStatusReasons)
+		assert.Equal(t, "reason-0", result.Reasons[0])
+		assert.Equal(t, "reason-7", result.Reasons[maxPodStatusReasons-1])
 	})
 }
 

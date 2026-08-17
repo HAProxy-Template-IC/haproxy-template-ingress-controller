@@ -65,7 +65,10 @@ func safeIntToInt32(n int) int32 {
 // syncResultToMetadata converts dataplane.SyncResult to events.SyncMetadata.
 // Package-level (no receiver state) so both the structural deploy path and the
 // runtime-raw bypass can build the metadata for ConfigAppliedToPodEvent.
-func syncResultToMetadata(result *dataplane.SyncResult) *events.SyncMetadata {
+//
+// planID is the render plan this sync carried: a Dataplane API sync applies and
+// activates it in one step, so the pod both applied and runs it.
+func syncResultToMetadata(result *dataplane.SyncResult, planID string) *events.SyncMetadata {
 	if result == nil {
 		return nil
 	}
@@ -100,6 +103,8 @@ func syncResultToMetadata(result *dataplane.SyncResult) *events.SyncMetadata {
 			FrontendsRemoved:   len(result.Details.FrontendsDeleted),
 			FrontendsModified:  len(result.Details.FrontendsModified),
 		},
-		Error: "", // Empty on success
+		AppliedPlanID: planID,
+		RunningPlanID: planID,
+		Error:         "", // Empty on success
 	}
 }

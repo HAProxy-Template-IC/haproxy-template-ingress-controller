@@ -366,7 +366,7 @@ func (b *runtimeBypass) publishConfigApplied(dep *scheduledDeployment, ep *datap
 		ep.PodRuntimeID,
 		dep.contentChecksum,
 		false, // an actual runtime apply, not a drift check
-		syncResultToMetadata(result),
+		syncResultToMetadata(result, dep.planID),
 	))
 }
 

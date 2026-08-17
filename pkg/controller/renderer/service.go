@@ -114,10 +114,12 @@ type RenderService struct {
 	// capabilities defines which features are available for the local HAProxy version.
 	capabilities dataplane.Capabilities
 
-	// planMu guards lastPlan, the newest reconcile render's plan. It is the
-	// primary source for the next render's `currentConfig`.
-	planMu   sync.Mutex
-	lastPlan *renderplan.Plan
+	// planMu guards both plans below. ackedPlan — the newest plan the fleet
+	// confirmed running — is the source for the next render's `currentConfig`;
+	// lastPlan, the newest reconcile render's plan, stands in until the first ACK.
+	planMu    sync.Mutex
+	ackedPlan *renderplan.Plan
+	lastPlan  *renderplan.Plan
 
 	// Optional dependencies for building render context
 	haproxyPodStore         stores.Store

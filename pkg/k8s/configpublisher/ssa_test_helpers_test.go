@@ -142,15 +142,15 @@ func extractDeployedToPodsFromPatch(patch map[string]any) []haproxyv1alpha1.PodD
 func mergeDeployedToPods(existing, patch []haproxyv1alpha1.PodDeploymentStatus) []haproxyv1alpha1.PodDeploymentStatus {
 	byName := make(map[string]int, len(existing))
 	out := append([]haproxyv1alpha1.PodDeploymentStatus(nil), existing...)
-	for i, p := range out {
-		byName[p.PodName] = i
+	for i := range out {
+		byName[out[i].PodName] = i
 	}
-	for _, p := range patch {
-		if idx, ok := byName[p.PodName]; ok {
-			out[idx] = p
+	for i := range patch {
+		if idx, ok := byName[patch[i].PodName]; ok {
+			out[idx] = patch[i]
 		} else {
-			out = append(out, p)
-			byName[p.PodName] = len(out) - 1
+			out = append(out, patch[i])
+			byName[patch[i].PodName] = len(out) - 1
 		}
 	}
 	return out

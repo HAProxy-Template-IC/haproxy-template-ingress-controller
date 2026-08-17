@@ -136,6 +136,24 @@ type PodDeploymentStatus struct {
 	// +optional
 	Checksum string `json:"checksum,omitempty"`
 
+	// AppliedPlanID is the render plan this pod last accepted.
+	// +optional
+	AppliedPlanID string `json:"appliedPlanID,omitempty"`
+
+	// RunningPlanID is the render plan this pod's running HAProxy serves.
+	// +optional
+	RunningPlanID string `json:"runningPlanID,omitempty"`
+
+	// Mode is how the plan was applied to this pod.
+	// +optional
+	// +kubebuilder:validation:Enum=runtime;file_only;reload;scheduled;noop;rejected
+	Mode string `json:"mode,omitempty"`
+
+	// Reasons explain the apply mode, most significant first.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	Reasons []string `json:"reasons,omitempty"`
+
 	// LastError contains the error message from the most recent failed sync attempt.
 	//
 	// This field is cleared when a sync succeeds. Combined with ConsecutiveErrors,

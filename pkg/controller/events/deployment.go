@@ -21,6 +21,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -384,6 +385,14 @@ type DeploymentScheduledEvent struct {
 	// Examples: "config_validation", "pod_discovery", "drift_prevention"
 	Reason string
 
+	// Plan is the structure of the render being deployed, propagated from
+	// TemplateRenderedEvent. Nil when the render produced none.
+	Plan *renderplan.Plan
+
+	// PlanID is the digest identifying Plan; it becomes the pod's applied plan
+	// id once the deployment lands.
+	PlanID string
+
 	// StatusPatches are the chart-rendered status patches for this
 	// configuration. The Deployer forwards them unchanged into
 	// DeploymentCompletedEvent so the StatusApplier can apply the
@@ -421,9 +430,9 @@ type DeploymentScheduledEvent struct {
 //
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewDeploymentScheduledEvent(config, auxFiles, parsedConfig, endpoints, name, ns, reason, contentChecksum, statusPatches, coalescible,
+//	event := events.NewDeploymentScheduledEvent(config, auxFiles, parsedConfig, endpoints, name, ns, reason, contentChecksum, plan, planID, statusPatches, coalescible,
 //	    events.PropagateCorrelation(validationEvent))
-func NewDeploymentScheduledEvent(config string, auxFiles *dataplane.AuxiliaryFiles, parsedConfig *parser.StructuredConfig, endpoints []dataplane.Endpoint, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum string, statusPatches []templating.StatusPatch, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
+func NewDeploymentScheduledEvent(config string, auxFiles *dataplane.AuxiliaryFiles, parsedConfig *parser.StructuredConfig, endpoints []dataplane.Endpoint, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum string, plan *renderplan.Plan, planID string, statusPatches []templating.StatusPatch, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
 	return &DeploymentScheduledEvent{
 		Config:                 config,
 		AuxiliaryFiles:         auxFiles,
@@ -433,6 +442,8 @@ func NewDeploymentScheduledEvent(config string, auxFiles *dataplane.AuxiliaryFil
 		RuntimeConfigNamespace: runtimeConfigNamespace,
 		ContentChecksum:        contentChecksum,
 		Reason:                 reason,
+		Plan:                   plan,
+		PlanID:                 planID,
 		StatusPatches:          slices.Clone(statusPatches),
 		coalescible:            coalescible,
 		timestamped:            newTimestamped(),
