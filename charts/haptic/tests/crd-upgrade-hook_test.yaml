@@ -25,7 +25,7 @@ tests:
           value: ["apply-crds"]
       - equal:
           path: spec.template.spec.containers[0].command
-          value: ["/usr/local/bin/haptic-controller"]
+          value: ["/usr/local/bin/haptic"]
       - matchRegex:
           path: spec.template.spec.containers[0].image
           pattern: "haptic:.*-haproxy3\\.4$"
