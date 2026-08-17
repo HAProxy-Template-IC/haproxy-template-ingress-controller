@@ -1371,7 +1371,8 @@ templateSnippets:
           servers       - server records, from BackendServers() or a library's
                           own list of {name, address, port, weight, disabled,
                           guid, comment}
-          defaultServer - `default-server` keyword records {name, args}
+          defaultServer - `default-server` keyword records {name, args}, formatted
+                          into the `default-server` line
           comments      - provenance lines emitted above the section header
           shape         - "structural" (default) or "dynamic"
           shapeReason   - what forced the shape
@@ -1437,6 +1438,15 @@ templateSnippets:
           }
           if hashType := tostring(spec | dig("hashType") | fallback("")); hashType != "" {
             lines = append(lines, "    hash-type " + hashType)
+          }
+          var defaultServer = []any{}
+          for _, keyword := range toSlice(spec["defaultServer"]) {
+            var arg = keyword.(map[string]any)
+            defaultServer = append(defaultServer,
+              join(append([]any{arg["name"]}, toSlice(arg["args"])...), " "))
+          }
+          if len(defaultServer) > 0 {
+            lines = append(lines, "    default-server " + join(defaultServer, " "))
           }
           for _, line := range toSlice(spec["body"]) {
             lines = append(lines, "    " + tostring(line))
@@ -2529,7 +2539,7 @@ templateSnippets:
       {{- Backend(map[string]any{
             "name": "default_backend",
             "guid": "be:default_backend",
-            "body": []any{"default-server check"},
+            "defaultServer": []any{map[string]any{"name": "check"}},
             "servers": BackendServers(dbName, 0, dbPort, nil, dbPortName, "default_backend", dbNamespace),
           }) }}
       {%- else %}
