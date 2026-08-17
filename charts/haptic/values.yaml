@@ -1754,6 +1754,9 @@ haproxy:
   initialConfig: |
     global
         log stdout len 4096 local0 info
+        # The HAPTIC agent's runtime socket; the master socket runs neither
+        # batched nor payload commands. Keep it in the rendered global too.
+        stats socket /etc/haproxy/haproxy-worker.sock mode 600 level admin
         {{- with include "haptic.haproxy.nbthread" . }}
         nbthread {{ . }}
         {{- end }}
