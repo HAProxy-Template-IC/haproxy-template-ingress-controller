@@ -1238,12 +1238,24 @@ To enable HAProxy runtime API updates without reloads, server options must be in
 **Correct pattern in templates:**
 
 ```scriggo
-backend {{ BackendNameIngress(ingress, path) }}
-    default-server check{{ BuildServerOptions(serverOpts) }}
-    {{ BackendServers(serviceName, 10, port, nil, nil, backendKey) }}
+{{ Backend(map[string]any{
+     "name":    backendKey,
+     "guid":    make_guid("be", backendKey),
+     "body":    []any{"default-server check" + BuildServerOptions(serverOpts)},
+     "servers": BackendServers(serviceName, 10, port, nil, nil, backendKey, ns),
+   }) }}
 ```
 
-The `BackendServers` macro generates server lines with only `address:port` plus `enabled` (for active servers) or `disabled` (for reserved slots), while all other options go in `default-server`.
+Every backend goes through base's `Backend()` (`util-backend`): it builds the
+section text from the record it declares to the render plan, so a change to a
+backend is data the controller can act on instead of text it has to re-read. A
+hand-written `backend` section still renders, but any change to it forces a
+reload.
+
+`BackendServers` returns server records — `name`, `address`, `port`,
+`disabled`, `weight`, `guid`, `comment` — and `Backend()` formats them into
+lines carrying only `address:port` plus `enabled`/`disabled`, while all other
+options go in `default-server`.
 
 **Example output:**
 

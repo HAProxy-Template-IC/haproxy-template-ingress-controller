@@ -381,30 +381,62 @@ The base library provides reusable macros across several `util-*` snippets, impo
 | `CalculateShardCount(resourceCount, itemsPerShard)` | Computes `clamp(count / itemsPerShard, 1, 2*GOMAXPROCS)` |
 | `HostMatchCondition(hosts)` | Builds a host-match ACL condition (in `util-ingress-helpers`) |
 | `BuildServerOptions(serverOpts)` | Renders server-line option flags (in `util-backend-servers-helpers`) |
-| `BackendServers(serviceName, slotBlock, port, opts, portName, backendName, namespace)` | Generates the full server pool with reserved slots (in `util-backend-servers`); `slotBlock` is the provisioning block size, `0` = chart default |
+| `Backend(spec)` | Emits one `backend` section from a record (in `util-backend`) |
+| `BackendServers(serviceName, slotBlock, port, opts, portName, backendName, namespace)` | Resolves a Service into the server records `Backend()` formats (in `util-backend-servers`); `slotBlock` is the provisioning block size, `0` = chart default |
 
 Usage:
 
 ```scriggo
+{%- import "util-backend" for Backend %}
 {%- import "util-backend-servers" for BackendServers %}
-{{ BackendServers(serviceName, 0, port, serverOpts, nil, backendKey, namespace) }}
+{{ Backend(map[string]any{
+     "name":    backendKey,
+     "guid":    make_guid("be", backendKey),
+     "body":    []any{"default-server check"},
+     "servers": BackendServers(serviceName, 0, port, serverOpts, nil, backendKey, namespace),
+   }) }}
 ```
+
+Emit every backend through `Backend()`. It builds the section text from the
+record it declares to the controller, which is how the controller knows what a
+config change actually changed. A `backend` section written by hand still
+renders, but the controller can only treat it as opaque text.
+
+`Backend()` accepts these keys, and fails the render on any other:
+
+| Key | Purpose |
+|-----|---------|
+| `name` | Backend name (required) |
+| `guid` | Value of the `guid` line |
+| `mode` | `mode` line — `http`, `tcp` or `spop`; omit to inherit `http` from `defaults` |
+| `balance`, `hashType` | `balance` and `hash-type` lines |
+| `body` | Directive lines that stay in this section |
+| `servers` | Server records: `name`, `address`, `port`, `weight`, `disabled`, `guid`, `comment` |
+| `defaultServer` | `default-server` keyword records (`name`, `args`) |
+| `comments` | Provenance lines emitted above the section header |
+
+A library that routes to something other than a Kubernetes Service passes its
+own `servers` list instead of calling `BackendServers()`.
 
 ### Backend server pool
 
-The `util-backend-servers` snippet generates server lines with:
+The `util-backend-servers` snippet resolves endpoints into server records with:
 
 - Pre-allocated server slots for dynamic scaling — sized to the ready endpoints plus headroom (`max(2, ceil(n/4))` spare, tunable via `extraContext.serverSlots.minFree`/`.increment`), kept while they still fit, grown by a block on the next reload when they fill, shrunk once mostly idle; no endpoint is ever left without a `server` line
 - Health check configuration
 - Support for per-server options (`maxconn`, SSL, etc.)
 
-The snippet holds only the `BackendServers` macro, so import it and call the macro — rendering the snippet emits nothing:
+The snippet holds only the `BackendServers` helper, so import it and call it — rendering the snippet emits nothing. It returns records, so pass the result to `Backend()` rather than showing it:
 
 ```scriggo
 {%- var service_name = "my-service" %}
 {%- var port = 8080 %}
+{%- import "util-backend" for Backend %}
 {%- import "util-backend-servers" for BackendServers %}
-{{ BackendServers(service_name, 0, port, serverOpts, nil, backendName, namespace) }}
+{{ Backend(map[string]any{
+     "name":    backendName,
+     "servers": BackendServers(service_name, 0, port, serverOpts, nil, backendName, namespace),
+   }) }}
 ```
 
 ### Error pages
