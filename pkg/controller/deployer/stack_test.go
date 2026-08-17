@@ -24,7 +24,7 @@ func TestNewDeployStack_WiresRuntimeBypassState(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	domainMetrics := metrics.NewMetrics(prometheus.NewRegistry())
 
-	stack := NewDeployStack(bus, &coreconfig.Config{}, logger, domainMetrics)
+	stack := NewDeployStack(bus, &coreconfig.Config{}, logger, domainMetrics, nil)
 
 	require.NotNil(t, stack.Deployer)
 	require.NotNil(t, stack.Scheduler)
@@ -43,7 +43,7 @@ func TestNewDeployStack_AppliesConfiguredIntervals(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &coreconfig.Config{}
-	stack := NewDeployStack(bus, cfg, logger, metrics.NewMetrics(prometheus.NewRegistry()))
+	stack := NewDeployStack(bus, cfg, logger, metrics.NewMetrics(prometheus.NewRegistry()), nil)
 
 	// Taking the whole config rather than positional durations is deliberate: a
 	// forgotten duration argument silently becomes 0, and a zero

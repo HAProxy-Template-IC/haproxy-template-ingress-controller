@@ -24,6 +24,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -81,6 +82,11 @@ type runtimeBypass struct {
 	// direct call rather than an event: the only subscriber was the metrics
 	// component, and it only incremented a counter (ADR-0001). Nil in tests.
 	recordFastPath func(serverUpdates int, failed bool)
+
+	// ackedPlans receives the plan of a complete runtime-raw apply. Without it
+	// the renderer's `currentConfig` would miss every server change this lane
+	// applies, since no structural deploy follows one. Nil in tests.
+	ackedPlans AckedPlanSink
 
 	configCache *configVersionCache
 
@@ -201,6 +207,7 @@ func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *schedule
 	current := b.commitLease(parentCtx, lease, func() {
 		if !push.partial && dep.lane == laneRuntimeRaw && successes.Load() > 0 {
 			b.publishDeployedConfig(dep)
+			b.recordFleetAck(dep.plan)
 		}
 	})
 	return current && !incomplete.Load()
@@ -366,7 +373,7 @@ func (b *runtimeBypass) publishConfigApplied(dep *scheduledDeployment, ep *datap
 		ep.PodRuntimeID,
 		dep.contentChecksum,
 		false, // an actual runtime apply, not a drift check
-		syncResultToMetadata(result),
+		syncResultToMetadata(result, dep.planID),
 	))
 }
 
@@ -388,6 +395,15 @@ func (b *runtimeBypass) publishDeployedConfig(dep *scheduledDeployment) {
 		dep.auxFiles,
 		dep.contentChecksum,
 	))
+}
+
+// recordFleetAck reports the plan this lane's apply landed, so the next render
+// reads the servers it just changed. No-op when the sink is nil (tests).
+func (b *runtimeBypass) recordFleetAck(plan *renderplan.Plan) {
+	if plan == nil || b.ackedPlans == nil {
+		return
+	}
+	b.ackedPlans.SetAckedPlan(plan)
 }
 
 // publishResult records the fire-vs-apply distinction. No-op when the recorder

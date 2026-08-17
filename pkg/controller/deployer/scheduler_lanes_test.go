@@ -187,7 +187,7 @@ func TestSchedulerLanes_SameURLReplacementForcesStructural(t *testing.T) {
 	s.lastDispatchedPodSetHash = computePodSetHash([]dataplane.Endpoint{oldEndpoint})
 	s.schedulerMutex.Unlock()
 	s.scheduleOrQueue(t.Context(), "config", nil, baseline, []dataplane.Endpoint{replacement},
-		"pod_discovery", "replacement", nil, true, "checksum")
+		"pod_discovery", "replacement", nil, true, "checksum", nil, "")
 
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
@@ -210,7 +210,7 @@ func TestSchedulerLanes_Case1_RuntimeEligibleIdle_AppliesRuntimeRawNow(t *testin
 	s.schedulerMutex.Unlock()
 
 	s.scheduleOrQueue(context.Background(), "runtime-config", nil, runtime, oneEndpoint(),
-		"endpoint-change", "corr-1", nil, true, "")
+		"endpoint-change", "corr-1", nil, true, "", nil, "")
 
 	// The runtime-raw apply fires inline; NO DeploymentScheduledEvent is published.
 	select {
@@ -288,7 +288,7 @@ func TestSchedulerLanes_Case2_RuntimeSubsetAppliesDuringInFlightStructural(t *te
 	// Dispatch a structural render first. Cold start (nil baseline) → structural,
 	// which the loop publishes and marks in-flight (loop parks in awaitCompletion).
 	s.scheduleOrQueue(context.Background(), "structural-config", nil, structural, oneEndpoint(),
-		"structural-change", "corr-structural", nil, true, "")
+		"structural-change", "corr-structural", nil, true, "", nil, "")
 	sd := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	assert.Equal(t, "structural-config", sd.Config, "the structural deploy is published first")
 
@@ -305,7 +305,7 @@ func TestSchedulerLanes_Case2_RuntimeSubsetAppliesDuringInFlightStructural(t *te
 
 	start := time.Now()
 	s.scheduleOrQueue(context.Background(), "runtime-config", nil, structuralPlusAddr, oneEndpoint(),
-		"endpoint-change", "corr-runtime", nil, true, "")
+		"endpoint-change", "corr-runtime", nil, true, "", nil, "")
 
 	// The runtime subset must apply within ms WHILE the structural deploy is still
 	// in flight — BEFORE we signal its completion below. (Without the fix, nothing
@@ -363,7 +363,7 @@ func TestSchedulerLanes_Case3_RuntimeRawIgnoresInterval(t *testing.T) {
 
 	start := time.Now()
 	s.scheduleOrQueue(context.Background(), "runtime-config", nil, runtime, oneEndpoint(),
-		"endpoint-change", "corr-3", nil, true, "")
+		"endpoint-change", "corr-3", nil, true, "", nil, "")
 
 	select {
 	case <-applied:
@@ -384,7 +384,7 @@ func TestSchedulerLanes_Case4_StructuralIdle_DeploysNow(t *testing.T) {
 
 	// Cold start (nil baseline) → structural; idle, interval elapsed.
 	s.scheduleOrQueue(context.Background(), "structural-config", nil, structural, oneEndpoint(),
-		"structural-change", "corr-4", nil, true, "")
+		"structural-change", "corr-4", nil, true, "", nil, "")
 
 	sd := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	assert.Equal(t, "structural-config", sd.Config)
@@ -408,7 +408,7 @@ func TestSchedulerLanes_Case5_StructuralEnqueuedLatestWins(t *testing.T) {
 	// First structural deploy: cold start → publishes immediately (lastDeployment
 	// EndTime is zero, so no interval wait), marks in-flight.
 	s.scheduleOrQueue(context.Background(), "structural-1", nil, structural, oneEndpoint(),
-		"structural-1", "corr-5a", nil, true, "")
+		"structural-1", "corr-5a", nil, true, "", nil, "")
 	sd1 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	assert.Equal(t, "structural-1", sd1.Config)
 
@@ -426,9 +426,9 @@ func TestSchedulerLanes_Case5_StructuralEnqueuedLatestWins(t *testing.T) {
 	structuralB := parseLaneConfig(t, fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")+laneStructuralExtra+extraBackend("api3"))
 	structuralC := parseLaneConfig(t, fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")+laneStructuralExtra+extraBackend("api4"))
 	s.scheduleOrQueue(context.Background(), "structural-2", nil, structuralB, oneEndpoint(),
-		"structural-2", "corr-5b", nil, true, "")
+		"structural-2", "corr-5b", nil, true, "", nil, "")
 	s.scheduleOrQueue(context.Background(), "structural-3", nil, structuralC, oneEndpoint(),
-		"structural-3", "corr-5c", nil, true, "")
+		"structural-3", "corr-5c", nil, true, "", nil, "")
 
 	s.schedulerMutex.Lock()
 	require.NotNil(t, s.state.pending, "a structural deploy must be enqueued")
@@ -484,7 +484,7 @@ func TestSchedulerLanes_Case6_StructuralWithRuntimeSubset_AppliesPreInterval(t *
 
 	start := time.Now()
 	s.scheduleOrQueue(context.Background(), "mixed-config", nil, mixed, oneEndpoint(),
-		"endpoint-change+churn", "corr-6", nil, true, "")
+		"endpoint-change+churn", "corr-6", nil, true, "", nil, "")
 
 	// The runtime-eligible subset must apply within ms, IGNORING the 5s interval
 	// that still gates the structural reload.
@@ -535,7 +535,7 @@ func TestSchedulerLanes_Case7_MidIntervalRuntimeChange_AppliesResponsively(t *te
 	// First structural+runtime render → the loop enters the interval wait and
 	// applies its runtime subset up front.
 	s.scheduleOrQueue(context.Background(), "render1", nil, render1, oneEndpoint(),
-		"r1", "corr-7a", nil, true, "")
+		"r1", "corr-7a", nil, true, "", nil, "")
 	select {
 	case <-applied:
 	case <-time.After(2 * time.Second):
@@ -547,7 +547,7 @@ func TestSchedulerLanes_Case7_MidIntervalRuntimeChange_AppliesResponsively(t *te
 	// wait out the remaining interval.
 	start := time.Now()
 	s.scheduleOrQueue(context.Background(), "render2", nil, render2, oneEndpoint(),
-		"r2", "corr-7b", nil, true, "")
+		"r2", "corr-7b", nil, true, "", nil, "")
 	select {
 	case <-applied:
 		assert.Less(t, time.Since(start), time.Second,
@@ -600,7 +600,7 @@ func TestSchedulerLanes_Case8_StructuralWaitZero_AppliesRuntimeSubset(t *testing
 
 	start := time.Now()
 	s.scheduleOrQueue(context.Background(), "mixed-config", nil, mixed, oneEndpoint(),
-		"endpoint-change+churn", "corr-8", nil, true, "")
+		"endpoint-change+churn", "corr-8", nil, true, "", nil, "")
 
 	// The runtime-eligible subset must apply within ms even though no interval
 	// gates the deploy — proving the apply is no longer trapped behind the
@@ -649,7 +649,7 @@ func TestSchedulerLanes_Case9_CompletionAndPendingRace(t *testing.T) {
 	// Dispatch a structural render; the loop marks it in-flight and parks in
 	// awaitCompletion.
 	s.scheduleOrQueue(context.Background(), "structural-config", nil, structural, oneEndpoint(),
-		"structural-change", "corr-structural", nil, true, "")
+		"structural-change", "corr-structural", nil, true, "", nil, "")
 	testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	s.schedulerMutex.Lock()
 	require.True(t, s.state.deployInFlight, "the structural deploy must be in flight")
@@ -674,7 +674,7 @@ func TestSchedulerLanes_Case9_CompletionAndPendingRace(t *testing.T) {
 		defer wg.Done()
 		<-startGate
 		s.scheduleOrQueue(context.Background(), "runtime-config", nil, runtimeRender, oneEndpoint(),
-			"endpoint-change", "corr-runtime", nil, true, "")
+			"endpoint-change", "corr-runtime", nil, true, "", nil, "")
 	}()
 	close(startGate)
 	wg.Wait()
@@ -734,7 +734,7 @@ func TestSchedulerLanes_Case10_RuntimeRawDuringStructuralInterval_AppliesImmedia
 	structuralPlus := parseLaneConfig(t, fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")+laneStructuralExtra+
 		"\nbackend api3\n  default-server check\n  server SRV_1 10.9.9.9:8080 enabled\n")
 	s.scheduleOrQueue(context.Background(), "structural-2", nil, structuralPlus, oneEndpoint(),
-		"structural-2", "corr-10a", nil, true, "")
+		"structural-2", "corr-10a", nil, true, "", nil, "")
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 200*time.Millisecond)
 	s.schedulerMutex.Lock()
 	require.NotNil(t, s.state.pending, "the structural render is pending")
@@ -751,7 +751,7 @@ func TestSchedulerLanes_Case10_RuntimeRawDuringStructuralInterval_AppliesImmedia
 
 	start := time.Now()
 	s.scheduleOrQueue(context.Background(), "runtime-config", nil, runtimeRender, oneEndpoint(),
-		"endpoint-change", "corr-10b", nil, true, "")
+		"endpoint-change", "corr-10b", nil, true, "", nil, "")
 	s.schedulerMutex.Lock()
 	require.Equal(t, laneRuntimeRaw, s.state.pending.lane, "the new-pod render is runtime-raw")
 	s.schedulerMutex.Unlock()

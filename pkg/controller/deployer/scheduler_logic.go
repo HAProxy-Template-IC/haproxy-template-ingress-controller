@@ -21,6 +21,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -47,6 +48,8 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 	statusPatches []templating.StatusPatch,
 	coalescible bool,
 	contentChecksum string,
+	plan *renderplan.Plan,
+	planID string,
 ) {
 	s.schedulerMutex.Lock()
 	if contextCancelled(ctx) {
@@ -62,6 +65,8 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 		config:          config,
 		auxFiles:        auxFiles,
 		parsedConfig:    parsedConfig,
+		plan:            plan,
+		planID:          planID,
 		endpoints:       endpoints,
 		reason:          reason,
 		correlationID:   correlationID,
@@ -591,7 +596,7 @@ func (s *DeploymentScheduler) resolveRuntimeConfigName() (name, namespace string
 func (s *DeploymentScheduler) newScheduledEvent(dep *scheduledDeployment) *events.DeploymentScheduledEvent {
 	runtimeConfigName, runtimeConfigNamespace := s.resolveRuntimeConfigName()
 	return events.NewDeploymentScheduledEvent(
-		dep.config, dep.auxFiles, dep.parsedConfig, dep.endpoints, runtimeConfigName, runtimeConfigNamespace, dep.reason, dep.contentChecksum, dep.statusPatches, dep.coalescible,
+		dep.config, dep.auxFiles, dep.parsedConfig, dep.endpoints, runtimeConfigName, runtimeConfigNamespace, dep.reason, dep.contentChecksum, dep.plan, dep.planID, dep.statusPatches, dep.coalescible,
 		events.WithCorrelation(dep.correlationID, dep.correlationID),
 	)
 }

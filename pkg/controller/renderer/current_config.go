@@ -19,15 +19,30 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
-// rememberPlan keeps the newest reconcile plan so the next render can read its
-// servers as `currentConfig`. Admission renders are proposals and must not
-// displace the state the fleet was last rendered from.
+// SetAckedPlan records the plan the fleet confirmed it is running. Pods that
+// disagree resolve to the newest ACK, which is what this call carries.
+func (s *RenderService) SetAckedPlan(plan *renderplan.Plan) {
+	if plan == nil {
+		return
+	}
+	s.planMu.Lock()
+	defer s.planMu.Unlock()
+	s.ackedPlan = plan
+}
+
+// rememberPlan keeps the newest reconcile plan as the fresh-install fallback:
+// until the fleet ACKs a plan, the last render is the only description of what
+// the pods were asked to run. Admission renders are proposals and must not
+// displace it.
 func (s *RenderService) rememberPlan(mode rendercontext.RenderMode, plan *renderplan.Plan) {
 	if mode != rendercontext.RenderModeReconcile || plan == nil {
 		return
 	}
 	s.planMu.Lock()
 	defer s.planMu.Unlock()
+	if s.ackedPlan != nil {
+		return
+	}
 	s.lastPlan = plan
 }
 
@@ -43,7 +58,10 @@ func (s *RenderService) currentConfig() *renderplan.CurrentConfig {
 	}
 
 	s.planMu.Lock()
-	plan := s.lastPlan
+	plan := s.ackedPlan
+	if plan == nil {
+		plan = s.lastPlan
+	}
 	s.planMu.Unlock()
 	if plan == nil {
 		return fromStore

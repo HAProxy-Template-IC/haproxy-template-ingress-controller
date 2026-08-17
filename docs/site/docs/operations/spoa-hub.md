@@ -43,7 +43,7 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 | `fingerprinting`  | `v0.3.0`   |
 | `maxmind`         | `v0.4.0`          |
 | `mirror`          | `v0.6.0`           |
-| `rate-limit`      | `v0.4.0`       |
+| `rate-limit`      | `v0.4.1`       |
 | `sso-auth`        | `v0.3.0`         |
 
 Plugin `.so` files target glibc `2.36` (Debian bookworm).

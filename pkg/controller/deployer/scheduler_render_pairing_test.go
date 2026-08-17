@@ -54,7 +54,7 @@ func renderedEvent(config string) *events.TemplateRenderedEvent {
 		1,   // durationMs
 		"",  // triggerReason
 		"checksum-"+config,
-		true, // coalescible
+		nil, "", true, // coalescible
 	)
 }
 

@@ -85,6 +85,8 @@ func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
 			"haptic",
 			"test",
 			"",   // contentChecksum
+			nil,  // plan
+			"",   // planID
 			nil,  // statusPatches
 			true, // coalescible
 			events.WithCorrelation(id, id),
@@ -147,7 +149,7 @@ func TestStart_FlushesStaleEventsFromPreviousTerm(t *testing.T) {
 	// A "previous term" event, buffered before Start.
 	stale := events.NewDeploymentScheduledEvent(
 		"global\n  daemon\n", nil, nil, []dataplane.Endpoint{},
-		"runtime-config", "haptic", "test", "", nil, true,
+		"runtime-config", "haptic", "test", "", nil, "", nil, true,
 		events.WithCorrelation("stale-prev-term", "stale-prev-term"),
 	)
 	bus.Publish(stale)
@@ -167,7 +169,7 @@ func TestStart_FlushesStaleEventsFromPreviousTerm(t *testing.T) {
 	// A current-term event still deploys.
 	fresh := events.NewDeploymentScheduledEvent(
 		"global\n  daemon\n", nil, nil, []dataplane.Endpoint{},
-		"runtime-config", "haptic", "test", "", nil, true,
+		"runtime-config", "haptic", "test", "", nil, "", nil, true,
 		events.WithCorrelation("fresh-current-term", "fresh-current-term"),
 	)
 	bus.Publish(fresh)

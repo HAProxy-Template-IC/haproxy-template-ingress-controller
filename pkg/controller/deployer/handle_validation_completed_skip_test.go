@@ -286,7 +286,7 @@ func TestHandleTemplateRendered_CachesStatusPatches(t *testing.T) {
 		"haproxy config",
 		&dataplane.AuxiliaryFiles{},
 		patches,
-		nil, 0, 50, "test", "checksum", true,
+		nil, 0, 50, "test", "checksum", nil, "", true,
 	)
 
 	scheduler.handleTemplateRendered(event)

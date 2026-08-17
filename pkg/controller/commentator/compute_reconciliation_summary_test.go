@@ -200,7 +200,7 @@ func TestComputeReconciliationSummary_QueueWaitsClampToNonNegative(t *testing.T)
 	// Render event timestamped IMMEDIATELY after trigger, but with a
 	// reported RenderMs much larger than wall-clock elapsed. The clamp
 	// must keep TriggerToRenderQueueMs >= 0.
-	render := ctlevents.NewTemplateRenderedEvent("", nil, nil, nil, 0, 100 /*duration ms*/, "test", "checksum", true, corr)
+	render := ctlevents.NewTemplateRenderedEvent("", nil, nil, nil, 0, 100 /*duration ms*/, "test", "checksum", nil, "", true, corr)
 
 	ec := fakeRB(trigger, render)
 	dep := depCompleted(t, corr, 50, 1, 1, 0, 0)
@@ -226,7 +226,7 @@ func TestComputeReconciliationSummary_AllPhaseEventsPopulateMs(t *testing.T) {
 	corrID := trigger.CorrelationID()
 	corr := ctlevents.WithCorrelation(corrID, trigger.EventID())
 
-	render := ctlevents.NewTemplateRenderedEvent("", nil, nil, nil, 0, 25, "config_change", "csum", true, corr)
+	render := ctlevents.NewTemplateRenderedEvent("", nil, nil, nil, 0, 25, "config_change", "csum", nil, "", true, corr)
 	validate := ctlevents.NewValidationCompletedEvent(nil, 30, "config_change", nil, true, corr)
 
 	// Pause generously so the deployment timestamp is reliably later

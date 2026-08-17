@@ -33,6 +33,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -121,6 +122,8 @@ type scheduledDeployment struct {
 	config          string
 	auxFiles        *dataplane.AuxiliaryFiles
 	parsedConfig    *parser.StructuredConfig
+	plan            *renderplan.Plan // Structure of THIS deployment's render — captured with `config`, same rule as contentChecksum
+	planID          string
 	endpoints       []dataplane.Endpoint
 	reason          string
 	correlationID   string                          // Correlation ID for event tracing
@@ -168,10 +171,14 @@ type DeploymentScheduler struct {
 	lastAuxiliaryFiles           *dataplane.AuxiliaryFiles // Last rendered auxiliary files
 	lastContentChecksum          string                    // Pre-computed content checksum from pipeline
 	lastRenderedEventID          string                    // EventID of the render that wrote the four fields above — see handleValidationCompleted
+	lastRenderedPlan             *renderplan.Plan          // Plan of the last rendered config
+	lastRenderedPlanID           string                    // Digest of lastRenderedPlan
 	lastValidatedStatusPatches   []templating.StatusPatch  // Patches from the last successful render — forwarded to deploy events for StatusApplier
 	lastValidatedConfig          string                    // Last validated HAProxy config
 	lastValidatedAux             *dataplane.AuxiliaryFiles // Last validated auxiliary files
 	lastValidatedContentChecksum string                    // Hash captured WITH lastValidatedConfig — must travel together, never reconstructed
+	lastValidatedPlan            *renderplan.Plan          // Plan captured WITH lastValidatedConfig
+	lastValidatedPlanID          string                    // Digest of lastValidatedPlan
 	lastParsedConfig             *parser.StructuredConfig  // Pre-parsed desired config
 	lastCorrelationID            string                    // Correlation ID from last validation event
 	lastCoalescible              bool                      // Coalescibility flag from last validation event

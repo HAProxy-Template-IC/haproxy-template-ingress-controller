@@ -21,6 +21,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -111,6 +112,43 @@ func TestCoordinator_HandleReconciliationTriggered_NonPipelineErrorDefaultsToRen
 			"that flipped this to 'validation' or empty would mis-attribute "+
 			"the failure in every downstream consumer that filters by phase")
 	assert.Contains(t, failed.Error, "unexpected non-pipeline crash")
+}
+
+func TestCoordinator_HandlePipelineSuccess_PublishesTheRenderPlan(t *testing.T) {
+	// The deployer diffs the plan against what each pod applied, so a render
+	// whose plan is dropped here degrades every deploy to a full push.
+	plan := &renderplan.Plan{ID: "plan-abc"}
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	mp := &mockPipeline{
+		result: &pipeline.PipelineResult{
+			HAProxyConfig:  "cfg",
+			AuxiliaryFiles: &dataplane.AuxiliaryFiles{},
+			Plan:           plan,
+			PlanID:         plan.ID,
+		},
+	}
+
+	c := NewCoordinator(&CoordinatorConfig{
+		EventBus:      bus,
+		Pipeline:      mp,
+		StoreProvider: stores.NewRealStoreProvider(nil),
+		Logger:        logger,
+	})
+
+	eventChan := bus.Subscribe("test-plan", 100)
+	bus.Start()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() { _ = c.Start(ctx) }()
+	time.Sleep(testutil.StartupDelay)
+
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
+
+	rendered := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Same(t, plan, rendered.Plan)
+	assert.Equal(t, "plan-abc", rendered.PlanID)
 }
 
 func TestCoordinator_HandlePipelineSuccess_PropagatesCoalescibleFlagToBothEvents(t *testing.T) {

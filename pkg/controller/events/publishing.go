@@ -86,6 +86,20 @@ type SyncMetadata struct {
 	// OperationCounts provides a breakdown of operations performed.
 	OperationCounts OperationCounts
 
+	// AppliedPlanID is the render plan the pod accepted in this sync.
+	AppliedPlanID string
+
+	// RunningPlanID is the render plan the pod's running HAProxy serves after
+	// this sync. It trails AppliedPlanID while a reload is still pending.
+	RunningPlanID string
+
+	// Mode is how the plan was applied: runtime, file_only, reload, scheduled,
+	// noop or rejected. Empty until the agent reports it.
+	Mode string
+
+	// Reasons explain Mode, most significant first.
+	Reasons []string
+
 	// Error contains the error message if sync failed.
 	// Empty string indicates success.
 	Error string

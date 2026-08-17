@@ -132,6 +132,19 @@ type DeploymentStatusUpdate struct {
 	// Checksum is the checksum of the configuration deployed to the pod.
 	Checksum string
 
+	// AppliedPlanID is the render plan the pod accepted.
+	AppliedPlanID string
+
+	// RunningPlanID is the render plan the pod's running HAProxy serves.
+	RunningPlanID string
+
+	// Mode is how the plan was applied.
+	Mode string
+
+	// Reasons explain Mode, most significant first. Written truncated to
+	// maxPodStatusReasons.
+	Reasons []string
+
 	// Error contains the error message if sync failed.
 	// Empty string indicates success.
 	Error string

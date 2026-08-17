@@ -27,6 +27,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -78,6 +79,13 @@ type PipelineResult struct {
 
 	// AuxiliaryFiles contains all rendered auxiliary files.
 	AuxiliaryFiles *dataplane.AuxiliaryFiles
+
+	// Plan is the structure this render declared: its sections, backends, map
+	// entries and file set. Nil when the renderer produced none.
+	Plan *renderplan.Plan
+
+	// PlanID is the digest identifying Plan.
+	PlanID string
 
 	// StatusPatches contains status patches registered by templates during rendering.
 	// Each patch targets a Kubernetes resource and contains outcome-keyed variants.
@@ -281,6 +289,8 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 	result := &PipelineResult{
 		HAProxyConfig:      renderResult.HAProxyConfig,
 		AuxiliaryFiles:     renderResult.AuxiliaryFiles,
+		Plan:               renderResult.Plan,
+		PlanID:             renderResult.PlanID,
 		StatusPatches:      renderResult.StatusPatches,
 		Events:             renderResult.Events,
 		RenderedResources:  renderResult.RenderedResources,
