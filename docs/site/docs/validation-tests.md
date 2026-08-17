@@ -159,7 +159,8 @@ Each test consists of:
 | **HTTP fixtures** (`httpResources`) | Optional — mocked responses for `http.Fetch()` URLs (see [HTTP Fixtures](#http-fixtures)) |
 | **Min HAProxy version** (`minHAProxyVersion`) | Optional — skip the test unless the HAProxy version under test is at least this (for version-gated features) |
 | **Extra context** (`extraContext`) | Optional — per-test values deep-merged into the global `templatingSettings.extraContext`: nested maps merge key by key with per-test leaves winning, so overriding one key keeps its siblings. Pin every value your assertions depend on — a sibling you leave unset keeps its deployment-configured value. To pin an exact key set instead of merging, give the nested map `__replace__: true`: it replaces the deployment's map at that key wholesale, and the sentinel is stripped from the result |
-| **Current config** (`currentConfig`) | Optional — an existing `haproxy.cfg` the render treats as the current config, exercising slot-preservation / reload-vs-runtime logic |
+| **Current servers** (`currentServers`) | Optional — the servers a previous deployment had, keyed by backend and server name, exposed to templates as `currentConfig.ServerIndex`; use it to exercise slot-preservation logic (see [Current servers](#current-servers)) |
+| **Current config** (`currentConfig`) | Deprecated — a raw `haproxy.cfg` the runner parses down to the same server index. Use `currentServers` |
 | **Current files** (`currentFiles`) | Optional — filename → content of the general files already deployed, exposed to templates as `currentFiles`; use it for templates that read their own prior output, such as self-rotating TLS session-ticket keys |
 | **Requires** (`requires` / `requiresFields`) | Optional — strip the test when a watched resource or schema field is unavailable (see [Conditional Tests](#conditional-tests-requires-and-requiresfields)) |
 
@@ -211,6 +212,21 @@ httpResources:
 ```
 
 Templates calling `http.Fetch()` for unmocked URLs fail with an error. Define shared HTTP fixtures in the `_global` test to make them available to all tests.
+
+### Current servers
+
+`currentServers` gives the render a previous deployment to reason about, keyed by backend name and then by server name. Templates read it as `currentConfig.ServerIndex`, so it's what you use to test that a rolling deployment keeps existing pods in their server slots:
+
+```yaml
+currentServers:
+  default_api_svc_api_80:
+    SRV_1: {address: 192.0.2.1, port: 1}
+    SRV_2: {address: 10.0.0.1, port: 8080}
+```
+
+Without `currentServers`, `currentConfig` is nil — the first-deployment case.
+
+The older `currentConfig` field takes a raw `haproxy.cfg` instead and parses it down to the same server index. It's deprecated: the parse reads far more of the file than templates can see, and a later release removes it. Setting both fields fails the test.
 
 ### Fixture keys
 

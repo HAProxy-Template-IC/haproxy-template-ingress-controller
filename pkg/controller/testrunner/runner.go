@@ -37,13 +37,15 @@ import (
 	"sync"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -347,62 +349,16 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 		Assertions:  make([]AssertionResult, 0),
 	}
 
-	// 1. Merge global fixtures with test-specific fixtures
-	fixtures := test.Fixtures
-	httpFixtures := test.HTTPFixtures
-	// _global also contributes a shared extraContext baseline: the isolated,
-	// synthetic values every test renders against (e.g. a default SSL cert
-	// decoupled from the operator's real defaultSSLCertificate.*). Per-test
-	// extraContext overrides this baseline, and mergeTestExtraContext later
-	// folds the result over the deployment's production extraContext — so what
-	// a synthetic test resolves is the _global pin, never the operator's real
-	// secret names. Without this, a custom default-cert name leaks into every
-	// test and fails the fixture-store lookup (crash-looping the load gate).
-	effectiveExtraContext := foldGlobalExtraContext(r.config, test.ExtraContext)
-
-	// Check for global fixtures in validationTests._global
-	if globalTest, hasGlobal := r.config.ValidationTests["_global"]; hasGlobal {
-		r.logger.Log(context.Background(), logging.LevelTrace, "Merging global fixtures with test fixtures",
-			"test", testName,
-			"global_fixture_types", len(globalTest.Fixtures),
-			"test_fixture_types", len(test.Fixtures),
-			"global_http_fixtures", len(globalTest.HTTPFixtures),
-			"test_http_fixtures", len(test.HTTPFixtures))
-
-		fixtures = MergeFixtures(globalTest.Fixtures, test.Fixtures)
-		httpFixtures = MergeHTTPFixtures(globalTest.HTTPFixtures, test.HTTPFixtures)
-
-		r.logger.Log(context.Background(), logging.LevelTrace, "Fixture merge completed",
-			"test", testName,
-			"merged_fixture_types", len(fixtures),
-			"merged_http_fixtures", len(httpFixtures))
-	}
-
-	// 2. Create resource stores from merged fixtures
-	fixtureStores, err := r.CreateStoresFromFixtures(fixtures)
-	if err != nil {
+	// 1.-4. Fixture stores, HTTP fixtures and the previously-deployed servers
+	inputs, inputErr := r.renderInputs(testName, test)
+	if inputErr != "" {
 		result.Passed = false
-		result.RenderError = fmt.Sprintf("creating fixture stores: %v", err)
+		result.RenderError = inputErr
 		result.Duration = time.Since(startTime)
 		return result, false
 	}
-
-	// 3. Create HTTP store from HTTP fixtures
-	// Always create the wrapper so that http.Fetch() fails gracefully when a fixture is missing
-	store := CreateHTTPStoreFromFixtures(httpFixtures, r.logger)
-	httpStore := NewFixtureHTTPStoreWrapper(store, r.logger)
-	r.logger.Log(context.Background(), logging.LevelTrace, "Created HTTP fixture store",
-		"test", testName,
-		"fixture_count", len(httpFixtures))
-
-	// 4. Parse current config if provided (for slot-aware server assignment testing)
-	currentConfig, parseErr := r.parseCurrentConfig(testName, test.CurrentConfig)
-	if parseErr != "" {
-		result.Passed = false
-		result.RenderError = parseErr
-		result.Duration = time.Since(startTime)
-		return result, false
-	}
+	fixtureStores, httpStore := inputs.Stores, inputs.HTTPStore
+	currentConfig, effectiveExtraContext := inputs.CurrentConfig, inputs.ExtraContext
 
 	// 5. Render HAProxy configuration and auxiliary files (using worker-specific engine)
 	rendered, err := r.renderWithStores(ctx, engine, fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles, effectiveExtraContext)
@@ -480,27 +436,121 @@ func isResourceInputError(err error) bool {
 	return errors.As(err, &resourceInputErr)
 }
 
-// parseCurrentConfig parses the optional `currentConfig` block from a test
-// definition. Returns the parsed config (or nil if the test didn't supply
-// one) and a non-empty error message string when parsing failed; the message
-// is intended to land directly in TestResult.RenderError so the caller can
-// stop with a uniform short-circuit shape.
-func (r *Runner) parseCurrentConfig(testName, raw string) (cfg *parserconfig.StructuredConfig, errMsg string) {
-	if raw == "" {
+// renderInput bundles everything a test's render reads besides the templates.
+type renderInput struct {
+	Stores        map[string]stores.Store
+	HTTPStore     *FixtureHTTPStoreWrapper
+	CurrentConfig *renderplan.CurrentConfig
+	ExtraContext  map[string]any
+}
+
+// renderInputs assembles a test's render inputs: the _global-merged fixture
+// stores and HTTP fixtures, the previously-deployed servers, and the
+// extraContext baseline. Returns a non-empty message when an input is
+// unusable — the message lands in TestResult.RenderError.
+//
+// _global contributes a shared extraContext baseline: the isolated, synthetic
+// values every test renders against (e.g. a default SSL cert decoupled from
+// the operator's real defaultSSLCertificate.*). Per-test extraContext overrides
+// this baseline, and mergeTestExtraContext later folds the result over the
+// deployment's production extraContext — so what a synthetic test resolves is
+// the _global pin, never the operator's real secret names. Without this, a
+// custom default-cert name leaks into every test and fails the fixture-store
+// lookup (crash-looping the load gate).
+func (r *Runner) renderInputs(testName string, test *config.ValidationTest) (inputs renderInput, failure string) {
+	fixtures := test.Fixtures
+	httpFixtures := test.HTTPFixtures
+	if globalTest, hasGlobal := r.config.ValidationTests["_global"]; hasGlobal {
+		fixtures = MergeFixtures(globalTest.Fixtures, test.Fixtures)
+		httpFixtures = MergeHTTPFixtures(globalTest.HTTPFixtures, test.HTTPFixtures)
+	}
+
+	fixtureStores, err := r.CreateStoresFromFixtures(fixtures)
+	if err != nil {
+		return renderInput{}, fmt.Sprintf("creating fixture stores: %v", err)
+	}
+
+	// The wrapper is always created so http.Fetch() fails gracefully when a
+	// fixture is missing.
+	httpStore := NewFixtureHTTPStoreWrapper(CreateHTTPStoreFromFixtures(httpFixtures, r.logger), r.logger)
+
+	currentConfig, parseErr := r.currentServers(testName, test)
+	if parseErr != "" {
+		return renderInput{}, parseErr
+	}
+
+	r.logger.Log(context.Background(), logging.LevelTrace, "Assembled render inputs",
+		"test", testName,
+		"fixture_types", len(fixtures),
+		"http_fixtures", len(httpFixtures))
+
+	return renderInput{
+		Stores:        fixtureStores,
+		HTTPStore:     httpStore,
+		CurrentConfig: currentConfig,
+		ExtraContext:  foldGlobalExtraContext(r.config, test.ExtraContext),
+	}, ""
+}
+
+// Render renders one validation test and returns everything the render
+// produced — including the plan the templates declared — without executing the
+// test's assertions. It renders into the runner's base validation paths, which
+// nothing writes to while no assertion runs.
+func (r *Runner) Render(ctx context.Context, testName string) (RenderOutput, error) {
+	test, found := r.config.ValidationTests[testName]
+	if !found {
+		return RenderOutput{}, fmt.Errorf("test %q not found", testName)
+	}
+	inputs, inputErr := r.renderInputs(testName, &test)
+	if inputErr != "" {
+		return RenderOutput{}, errors.New(inputErr)
+	}
+	return r.renderWithStores(ctx, r.engineTemplate, inputs.Stores, r.validationPaths,
+		inputs.HTTPStore, inputs.CurrentConfig, test.CurrentFiles, inputs.ExtraContext)
+}
+
+// currentServers resolves what a test declares about the previous deployment
+// into the shape templates read as `currentConfig`. The structured
+// `currentServers` fixture is taken as-is; the deprecated `currentConfig` text
+// still goes through the HAProxy config parser. Returns nil when the test
+// declares neither, and a non-empty error message when the declaration is
+// unusable — the message lands in TestResult.RenderError.
+func (r *Runner) currentServers(testName string, test *config.ValidationTest) (current *renderplan.CurrentConfig, failure string) {
+	if len(test.CurrentServers) > 0 {
+		if test.CurrentConfig != "" {
+			return nil, fmt.Sprintf("test %q sets both currentServers and the deprecated currentConfig; keep currentServers", testName)
+		}
+		return currentConfigFromFixture(test.CurrentServers), ""
+	}
+	if test.CurrentConfig == "" {
 		return nil, ""
 	}
 	p, err := parser.New()
 	if err != nil {
 		return nil, fmt.Sprintf("creating parser for currentConfig: %v", err)
 	}
-	cfg, err = p.ParseFromString(raw)
+	parsed, err := p.ParseFromString(test.CurrentConfig)
 	if err != nil {
 		return nil, fmt.Sprintf("parsing currentConfig: %v", err)
 	}
 	r.logger.Log(context.Background(), logging.LevelTrace, "Parsed currentConfig for test",
 		"test", testName,
-		"backends", len(cfg.Backends))
-	return cfg, ""
+		"backends", len(parsed.Backends))
+	return currentconfigstore.CurrentConfigFrom(parsed), ""
+}
+
+// currentConfigFromFixture projects the `currentServers` fixture into the
+// template-facing shape.
+func currentConfigFromFixture(fixture map[string]map[string]config.ServerAddr) *renderplan.CurrentConfig {
+	index := make(map[string]map[string]renderplan.ServerAddr, len(fixture))
+	for backend, servers := range fixture {
+		addresses := make(map[string]renderplan.ServerAddr, len(servers))
+		for name := range servers {
+			addresses[name] = renderplan.ServerAddr{Address: servers[name].Address, Port: servers[name].Port}
+		}
+		index[backend] = addresses
+	}
+	return &renderplan.CurrentConfig{ServerIndex: index}
 }
 
 // storeAuxiliaryFiles stores rendered auxiliary files in the test result for --dump-rendered flag.

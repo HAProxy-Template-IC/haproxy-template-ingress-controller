@@ -416,8 +416,8 @@ func TestTemplateValidator_CurrentConfigDeclaration(t *testing.T) {
 	cfg := &coreconfig.Config{
 		HAProxyConfig: coreconfig.HAProxyConfig{
 			Template: `{%- if !isNil(currentConfig) %}
-{%- for _, backend := range currentConfig.Backends %}
-# Backend: {{ backend.Name }}
+{%- for backendName, _ := range currentConfig.ServerIndex %}
+# Backend: {{ backendName }}
 {%- end %}
 {%- end %}
 valid config`,

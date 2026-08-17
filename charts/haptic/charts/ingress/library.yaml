@@ -382,6 +382,7 @@ templateSnippets:
 
   util-generate-backends-ingress:
     template: |
+      {%- import "util-backend" for Backend, AppendLines -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
@@ -400,16 +401,23 @@ templateSnippets:
                 {%- var portId = portName -%}
                 {%- if portId == "" -%}{%- portId = tostring(port) -%}{%- end -%}
                 {%- if first_seen("ingress_backend", ns, name, svcName, portId) -%}
-      # Backend for: Ingress {{ ns }}/{{ name }} → Service {{ svcName }}:{{ port }}
-                  {%- var backendKey = BackendNameIngress(ingress, path) %}
-      backend {{ backendKey }}
-          guid {{ make_guid("be", backendKey) }}
-          http-request set-var(txn.namespace) str({{ ns }})
-          http-request set-var(txn.service) str({{ svcName }})
+                  {%- var backendKey = BackendNameIngress(ingress, path) -%}
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
-                  {{- render_glob "backend-directives-*" inherit_context | indent(2, true) }}
-        default-server {{ serverOpts | dig("checkDirective") | fallback("check") | tostring() }}{{ BuildServerOptions(serverOpts) }}
-        {{ BackendServers(svcName, 0, port, serverOpts, portName, backendKey, ns) | indent(2, true) }}
+                  {%- var body = []any{
+                        "http-request set-var(txn.namespace) str(" + ns + ")",
+                        "http-request set-var(txn.service) str(" + svcName + ")",
+                      } -%}
+                  {%- body = AppendLines(body, render_glob "backend-directives-*" inherit_context) -%}
+                  {%- body = append(body, "default-server " +
+                        tostring(serverOpts | dig("checkDirective") | fallback("check")) +
+                        BuildServerOptions(serverOpts)) -%}
+      {{ Backend(map[string]any{
+           "name": backendKey,
+           "guid": make_guid("be", backendKey),
+           "comments": []any{"# Backend for: Ingress " + ns + "/" + name + " → Service " + svcName + ":" + tostring(port)},
+           "body": body,
+           "servers": BackendServers(svcName, 0, port, serverOpts, portName, backendKey, ns),
+         }) }}
                 {%- end -%}
               {%- end -%}
             {%- end -%}
@@ -423,16 +431,23 @@ templateSnippets:
             {%- var portId = portName -%}
             {%- if portId == "" -%}{%- portId = tostring(port) -%}{%- end -%}
             {%- if first_seen("ingress_backend", ns, name, dbSvcName, portId) -%}
-      # Default backend for: Ingress {{ ns }}/{{ name }} → Service {{ dbSvcName }}:{{ port }}
-              {%- var backendKey = BackendNameIngress(ingress, path) %}
-      backend {{ backendKey }}
-          guid {{ make_guid("be", backendKey) }}
-          http-request set-var(txn.namespace) str({{ ns }})
-          http-request set-var(txn.service) str({{ dbSvcName }})
+              {%- var backendKey = BackendNameIngress(ingress, path) -%}
               {%- var serverOpts = map[string]any{"flags": []any{}} -%}
-              {{- render_glob "backend-directives-*" inherit_context | indent(2, true) }}
-        default-server {{ serverOpts | dig("checkDirective") | fallback("check") | tostring() }}{{ BuildServerOptions(serverOpts) }}
-        {{ BackendServers(dbSvcName, 0, port, serverOpts, portName, backendKey, ns) | indent(2, true) }}
+              {%- var body = []any{
+                    "http-request set-var(txn.namespace) str(" + ns + ")",
+                    "http-request set-var(txn.service) str(" + dbSvcName + ")",
+                  } -%}
+              {%- body = AppendLines(body, render_glob "backend-directives-*" inherit_context) -%}
+              {%- body = append(body, "default-server " +
+                    tostring(serverOpts | dig("checkDirective") | fallback("check")) +
+                    BuildServerOptions(serverOpts)) -%}
+      {{ Backend(map[string]any{
+           "name": backendKey,
+           "guid": make_guid("be", backendKey),
+           "comments": []any{"# Default backend for: Ingress " + ns + "/" + name + " → Service " + dbSvcName + ":" + tostring(port)},
+           "body": body,
+           "servers": BackendServers(dbSvcName, 0, port, serverOpts, portName, backendKey, ns),
+         }) }}
             {%- end -%}
           {%- end -%}
         {%- end %}
@@ -694,6 +709,52 @@ k8sResources:
       {%- end %}
 
 validationTests:
+  test-render-plan-many-backends-leave-no-tokens:
+    description: >-
+      Every generated backend is registered and spliced back in place: the
+      sections are complete and no placeholder line reaches HAProxy.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: shop-svc, namespace: default}
+          spec:
+            ports: [{name: http, port: 80, targetPort: 8080}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {name: plan-a, namespace: default}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: a.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: shop-svc, port: {number: 80}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {name: plan-b, namespace: default}
+          spec:
+            ingressClassName: haproxy
+            defaultBackend: {service: {name: shop-svc, port: {number: 80}}}
+            rules:
+              - host: b.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: echo, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: "@haptic:"}
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^backend default_plan-a_svc_shop-svc_http$.*?^\s+guid be:default_plan-a_svc_shop-svc_http$.*?^\s+default-server check$.*?^\s+server SRV_1 '
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_plan-b_svc_echo_80"}
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_plan-b_svc_shop-svc_http"}
+
   test-ingress-duplicate-backend-different-ports:
     description: Ingress with multiple paths to same service but different ports (tests deduplication)
     fixtures:
@@ -882,16 +943,16 @@ validationTests:
       slot N+1 after highestUsedSlot (no reuse of freshly-vacated slots).
       Existing pod parked at SRV_3 so the assertion is sensitive to actual
       preservation vs. lowest-free-slot luck.
-    currentConfig: |
-      # SRV_3: existing pod (10.0.0.1) — preserved across rollout.
-      # SRV_4: old pod (10.0.0.2) being replaced → placeholder; new pod → SRV_5.
-      backend default_slot-test_svc_slot-svc_80
-          server SRV_1 192.0.2.1:1 disabled
-          server SRV_2 192.0.2.1:1 disabled
-          server SRV_3 10.0.0.1:8080 check
-          server SRV_4 10.0.0.2:8080 check
-          server SRV_5 192.0.2.1:1 disabled
-          server SRV_6 192.0.2.1:1 disabled
+    # SRV_3: existing pod (10.0.0.1) — preserved across rollout.
+    # SRV_4: old pod (10.0.0.2) being replaced → placeholder; new pod → SRV_5.
+    currentServers:
+      default_slot-test_svc_slot-svc_80:
+        SRV_1: {address: 192.0.2.1, port: 1}
+        SRV_2: {address: 192.0.2.1, port: 1}
+        SRV_3: {address: 10.0.0.1, port: 8080}
+        SRV_4: {address: 10.0.0.2, port: 8080}
+        SRV_5: {address: 192.0.2.1, port: 1}
+        SRV_6: {address: 192.0.2.1, port: 1}
     fixtures:
       services:
         - apiVersion: v1
@@ -944,15 +1005,15 @@ validationTests:
       keeps its parked slot even when the new pod's IP sorts lower.
       Existing pod at SRV_3 forces the assertion to be sensitive to
       actual preservation vs. iteration-order luck.
-    currentConfig: |
-      # SRV_3=10.0.0.5 stays; SRV_4=10.0.0.6 vacated → placeholder; 10.0.0.2 → SRV_5.
-      backend default_slot-lower_svc_slot-svc_80
-          server SRV_1 192.0.2.1:1 disabled
-          server SRV_2 192.0.2.1:1 disabled
-          server SRV_3 10.0.0.5:8080 check
-          server SRV_4 10.0.0.6:8080 check
-          server SRV_5 192.0.2.1:1 disabled
-          server SRV_6 192.0.2.1:1 disabled
+    # SRV_3=10.0.0.5 stays; SRV_4=10.0.0.6 vacated → placeholder; 10.0.0.2 → SRV_5.
+    currentServers:
+      default_slot-lower_svc_slot-svc_80:
+        SRV_1: {address: 192.0.2.1, port: 1}
+        SRV_2: {address: 192.0.2.1, port: 1}
+        SRV_3: {address: 10.0.0.5, port: 8080}
+        SRV_4: {address: 10.0.0.6, port: 8080}
+        SRV_5: {address: 192.0.2.1, port: 1}
+        SRV_6: {address: 192.0.2.1, port: 1}
     fixtures:
       services:
         - apiVersion: v1
@@ -1161,14 +1222,14 @@ validationTests:
   test-ingress-slot-pool-keeps-current-when-it-fits:
     description: |
       The current pool is kept while the endpoints still fit and it is under twice the desired size: 6 live slots, 3 pods (desired 5) → still 6 slots, no reload.
-    currentConfig: |
-      backend default_slot-pool-keeps-current-when-it-fits_svc_pool-keep_80
-          server SRV_1 10.0.3.1:8080 check
-          server SRV_2 10.0.3.2:8080 check
-          server SRV_3 192.0.2.1:1 disabled
-          server SRV_4 192.0.2.1:1 disabled
-          server SRV_5 192.0.2.1:1 disabled
-          server SRV_6 192.0.2.1:1 disabled
+    currentServers:
+      default_slot-pool-keeps-current-when-it-fits_svc_pool-keep_80:
+        SRV_1: {address: 10.0.3.1, port: 8080}
+        SRV_2: {address: 10.0.3.2, port: 8080}
+        SRV_3: {address: 192.0.2.1, port: 1}
+        SRV_4: {address: 192.0.2.1, port: 1}
+        SRV_5: {address: 192.0.2.1, port: 1}
+        SRV_6: {address: 192.0.2.1, port: 1}
     fixtures:
       services:
         - apiVersion: v1
@@ -1216,28 +1277,28 @@ validationTests:
   test-ingress-slot-pool-shrinks-when-mostly-idle:
     description: |
       A pool at least twice the desired size shrinks: 8 live slots for 2 pods (desired 4) → 4 slots (7 would be kept).
-    currentConfig: |
-      backend default_slot-pool-shrinks-when-mostly-idle_svc_pool-shrink_80
-          server SRV_1 10.0.4.1:8080 check
-          server SRV_2 10.0.4.2:8080 check
-          server SRV_3 192.0.2.1:1 disabled
-          server SRV_4 192.0.2.1:1 disabled
-          server SRV_5 192.0.2.1:1 disabled
-          server SRV_6 192.0.2.1:1 disabled
-          server SRV_7 192.0.2.1:1 disabled
-          server SRV_8 192.0.2.1:1 disabled
-          server SRV_9 192.0.2.1:1 disabled
-          server SRV_10 192.0.2.1:1 disabled
-          server SRV_11 192.0.2.1:1 disabled
-          server SRV_12 192.0.2.1:1 disabled
-          server SRV_13 192.0.2.1:1 disabled
-          server SRV_14 192.0.2.1:1 disabled
-          server SRV_15 192.0.2.1:1 disabled
-          server SRV_16 192.0.2.1:1 disabled
-          server SRV_17 192.0.2.1:1 disabled
-          server SRV_18 192.0.2.1:1 disabled
-          server SRV_19 192.0.2.1:1 disabled
-          server SRV_20 192.0.2.1:1 disabled
+    currentServers:
+      default_slot-pool-shrinks-when-mostly-idle_svc_pool-shrink_80:
+        SRV_1: {address: 10.0.4.1, port: 8080}
+        SRV_2: {address: 10.0.4.2, port: 8080}
+        SRV_3: {address: 192.0.2.1, port: 1}
+        SRV_4: {address: 192.0.2.1, port: 1}
+        SRV_5: {address: 192.0.2.1, port: 1}
+        SRV_6: {address: 192.0.2.1, port: 1}
+        SRV_7: {address: 192.0.2.1, port: 1}
+        SRV_8: {address: 192.0.2.1, port: 1}
+        SRV_9: {address: 192.0.2.1, port: 1}
+        SRV_10: {address: 192.0.2.1, port: 1}
+        SRV_11: {address: 192.0.2.1, port: 1}
+        SRV_12: {address: 192.0.2.1, port: 1}
+        SRV_13: {address: 192.0.2.1, port: 1}
+        SRV_14: {address: 192.0.2.1, port: 1}
+        SRV_15: {address: 192.0.2.1, port: 1}
+        SRV_16: {address: 192.0.2.1, port: 1}
+        SRV_17: {address: 192.0.2.1, port: 1}
+        SRV_18: {address: 192.0.2.1, port: 1}
+        SRV_19: {address: 192.0.2.1, port: 1}
+        SRV_20: {address: 192.0.2.1, port: 1}
     fixtures:
       services:
         - apiVersion: v1
@@ -1283,12 +1344,12 @@ validationTests:
   test-ingress-slot-pool-grows-past-current:
     description: |
       A pool that no longer fits grows by a block: 4 live slots, 5 pods → 5 + 2 free = 7 slots, every pod served.
-    currentConfig: |
-      backend default_slot-pool-grows-past-current_svc_pool-grow_80
-          server SRV_1 10.0.5.1:8080 check
-          server SRV_2 10.0.5.2:8080 check
-          server SRV_3 10.0.5.3:8080 check
-          server SRV_4 10.0.5.4:8080 check
+    currentServers:
+      default_slot-pool-grows-past-current_svc_pool-grow_80:
+        SRV_1: {address: 10.0.5.1, port: 8080}
+        SRV_2: {address: 10.0.5.2, port: 8080}
+        SRV_3: {address: 10.0.5.3, port: 8080}
+        SRV_4: {address: 10.0.5.4, port: 8080}
     fixtures:
       services:
         - apiVersion: v1

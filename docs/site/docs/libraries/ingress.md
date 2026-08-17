@@ -480,7 +480,7 @@ The Ingress library includes these validation tests:
 |------|-------------|
 | `test-ingress-duplicate-backend-different-ports` | Multiple paths to same service with different ports (deduplication) |
 | `test-ingress-tls-basic` | `spec.tls` registers TLS certificates into the SSL crt-list |
-| `test-ingress-slot-preservation` | Existing pod slots survive a rolling deployment when `currentConfig` is provided |
+| `test-ingress-slot-preservation` | Existing pod slots survive a rolling deployment when `currentServers` is provided |
 | `test-ingress-slot-preservation-lower-ip` | Slot preservation is order-independent (new pod with a lower IP still gets the freed slot) |
 | `test-ingress-status-patches` | LoadBalancer addresses from the controller Service propagate to `status.loadBalancer.ingress` |
 | `test-ingress-endpoint-conditions-filter` | EndpointSlice endpoints with non-Ready conditions are excluded from the backend |

@@ -63,13 +63,14 @@ marked "optional"):
 | `controller` | `map[string]templating.ResourceStore` | Controller-managed stores; currently `controller["haproxy_pods"]` only |
 | `templateSnippets` | `[]string` | Snippet names sorted alphabetically |
 | `fileRegistry` | `*FileRegistry` | Dynamic file registration during render |
+| `planRegistry` | `*PlanRegistry` | Section, backend and map declarations; `RenderMain` assembles the config from the tokens it hands back |
 | `statusPatchCollector` | `*templating.StatusPatchCollector` | Captures status mutations from `filters_status.go` |
 | `pathResolver` | `*templating.PathResolver` | File path resolution (relative vs absolute) |
 | `dataplane` | `config.DataplaneConfig` | DataPlane API config block |
 | `capabilities` | `map[string]any` | HAProxy version capabilities (`supports_crt_list`, `supports_waf`, …) from `CapabilitiesToMap`. Always populated (all-false map when no `WithCapabilities` option is passed) so validation and production expose the identical key. |
 | `shared` | `*templating.SharedContext` | Per-render compute-once cache (`ComputeIfAbsent` etc.) |
 | `runtimeEnvironment` | `*templating.RuntimeEnvironment` | GOMAXPROCS and related runtime info |
-| `currentConfig` | `*parserconfig.StructuredConfig` | Live HAProxy config — *optional*, omitted when nil (first deploy) to dodge a Scriggo nil-pointer-initializer panic |
+| `currentConfig` | `*renderplan.CurrentConfig` | Servers of the running config (`currentConfig.ServerIndex[backend][server].Address/.Port`) — *optional*, omitted when nil (first deploy) to dodge a Scriggo nil-pointer-initializer panic |
 | `http` | `templating.HTTPFetcher` | HTTP resource fetching — *optional*, omitted when no fetcher passed |
 | `extraContext` | `map[string]any` | User-defined variables from `cfg.TemplatingSettings.ExtraContext` (always set, possibly empty map). The same map's *top-level keys* are also merged into the context (`maps.Copy(renderCtx, cfg.TemplatingSettings.ExtraContext)` in `MergeExtraContextInto`), so templates can write `{{ debug.enabled }}` directly *and* `{{ extraContext | dig("debug", "enabled") }}` for the Scriggo-safe variant. |
 
@@ -80,7 +81,7 @@ marked "optional"):
 | `WithStores(map[string]stores.Store)` | Resource stores keyed by watched-resource name; ends up in `resources`; API-backed reads use the `NewBuilder` context |
 | `WithHAProxyPodStore(stores.Store)` | HAProxy pod store; ends up in `controller["haproxy_pods"]` |
 | `WithHTTPFetcher(templating.HTTPFetcher)` | Wires the `http` runtime variable so templates can call `http.Fetch(...)` |
-| `WithCurrentConfig(*parser.StructuredConfig)` | Adds `currentConfig` to the context so templates can reason about the live HAProxy config; nil on the first deployment |
+| `WithCurrentConfig(*renderplan.CurrentConfig)` | Adds `currentConfig` to the context so templates can reason about the running servers; nil on the first deployment. Production feeds it from the last render's plan plus `currentconfigstore`; the testrunner builds it from a test's `currentServers:` fixture, or from the deprecated `currentConfig:` text via `currentconfigstore.CurrentConfigFrom` |
 | `WithCapabilities(dataplane.Capabilities)` | Sets the HAProxy version capabilities exposed under `capabilities`. The testrunner passes the detected local capabilities so `controller validate` matches production; omit it and `Build()` still populates an all-false map |
 
 `extraContext` is **not** an option — `Build()` reads `cfg.TemplatingSettings.ExtraContext`
@@ -94,6 +95,8 @@ This package contains:
 - **Builder**: Constructs template rendering contexts with functional options pattern
 - **StoreWrapper**: Wraps types.Store to provide template-friendly methods (List, Fetch, GetSingle)
 - **FileRegistry**: Enables dynamic auxiliary file registration during template rendering
+- **PlanRegistry**: Collects the sections, backend records and map metadata templates declare, assembles the config from their tokens (`Assemble`) and builds the `renderplan.Plan` (`Plan`)
+- **RenderMain**: The one render-and-assemble path for `haproxy.cfg`, used by the renderer, the testrunner and the render benchmark
 - **MergeAuxiliaryFiles**: Canonicalizes static and dynamic auxiliary files, deduplicating identical definitions and rejecting storage-identity conflicts
 - **SortSnippetNames**: Helper to sort template snippet names alphabetically
 

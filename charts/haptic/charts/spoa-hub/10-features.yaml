@@ -57,6 +57,7 @@ templateSnippets:
 
   backends-100-spoa-hub:
     template: |
+      {%- import "util-backend" for Backend -%}
       {%- if (render "util-spoa-hub-enabled") == "true" %}
       {#- mode spop is the native SPOP backend mode introduced in HAProxy 3.1.
           On HAProxy 3.0 the proxy mode doesn't exist and the parser rejects
@@ -69,11 +70,31 @@ templateSnippets:
       {%- if modeSpopRequestedAny != nil %}{%- modeSpopRequested = tostring(modeSpopRequestedAny) %}{%- end %}
       {%- var hapVersion = extraContext | dig_string("", "haproxyVersion") %}
       {%- var spopSupported = semver_gte(hapVersion, "3.1") %}
-      backend spoa-hub
-          mode {%- if modeSpopRequested == "true" && spopSupported %} spop{%- else %} tcp{%- end %}
-          option spop-check
-          timeout connect 5s
-          timeout check 500ms
-          timeout server  {{ extraContext | dig("spoaHub", "haproxy", "timeoutIdle") | fallback("5m") }}
-          server hub {{ extraContext | dig("spoaHub", "haproxy", "socketPath") | fallback("/run/spoa/hub.sock") }} check inter 1s fastinter 500ms downinter 1s fall 2 rise 2 pool-low-conn 0 pool-max-conn {{ extraContext | dig("spoaHub", "haproxy", "poolMaxConn") | fallback(100) }} pool-purge-delay {{ extraContext | dig("spoaHub", "haproxy", "poolPurgeDelay") | fallback("30s") }}
+      {%- var mode = "tcp" %}
+      {%- if modeSpopRequested == "true" && spopSupported %}{%- mode = "spop" %}{%- end %}
+      {{ Backend(map[string]any{
+           "name": "spoa-hub",
+           "mode": mode,
+           "body": []any{
+             "option spop-check",
+             "timeout connect 5s",
+             "timeout check 500ms",
+             "timeout server  " + tostring(extraContext | dig("spoaHub", "haproxy", "timeoutIdle") | fallback("5m")),
+           },
+           "servers": []any{map[string]any{
+             "name":    "hub",
+             "address": tostring(extraContext | dig("spoaHub", "haproxy", "socketPath") | fallback("/run/spoa/hub.sock")),
+             "extra": []any{
+               map[string]any{"name": "check"},
+               map[string]any{"name": "inter", "args": []any{"1s"}},
+               map[string]any{"name": "fastinter", "args": []any{"500ms"}},
+               map[string]any{"name": "downinter", "args": []any{"1s"}},
+               map[string]any{"name": "fall", "args": []any{"2"}},
+               map[string]any{"name": "rise", "args": []any{"2"}},
+               map[string]any{"name": "pool-low-conn", "args": []any{"0"}},
+               map[string]any{"name": "pool-max-conn", "args": []any{tostring(extraContext | dig("spoaHub", "haproxy", "poolMaxConn") | fallback(100))}},
+               map[string]any{"name": "pool-purge-delay", "args": []any{tostring(extraContext | dig("spoaHub", "haproxy", "poolPurgeDelay") | fallback("30s"))}},
+             },
+           }},
+         }) }}
       {%- end %}

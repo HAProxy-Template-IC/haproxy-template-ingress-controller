@@ -248,7 +248,7 @@ func runSingleTestBenchmark(
 	testrunner.ApplyTestExtraContext(renderCtx, cfg, test.ExtraContext)
 
 	// Warm up (one render to eliminate any JIT effects)
-	_, err = renderAllFiles(engine, cfg, renderCtx)
+	_, err = renderAllFiles(engine, cfg, bctx)
 	if resourceErr := bctx.Err(context.Background()); resourceErr != nil {
 		return nil, resourceErr
 	}
@@ -263,7 +263,7 @@ func runSingleTestBenchmark(
 	}
 
 	for i := 0; i < benchmarkIterations; i++ {
-		iterResult, err := renderAllFiles(engine, cfg, renderCtx)
+		iterResult, err := renderAllFiles(engine, cfg, bctx)
 		if resourceErr := bctx.Err(context.Background()); resourceErr != nil {
 			return nil, resourceErr
 		}

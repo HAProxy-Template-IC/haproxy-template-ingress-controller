@@ -314,6 +314,7 @@ templateSnippets:
   backends-870-haptic-varnish-cache:
     template: |
       {# HAPTIC shared cache — the sharded varnish_cache backend + header injection. #}
+      {%- import "util-backend" for Backend, AppendLines -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-haptic-cache-private-request-header-deletes" for HapticCachePrivateRequestHeaderDeletes -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
@@ -343,86 +344,128 @@ templateSnippets:
             initStateUp = " init-state fully-up"
           }
         %%}
-      {{ "\n" }}# haptic/varnish-cache — shared, consistent-hash-sharded cache tier
-      backend varnish_cache
-          balance first
-          option httpchk
-          http-check send meth GET uri /.well-known/haptic-cache-dispatch-ready ver HTTP/1.1 hdr Host haptic-cache-health hdr X-Haptic-Cache-Probe dispatch
-          http-check expect status 204
-          timeout check 500ms
-          timeout server 0
-          retries 1
-          retry-on conn-failure empty-response response-timeout 425
-          option redispatch 1
-          # Strip the cache tier's private request protocol before dispatch.
-          # Stamp the HAProxy-resolved backend so the dedicated backend-fetch
-          # frontend routes the cache-miss loopback to the SAME backend this
-          # client-leg selected — without re-deriving routing from an
-          # already-rewritten request. del-header first so a client can't forge it.
-      {{ HapticCachePrivateRequestHeaderDeletes(false) | indent(4, true) }}
-          http-request set-header X-Haptic-Backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
-          http-request set-header X-Haptic-Cache-TTL %[var(txn.resource_id),map({{ ttlMap }})] if { var(txn.resource_id),map({{ ttlMap }}) -m found }
-          http-request set-header X-Haptic-Cache-Skip-CT %[var(txn.resource_id),map({{ skipMap }})] if { var(txn.resource_id),map({{ skipMap }}) -m found }
-          http-request set-header X-Haptic-Cache-Max-Size %[var(txn.resource_id),map({{ sizeMap }})] if { var(txn.resource_id),map({{ sizeMap }}) -m found }
-          {# Only set when the route opted in: an explicit "0" grace would
-              override Varnish's default_grace and disable stale delivery for a
-              route that never asked to change it. #}
-          http-request set-header X-Haptic-Cache-Grace %[var(txn.resource_id),map({{ graceMap }})] if { var(txn.resource_id),map({{ graceMap }}) -m found }
-          http-request set-header X-Haptic-Cache-SWR %[var(txn.resource_id),map({{ swrMap }})] if { var(txn.resource_id),map({{ swrMap }}) -m found }
-          http-request set-header X-Haptic-Cache-Stale-If-Error %[var(txn.resource_id),map({{ sieMap }})] if { var(txn.resource_id),map({{ sieMap }}) -m found }
-          http-request set-header X-Haptic-Cache-Keep %[var(txn.resource_id),map({{ keepMap }})] if { var(txn.resource_id),map({{ keepMap }}) -m found }
-          http-request set-header X-Haptic-Cache-Strip-Cookie %[var(txn.resource_id),map({{ stripMap }})] if { var(txn.resource_id),map({{ stripMap }}) -m found }
-          http-request set-header X-Haptic-Cache-Negative-TTL %[var(txn.resource_id),map({{ negMap }})] if { var(txn.resource_id),map({{ negMap }}) -m found }
-          {# The flag that lets Varnish cache an authenticated request. Requires
-              BOTH that the route is keyed on `consumer` AND that a consumer was
-              actually resolved: an empty identity would put every caller in one
-              bucket, which is the leak this guards, not a fix for it. #}
-          http-request set-header X-Haptic-Cache-Auth 1 if { var(txn.resource_id),map({{ authMap }}) -m found } { var(txn.haptic_consumer),length gt 0 }
-        {%- for _, ingress := range resources.ingresses.List() %}
-          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" %}
-            {%- var ckey = ingress.Metadata.Annotations["haproxy-haptic.org/cache-key"] %}
-            {#- auth-tls-cert-header injects per-CALLER X-SSL-Client-* headers at band
-                820, before the cache switch at 865. Those are an identity the app
-                personalises on, so they must be in the key — otherwise one
-                certificate holder's page is stored under (Host, URL) alone and
-                served to the next holder, or to an anonymous caller on :80 where
-                no header is injected at all. Folded in automatically rather than
-                left to the operator to remember. -#}
-            {%- var certHdr = ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"] == "true" %}
-            {%- if ckey != "" || certHdr %}
-              {%- var rid = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-              {%- var parts = []string{} %}
-              {#- Only walk the components when there ARE components: split("", ",")
-                  yields one empty element, which the else branch below rightly
-                  rejects as an invalid component — so a cert-header route with no
-                  cache-key of its own would fail to render. -#}
-              {%- var comps = []string{} %}
-              {%- if ckey != "" %}{%- comps = split(ckey, ",") %}{%- end %}
-              {%- for _, comp := range comps %}
-                {%- var c = strip(comp) %}
-                {%- if c == "consumer" %}{%- parts = append(parts, "%[var(txn.haptic_consumer)]") %}
-                {%- else if c == "src" %}{%- parts = append(parts, "%[src]") %}
-                {%- else if hasPrefix(c, "header:") %}{%- parts = append(parts, "%[req.hdr(" + ValidateConfigValue(c[7:], "haproxy-haptic.org/cache-key", rid, false) + ")]") %}
-                {%- else if hasPrefix(c, "cookie:") %}{%- parts = append(parts, "%[req.cook(" + ValidateConfigValue(c[7:], "haproxy-haptic.org/cache-key", rid, false) + ")]") %}
-                {%- else if hasPrefix(c, "query:") %}{%- parts = append(parts, "%[urlp(" + ValidateConfigValue(c[6:], "haproxy-haptic.org/cache-key", rid, false) + ")]") %}
-                {%- else %}{{ fail("Invalid cache-key component '" + c + "' in 'haproxy-haptic.org/cache-key' on Ingress '" + rid + "'. Valid: consumer, src, header:<h>, cookie:<c>, query:<q>.") }}{%- end %}
-              {%- end %}
-              {%- if certHdr %}{%- parts = append(parts, "%[ssl_c_s_dn(CN)]") %}{%- end %}
-          http-request set-header X-Haptic-Cache-Vary {{ join(parts, "|") }} if { var(txn.resource_id) -m str {{ rid }} }
-            {%- end %}
-          {%- end %}
-        {%- end %}
-          http-after-response set-var(txn.cache_status) res.hdr(X-Cache) if { res.hdr(X-Cache) -m found }
-          http-after-response set-var(txn.cache_age) res.hdr(Age) if { res.hdr(Age) -m found }
-          http-after-response set-var(txn.cache_uncacheable_reason) res.hdr(X-Haptic-Cache-Uncacheable) if { res.hdr(X-Haptic-Cache-Uncacheable) -m found }
-          http-after-response set-var(txn.cache_degraded) str(1) if { srv_name -m str ORIGIN_FALLBACK }
-          http-after-response set-status 425 if { srv_name -m str CACHE_DISPATCH } { res.hdr(X-Haptic-Cache-Origin-425) -m str 1 }
-          http-after-response del-header X-Haptic-Cache-Uncacheable
-          http-after-response del-header X-Haptic-Cache-Origin-425
-          http-after-response del-header X-Haptic-Cache-Origin-Transport-Failure
-          http-after-response del-header X-Haptic-Cache-Failure
-          server CACHE_DISPATCH unix@/etc/haproxy/cache-dispatch.sock check{{ initStateDown }} inter 1s fastinter 500ms downinter 1s fall 2 rise 2
-          server ORIGIN_FALLBACK 127.0.0.1:{{ loopbackPort }} no-check{{ initStateUp }}
+      {%%
+        var cacheBody = []any{
+          "option httpchk",
+          "http-check send meth GET uri /.well-known/haptic-cache-dispatch-ready ver HTTP/1.1 hdr Host haptic-cache-health hdr X-Haptic-Cache-Probe dispatch",
+          "http-check expect status 204",
+          "timeout check 500ms",
+          "timeout server 0",
+          "retries 1",
+          "retry-on conn-failure empty-response response-timeout 425",
+          "option redispatch 1",
+          "# Strip the cache tier's private request protocol before dispatch.",
+          "# Stamp the HAProxy-resolved backend so the dedicated backend-fetch",
+          "# frontend routes the cache-miss loopback to the SAME backend this",
+          "# client-leg selected — without re-deriving routing from an",
+          "# already-rewritten request. del-header first so a client can't forge it.",
+        }
+        cacheBody = AppendLines(cacheBody, HapticCachePrivateRequestHeaderDeletes(false))
+        cacheBody = append(cacheBody, "http-request set-header X-Haptic-Backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }")
+
+        var mapHeader = func(header string, path string) string {
+          return "http-request set-header " + header + " %[var(txn.resource_id),map(" + path + ")]" +
+            " if { var(txn.resource_id),map(" + path + ") -m found }"
+        }
+        cacheBody = append(cacheBody,
+          mapHeader("X-Haptic-Cache-TTL", ttlMap),
+          mapHeader("X-Haptic-Cache-Skip-CT", skipMap),
+          mapHeader("X-Haptic-Cache-Max-Size", sizeMap),
+          // Only set when the route opted in: an explicit "0" grace would
+          // override Varnish's default_grace and disable stale delivery for a
+          // route that never asked to change it.
+          mapHeader("X-Haptic-Cache-Grace", graceMap),
+          mapHeader("X-Haptic-Cache-SWR", swrMap),
+          mapHeader("X-Haptic-Cache-Stale-If-Error", sieMap),
+          mapHeader("X-Haptic-Cache-Keep", keepMap),
+          mapHeader("X-Haptic-Cache-Strip-Cookie", stripMap),
+          mapHeader("X-Haptic-Cache-Negative-TTL", negMap),
+          // The flag that lets Varnish cache an authenticated request. Requires
+          // BOTH that the route is keyed on `consumer` AND that a consumer was
+          // actually resolved: an empty identity would put every caller in one
+          // bucket, which is the leak this guards, not a fix for it.
+          "http-request set-header X-Haptic-Cache-Auth 1 if { var(txn.resource_id),map(" + authMap +
+            ") -m found } { var(txn.haptic_consumer),length gt 0 }")
+
+        for _, ingress := range resources.ingresses.List() {
+          if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] != "true" {
+            continue
+          }
+          var ckey = ingress.Metadata.Annotations["haproxy-haptic.org/cache-key"]
+          // auth-tls-cert-header injects per-CALLER X-SSL-Client-* headers at band
+          // 820, before the cache switch at 865. Those are an identity the app
+          // personalises on, so they must be in the key — otherwise one
+          // certificate holder's page is stored under (Host, URL) alone and
+          // served to the next holder, or to an anonymous caller on :80 where
+          // no header is injected at all. Folded in automatically rather than
+          // left to the operator to remember.
+          var certHdr = ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"] == "true"
+          if ckey == "" && !certHdr {
+            continue
+          }
+          var rid = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name
+          var parts = []string{}
+          // Only walk the components when there ARE components: split("", ",")
+          // yields one empty element, which the else branch below rightly
+          // rejects as an invalid component — so a cert-header route with no
+          // cache-key of its own would fail to render.
+          var comps = []string{}
+          if ckey != "" { comps = split(ckey, ",") }
+          for _, comp := range comps {
+            var c = strip(comp)
+            if c == "consumer" {
+              parts = append(parts, "%[var(txn.haptic_consumer)]")
+            } else if c == "src" {
+              parts = append(parts, "%[src]")
+            } else if hasPrefix(c, "header:") {
+              parts = append(parts, "%[req.hdr(" + ValidateConfigValue(c[7:], "haproxy-haptic.org/cache-key", rid, false) + ")]")
+            } else if hasPrefix(c, "cookie:") {
+              parts = append(parts, "%[req.cook(" + ValidateConfigValue(c[7:], "haproxy-haptic.org/cache-key", rid, false) + ")]")
+            } else if hasPrefix(c, "query:") {
+              parts = append(parts, "%[urlp(" + ValidateConfigValue(c[6:], "haproxy-haptic.org/cache-key", rid, false) + ")]")
+            } else {
+              fail("Invalid cache-key component '" + c + "' in 'haproxy-haptic.org/cache-key' on Ingress '" + rid + "'. Valid: consumer, src, header:<h>, cookie:<c>, query:<q>.")
+            }
+          }
+          if certHdr { parts = append(parts, "%[ssl_c_s_dn(CN)]") }
+          cacheBody = append(cacheBody, "http-request set-header X-Haptic-Cache-Vary " + join(parts, "|") +
+            " if { var(txn.resource_id) -m str " + rid + " }")
+        }
+
+        cacheBody = append(cacheBody,
+          "http-after-response set-var(txn.cache_status) res.hdr(X-Cache) if { res.hdr(X-Cache) -m found }",
+          "http-after-response set-var(txn.cache_age) res.hdr(Age) if { res.hdr(Age) -m found }",
+          "http-after-response set-var(txn.cache_uncacheable_reason) res.hdr(X-Haptic-Cache-Uncacheable) if { res.hdr(X-Haptic-Cache-Uncacheable) -m found }",
+          "http-after-response set-var(txn.cache_degraded) str(1) if { srv_name -m str ORIGIN_FALLBACK }",
+          "http-after-response set-status 425 if { srv_name -m str CACHE_DISPATCH } { res.hdr(X-Haptic-Cache-Origin-425) -m str 1 }",
+          "http-after-response del-header X-Haptic-Cache-Uncacheable",
+          "http-after-response del-header X-Haptic-Cache-Origin-425",
+          "http-after-response del-header X-Haptic-Cache-Origin-Transport-Failure",
+          "http-after-response del-header X-Haptic-Cache-Failure")
+        var dispatchExtra = []any{map[string]any{"name": "check"}}
+        var fallbackExtra = []any{map[string]any{"name": "no-check"}}
+        if initStateDown != "" {
+          dispatchExtra = append(dispatchExtra, map[string]any{"name": "init-state", "args": []any{"fully-down"}})
+          fallbackExtra = append(fallbackExtra, map[string]any{"name": "init-state", "args": []any{"fully-up"}})
+        }
+        dispatchExtra = append(dispatchExtra,
+          map[string]any{"name": "inter", "args": []any{"1s"}},
+          map[string]any{"name": "fastinter", "args": []any{"500ms"}},
+          map[string]any{"name": "downinter", "args": []any{"1s"}},
+          map[string]any{"name": "fall", "args": []any{"2"}},
+          map[string]any{"name": "rise", "args": []any{"2"}})
+        var cacheServers = []any{
+          map[string]any{"name": "CACHE_DISPATCH", "address": "unix@/etc/haproxy/cache-dispatch.sock", "extra": dispatchExtra},
+          map[string]any{"name": "ORIGIN_FALLBACK", "address": "127.0.0.1", "port": toint(loopbackPort), "extra": fallbackExtra},
+        }
+      %%}
+      {{ "\n" }}{{ Backend(map[string]any{
+           "name": "varnish_cache",
+           "balance": "first",
+           "comments": []any{"# haptic/varnish-cache — shared, consistent-hash-sharded cache tier"},
+           "body": cacheBody,
+           "servers": cacheServers,
+         }) }}
 
       frontend haptic_cache_dispatch
           mode http
@@ -433,23 +476,31 @@ templateSnippets:
           http-request del-header X-Haptic-Cache-Probe
           default_backend varnish_cache_shards
 
-      backend varnish_cache_shards
-          balance uri
-          hash-type consistent
-          option httpchk
-          http-check send meth GET uri /.well-known/haptic-cache-ready ver HTTP/1.1 hdr Host haptic-cache-health hdr X-Haptic-Cache-Probe origin
-          http-check expect status 204
-          timeout check 500ms
-          timeout server {{ responseTimeoutMs }}ms
-          retries 0
-          http-after-response set-status 425 if { txn.sess_term_state -m str SC sC SH sH sQ PH }
-          http-after-response set-status 425 if { res.hdr(X-Haptic-Cache-Failure) -m str 1 }
-          http-after-response del-header X-Haptic-Cache-Failure
-        {%- if hbf != "0" %}
-          hash-balance-factor {{ hbf }}
-        {%- end %}
-          default-server check{{ initStateDown }} inter 1s fastinter 500ms downinter 1s fall 2 rise 2
-      {{ BackendServers(vSvc, 0, vPort, map[string]any{"flags": []any{}}, "", "varnish_cache_shards", vNs) | indent(4, true) }}
+      {%%
+        var shardBody = []any{
+          "option httpchk",
+          "http-check send meth GET uri /.well-known/haptic-cache-ready ver HTTP/1.1 hdr Host haptic-cache-health hdr X-Haptic-Cache-Probe origin",
+          "http-check expect status 204",
+          "timeout check 500ms",
+          "timeout server " + tostring(responseTimeoutMs) + "ms",
+          "retries 0",
+          "http-after-response set-status 425 if { txn.sess_term_state -m str SC sC SH sH sQ PH }",
+          "http-after-response set-status 425 if { res.hdr(X-Haptic-Cache-Failure) -m str 1 }",
+          "http-after-response del-header X-Haptic-Cache-Failure",
+        }
+        if hbf != "0" {
+          shardBody = append(shardBody, "hash-balance-factor " + tostring(hbf))
+        }
+        shardBody = append(shardBody,
+          "default-server check" + initStateDown + " inter 1s fastinter 500ms downinter 1s fall 2 rise 2")
+      %%}
+      {{ Backend(map[string]any{
+           "name": "varnish_cache_shards",
+           "balance": "uri",
+           "hashType": "consistent",
+           "body": shardBody,
+           "servers": BackendServers(vSvc, 0, vPort, map[string]any{"flags": []any{}}, "", "varnish_cache_shards", vNs),
+         }) }}
       {%- end %}
 
   # ==========================================================================

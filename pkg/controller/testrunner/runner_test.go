@@ -30,7 +30,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -843,15 +843,18 @@ func TestRunner_RunTests_WithCurrentConfig(t *testing.T) {
 			Engine: "scriggo",
 		},
 		HAProxyConfig: v1alpha1.HAProxyConfig{
-			// Template checks len(currentConfig.Backends) > 0 to detect if config is available
+			// Template checks len(currentConfig.ServerIndex) > 0 to detect if config is available
 			// Note: Scriggo converts (*T)(nil) declaration to a zero-value struct, so isNil() doesn't work
 			Template: `global
   maxconn 1000
 
 # Previous backends from currentConfig:
-{%- if len(currentConfig.Backends) > 0 %}
-{%- for _, backend := range currentConfig.Backends %}
-# Previous backend: {{ backend.Name }}
+{%- if len(currentConfig.ServerIndex) > 0 %}
+{%- if currentConfig.ServerIndex["my-backend-1"] != nil %}
+# Previous backend: my-backend-1
+{%- end %}
+{%- if currentConfig.ServerIndex["my-backend-2"] != nil %}
+# Previous backend: my-backend-2
 {%- end %}
 {%- else %}
 # No currentConfig available (first deployment)
@@ -899,7 +902,7 @@ backend my-backend-2
 
 	// Need to provide the currentConfig type declaration for Scriggo
 	additionalDeclarations := map[string]any{
-		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+		"currentConfig": (*renderplan.CurrentConfig)(nil),
 	}
 	engine, err := templating.New(templates, &templating.Options{EntryPoints: []string{"haproxy.cfg"}, Declarations: additionalDeclarations})
 	require.NoError(t, err)
@@ -937,6 +940,87 @@ backend my-backend-2
 	assert.Contains(t, testResult.RenderedConfig, "Previous backend: my-backend-2")
 }
 
+// currentServers is the structured replacement for the currentConfig text: the
+// same server index reaches templates without a config parse in between.
+func TestRunner_RunTests_WithCurrentServers(t *testing.T) {
+	port := int64(8080)
+	tests := []struct {
+		name           string
+		currentServers map[string]map[string]v1alpha1.ServerAddr
+		currentConfig  string
+		wantPassed     bool
+		wantError      string
+	}{
+		{
+			name: "the fixture reaches templates as currentConfig.ServerIndex",
+			currentServers: map[string]map[string]v1alpha1.ServerAddr{
+				"my-backend-1": {"srv1": {Address: "10.0.0.1", Port: &port}},
+				"my-backend-2": {"srv2": {Address: "10.0.0.2", Port: &port}},
+			},
+			wantPassed: true,
+		},
+		{
+			name: "declaring both fixtures is rejected rather than silently ignored",
+			currentServers: map[string]map[string]v1alpha1.ServerAddr{
+				"my-backend-1": {"srv1": {Address: "10.0.0.1", Port: &port}},
+			},
+			currentConfig: "backend my-backend-2\n    server srv2 10.0.0.2:8080\n",
+			wantError:     "sets both currentServers and the deprecated currentConfig",
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := &v1alpha1.HAProxyTemplateConfigSpec{
+				TemplatingSettings: v1alpha1.TemplatingSettings{Engine: "scriggo"},
+				HAProxyConfig: v1alpha1.HAProxyConfig{Template: `global
+  maxconn 1000
+{%- if currentConfig.ServerIndex["my-backend-1"] != nil %}
+# srv1 at {{ currentConfig.ServerIndex["my-backend-1"]["srv1"].Address }}
+{%- end %}
+`},
+				WatchedResources: servicesWatch(),
+				ValidationTests: map[string]v1alpha1.ValidationTest{
+					"test-currentservers": {
+						Fixtures:       map[string][]runtime.RawExtension{"services": {}},
+						CurrentServers: tt.currentServers,
+						CurrentConfig:  tt.currentConfig,
+						Assertions: []v1alpha1.ValidationAssertion{
+							{Type: "contains", Target: "haproxy.cfg", Pattern: "srv1 at 10\\.0\\.0\\.1"},
+						},
+					},
+				},
+			}
+
+			engine, err := templating.New(
+				map[string]string{"haproxy.cfg": spec.HAProxyConfig.Template},
+				&templating.Options{
+					EntryPoints:  []string{"haproxy.cfg"},
+					Declarations: map[string]any{"currentConfig": (*renderplan.CurrentConfig)(nil)},
+				})
+			require.NoError(t, err)
+
+			cfg, err := conversion.ConvertSpec(spec)
+			require.NoError(t, err)
+
+			results, err := New(cfg, engine, &dataplane.ValidationPaths{}, &Options{Logger: logger}).
+				RunTests(context.Background(), "")
+			require.NoError(t, err)
+			require.Len(t, results.TestResults, 1)
+
+			result := results.TestResults[0]
+			if tt.wantError != "" {
+				assert.False(t, result.Passed)
+				assert.Contains(t, result.RenderError, tt.wantError)
+				return
+			}
+			assert.True(t, result.Passed, "test should pass: %s", result.RenderError)
+			assert.Contains(t, result.RenderedConfig, "srv1 at 10.0.0.1")
+		})
+	}
+}
+
 // the case when currentConfig is nil (first deployment).
 func TestRunner_RunTests_WithoutCurrentConfig(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -947,12 +1031,12 @@ func TestRunner_RunTests_WithoutCurrentConfig(t *testing.T) {
 			Engine: "scriggo",
 		},
 		HAProxyConfig: v1alpha1.HAProxyConfig{
-			// Template checks len(currentConfig.Backends) > 0 to detect if config is available
+			// Template checks len(currentConfig.ServerIndex) > 0 to detect if config is available
 			// Note: Scriggo converts (*T)(nil) declaration to a zero-value struct, so isNil() doesn't work
 			Template: `global
   maxconn 1000
 
-{%- if len(currentConfig.Backends) > 0 %}
+{%- if len(currentConfig.ServerIndex) > 0 %}
 # Has previous config
 {%- else %}
 # First deployment - no previous config
@@ -991,7 +1075,7 @@ func TestRunner_RunTests_WithoutCurrentConfig(t *testing.T) {
 	}
 
 	additionalDeclarations := map[string]any{
-		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+		"currentConfig": (*renderplan.CurrentConfig)(nil),
 	}
 	engine, err := templating.New(templates, &templating.Options{EntryPoints: []string{"haproxy.cfg"}, Declarations: additionalDeclarations})
 	require.NoError(t, err)

@@ -2,6 +2,7 @@ templateSnippets:
   util-generate-httproute-backends-gateway:
     requires: [gateways, httproutes, referencegrants]
     template: |
+      {%- import "util-backend" for Backend -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
@@ -246,172 +247,196 @@ templateSnippets:
             gwClientCertPath = fname
           }
         }
+
+        var body = []any{
+          "http-request set-var(txn.namespace) str(" + tostring(backendNs) + ")",
+          "http-request set-var(txn.service) str(" + tostring(backendName) + ")",
+        }
+
+        var defaultServer = "default-server check"
+        if resolvedProtoFlag != "" {
+          defaultServer = defaultServer + " proto " + resolvedProtoFlag
+        }
+        if btlsCaPath != "" && btlsCaPath != "@system-ca" {
+          defaultServer = defaultServer + " ssl ca-file " + btlsCaPath + " verify required"
+        } else if btlsCaPath == "@system-ca" {
+          defaultServer = defaultServer + " ssl verify required"
+        } else if gwClientCertPath != "" {
+          defaultServer = defaultServer + " ssl verify none"
+        }
+        if btlsCaPath != "" {
+          if btlsHostname != "" {
+            defaultServer = defaultServer + " sni str(" + btlsHostname + ")"
+          }
+          if btlsVerifyHost != "" {
+            defaultServer = defaultServer + " verifyhost " + btlsVerifyHost
+          }
+        }
+        if gwClientCertPath != "" {
+          defaultServer = defaultServer + " crt " + gwClientCertPath
+        }
+        body = append(body, defaultServer)
+
+        if btlsBroken {
+          body = append(body,
+            "# BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading",
+            "# to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/",
+            "http-request return status 503")
+        }
+
+        // Rule-level retry (GEP-1731). `retries`/`retry-on` are not conditional
+        // directives, so they can't be scoped per gw_rule_id: with several rules
+        // sharing this deduplicated backend, the first one carrying a retry block
+        // wins. retry.backoff has no HAProxy equivalent and is dropped.
+        if protoFlag == "" {
+          var retryFound = false
+          for _, rl := range route.Spec.Rules {
+            if retryFound {
+              continue
+            }
+            var rlReferencesBackend = false
+            for _, bRef := range rl.BackendRefs {
+              if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) {
+                rlReferencesBackend = true
+              }
+            }
+            if !rlReferencesBackend {
+              continue
+            }
+            // dig(): `retry` is Experimental-channel only, so `rl.Retry`
+            // doesn't compile against the Standard-channel CRD.
+            var rt = dig(rl, "retry")
+            var attempts = toint(dig(rt, "attempts"))
+            if attempts <= 0 {
+              continue
+            }
+            retryFound = true
+            var codeParts = []any{}
+            for _, c := range toSlice(dig(rt, "codes")) {
+              codeParts = append(codeParts, tostring(toint(c)))
+            }
+            var retryCodes = "500 502 503 504"
+            if len(codeParts) > 0 {
+              retryCodes = join(codeParts, " ")
+            }
+            body = append(body, "retries " + tostring(attempts), "retry-on " + retryCodes)
+          }
+        }
+
+        // GEP-1619 session persistence. Backends are deduplicated per
+        // (route, service, port), so the first rule declaring Cookie persistence
+        // for this backend wins. dynamic-cookie-key is seeded from beKey:
+        // stable across reloads, unforgeable. type: Header is not implemented
+        // (no stick-table key for a dynamically-named header).
+        var spCookieEmitted = false
+        for _, rl := range route.Spec.Rules {
+          if spCookieEmitted {
+            continue
+          }
+          var sp = dig(rl, "sessionPersistence")
+          if sp == nil || tostring(dig(sp, "type") | fallback("Cookie")) != "Cookie" {
+            continue
+          }
+          var refsThis = false
+          for _, bRef := range rl.BackendRefs {
+            if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) {
+              refsThis = true
+            }
+          }
+          if !refsThis {
+            continue
+          }
+          var cookieName = tostring(dig(sp, "sessionName") | fallback(""))
+          if cookieName == "" { cookieName = "SESSION" }
+          var absTimeout = tostring(dig(sp, "absoluteTimeout") | fallback(""))
+          var idleTimeout = tostring(dig(sp, "idleTimeout") | fallback(""))
+          var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic"
+          if absTimeout != "" { cookieDir = cookieDir + " maxlife " + absTimeout }
+          if idleTimeout != "" { cookieDir = cookieDir + " maxidle " + idleTimeout }
+          body = append(body,
+            "# GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity",
+            cookieDir,
+            "dynamic-cookie-key " + sha256(beKey))
+          spCookieEmitted = true
+        }
+
+        // HAProxy rejects `set-timeout server` in a frontend (no backend bound
+        // yet), so per-rule timeouts land here, gated on the txn.gw_rule_id the
+        // frontend matcher set. HTTPRoute only.
+        if protoFlag == "" {
+          var ruleIdxLocal = 0
+          for _, rl := range route.Spec.Rules {
+            // Dig-only: rules[].timeouts is newer than the oldest schema
+            // generation the httproutes candidate list resolves.
+            var tval = dig_string(rl, "", "timeouts", "request")
+            if tval == "" || tval == "0s" {
+              tval = dig_string(rl, "", "timeouts", "backendRequest")
+            }
+            if tval != "" && tval != "0s" {
+              var ruleRouteId = tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxLocal)
+              body = append(body, "http-request set-timeout server " + tval +
+                ` if { var(txn.gw_rule_id) -m str "` + ruleRouteId + `" }`)
+            }
+            ruleIdxLocal = ruleIdxLocal + 1
+          }
+
+          // One backend serves every rule that references this (service, port),
+          // so per-backendRef filters must be gated on txn.gw_rule_id or they
+          // cross-bleed between rules. Rule-level filters run in the frontend,
+          // so backendRef-level ones evaluated here take precedence per spec.
+          var ruleIdxBe = 0
+          for _, rl := range route.Spec.Rules {
+            for _, bRef := range rl.BackendRefs {
+              var bRefNs = tostring(bRef.Namespace)
+              if bRefNs == "" { bRefNs = tostring(routeNs) }
+              if bRef.Name != backendName || toint(bRef.Port) != toint(backendPort) || bRefNs != tostring(backendNs) {
+                continue
+              }
+              var gate = ` if { var(txn.gw_rule_id) -m str "` +
+                tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxBe) + `" }`
+              for _, bf := range bRef.Filters {
+                var directive = ""
+                var mod any = nil
+                if bf.Type == "RequestHeaderModifier" {
+                  directive = "http-request"
+                  mod = bf.RequestHeaderModifier
+                } else if bf.Type == "ResponseHeaderModifier" {
+                  directive = "http-response"
+                  mod = bf.ResponseHeaderModifier
+                }
+                if directive == "" || mod == nil {
+                  continue
+                }
+                for _, action := range []string{"set", "add"} {
+                  for _, h := range dig(mod, action) | toSlice() {
+                    var hName = dig_string(h, "", "name")
+                    var hVal = dig_string(h, "", "value")
+                    var hInj = ConfigInjectionKind(hVal, "line")
+                    if hInj != "" {
+                      _ = WebhookRejectOrWarn(route, "InvalidHeaderModifier", "HTTPRoute " + routeNs + "/" + routeName + " backendRef " + bf.Type + " " + action + "-header value contains " + hInj + ", which would split the backend directive; the header is not applied. Remove control characters from the value.")
+                      continue
+                    }
+                    body = append(body, directive + " " + action + "-header " + hName +
+                      ` "` + EscapeLogFormatValue(hVal) + `"` + gate)
+                  }
+                }
+                for _, name := range dig(mod, "remove") | toSlice() {
+                  body = append(body, directive + " del-header " + tostring(name) + gate)
+                }
+              }
+            }
+            ruleIdxBe = ruleIdxBe + 1
+          }
+        }
       %%}
-      # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
-      backend {{ beKey }}
-          guid {{ make_guid("be", beKey) }}
-          http-request set-var(txn.namespace) str({{ backendNs }})
-          http-request set-var(txn.service) str({{ backendName }})
-        default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end -%}
-      {%- if btlsCaPath != "" && btlsCaPath != "@system-ca" %} ssl ca-file {{ btlsCaPath }} verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
-      {%- else if btlsCaPath == "@system-ca" %} ssl verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
-      {%- else if gwClientCertPath != "" %} ssl verify none
-      {%- end -%}
-      {%- if gwClientCertPath != "" %} crt {{ gwClientCertPath }}
-      {%- end %}
-      {%- if btlsBroken %}
-          # BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading
-          # to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/
-          http-request return status 503
-      {%- end %}
-      {#- Rule-level retry (GEP-1731). `retries`/`retry-on` are not conditional
-          directives, so they can't be scoped per gw_rule_id: with several rules
-          sharing this deduplicated backend, the first one carrying a retry block
-          wins. retry.backoff has no HAProxy equivalent and is dropped. -#}
-      {%- if protoFlag == "" %}
-        {%- var retryAttempts = 0 %}
-        {%- var retryCodes = "" %}
-        {%- var retryFound = false %}
-        {%- for _, rl := range route.Spec.Rules %}
-          {%- if !retryFound %}
-            {%- var rlReferencesBackend = false %}
-            {%- for _, bRef := range rl.BackendRefs %}
-              {%- if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) %}
-                {%- rlReferencesBackend = true %}
-              {%- end %}
-            {%- end %}
-            {%- if rlReferencesBackend %}
-              {#- dig(): `retry` is Experimental-channel only, so `rl.Retry`
-                  doesn't compile against the Standard-channel CRD. -#}
-              {%- var rt = dig(rl, "retry") %}
-              {%- var attempts = toint(dig(rt, "attempts")) %}
-              {%- if attempts > 0 %}
-                {%- retryAttempts = attempts %}
-                {%- retryFound = true %}
-                {%- var codeParts = []any{} %}
-                {%- for _, c := range toSlice(dig(rt, "codes")) %}
-                  {%- codeParts = append(codeParts, tostring(toint(c))) %}
-                {%- end %}
-                {%- if len(codeParts) > 0 %}
-                  {%- retryCodes = join(codeParts, " ") %}
-                {%- else %}
-                  {%- retryCodes = "500 502 503 504" %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-        {%- if retryFound %}
-          retries {{ retryAttempts }}
-          retry-on {{ retryCodes }}
-        {%- end %}
-      {%- end %}
-      {#- GEP-1619 session persistence. Backends are deduplicated per
-          (route, service, port), so the first rule declaring Cookie persistence
-          for this backend wins. dynamic-cookie-key is seeded from beKey:
-          stable across reloads, unforgeable. type: Header is not implemented
-          (no stick-table key for a dynamically-named header). -#}
-      {%- var spCookieEmitted = false %}
-      {%- for _, rl := range route.Spec.Rules %}
-        {%- if !spCookieEmitted %}
-          {%- var sp = dig(rl, "sessionPersistence") %}
-          {%- if sp != nil %}
-            {%- var spType = tostring(dig(sp, "type") | fallback("Cookie")) %}
-            {%- if spType == "Cookie" %}
-              {%- var refsThis = false %}
-              {%- for _, bRef := range rl.BackendRefs %}
-                {%- if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) %}
-                  {%- refsThis = true %}
-                {%- end %}
-              {%- end %}
-              {%- if refsThis %}
-                {%- var cookieName = tostring(dig(sp, "sessionName") | fallback("")) %}
-                {%- if cookieName == "" %}{%- cookieName = "SESSION" %}{%- end %}
-                {%- var absTimeout = tostring(dig(sp, "absoluteTimeout") | fallback("")) %}
-                {%- var idleTimeout = tostring(dig(sp, "idleTimeout") | fallback("")) %}
-                {%- var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic" %}
-                {%- if absTimeout != "" %}{%- cookieDir = cookieDir + " maxlife " + absTimeout %}{%- end %}
-                {%- if idleTimeout != "" %}{%- cookieDir = cookieDir + " maxidle " + idleTimeout %}{%- end %}
-          # GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity
-          {{ cookieDir }}
-          dynamic-cookie-key {{ sha256(beKey) }}
-                {%- spCookieEmitted = true %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
-      {#- HAProxy rejects `set-timeout server` in a frontend (no backend bound
-          yet), so per-rule timeouts land here, gated on the txn.gw_rule_id the
-          frontend matcher set. HTTPRoute only. -#}
-      {%- if protoFlag == "" %}
-        {%- var ruleIdxLocal = 0 %}
-        {%- for _, rl := range route.Spec.Rules %}
-          {#- Dig-only: rules[].timeouts is newer than the oldest schema
-              generation the httproutes candidate list resolves. -#}
-          {%- var rlReq = dig_string(rl, "", "timeouts", "request") %}
-          {%- var rlBeReq = dig_string(rl, "", "timeouts", "backendRequest") %}
-          {%- var tval = rlReq %}
-          {%- if tval == "" || tval == "0s" %}{%- tval = rlBeReq %}{%- end %}
-          {%- if tval != "" && tval != "0s" %}
-            {%- var ruleRouteId = tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxLocal) %}
-        http-request set-timeout server {{ tval }} if { var(txn.gw_rule_id) -m str "{{ ruleRouteId }}" }
-          {%- end %}
-          {%- ruleIdxLocal = ruleIdxLocal + 1 %}
-        {%- end %}
-        {#- One backend serves every rule that references this (service, port),
-            so per-backendRef filters must be gated on txn.gw_rule_id or they
-            cross-bleed between rules. Rule-level filters run in the frontend,
-            so backendRef-level ones evaluated here take precedence per spec. -#}
-        {%- var ruleIdxBe = 0 %}
-        {%- for _, rl := range route.Spec.Rules %}
-          {%- for _, bRef := range rl.BackendRefs %}
-            {%- var bRefNs = tostring(bRef.Namespace) %}
-            {%- if bRefNs == "" %}{%- bRefNs = tostring(routeNs) %}{%- end %}
-            {%- if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) && bRefNs == tostring(backendNs) %}
-              {%- var ruleRouteIdBe = tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxBe) %}
-              {%- for _, bf := range bRef.Filters %}
-                {%- var directive = "" %}
-                {%- var mod any = nil %}
-                {%- if bf.Type == "RequestHeaderModifier" %}
-                  {%- directive = "http-request" %}
-                  {%- mod = bf.RequestHeaderModifier %}
-                {%- else if bf.Type == "ResponseHeaderModifier" %}
-                  {%- directive = "http-response" %}
-                  {%- mod = bf.ResponseHeaderModifier %}
-                {%- end %}
-                {%- if directive != "" && mod != nil %}
-                  {%- for _, h := range dig(mod, "set") | toSlice() %}
-                    {%- var hName = dig_string(h, "", "name") %}
-                    {%- var hVal = dig_string(h, "", "value") %}
-                    {%- var hInj = ConfigInjectionKind(hVal, "line") %}
-                    {%- if hInj != "" %}
-                      {{- WebhookRejectOrWarn(route, "InvalidHeaderModifier", "HTTPRoute " + routeNs + "/" + routeName + " backendRef " + bf.Type + " set-header value contains " + hInj + ", which would split the backend directive; the header is not applied. Remove control characters from the value.") -}}
-                    {%- else %}
-        {{ directive }} set-header {{ hName }} "{{ EscapeLogFormatValue(hVal) }}" if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
-                    {%- end %}
-                  {%- end %}
-                  {%- for _, h := range dig(mod, "add") | toSlice() %}
-                    {%- var hName = dig_string(h, "", "name") %}
-                    {%- var hVal = dig_string(h, "", "value") %}
-                    {%- var hInj = ConfigInjectionKind(hVal, "line") %}
-                    {%- if hInj != "" %}
-                      {{- WebhookRejectOrWarn(route, "InvalidHeaderModifier", "HTTPRoute " + routeNs + "/" + routeName + " backendRef " + bf.Type + " add-header value contains " + hInj + ", which would split the backend directive; the header is not applied. Remove control characters from the value.") -}}
-                    {%- else %}
-        {{ directive }} add-header {{ hName }} "{{ EscapeLogFormatValue(hVal) }}" if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
-                    {%- end %}
-                  {%- end %}
-                  {%- for _, name := range dig(mod, "remove") | toSlice() %}
-        {{ directive }} del-header {{ name }} if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-          {%- ruleIdxBe = ruleIdxBe + 1 %}
-        {%- end %}
-      {%- end %}
-        {{ BackendServers(backendName, 0, backendPort, nil, nil, beKey, backendNs) | indent(2, true) -}}
+      {{ Backend(map[string]any{
+           "name": beKey,
+           "guid": make_guid("be", beKey),
+           "comments": []any{"# Backend for: " + routeTypeLabel + " " + tostring(routeNs) + "/" + tostring(routeName) +
+             " → Service " + tostring(backendName) + ":" + tostring(backendPort)},
+           "body": body,
+           "servers": BackendServers(backendName, 0, backendPort, nil, nil, beKey, backendNs),
+         }) }}
       {%- end -%}
       {%- end -%}
       {%- end -%}
@@ -422,6 +447,7 @@ templateSnippets:
   util-generate-grpcroute-backends-gateway:
     requires: [gateways, grpcroutes, referencegrants]
     template: |
+      {%- import "util-backend" for Backend -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
@@ -641,57 +667,85 @@ templateSnippets:
             gwClientCertPath = fname
           }
         }
+
+        var body = []any{
+          "http-request set-var(txn.namespace) str(" + tostring(backendNs) + ")",
+          "http-request set-var(txn.service) str(" + tostring(backendName) + ")",
+        }
+
+        var defaultServer = "default-server check"
+        if resolvedProtoFlag != "" {
+          defaultServer = defaultServer + " proto " + resolvedProtoFlag
+        }
+        if btlsCaPath != "" && btlsCaPath != "@system-ca" {
+          defaultServer = defaultServer + " ssl ca-file " + btlsCaPath + " verify required"
+        } else if btlsCaPath == "@system-ca" {
+          defaultServer = defaultServer + " ssl verify required"
+        } else if gwClientCertPath != "" {
+          defaultServer = defaultServer + " ssl verify none"
+        }
+        if btlsCaPath != "" {
+          if btlsHostname != "" {
+            defaultServer = defaultServer + " sni str(" + btlsHostname + ")"
+          }
+          if btlsVerifyHost != "" {
+            defaultServer = defaultServer + " verifyhost " + btlsVerifyHost
+          }
+        }
+        if gwClientCertPath != "" {
+          defaultServer = defaultServer + " crt " + gwClientCertPath
+        }
+        body = append(body, defaultServer)
+
+        if btlsBroken {
+          body = append(body,
+            "# BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading",
+            "# to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/",
+            "http-request return status 503")
+        }
+
+        // GEP-1619 session persistence — rationale in the HTTPRoute backend
+        // above; the first Cookie rule referencing this backend wins.
+        var spCookieEmitted = false
+        for _, rl := range route.Spec.Rules {
+          if spCookieEmitted {
+            continue
+          }
+          var sp = dig(rl, "sessionPersistence")
+          if sp == nil || tostring(dig(sp, "type") | fallback("Cookie")) != "Cookie" {
+            continue
+          }
+          var refsThis = false
+          for _, bRef := range rl.BackendRefs {
+            if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) {
+              refsThis = true
+            }
+          }
+          if !refsThis {
+            continue
+          }
+          var cookieName = tostring(dig(sp, "sessionName") | fallback(""))
+          if cookieName == "" { cookieName = "SESSION" }
+          var absTimeout = tostring(dig(sp, "absoluteTimeout") | fallback(""))
+          var idleTimeout = tostring(dig(sp, "idleTimeout") | fallback(""))
+          var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic"
+          if absTimeout != "" { cookieDir = cookieDir + " maxlife " + absTimeout }
+          if idleTimeout != "" { cookieDir = cookieDir + " maxidle " + idleTimeout }
+          body = append(body,
+            "# GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity",
+            cookieDir,
+            "dynamic-cookie-key " + sha256(beKey))
+          spCookieEmitted = true
+        }
       %%}
-      # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
-      backend {{ beKey }}
-          guid {{ make_guid("be", beKey) }}
-          http-request set-var(txn.namespace) str({{ backendNs }})
-          http-request set-var(txn.service) str({{ backendName }})
-        default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end -%}
-      {%- if btlsCaPath != "" && btlsCaPath != "@system-ca" %} ssl ca-file {{ btlsCaPath }} verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
-      {%- else if btlsCaPath == "@system-ca" %} ssl verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
-      {%- else if gwClientCertPath != "" %} ssl verify none
-      {%- end -%}
-      {%- if gwClientCertPath != "" %} crt {{ gwClientCertPath }}
-      {%- end %}
-      {%- if btlsBroken %}
-          # BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading
-          # to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/
-          http-request return status 503
-      {%- end %}
-      {#- GEP-1619 session persistence — rationale in the HTTPRoute backend
-          above; the first Cookie rule referencing this backend wins. -#}
-      {%- var spCookieEmitted = false %}
-      {%- for _, rl := range route.Spec.Rules %}
-        {%- if !spCookieEmitted %}
-          {%- var sp = dig(rl, "sessionPersistence") %}
-          {%- if sp != nil %}
-            {%- var spType = tostring(dig(sp, "type") | fallback("Cookie")) %}
-            {%- if spType == "Cookie" %}
-              {%- var refsThis = false %}
-              {%- for _, bRef := range rl.BackendRefs %}
-                {%- if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) %}
-                  {%- refsThis = true %}
-                {%- end %}
-              {%- end %}
-              {%- if refsThis %}
-                {%- var cookieName = tostring(dig(sp, "sessionName") | fallback("")) %}
-                {%- if cookieName == "" %}{%- cookieName = "SESSION" %}{%- end %}
-                {%- var absTimeout = tostring(dig(sp, "absoluteTimeout") | fallback("")) %}
-                {%- var idleTimeout = tostring(dig(sp, "idleTimeout") | fallback("")) %}
-                {%- var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic" %}
-                {%- if absTimeout != "" %}{%- cookieDir = cookieDir + " maxlife " + absTimeout %}{%- end %}
-                {%- if idleTimeout != "" %}{%- cookieDir = cookieDir + " maxidle " + idleTimeout %}{%- end %}
-          # GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity
-          {{ cookieDir }}
-          dynamic-cookie-key {{ sha256(beKey) }}
-                {%- spCookieEmitted = true %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
-        {{ BackendServers(backendName, 0, backendPort, nil, nil, beKey, backendNs) | indent(2, true) -}}
+      {{ Backend(map[string]any{
+           "name": beKey,
+           "guid": make_guid("be", beKey),
+           "comments": []any{"# Backend for: " + routeTypeLabel + " " + tostring(routeNs) + "/" + tostring(routeName) +
+             " → Service " + tostring(backendName) + ":" + tostring(backendPort)},
+           "body": body,
+           "servers": BackendServers(backendName, 0, backendPort, nil, nil, beKey, backendNs),
+         }) }}
       {%- end -%}
       {%- end -%}
       {%- end -%}
@@ -746,14 +800,18 @@ templateSnippets:
           matcher sends them here (qualifier BACKEND:gw-invalid-backend).
           Always rendered — HAProxy refuses a config that references a
           backend that doesn't exist. #}
+      {%- import "util-backend" for Backend -%}
       # gateway/backends-501-gateway-invalid
-      backend gw-invalid-backend
-          guid be:gw-invalid-backend
-          http-request return status 500
+      {{ Backend(map[string]any{
+           "name": "gw-invalid-backend",
+           "guid": "be:gw-invalid-backend",
+           "body": []any{"http-request return status 500"},
+         }) }}
 
   backends-501-gateway-ssl-passthrough:
     requires: [gateways, httproutes, referencegrants, tlsroutes]
     template: |
+      {%- import "util-backend" for Backend -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {{ render "util-gateway-ssl-passthrough" }}
 
@@ -781,12 +839,13 @@ templateSnippets:
                   {%- var refName = backendRef.Name %}
                   {%- var refPort = toint(backendRef.Port) %}
                   {%- if refPort == 0 %}{%- refPort = 80 %}{%- end %}
-      # gateway/backends-gateway-ssl-passthrough
-
-      backend {{ biName }}
-          guid {{ make_guid("be", biName) }}
-          mode tcp
-          {{ BackendServers(refName, 0, refPort, nil, nil, biName, tostring(biNamespace)) | indent(4, false) }}
+      {{ Backend(map[string]any{
+           "name": tostring(biName),
+           "guid": make_guid("be", biName),
+           "mode": "tcp",
+           "comments": []any{"# gateway/backends-gateway-ssl-passthrough"},
+           "servers": BackendServers(refName, 0, refPort, nil, nil, biName, tostring(biNamespace)),
+         }) }}
                   {%- generated = true %}
                 {%- end %}
               {%- end %}
@@ -806,12 +865,13 @@ templateSnippets:
                     {%- if refPort == 0 %}{%- refPort = 443 %}{%- end %}
                     {%- var refNs = backendRef.Namespace %}
                     {%- if refNs == "" %}{%- refNs = tostring(biNamespace) %}{%- end %}
-      # gateway/backends-gateway-ssl-passthrough (tlsroute)
-
-      backend {{ biName }}
-          guid {{ make_guid("be", biName) }}
-          mode tcp
-          {{ BackendServers(refName, 0, refPort, nil, nil, biName, refNs) | indent(4, false) }}
+      {{ Backend(map[string]any{
+           "name": tostring(biName),
+           "guid": make_guid("be", biName),
+           "mode": "tcp",
+           "comments": []any{"# gateway/backends-gateway-ssl-passthrough (tlsroute)"},
+           "servers": BackendServers(refName, 0, refPort, nil, nil, biName, refNs),
+         }) }}
                     {%- generated = true %}
                   {%- end %}
                 {%- end %}

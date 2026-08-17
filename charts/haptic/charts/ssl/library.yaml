@@ -647,16 +647,18 @@ templateSnippets:
 
   backends-500-ssl-loopback:
     template: |
+      {%- import "util-backend" for Backend -%}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
       {%- if len(passthroughBackends) > 0 -%}
-      # ssl/backends-ssl-loopback
-
-      backend ssl-loopback
-          guid be:ssl-loopback
-          mode tcp
-          server loopback unix@/etc/haproxy/ssl-frontend.sock send-proxy-v2
-
+      {{ Backend(map[string]any{
+           "name": "ssl-loopback",
+           "guid": "be:ssl-loopback",
+           "mode": "tcp",
+           "comments": []any{"# ssl/backends-ssl-loopback"},
+           "servers": []any{map[string]any{"name": "loopback", "address": "unix@/etc/haproxy/ssl-frontend.sock",
+             "extra": []any{map[string]any{"name": "send-proxy-v2"}}}},
+         }) }}
       {%- end -%}
 
   frontends-500-https:

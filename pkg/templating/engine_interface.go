@@ -41,6 +41,11 @@ type Engine interface {
 	// template are combined into a single IncludeStats entry with count > 1.
 	RenderWithProfiling(ctx context.Context, templateName string, templateContext map[string]any) (string, []IncludeStats, error)
 
+	// PostProcess applies a template's configured post-processor chain to
+	// text that did not come from that render pass, so a caller assembling
+	// output from several pieces can normalise each piece the same way.
+	PostProcess(ctx context.Context, templateName string, text string) (string, error)
+
 	// --- Template introspection ---
 
 	// TemplateNames returns the names of all available templates, sorted alphabetically.

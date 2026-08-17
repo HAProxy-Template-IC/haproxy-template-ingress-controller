@@ -32,6 +32,41 @@ type FileRegistrar interface {
 	Register(args ...any) (string, error)
 }
 
+// PlanRegistrar lets templates declare the structure of the configuration they
+// emit: which text is one section, which backend record a section was built
+// from, where the shared profiles go, and how a map file is ordered. It is
+// implemented by rendercontext.PlanRegistry (which also assembles the final
+// config from the returned tokens), keeping the plan types out of this package.
+//
+// Templates use it through the `planRegistry` global:
+//
+//	{%- var token, err = planRegistry.Section("profile", name, body) -%}
+//	{%- var token, err = planRegistry.Backend(record, text) -%}
+//	{{ planRegistry.ProfileGroup() }}
+//	{%- var err = planRegistry.MapMeta("host.map", false) -%}
+//
+// Section, Backend and ProfileGroup return a placeholder line that the
+// assembler replaces with the registered text; nothing else may emit one.
+type PlanRegistrar interface {
+	// Section registers section text under a kind ("profile" or "backend")
+	// and a name, and returns its placeholder line. Registering the same
+	// (kind, name) twice is fine while the text is identical.
+	Section(kind, name, text string) (string, error)
+
+	// Backend records a backend as data and registers its section text.
+	// Unknown keys and a missing name are errors — a typo must not silently
+	// under-describe the emitted section.
+	Backend(record map[string]any, text string) (string, error)
+
+	// ProfileGroup returns the placeholder line where every registered
+	// profile section is spliced, sorted by name. Emit it exactly once.
+	ProfileGroup() string
+
+	// MapMeta declares whether entry order matters for a map file. Maps are
+	// ordered unless declared otherwise.
+	MapMeta(path string, ordered bool) error
+}
+
 // ResourceStore defines the interface for resource stores accessible from templates.
 // This interface enables direct method calls in Scriggo templates:
 //
