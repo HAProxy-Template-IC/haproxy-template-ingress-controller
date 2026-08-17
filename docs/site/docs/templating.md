@@ -635,7 +635,7 @@ backend {{ svc }}
 
 ### Context variables
 
-Templates receive a set of top-level variables: `resources` (the watched-resource stores), `pathResolver`, `capabilities` (HAProxy feature flags), `currentConfig` (the previously deployed config), `shared` (a compute-once cache), `extraContext`, and more. The [Template Reference](./template-reference.md#context-variables) documents each one. The one you'll use constantly is `resources`, covered next.
+Templates receive a set of top-level variables: `resources` (the watched-resource stores), `pathResolver`, `capabilities` (HAProxy feature flags), `currentConfig` (the servers the running config has), `shared` (a compute-once cache), `extraContext`, and more. The [Template Reference](./template-reference.md#context-variables) documents each one. The one you'll use constantly is `resources`, covered next.
 
 ### The `resources` variable
 
