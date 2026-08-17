@@ -1,0 +1,270 @@
+// Copyright 2025 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package agenttest serves an in-memory model of the HAProxy runtime over a
+// worker stats socket and a master socket. It is the oracle the agent's unit
+// and fault-simulation tests compare against; the real wire framing is pinned
+// by the docker test, not here.
+package agenttest
+
+import (
+	"bufio"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+)
+
+// Model is everything the fake knows. A test reaches it only through
+// HAProxy.With, which holds the lock the socket goroutines take.
+type Model struct {
+	Version  string
+	Pid      int
+	Backends map[string]*Backend
+	Maps     map[string][]MapEntry
+	Certs    map[string]string
+	CAFiles  map[string]string
+	CRTLists map[string][]string
+
+	// ReloadFails makes the master `reload` answer Success=0.
+	ReloadFails bool
+	// ReloadLog is the startup log a reload returns.
+	ReloadLog string
+	// Commands records every command the agent sent, in order.
+	Commands []string
+	// BlockedServers makes `wait … srv-removable` expire for a server, the way
+	// an in-flight request does.
+	BlockedServers map[string]bool
+	// Reject answers the matching command with an error instead of running it.
+	Reject func(command string) (message string, rejected bool)
+	// OnReload installs the state a newly started worker inherits from its
+	// config file. Runtime-only objects are gone by the time it runs.
+	OnReload func(m *Model)
+
+	pendingCert map[string]string
+	pendingCA   map[string]string
+	mapVersions map[string][]MapEntry
+	preparedFor map[string]string
+	nextMapVer  int
+}
+
+// HAProxy is the model plus its two sockets.
+type HAProxy struct {
+	mu sync.Mutex
+	m  Model
+
+	workerPath string
+	masterPath string
+}
+
+// Backend is one proxy of the model.
+type Backend struct {
+	Profile   string
+	Mode      string
+	GUID      string
+	Published bool
+	Servers   []*Server
+}
+
+// Server is one server of a backend.
+type Server struct {
+	Name    string
+	Address string
+	Weight  int
+	State   string
+	Enabled bool
+	Health  bool
+}
+
+// MapEntry is one key/value pair of a map file, duplicates included.
+type MapEntry struct {
+	Key   string
+	Value string
+}
+
+// Start serves the model on two unix sockets under t.TempDir().
+func Start(t *testing.T) *HAProxy {
+	t.Helper()
+	dir := t.TempDir()
+	h := &HAProxy{
+		m: Model{
+			Version:        "3.4.3-1deb11u1",
+			Pid:            1000,
+			Backends:       map[string]*Backend{},
+			Maps:           map[string][]MapEntry{},
+			Certs:          map[string]string{},
+			CAFiles:        map[string]string{},
+			CRTLists:       map[string][]string{},
+			BlockedServers: map[string]bool{},
+			ReloadLog:      "Loading success.",
+			pendingCert:    map[string]string{},
+			pendingCA:      map[string]string{},
+			mapVersions:    map[string][]MapEntry{},
+			preparedFor:    map[string]string{},
+		},
+		workerPath: filepath.Join(dir, "haproxy-worker.sock"),
+		masterPath: filepath.Join(dir, "haproxy-master.sock"),
+	}
+	h.serve(t, h.workerPath)
+	h.serve(t, h.masterPath)
+	return h
+}
+
+// WorkerSocket is the stats socket every runtime command goes to.
+func (h *HAProxy) WorkerSocket() string { return h.workerPath }
+
+// MasterSocket carries reload and show proc.
+func (h *HAProxy) MasterSocket() string { return h.masterPath }
+
+// With runs fn against the model under the lock the socket goroutines hold.
+func (h *HAProxy) With(fn func(m *Model)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	fn(&h.m)
+}
+
+// Sent returns the commands the agent has issued so far.
+func (h *HAProxy) Sent() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.m.Commands...)
+}
+
+// MapEntries copies one map file's contents.
+func (h *HAProxy) MapEntries(path string) []MapEntry {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]MapEntry(nil), h.m.Maps[path]...)
+}
+
+// ServerNames lists the servers a backend holds, empty when it does not exist.
+func (h *HAProxy) ServerNames(backend string) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	be, exists := h.m.Backends[backend]
+	if !exists {
+		return nil
+	}
+	names := make([]string, 0, len(be.Servers))
+	for _, s := range be.Servers {
+		names = append(names, s.Name)
+	}
+	return names
+}
+
+// HasBackend reports whether the model holds a backend of that name.
+func (h *HAProxy) HasBackend(name string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, exists := h.m.Backends[name]
+	return exists
+}
+
+func (h *HAProxy) serve(t *testing.T, path string) {
+	t.Helper()
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen on %s: %v", path, err)
+	}
+	t.Cleanup(func() {
+		_ = listener.Close()
+		_ = os.Remove(path)
+	})
+	master := path == h.masterPath
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go h.handle(conn, master)
+		}
+	}()
+}
+
+func (h *HAProxy) handle(conn net.Conn, master bool) {
+	defer func() { _ = conn.Close() }()
+	reader := bufio.NewReader(conn)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return
+	}
+	payload := ""
+	if strings.HasSuffix(strings.TrimRight(line, "\n"), "<<") {
+		payload = readPayload(reader)
+	}
+	var out strings.Builder
+	severity := false
+	for _, command := range strings.Split(strings.TrimRight(line, "\n"), ";") {
+		command = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(command), "<<"))
+		if command == "set severity-output number" {
+			severity = true
+			out.WriteString("\n")
+			continue
+		}
+		write(&out, h.dispatch(command, payload, master), severity)
+	}
+	_, _ = conn.Write([]byte(out.String()))
+}
+
+func readPayload(reader *bufio.Reader) string {
+	var b strings.Builder
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil || line == "\n" {
+			return b.String()
+		}
+		b.WriteString(line)
+	}
+}
+
+// reply is one command's answer: a message carries a severity, a dump does not.
+type reply struct {
+	text  string
+	dump  bool
+	fatal bool
+}
+
+func silent() reply { return reply{} }
+
+func message(format string, a ...any) reply {
+	return reply{text: fmt.Sprintf(format, a...)}
+}
+
+func failure(format string, a ...any) reply {
+	return reply{text: fmt.Sprintf(format, a...), fatal: true}
+}
+
+func dump(text string) reply { return reply{text: text, dump: true} }
+
+func write(out *strings.Builder, r reply, severity bool) {
+	if r.text == "" {
+		out.WriteString("\n")
+		return
+	}
+	switch {
+	case r.dump:
+		out.WriteString(r.text)
+	case severity && r.fatal:
+		out.WriteString("[3]: " + r.text)
+	case severity:
+		out.WriteString("[6]: " + r.text)
+	default:
+		out.WriteString(r.text)
+	}
+	out.WriteString("\n\n")
+}

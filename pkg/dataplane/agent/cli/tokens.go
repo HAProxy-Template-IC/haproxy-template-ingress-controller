@@ -1,0 +1,72 @@
+// Copyright 2025 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package cli turns the agent's typed ops into HAProxy runtime commands and
+// runs them against the worker stats socket. It knows command strings and
+// success strings; it makes no decisions and parses no configuration.
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// ErrUnsafeToken is what every negative-space rejection wraps. A token that
+// reaches HAProxy unchecked can split the command line and run a second
+// command, so the check is a refusal, never a sanitisation.
+var ErrUnsafeToken = errors.New("unsafe runtime token")
+
+// unsafeRunes are the characters that change the meaning of a CLI line: the
+// command separator, the payload introducer's parts, the line terminators and
+// the escape HAProxy's line form consumes.
+const unsafeRunes = ";<>\\\n\r\t\x00"
+
+// validateToken accepts one command word: a name, a path, a map key, a keyword
+// or a keyword argument. Whitespace is rejected because HAProxy splits the
+// line on it, which would silently turn one word into two.
+func validateToken(field, s string) error {
+	if s == "" {
+		return fmt.Errorf("%w: %s is empty", ErrUnsafeToken, field)
+	}
+	if strings.ContainsAny(s, unsafeRunes) || strings.ContainsRune(s, ' ') {
+		return fmt.Errorf("%w: %s %q", ErrUnsafeToken, field, s)
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("%w: %s %q has a control character", ErrUnsafeToken, field, s)
+		}
+	}
+	return nil
+}
+
+// validatePayloadValue accepts a value that travels in a payload block, where
+// only the line framing is significant.
+func validatePayloadValue(field, s string) error {
+	if strings.ContainsAny(s, "\n\r\x00") {
+		return fmt.Errorf("%w: %s spans lines", ErrUnsafeToken, field)
+	}
+	return nil
+}
+
+// validateEnum accepts one of a fixed set, so a typo cannot reach HAProxy as a
+// silently different command.
+func validateEnum(field, s string, allowed ...string) error {
+	for _, a := range allowed {
+		if s == a {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %s %q is not one of %s", ErrUnsafeToken, field, s, strings.Join(allowed, "|"))
+}

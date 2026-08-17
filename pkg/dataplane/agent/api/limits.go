@@ -33,4 +33,7 @@ const (
 	ConnectRetries           = 3
 	ConnectRetryBackoffMs    = 100
 	MaxSections              = 65536
+	MaxMapDelRepeat          = 64 // 3.4 deletes one duplicate per `del map` call
+	MaxDeferredAttempts      = 5  // per queued delete before the agent gives up on it
+	MaxInventoryEntries      = 4096
 )
