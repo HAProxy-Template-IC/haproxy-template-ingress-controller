@@ -95,30 +95,30 @@ type File struct {
 // Op kinds the agent executes. Unknown kinds are refused and the apply falls
 // back to a reload (fail closed).
 const (
-	OpBackendAdd       = "backend_add"        // Backend, Profile, Mode, GUID
-	OpBackendPublish   = "backend_publish"    // Backend
-	OpBackendUnpublish = "backend_unpublish"  // Backend
-	OpBackendDel       = "backend_del"        // Backend
-	OpWaitBeRemovable  = "wait_be_removable"  // Backend, TimeoutMs
-	OpServerAdd        = "server_add"         // Backend, Server, Address, Port, Keywords
-	OpServerEnable     = "server_enable"      // Backend, Server, Health
-	OpServerDisable    = "server_disable"     // Backend, Server
-	OpServerSetAddr    = "server_set_addr"    // Backend, Server, Address, Port
-	OpServerSetWeight  = "server_set_weight"  // Backend, Server, Weight
-	OpServerSetState   = "server_set_state"   // Backend, Server, State (ready|maint|drain)
-	OpWaitSrvRemovable = "wait_srv_removable" // Backend, Server, TimeoutMs
-	OpShutdownSessions = "shutdown_sessions"  // Backend, Server
-	OpServerDel        = "server_del"         // Backend, Server
-	OpMapAdd           = "map_add"            // Path, Key, Value (payload form)
-	OpMapSet           = "map_set"            // Path, Key, Value (line form; value must be line-safe)
-	OpMapDel           = "map_del"            // Path, Key (every value of the key)
-	OpMapReplace       = "map_replace"        // Path (versioned atomic replace from the file part)
-	OpCertSet          = "cert_set"           // Path (set + commit from the file part)
-	OpCertNew          = "cert_new"           // Path (new + set + commit)
-	OpCASet            = "ca_set"             // Path
-	OpCANew            = "ca_new"             // Path
-	OpCRTListAdd       = "crtlist_add"        // Path (list), Cert, Options, SNIFilters (payload form)
-	OpCRTListDel       = "crtlist_del"        // Path (list), Cert
+	OpBackendAdd           = "backend_add"        // Backend, Profile, Mode, GUID
+	OpBackendPublish       = "backend_publish"    // Backend
+	OpBackendUnpublish     = "backend_unpublish"  // Backend
+	OpBackendDel           = "backend_del"        // Backend
+	OpBackendWaitRemovable = "wait_be_removable"  // Backend, TimeoutMs
+	OpServerAdd            = "server_add"         // Backend, Server, Address, Port, Keywords
+	OpServerEnable         = "server_enable"      // Backend, Server, Health
+	OpServerDisable        = "server_disable"     // Backend, Server
+	OpServerSetAddr        = "server_set_addr"    // Backend, Server, Address, Port
+	OpServerSetWeight      = "server_set_weight"  // Backend, Server, Weight
+	OpServerSetState       = "server_set_state"   // Backend, Server, State (ready|maint|drain)
+	OpServerWaitRemovable  = "wait_srv_removable" // Backend, Server, TimeoutMs
+	OpShutdownSessions     = "shutdown_sessions"  // Backend, Server
+	OpServerDel            = "server_del"         // Backend, Server
+	OpMapAdd               = "map_add"            // Path, Key, Value (payload form)
+	OpMapSet               = "map_set"            // Path, Key, Value (line form; value must be line-safe)
+	OpMapDel               = "map_del"            // Path, Key (every value of the key)
+	OpMapReplace           = "map_replace"        // Path (versioned atomic replace from the file part)
+	OpCertSet              = "cert_set"           // Path (set + commit from the file part)
+	OpCertNew              = "cert_new"           // Path (new + set + commit)
+	OpCASet                = "ca_set"             // Path
+	OpCANew                = "ca_new"             // Path
+	OpCRTListAdd           = "crtlist_add"        // Path (list), Cert, Options, SNIFilters (payload form)
+	OpCRTListDel           = "crtlist_del"        // Path (list), Cert
 )
 
 // Op is one typed runtime command. Fields not used by a kind are empty. Every
@@ -193,6 +193,7 @@ type Inventory struct {
 	Maps       []string `json:"maps"`
 	Certs      []string `json:"certs"`
 	CAFiles    []string `json:"ca_files"`
+	CRLFiles   []string `json:"crl_files"`
 	CRTLists   []string `json:"crt_lists"`
 }
 
