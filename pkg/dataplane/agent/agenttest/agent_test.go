@@ -402,8 +402,10 @@ func TestPartDigestMismatchIsRefused(t *testing.T) {
 	m, _ := build("plan-1", api.ModeReload, api.Token{LeaderEpoch: 1, RenderSeq: 1}, map[string]string{
 		"haproxy.cfg": "global\n",
 	})
+	// Same length, different bytes: the client's own size check must not fire
+	// before the fake gets to verify the digest.
 	result, err := c.Apply(context.Background(), m,
-		map[string]io.Reader{"haproxy.cfg": strings.NewReader("globaX")}, nil)
+		map[string]io.Reader{"haproxy.cfg": strings.NewReader("globaX\n")}, nil)
 	require.NoError(t, err)
 	assert.False(t, result.OK)
 	require.NotNil(t, result.Error)
