@@ -314,6 +314,7 @@ templateSnippets:
   backends-502-gateway-tcproute:
     requires: [gateways, referencegrants, tcproutes]
     template: |
+      {%- import "util-backend" for Backend %}
       {%- import "util-backend-servers" for BackendServers %}
       {{ render "util-gateway-tcproute-analysis" }}
       {%- var dataRaw = shared.Get("gateway_tcproute") %}
@@ -345,25 +346,39 @@ templateSnippets:
           {%- var refPort = toint(info["refPort"]) %}
           {%- var refNs = tostring(info["refNs"]) %}
           {%- var refs = info["refs"].([]any) %}
-      # gateway/backends-502-gateway-tcproute: {{ info["routeNs"] }}/{{ info["routeName"] }} rule {{ info["ruleIdx"] }} (port {{ port }})
-
-      backend {{ beName }}
-          guid {{ make_guid("be", beName) }}
-          mode tcp
-          {%- if len(refs) <= 1 %}
-          {{ BackendServers(refName, 0, refPort, nil, nil, beName, refNs) | indent(4, false) }}
-          {%- else %}
-          {# Weighted TCPRoute: several routable backendRefs. `balance
-              roundrobin` honours per-server weights; each Service gets its
-              own slotPrefix so the reload-free slot preservation tracks each
-              independently within the one backend. A weight-0 ref stays in
-              the config (emitted `weight 0`) so it takes no traffic. #}
-          balance roundrobin
-          {%- for ri, r := range refs %}
-          {%- var rm = r.(map[string]any) %}
-          {{ BackendServers(tostring(rm["name"]), 0, toint(rm["port"]), map[string]any{"slotPrefix": "SRV" + tostring(ri) + "_", "weight": toint(rm["weight"])}, nil, beName, tostring(rm["ns"])) | indent(4, false) }}
-          {%- end %}
-          {%- end %}
+          {%%
+            var balance = ""
+            var servers = []any{}
+            if len(refs) <= 1 {
+              servers = BackendServers(refName, 0, refPort, nil, nil, beName, refNs)
+            } else {
+              // Weighted TCPRoute: several routable backendRefs. `balance
+              // roundrobin` honours per-server weights; each Service gets its
+              // own slotPrefix so the reload-free slot preservation tracks each
+              // independently within the one backend. A weight-0 ref stays in
+              // the config (emitted `weight 0`) so it takes no traffic.
+              balance = "roundrobin"
+              for ri, r := range refs {
+                var rm = r.(map[string]any)
+                var opts = map[string]any{
+                  "slotPrefix": "SRV" + tostring(ri) + "_",
+                  "weight":     toint(rm["weight"]),
+                }
+                for _, server := range BackendServers(tostring(rm["name"]), 0, toint(rm["port"]), opts, nil, beName, tostring(rm["ns"])) {
+                  servers = append(servers, server)
+                }
+              }
+            }
+          %%}
+      {{ Backend(map[string]any{
+           "name": beName,
+           "guid": make_guid("be", beName),
+           "mode": "tcp",
+           "balance": balance,
+           "comments": []any{"# gateway/backends-502-gateway-tcproute: " + tostring(info["routeNs"]) + "/" +
+             tostring(info["routeName"]) + " rule " + tostring(info["ruleIdx"]) + " (port " + tostring(port) + ")"},
+           "servers": servers,
+         }) }}
           {%- end %}
         {%- end %}
       {%- end %}
