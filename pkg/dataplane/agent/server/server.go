@@ -56,7 +56,6 @@ type Config struct {
 	WorkerSocket      string
 	StateFile         string
 	Listen            string
-	MetricsListen     string
 	ReloadIntervalMin time.Duration
 	Username          string
 	Password          string

@@ -43,6 +43,8 @@ func (s *Server) setPhase(p phase, planID string) {
 	}
 }
 
+// journal hands out the live journal. Only the apply path mutates it, and it
+// holds the apply lock for the whole transaction, so no second writer exists.
 func (s *Server) journal() *files.Journal {
 	s.mu.Lock()
 	defer s.mu.Unlock()

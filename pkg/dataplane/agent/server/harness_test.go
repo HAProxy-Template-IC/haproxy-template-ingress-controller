@@ -63,7 +63,6 @@ type options struct {
 	reloadIntervalMin time.Duration
 	baseDir           string
 	model             *agenttest.HAProxy
-	statePrepare      func(baseDir string)
 }
 
 func newHarness(tb testing.TB, opts ...func(*options)) *harness {
@@ -72,9 +71,6 @@ func newHarness(tb testing.TB, opts ...func(*options)) *harness {
 	settings := options{baseDir: t.TempDir()}
 	for _, opt := range opts {
 		opt(&settings)
-	}
-	if settings.statePrepare != nil {
-		settings.statePrepare(settings.baseDir)
 	}
 	model := settings.model
 	if model == nil {

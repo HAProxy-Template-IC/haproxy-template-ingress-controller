@@ -113,7 +113,6 @@ func runAgent(_ *cobra.Command, _ []string) error {
 		WorkerSocket:      resolveSocket(agentBaseDir, agentWorkerSocket),
 		StateFile:         agentStateFile,
 		Listen:            agentListen,
-		MetricsListen:     agentMetricsListen,
 		ReloadIntervalMin: agentReloadIntervalMin,
 		Username:          username,
 		Password:          password,
