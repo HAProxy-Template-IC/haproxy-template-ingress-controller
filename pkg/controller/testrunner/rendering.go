@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -125,21 +126,14 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 	mergeTestExtraContext(renderCtx, testExtraContext)
 
 	// Render main HAProxy configuration using worker-specific engine
-	var haproxyConfig string
-	var includeStats []templating.IncludeStats
-	var err error
-
-	if r.profileIncludes {
-		haproxyConfig, includeStats, err = engine.RenderWithProfiling(ctx, names.MainTemplateName, renderCtx)
-	} else {
-		haproxyConfig, err = engine.Render(ctx, names.MainTemplateName, renderCtx)
-	}
+	mainRender, err := rendercontext.RenderMain(ctx, engine, renderCtx, bctx.PlanRegistry, r.profileIncludes)
 	if resourceErr := bctx.Err(ctx); resourceErr != nil {
 		return RenderOutput{}, resourceErr
 	}
 	if err != nil {
 		return RenderOutput{}, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
+	haproxyConfig, includeStats := mainRender.Config, mainRender.IncludeStats
 
 	// Render auxiliary files using worker-specific engine (pre-declared files)
 	staticFiles, err := r.renderAuxiliaryFiles(ctx, engine, renderCtx, validationPaths)
@@ -383,7 +377,7 @@ func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]
 		rendercontext.WithStores(resourceStores),
 		rendercontext.WithHAProxyPodStore(haproxyPodStore),
 		rendercontext.WithHTTPFetcher(httpStore),
-		rendercontext.WithCurrentConfig(currentConfig),
+		rendercontext.WithCurrentConfig(currentconfigstore.CurrentConfigFrom(currentConfig)),
 		rendercontext.WithCurrentAuxFiles(currentFiles),
 		rendercontext.WithTypedResources(r.typedResourceTypes),
 		rendercontext.WithCapabilities(r.capabilities),

@@ -45,7 +45,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -64,7 +64,7 @@ type Builder struct {
 	stores             map[string]stores.Store
 	haproxyPodStore    stores.Store
 	httpFetcher        templating.HTTPFetcher
-	currentConfig      *parserconfig.StructuredConfig
+	currentConfig      *renderplan.CurrentConfig
 	currentAuxFiles    map[string]string
 	typedResourceTypes map[string]reflect.Type
 	capabilities       dataplane.Capabilities
@@ -126,11 +126,10 @@ func WithHTTPFetcher(fetcher templating.HTTPFetcher) Option {
 	}
 }
 
-// WithCurrentConfig sets the current deployed HAProxy config for templates.
+// WithCurrentConfig sets the servers of the running config for templates.
 // This enables slot-aware server assignment and other config-aware features.
-// The config is parsed from the HAProxyCfg CRD's spec.content field.
 // If nil, templates receive nil currentConfig (first deployment case).
-func WithCurrentConfig(cfg *parserconfig.StructuredConfig) Option {
+func WithCurrentConfig(cfg *renderplan.CurrentConfig) Option {
 	return func(b *Builder) {
 		b.currentConfig = cfg
 	}
@@ -258,6 +257,7 @@ func NewBuilder(ctx context.Context, cfg *config.Config, pathResolver *templatin
 type BuildResult struct {
 	Context                   map[string]any
 	FileRegistry              *FileRegistry
+	PlanRegistry              *PlanRegistry
 	StatusPatchCollector      *templating.StatusPatchCollector
 	RenderedResourceCollector *templating.RenderedResourceCollector
 	EventCollector            *templating.EventCollector
@@ -274,12 +274,13 @@ type BuildResult struct {
 //	  "controller": {"haproxy_pods": StoreWrapper},
 //	  "templateSnippets": []string,
 //	  "fileRegistry": FileRegistry,
+//	  "planRegistry": PlanRegistry,
 //	  "statusPatchCollector": StatusPatchCollector,
 //	  "renderedResourceCollector": RenderedResourceCollector,
 //	  "pathResolver": PathResolver,
 //	  "dataplane": Config.Dataplane,
 //	  "capabilities": map[string]any (HAProxy version capabilities),
-//	  "currentConfig": *StructuredConfig (nil on first deployment),
+//	  "currentConfig": *renderplan.CurrentConfig (nil on first deployment),
 //	  "shared": map[string]any,
 //	  "runtimeEnvironment": RuntimeEnvironment,
 //	  "http": HTTPFetcher (if set),
@@ -317,6 +318,10 @@ func (b *Builder) Build() *BuildResult {
 	// Create file registry for dynamic auxiliary file registration
 	fileRegistry := NewFileRegistry(b.pathResolver)
 
+	// Create plan registry so templates can declare the structure of the
+	// config they emit; RenderMain assembles the config from its tokens.
+	planRegistry := NewPlanRegistry()
+
 	// Create status patch collector for template-driven status updates
 	statusPatchCollector := templating.NewStatusPatchCollector()
 
@@ -344,6 +349,7 @@ func (b *Builder) Build() *BuildResult {
 		"controller":                controller,
 		"templateSnippets":          snippetNames,
 		"fileRegistry":              fileRegistry,
+		"planRegistry":              planRegistry,
 		"statusPatchCollector":      statusPatchCollector,
 		"recordEventCollector":      eventCollector,
 		"renderedResourceCollector": renderedResourceCollector,
@@ -406,6 +412,7 @@ func (b *Builder) Build() *BuildResult {
 	return &BuildResult{
 		Context:                   templateContext,
 		FileRegistry:              fileRegistry,
+		PlanRegistry:              planRegistry,
 		StatusPatchCollector:      statusPatchCollector,
 		RenderedResourceCollector: renderedResourceCollector,
 		EventCollector:            eventCollector,

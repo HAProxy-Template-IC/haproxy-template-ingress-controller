@@ -17,7 +17,7 @@ package helpers
 import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
 // BuildAdditionalDeclarations returns the additionalDeclarations
@@ -54,7 +54,7 @@ func BuildAdditionalDeclarations(cfg *config.Config, result *typebootstrap.Resul
 			"— see the doc comment for why envelope-only fallback was removed")
 	}
 	decls := map[string]any{
-		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+		"currentConfig": (*renderplan.CurrentConfig)(nil),
 		// Current general aux files (filename → content) — lets a template read
 		// its own prior output, e.g. self-rotating TLS session-ticket keys.
 		// Declared as a pointer (Scriggo requires pointers for variable

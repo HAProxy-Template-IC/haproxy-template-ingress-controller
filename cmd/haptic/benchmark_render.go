@@ -76,6 +76,20 @@ func renderSingleTemplate(
 	}, stats, nil
 }
 
+// renderMainConfig renders and assembles haproxy.cfg, returning its timing and
+// profiling stats.
+func renderMainConfig(engine templating.Engine, bctx *rendercontext.BuildResult) (FileRenderResult, []templating.IncludeStats, error) {
+	start := time.Now()
+	main, err := rendercontext.RenderMain(context.Background(), engine, bctx.Context, bctx.PlanRegistry, benchmarkProfileIncludes)
+	if err != nil {
+		return FileRenderResult{}, nil, err
+	}
+	return FileRenderResult{
+		Name:     names.MainTemplateName,
+		Duration: time.Since(start),
+	}, main.IncludeStats, nil
+}
+
 // templateGroup defines a group of templates to render with a display prefix.
 type templateGroup struct {
 	names  []string // sorted template names
@@ -83,15 +97,17 @@ type templateGroup struct {
 }
 
 // renderAllFiles renders all templates (haproxy.cfg + maps + files + certs) and returns timing for each.
-func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[string]any) (IterationResult, error) {
+func renderAllFiles(engine templating.Engine, cfg *config.Config, bctx *rendercontext.BuildResult) (IterationResult, error) {
 	var result IterationResult
 	totalStart := time.Now()
+	renderCtx := bctx.Context
 
 	// Collect all include stats across renders when profiling is enabled
 	var allIncludeStats []templating.IncludeStats
 
-	// Render haproxy.cfg
-	fileResult, stats, err := renderSingleTemplate(engine, names.MainTemplateName, names.MainTemplateName, renderCtx)
+	// Render and assemble haproxy.cfg through the production path, so the
+	// benchmark measures what the controller actually does per render.
+	fileResult, stats, err := renderMainConfig(engine, bctx)
 	if err != nil {
 		return result, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
