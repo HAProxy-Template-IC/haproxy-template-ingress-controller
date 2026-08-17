@@ -21,6 +21,9 @@ tests:
       - matchRegex:
           path: data["haproxy.cfg"]
           pattern: "hard-stop-after 10s"
+      - matchRegex:
+          path: data["haproxy.cfg"]
+          pattern: "stats socket /etc/haproxy/haproxy-worker\\.sock mode 600 level admin"
 
   - it: should use the rendered config hard-stop bound for the bootstrap worker
     set:
