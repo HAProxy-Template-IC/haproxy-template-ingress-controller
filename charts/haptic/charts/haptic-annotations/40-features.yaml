@@ -472,6 +472,7 @@ templateSnippets:
         (diverges from the redirect-based haproxy-ingress default-backend).
       #}
       {%- import "util-haptic-default-backend" for ResolveHapticDefaultBackend -%}
+      {%- import "util-backend" for Backend, AppendLines -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -484,13 +485,17 @@ templateSnippets:
           {%- var portName = tostring(info["portName"]) -%}
           {%- var backendName = tostring(info["backendName"]) -%}
           {%- if first_seen("haptic_default_backend", backendName) -%}
-      {{ "\n" }}# haptic/default-backend: Ingress {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} → Service {{ svcNs }}/{{ svcName }}:{{ port }}
-      backend {{ backendName }}
-          guid {{ make_guid("be", backendName) }}
           {%- var serverOpts = map[string]any{"flags": []any{}} -%}
-          {{- render_glob "backend-directives-*" inherit_context | indent(2, true) }}
-        default-server check{{ BuildServerOptions(serverOpts) }}
-        {{ BackendServers(svcName, 0, port, nil, portName, backendName, svcNs) | indent(2, true) }}
+          {%- var body = AppendLines([]any{}, render_glob "backend-directives-*" inherit_context) -%}
+          {%- body = append(body, "default-server check" + BuildServerOptions(serverOpts)) -%}
+      {{ "\n" }}{{ Backend(map[string]any{
+           "name": backendName,
+           "guid": make_guid("be", backendName),
+           "comments": []any{"# haptic/default-backend: Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name +
+             " → Service " + svcNs + "/" + svcName + ":" + tostring(port)},
+           "body": body,
+           "servers": BackendServers(svcName, 0, port, nil, portName, backendName, svcNs),
+         }) }}
           {%- end -%}
         {%- end -%}
       {%- end -%}

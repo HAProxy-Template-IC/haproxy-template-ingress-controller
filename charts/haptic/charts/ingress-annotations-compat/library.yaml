@@ -71,6 +71,7 @@ templateSnippets:
 
   util-render-annotation-ssl-passthrough-backends:
     template: |
+      {%- import "util-backend" for Backend -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- macro RenderAnnotationSSLPassthroughBackends(cacheKey string, firstSeenKey string, commentLabel string) %}
         {%- var rawVal, _ = shared.ComputeIfAbsent(cacheKey, func() any { return nil }) %}
@@ -86,11 +87,12 @@ templateSnippets:
           {%- var svcPort = info["svcPort"] | toint() %}
           {%- var svcPortName = info["svcPortName"] | fallback("") | tostring() %}
           {%- if first_seen(firstSeenKey, beNs + "/" + beIngress) %}
-      # {{ commentLabel }}/backends-ssl-passthrough
-
-      backend {{ beName }}
-          mode tcp
-          {{ BackendServers(svcName, 0, svcPort, nil, svcPortName, beName, beNs) | indent(4) }}
+      {{ Backend(map[string]any{
+           "name": beName,
+           "mode": "tcp",
+           "comments": []any{"# " + commentLabel + "/backends-ssl-passthrough"},
+           "servers": BackendServers(svcName, 0, svcPort, nil, svcPortName, beName, beNs),
+         }) }}
           {%- end %}
         {%- end %}
       {%- end macro %}

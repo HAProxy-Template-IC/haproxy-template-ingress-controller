@@ -382,6 +382,7 @@ templateSnippets:
 
   util-generate-backends-ingress:
     template: |
+      {%- import "util-backend" for Backend, AppendLines -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
@@ -400,16 +401,23 @@ templateSnippets:
                 {%- var portId = portName -%}
                 {%- if portId == "" -%}{%- portId = tostring(port) -%}{%- end -%}
                 {%- if first_seen("ingress_backend", ns, name, svcName, portId) -%}
-      # Backend for: Ingress {{ ns }}/{{ name }} → Service {{ svcName }}:{{ port }}
-                  {%- var backendKey = BackendNameIngress(ingress, path) %}
-      backend {{ backendKey }}
-          guid {{ make_guid("be", backendKey) }}
-          http-request set-var(txn.namespace) str({{ ns }})
-          http-request set-var(txn.service) str({{ svcName }})
+                  {%- var backendKey = BackendNameIngress(ingress, path) -%}
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
-                  {{- render_glob "backend-directives-*" inherit_context | indent(2, true) }}
-        default-server {{ serverOpts | dig("checkDirective") | fallback("check") | tostring() }}{{ BuildServerOptions(serverOpts) }}
-        {{ BackendServers(svcName, 0, port, serverOpts, portName, backendKey, ns) | indent(2, true) }}
+                  {%- var body = []any{
+                        "http-request set-var(txn.namespace) str(" + ns + ")",
+                        "http-request set-var(txn.service) str(" + svcName + ")",
+                      } -%}
+                  {%- body = AppendLines(body, render_glob "backend-directives-*" inherit_context) -%}
+                  {%- body = append(body, "default-server " +
+                        tostring(serverOpts | dig("checkDirective") | fallback("check")) +
+                        BuildServerOptions(serverOpts)) -%}
+      {{ Backend(map[string]any{
+           "name": backendKey,
+           "guid": make_guid("be", backendKey),
+           "comments": []any{"# Backend for: Ingress " + ns + "/" + name + " → Service " + svcName + ":" + tostring(port)},
+           "body": body,
+           "servers": BackendServers(svcName, 0, port, serverOpts, portName, backendKey, ns),
+         }) }}
                 {%- end -%}
               {%- end -%}
             {%- end -%}
@@ -423,16 +431,23 @@ templateSnippets:
             {%- var portId = portName -%}
             {%- if portId == "" -%}{%- portId = tostring(port) -%}{%- end -%}
             {%- if first_seen("ingress_backend", ns, name, dbSvcName, portId) -%}
-      # Default backend for: Ingress {{ ns }}/{{ name }} → Service {{ dbSvcName }}:{{ port }}
-              {%- var backendKey = BackendNameIngress(ingress, path) %}
-      backend {{ backendKey }}
-          guid {{ make_guid("be", backendKey) }}
-          http-request set-var(txn.namespace) str({{ ns }})
-          http-request set-var(txn.service) str({{ dbSvcName }})
+              {%- var backendKey = BackendNameIngress(ingress, path) -%}
               {%- var serverOpts = map[string]any{"flags": []any{}} -%}
-              {{- render_glob "backend-directives-*" inherit_context | indent(2, true) }}
-        default-server {{ serverOpts | dig("checkDirective") | fallback("check") | tostring() }}{{ BuildServerOptions(serverOpts) }}
-        {{ BackendServers(dbSvcName, 0, port, serverOpts, portName, backendKey, ns) | indent(2, true) }}
+              {%- var body = []any{
+                    "http-request set-var(txn.namespace) str(" + ns + ")",
+                    "http-request set-var(txn.service) str(" + dbSvcName + ")",
+                  } -%}
+              {%- body = AppendLines(body, render_glob "backend-directives-*" inherit_context) -%}
+              {%- body = append(body, "default-server " +
+                    tostring(serverOpts | dig("checkDirective") | fallback("check")) +
+                    BuildServerOptions(serverOpts)) -%}
+      {{ Backend(map[string]any{
+           "name": backendKey,
+           "guid": make_guid("be", backendKey),
+           "comments": []any{"# Default backend for: Ingress " + ns + "/" + name + " → Service " + dbSvcName + ":" + tostring(port)},
+           "body": body,
+           "servers": BackendServers(dbSvcName, 0, port, serverOpts, portName, backendKey, ns),
+         }) }}
             {%- end -%}
           {%- end -%}
         {%- end %}

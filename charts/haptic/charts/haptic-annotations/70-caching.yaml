@@ -314,6 +314,7 @@ templateSnippets:
   backends-870-haptic-varnish-cache:
     template: |
       {# HAPTIC shared cache — the sharded varnish_cache backend + header injection. #}
+      {%- import "util-backend" for Backend -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-haptic-cache-private-request-header-deletes" for HapticCachePrivateRequestHeaderDeletes -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
@@ -433,23 +434,31 @@ templateSnippets:
           http-request del-header X-Haptic-Cache-Probe
           default_backend varnish_cache_shards
 
-      backend varnish_cache_shards
-          balance uri
-          hash-type consistent
-          option httpchk
-          http-check send meth GET uri /.well-known/haptic-cache-ready ver HTTP/1.1 hdr Host haptic-cache-health hdr X-Haptic-Cache-Probe origin
-          http-check expect status 204
-          timeout check 500ms
-          timeout server {{ responseTimeoutMs }}ms
-          retries 0
-          http-after-response set-status 425 if { txn.sess_term_state -m str SC sC SH sH sQ PH }
-          http-after-response set-status 425 if { res.hdr(X-Haptic-Cache-Failure) -m str 1 }
-          http-after-response del-header X-Haptic-Cache-Failure
-        {%- if hbf != "0" %}
-          hash-balance-factor {{ hbf }}
-        {%- end %}
-          default-server check{{ initStateDown }} inter 1s fastinter 500ms downinter 1s fall 2 rise 2
-      {{ BackendServers(vSvc, 0, vPort, map[string]any{"flags": []any{}}, "", "varnish_cache_shards", vNs) | indent(4, true) }}
+      {%%
+        var shardBody = []any{
+          "option httpchk",
+          "http-check send meth GET uri /.well-known/haptic-cache-ready ver HTTP/1.1 hdr Host haptic-cache-health hdr X-Haptic-Cache-Probe origin",
+          "http-check expect status 204",
+          "timeout check 500ms",
+          "timeout server " + tostring(responseTimeoutMs) + "ms",
+          "retries 0",
+          "http-after-response set-status 425 if { txn.sess_term_state -m str SC sC SH sH sQ PH }",
+          "http-after-response set-status 425 if { res.hdr(X-Haptic-Cache-Failure) -m str 1 }",
+          "http-after-response del-header X-Haptic-Cache-Failure",
+        }
+        if hbf != "0" {
+          shardBody = append(shardBody, "hash-balance-factor " + tostring(hbf))
+        }
+        shardBody = append(shardBody,
+          "default-server check" + initStateDown + " inter 1s fastinter 500ms downinter 1s fall 2 rise 2")
+      %%}
+      {{ Backend(map[string]any{
+           "name": "varnish_cache_shards",
+           "balance": "uri",
+           "hashType": "consistent",
+           "body": shardBody,
+           "servers": BackendServers(vSvc, 0, vPort, map[string]any{"flags": []any{}}, "", "varnish_cache_shards", vNs),
+         }) }}
       {%- end %}
 
   # ==========================================================================
