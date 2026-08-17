@@ -137,7 +137,7 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 		// "_global" carries shared fixtures AND a shared extraContext baseline
 		// merged into every test (see the _global lookup in runSingleTest); it
 		// is never executed as a standalone test. The benchmark path excludes it
-		// the same way (cmd/controller/benchmark.go).
+		// the same way (cmd/haptic/benchmark.go).
 		if name == "_global" {
 			continue
 		}

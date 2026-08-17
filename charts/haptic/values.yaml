@@ -62,7 +62,7 @@ fullnameOverride: ""
 # subsequent `helm upgrade` (a documented Helm limitation). Without this hook,
 # additive CRD schema changes (new fields, printer columns, validation) shipped
 # in a chart upgrade would be silently pruned by the API server. The hook runs
-# `haptic-controller apply-crds`, which server-side applies the bundled CRDs.
+# `haptic apply-crds`, which server-side applies the bundled CRDs.
 crds:
   upgradeJob:
     # Run the pre-install/pre-upgrade Job that server-side applies the bundled

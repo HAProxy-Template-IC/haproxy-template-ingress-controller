@@ -34,8 +34,8 @@ Creates a template engine from configuration with all standard filters and the
 
 - `pkg/controller/reconciliation.go` - Engine creation for the reconciliation pipeline
 - `pkg/controller/validator/validationtests.go` - Validation-test rendering
-- `cmd/controller/validate.go` - CLI validation command
-- `cmd/controller/benchmark_render.go` - Benchmark rendering
+- `cmd/haptic/validate.go` - CLI validation command
+- `cmd/haptic/benchmark_render.go` - Benchmark rendering
 
 ```go
 engine, err := helpers.NewEngineFromConfig(cfg, nil, nil)

@@ -113,7 +113,7 @@ render_config() {
   fi
   set_preset_sources "$id" "$actual_csv"
 
-  (cd "$REPO" && go run ./cmd/controller validate -f "$rendered" --dump-merged) \
+  (cd "$REPO" && go run ./cmd/haptic validate -f "$rendered" --dump-merged) \
     > "$OUT/presets/$id.config.yaml"
   if yq -e '.migrationCoverage != null or ._migrationCoverage != null' "$OUT/presets/$id.config.yaml" >/dev/null 2>&1; then
     echo "FAIL [$id]: emitted config contains migration tooling metadata" >&2

@@ -1123,7 +1123,7 @@ func verifyControllerBinary(
 	for _, pod := range pods {
 		checksum := exec.CommandContext(ctx, "kubectl", "exec",
 			"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
-			pod, "-c", "controller", "--", "sha256sum", "/usr/local/bin/haptic-controller")
+			pod, "-c", "controller", "--", "sha256sum", "/usr/local/bin/haptic")
 		checksumOut, err := checksum.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("hash controller binary in pod %s: %w (output: %s)", pod, err, checksumOut)

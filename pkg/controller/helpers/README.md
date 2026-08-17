@@ -4,7 +4,7 @@ Shared utility for constructing a template engine from a `*config.Config`.
 
 ## Overview
 
-Several code paths need to build a template engine from the controller's loaded config: the reconciliation wiring (`pkg/controller/reconciliation.go`), validation-test runner, playground, benchmarks, and `haptic-controller validate`. The watched-resource webhook reuses the reconciliation engine. This package consolidates construction so a change to template extraction or filter registration lands in one place.
+Several code paths need to build a template engine from the controller's loaded config: the reconciliation wiring (`pkg/controller/reconciliation.go`), validation-test runner, playground, benchmarks, and `haptic validate`. The watched-resource webhook reuses the reconciliation engine. This package consolidates construction so a change to template extraction or filter registration lands in one place.
 
 This is a **utility package** — pure functions, no event-bus dependency, no goroutines.
 

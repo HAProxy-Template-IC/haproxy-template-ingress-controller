@@ -680,7 +680,7 @@ if !strings.Contains(trace, "Rendering: backends.cfg") {
 **3. Integration with validation tests:**
 
 ```go
-// In haptic-controller validate command
+// In haptic validate command
 engine.EnableTracing()
 
 runner := testrunner.New(config, engine, paths, options)
@@ -880,14 +880,14 @@ INFO SORT comparison criterion=$.priority:desc valA=5 valA_type=int valB=1 valB_
 
 ### CLI Integration
 
-The `haptic-controller validate` command supports the `--debug-filters` flag:
+The `haptic validate` command supports the `--debug-filters` flag:
 
 ```bash
 # Enable filter debug logging during validation tests
-./bin/haptic-controller validate --test test-gateway-route-precedence --debug-filters
+./bin/haptic validate --test test-gateway-route-precedence --debug-filters
 
 # Combine with other debugging flags
-./bin/haptic-controller validate --debug-filters --trace-templates --dump-rendered
+./bin/haptic validate --debug-filters --trace-templates --dump-rendered
 ```
 
 **How it works:**

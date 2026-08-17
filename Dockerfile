@@ -73,19 +73,19 @@ RUN CGO_ENABLED=0 \
     -buildvcs=false \
     -pgo=auto \
     -ldflags="-s -w -X main.version=${GIT_TAG} -X main.commit=${GIT_COMMIT} -X main.sourceHash=${SOURCE_HASH}" \
-    -o /build/${TARGETPLATFORM}/haptic-controller \
-    ./cmd/controller
+    -o /build/${TARGETPLATFORM}/haptic \
+    ./cmd/haptic
 
 # -----------------------------------------------------------------------------
 # Binary output stage - exports the controller binary
 # This stage can be overridden via --build-context binary=<path> to use a
 # pre-compiled binary instead of building from source (used in GitLab CI).
-# The platform-structured path (e.g., linux/amd64/haptic-controller) ensures
+# The platform-structured path (e.g., linux/amd64/haptic) ensures
 # compatibility with both CI builds and goreleaser dockers_v2.
 # -----------------------------------------------------------------------------
 FROM scratch AS binary
 ARG TARGETPLATFORM
-COPY --from=builder /build/${TARGETPLATFORM}/haptic-controller /${TARGETPLATFORM}/haptic-controller
+COPY --from=builder /build/${TARGETPLATFORM}/haptic /${TARGETPLATFORM}/haptic
 
 # -----------------------------------------------------------------------------
 # Runtime stage - minimal image with HAProxy for validation
@@ -97,12 +97,12 @@ ARG TARGETPLATFORM
 
 # Copy the controller binary from the 'binary' stage
 # When using --build-context binary=<path>, this copies from the external context
-COPY --chmod=0755 --from=binary /${TARGETPLATFORM}/haptic-controller /usr/local/bin/haptic-controller
+COPY --chmod=0755 --from=binary /${TARGETPLATFORM}/haptic /usr/local/bin/haptic
 
-# Bundle the Helm chart so `haptic-controller migrate-check` can render the
+# Bundle the Helm chart so `haptic migrate-check` can render the
 # config in-process with the image's own chart — no cluster or mounted
 # values needed for the zero-argument audit. The path matches
-# embeddedChartPath in cmd/controller/chartrender.go. The chart is source
+# embeddedChartPath in cmd/haptic/chartrender.go. The chart is source
 # YAML (~3 MB); it adds one layer and no runtime cost for `run`.
 COPY charts/haptic /usr/share/haptic/chart
 
@@ -122,7 +122,7 @@ WORKDIR /
 STOPSIGNAL SIGTERM
 
 # Set the entrypoint to the controller
-ENTRYPOINT ["/usr/local/bin/haptic-controller"]
+ENTRYPOINT ["/usr/local/bin/haptic"]
 
 # Default command (can be overridden)
 CMD ["run"]

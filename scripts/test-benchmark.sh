@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CHART_DIR="${PROJECT_ROOT}/charts/haptic"
-CONTROLLER_BIN="${PROJECT_ROOT}/bin/haptic-controller"
+CONTROLLER_BIN="${PROJECT_ROOT}/bin/haptic"
 
 # Colors for output
 RED='\033[0;31m'
@@ -167,7 +167,7 @@ check_prerequisites() {
     fi
 
     # Check if controller binary is outdated
-    if find cmd/controller pkg go.mod go.sum VERSION -newer "$CONTROLLER_BIN" 2>/dev/null | grep -q .; then
+    if find cmd/haptic pkg go.mod go.sum VERSION -newer "$CONTROLLER_BIN" 2>/dev/null | grep -q .; then
         warn "Controller binary may be outdated (source files modified since build)"
         warn "Run 'make build' to rebuild the controller binary"
         echo >&2

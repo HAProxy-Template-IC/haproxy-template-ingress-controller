@@ -71,7 +71,7 @@
         "^charts/haptic/values\\.yaml$",
         "^charts/haptic/charts/haptic-annotations/_index\\.yaml$",
         "^charts/haptic/charts/haptic-annotations/70-caching\\.yaml$",
-        "^cmd/controller/preflight\\.go$",
+        "^cmd/haptic/preflight\\.go$",
         "^tests/e2e/constants\\.go$"
       ],
       "matchStrings": [

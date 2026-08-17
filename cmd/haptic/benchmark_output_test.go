@@ -15,11 +15,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// truncateString lives in cmd/controller/benchmark_output.go and is used
+// truncateString lives in cmd/haptic/benchmark_output.go and is used
 // to fit benchmark file names into the fixed-width table. Note that
 // pkg/controller/testrunner has a same-named helper with DIFFERENT
 // semantics (no max-len underflow guard, "..." appended without
-// shrinking the slice prefix). The cmd/controller version pins:
+// shrinking the slice prefix). The cmd/haptic version pins:
 //
 //   - Strings shorter or equal to maxLen pass through verbatim.
 //   - Strings longer than maxLen are shrunk to maxLen total bytes,

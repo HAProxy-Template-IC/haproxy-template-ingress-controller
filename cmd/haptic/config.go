@@ -92,17 +92,17 @@ service account, or can be overridden with --namespace.
 
 Examples:
   # View config using defaults
-  haptic-controller config view
+  haptic config view
 
   # View config for a specific CRD
-  haptic-controller config view --crd-name my-haproxy-config
+  haptic config view --crd-name my-haproxy-config
 
   # View config from a specific namespace
-  haptic-controller config view --namespace production
+  haptic config view --namespace production
 
   # Pipe to a pager or syntax highlighter
-  haptic-controller config view | less
-  haptic-controller config view | bat -l haproxy`,
+  haptic config view | less
+  haptic config view | bat -l haproxy`,
 	RunE: runConfigView,
 }
 

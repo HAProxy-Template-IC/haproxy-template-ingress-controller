@@ -15,8 +15,8 @@ before:
 
 builds:
   - id: controller
-    main: ./cmd/controller
-    binary: haptic-controller
+    main: ./cmd/haptic
+    binary: haptic
     env:
       - CGO_ENABLED=0
       # The pre-build hook rejects a missing or stale source hash.
@@ -48,7 +48,7 @@ builds:
 archives:
   - formats: [binary]
     name_template: >-
-      haptic-controller-{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
+      haptic-{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
 
 checksum:
   name_template: checksums.txt

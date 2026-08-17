@@ -2018,8 +2018,8 @@ verify_controller_runtime_identity() {
         select(.metadata.labels["app.kubernetes.io/component"] == "controller") | .metadata.name' "$before_pods" | sort)
     for pod in "${controller_pods[@]}"; do
         checksum_output="$(kubectl exec -n "$RELEASE_NAMESPACE" "$pod" -c controller -- \
-            sha256sum /usr/local/bin/haptic-controller)"
-        checksum="$(awk '$2 == "/usr/local/bin/haptic-controller" {print $1; found++}
+            sha256sum /usr/local/bin/haptic)"
+        checksum="$(awk '$2 == "/usr/local/bin/haptic" {print $1; found++}
             END {if (found != 1) exit 1}' <<< "$checksum_output")" || \
             die "controller binary checksum output is invalid on ${pod}"
         [[ "$checksum" == "$binary_sha256" ]] || die "controller binary checksum differs on ${pod}"

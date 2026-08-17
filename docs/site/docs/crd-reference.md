@@ -538,7 +538,7 @@ controller:
     compressionThreshold: 1048576
 ```
 
-When the rendered configuration exceeds the threshold, it's compressed with zstd and base64-encoded; the `HAProxyCfg` resource stores it with `spec.compressed: true`, reducing etcd storage and speeding up watch events for large configurations. To read a published config back in plaintext, use `haptic-controller config view` — see [Debugging](./operations/debugging.md#common-recipes).
+When the rendered configuration exceeds the threshold, it's compressed with zstd and base64-encoded; the `HAProxyCfg` resource stores it with `spec.compressed: true`, reducing etcd storage and speeding up watch events for large configurations. To read a published config back in plaintext, use `haptic config view` — see [Debugging](./operations/debugging.md#common-recipes).
 
 ### `logging`
 
@@ -657,7 +657,7 @@ spec:
 kubectl get haproxytemplatelibrary   # or: kubectl get htpllib
 ```
 
-Names must be unique across the merged set for `validationTests`. See [ADR-0017](development/adr/0017-template-library-kind.md) for the rationale, and [`haptic-controller config view --input`](./operations/debugging.md) to print the merged result.
+Names must be unique across the merged set for `validationTests`. See [ADR-0017](development/adr/0017-template-library-kind.md) for the rationale, and [`haptic config view --input`](./operations/debugging.md) to print the merged result.
 
 ## Command-line management
 
@@ -690,17 +690,17 @@ snippet by name under `controller.config.templateSnippets` instead.
 To see what the controller actually assembles from the whole set:
 
 ```bash
-haptic-controller config view --input --namespace haptic
+haptic config view --input --namespace haptic
 ```
 
 Validation status is reported on `<configName>` only — it represents the merged
-set. Offline, `haptic-controller validate -f <file>` accepts the flag repeatedly
+set. Offline, `haptic validate -f <file>` accepts the flag repeatedly
 and accepts multi-document files, so you can validate a whole rendered set:
 
 ```bash
 helm template charts/haptic > all.yaml   # validate keeps the config + library docs and ignores the rest
-haptic-controller validate -f all.yaml
-haptic-controller validate -f all.yaml --dump-merged   # print the merged spec
+haptic validate -f all.yaml
+haptic validate -f all.yaml --dump-merged   # print the merged spec
 ```
 
 Applying a single hand-written `HAProxyTemplateConfig` — without Helm — still
@@ -710,11 +710,11 @@ works exactly as before: point `--crd-name` at it and it's the whole config.
 
 ```bash
 # Validate local file
-haptic-controller validate -f haproxy-config.yaml
+haptic validate -f haproxy-config.yaml
 
 # Validate deployed config
 kubectl get htplcfg -n haptic haproxy-config -o yaml > /tmp/haproxy-config.yaml
-haptic-controller validate -f /tmp/haproxy-config.yaml
+haptic validate -f /tmp/haproxy-config.yaml
 ```
 
 ### Edit Configuration
@@ -746,10 +746,10 @@ The CRD includes OpenAPI schema validation that checks:
 
 Additional validation occurs when:
 
-1. **Pre-rollout Helm hook** - the chart's `pre-install`/`pre-upgrade` Job runs `haptic-controller preflight`, which renders the chart from your values and runs the embedded tests before any object is applied
+1. **Pre-rollout Helm hook** - the chart's `pre-install`/`pre-upgrade` Job runs `haptic preflight`, which renders the chart from your values and runs the embedded tests before any object is applied
 2. **Controller startup** - the load gate runs the embedded tests before the controller serves; a failure crash-loops the new pod instead of replacing a working one
 3. **Live config change** - the same suite re-runs on every config change; a failure is refused and the last-good config keeps serving
-4. **CLI command** - `haptic-controller validate` runs tests locally
+4. **CLI command** - `haptic validate` runs tests locally
 
 ## Best practices
 
@@ -769,7 +769,7 @@ Additional validation occurs when:
 
 - Include validation tests for critical routing paths
 - Test with realistic fixtures, not toy examples
-- Run `haptic-controller validate` before applying changes
+- Run `haptic validate` before applying changes
 - Use CI/CD to validate configs in pull requests
 
 **Templates:**

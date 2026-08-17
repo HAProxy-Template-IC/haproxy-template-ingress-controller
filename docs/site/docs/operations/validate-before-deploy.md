@@ -23,11 +23,11 @@ Three things make this worth an explicit step:
 
 ## Run the check
 
-`haptic-controller preflight` renders the chart with your values and runs the
+`haptic preflight` renders the chart with your values and runs the
 same checks the controller runs on startup:
 
 ```bash
-haptic-controller preflight \
+haptic preflight \
   --values ./haptic-values.yaml \
   --namespace haptic \
   --release haptic
@@ -38,7 +38,7 @@ pipeline before the step that applies the chart — any runner works, these are
 plain commands with no runner-specific syntax:
 
 ```bash
-haptic-controller preflight --values ./haptic-values.yaml --namespace haptic
+haptic preflight --values ./haptic-values.yaml --namespace haptic
 helm upgrade --install haptic <chart> -n haptic -f ./haptic-values.yaml
 ```
 
@@ -100,13 +100,13 @@ the pipeline has no credentials, not as the default.
 
 ```bash
 # Offline: schemas from a directory, no cluster contacted.
-haptic-controller preflight --values ./haptic-values.yaml --schema-dir ./schemas
+haptic preflight --values ./haptic-values.yaml --schema-dir ./schemas
 ```
 
 ## Getting the binary
 
-`haptic-controller` ships in the controller image at
-`/usr/local/bin/haptic-controller`, together with the chart. The simplest
+The `haptic` binary ships in the controller image at
+`/usr/local/bin/haptic`, together with the chart. The simplest
 pipeline step runs the image directly:
 
 ```bash
@@ -126,11 +126,11 @@ run the binary on the pipeline host to get all three:
 
 ```bash
 id=$(docker create <haptic-image>)
-docker cp "$id:/usr/local/bin/haptic-controller" ./haptic-controller
+docker cp "$id:/usr/local/bin/haptic" ./haptic
 docker cp "$id:/usr/share/haptic/chart" ./chart
 docker rm "$id"
 
-./haptic-controller preflight --values ./haptic-values.yaml --chart ./chart
+./haptic preflight --values ./haptic-values.yaml --chart ./chart
 ```
 
 Match the binary to the version you're about to deploy. Validating with one
