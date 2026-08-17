@@ -442,9 +442,11 @@ create_all_tests_config() {
     # write each test into every library.
     local libs_file="${output_config}.libs"
     local cfg_file="${output_config}.cfg"
-    yq eval 'del(.spec.validationTests)' "$base_config" \
+    # Keep each library's `_global` test: it pins the synthetic default cert
+    # (extraContext + Secret fixture) the render needs.
+    yq eval '.spec.validationTests |= with_entries(select(.key == "_global"))' "$base_config" \
         | yq 'select(.kind != "HAProxyTemplateConfig")' > "$libs_file"
-    yq eval 'del(.spec.validationTests)' "$base_config" \
+    yq eval '.spec.validationTests |= with_entries(select(.key == "_global"))' "$base_config" \
         | yq 'select(.kind == "HAProxyTemplateConfig")' > "$cfg_file"
 
     info "Generating benchmark tests..."
