@@ -1,5 +1,5 @@
 {{- /*
-Pre-rollout validation hook: runs `haptic-controller preflight` against the
+Pre-rollout validation hook: runs `haptic preflight` against the
 release's OWN values before any manifest is applied.
 
 With config admission gone (ADR-0016 — a per-object webhook cannot judge the
@@ -160,7 +160,7 @@ spec:
           {{- end }}
           image: {{ include "haptic.controller.image" . | quote }}
           imagePullPolicy: {{ $controller.image.pullPolicy }}
-          command: ["/usr/local/bin/haptic-controller"]
+          command: ["/usr/local/bin/haptic"]
           args:
             - preflight
             - --values=/haptic/values/values.yaml

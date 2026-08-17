@@ -186,7 +186,7 @@ graph LR
 
 ## Build optimizations (contributors)
 
-Controller images are built with Go's Profile-Guided Optimization (PGO), which typically provides 2-7% CPU improvement by optimizing frequently called functions. A baseline CPU profile (`cmd/controller/default.pgo`) is committed to the repository; Go automatically uses it during builds to optimize hot paths.
+Controller images are built with Go's Profile-Guided Optimization (PGO), which typically provides 2-7% CPU improvement by optimizing frequently called functions. A baseline CPU profile (`cmd/haptic/default.pgo`) is committed to the repository; Go automatically uses it during builds to optimize hot paths.
 
 **Updating the profile** from the development environment:
 
@@ -209,7 +209,7 @@ Controller images are built with Go's Profile-Guided Optimization (PGO), which t
     ```bash
     make pgo-profile
     # Or manually:
-    curl -o cmd/controller/default.pgo http://localhost:8080/debug/pprof/profile?seconds=30
+    curl -o cmd/haptic/default.pgo http://localhost:8080/debug/pprof/profile?seconds=30
     ```
 
 5. Rebuild with the new profile:

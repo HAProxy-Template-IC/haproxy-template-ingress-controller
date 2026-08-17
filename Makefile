@@ -272,7 +272,7 @@ test: ## Run tests
 	# -coverpkg=./... (rather than a bare -cover) instruments the whole module
 	# for coverage, matching how the CI `test` job invokes gotestsum. Beyond
 	# unifying local and CI runs, it sidesteps a Go toolchain bug: with the
-	# committed cmd/controller/default.pgo, `go test -cover ./...` links the
+	# committed cmd/haptic/default.pgo, `go test -cover ./...` links the
 	# PGO-built and cover-built variants of a package imported only by the
 	# PGO main under conflicting fingerprints ("fingerprint mismatch" link
 	# error). Whole-module coverage instrumentation makes the variants
@@ -560,8 +560,8 @@ test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run
 	@echo "                        from 4 up through 16 on a 16-core box. Override with"
 	@echo "                        PARALLEL=N for constrained environments"
 	@controller_rollout_id="$$(docker image inspect --format '{{.Id}}' haptic:test-haproxy$(HAPROXY_VERSION))"; \
-	controller_binary_sha256="$$(docker run --rm --entrypoint sha256sum haptic:test-haproxy$(HAPROXY_VERSION) /usr/local/bin/haptic-controller | awk '{print $$1}')"; \
-	controller_source_hash="$$(docker run --rm --entrypoint /usr/local/bin/haptic-controller haptic:test-haproxy$(HAPROXY_VERSION) version | awk '$$1 == "Source" && $$2 == "Hash:" {print $$3}')"; \
+	controller_binary_sha256="$$(docker run --rm --entrypoint sha256sum haptic:test-haproxy$(HAPROXY_VERSION) /usr/local/bin/haptic | awk '{print $$1}')"; \
+	controller_source_hash="$$(docker run --rm --entrypoint /usr/local/bin/haptic haptic:test-haproxy$(HAPROXY_VERSION) version | awk '$$1 == "Source" && $$2 == "Hash:" {print $$3}')"; \
 	if ! printf '%s\n' "$$controller_rollout_id" | grep -Eq '^sha256:[0-9a-f]{64}$$'; then echo "Controller image haptic:test-haproxy$(HAPROXY_VERSION) has invalid ID '$$controller_rollout_id'; rebuild it with make docker-build-test."; exit 1; fi; \
 	if ! printf '%s\n' "$$controller_binary_sha256" | grep -Eq '^[0-9a-f]{64}$$'; then echo "Controller binary digest '$$controller_binary_sha256' is invalid; rebuild haptic:test-haproxy$(HAPROXY_VERSION)."; exit 1; fi; \
 	if [ "$$controller_source_hash" != "$(SOURCE_HASH)" ]; then echo "Controller image source hash '$$controller_source_hash' does not match local source hash '$(SOURCE_HASH)'; rebuild it with make docker-build-test."; exit 1; fi; \
@@ -638,7 +638,7 @@ bench-gateway-api: ## Run pinned Gateway API benchmark programs against HAPTIC
 # SCHEMA_DIR is where extract-schemas writes its output. The default
 # matches the path the chart's tests reference; operators can override
 # to populate any local directory they later pass to
-# `haptic-controller validate --schema-dir=<path>`.
+# `haptic validate --schema-dir=<path>`.
 SCHEMA_DIR ?= tests/schemas
 
 extract-schemas: ## Extract CustomResourceDefinitions into $(SCHEMA_DIR) for offline `validate --schema-dir`
@@ -685,8 +685,8 @@ extract-schemas: ## Extract CustomResourceDefinitions into $(SCHEMA_DIR) for off
 	fi
 	@echo
 	@echo "Schemas written to $(SCHEMA_DIR)/. Usage:"
-	@echo "  haptic-controller validate -f config.yaml --schema-dir=$(SCHEMA_DIR)"
-	@echo "  HAPTIC_SCHEMA_DIR=$(SCHEMA_DIR) haptic-controller validate -f config.yaml"
+	@echo "  haptic validate -f config.yaml --schema-dir=$(SCHEMA_DIR)"
+	@echo "  HAPTIC_SCHEMA_DIR=$(SCHEMA_DIR) haptic validate -f config.yaml"
 
 validate-helm-libraries: build ## Render the chart and run `controller validate` against the merged HAProxyTemplateConfig (thin wrapper around scripts/test-templates.sh)
 	@# Smoke-tests that the chart's bundled libraries merge cleanly and
@@ -708,14 +708,14 @@ build: check-source-hash ## Build the controller binary for local development (w
 	@echo "Building controller..."
 	@echo "  Version: $(VERSION)"
 	@echo "  Git commit: $(GIT_COMMIT)"
-	@if [ -f cmd/controller/default.pgo ]; then echo "  PGO: enabled (using cmd/controller/default.pgo)"; else echo "  PGO: disabled (no profile found)"; fi
+	@if [ -f cmd/haptic/default.pgo ]; then echo "  PGO: enabled (using cmd/haptic/default.pgo)"; else echo "  PGO: disabled (no profile found)"; fi
 	@mkdir -p bin
 	$(GO) build \
 		-mod=readonly \
 		-pgo=auto \
 		-ldflags="-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) -X main.sourceHash=$(SOURCE_HASH)" \
-		-o bin/haptic-controller \
-		./cmd/controller
+		-o bin/haptic \
+		./cmd/haptic
 
 build-for-docker: check-source-hash ## Build binary in platform-structured path for Docker builds with --build-context
 	@echo "Building controller for Docker..."
@@ -728,9 +728,9 @@ build-for-docker: check-source-hash ## Build binary in platform-structured path 
 		-trimpath \
 		-buildvcs=false \
 		-ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.sourceHash=$(SOURCE_HASH)" \
-		-o dist/linux/amd64/haptic-controller \
-		./cmd/controller
-	@echo "✓ Binary built: dist/linux/amd64/haptic-controller"
+		-o dist/linux/amd64/haptic \
+		./cmd/haptic
+	@echo "✓ Binary built: dist/linux/amd64/haptic"
 	@echo "  Use with: docker buildx build --platform linux/amd64 --build-context binary=dist --target runtime ..."
 
 ## Docker targets
@@ -988,13 +988,13 @@ pgo-profile: ## Collect CPU profile from dev environment for PGO
 	@echo "  2. Port-forward active: kubectl -n haptic port-forward deploy/haptic-controller 8080:8080"
 	@echo ""
 	@echo "Starting profile collection (30 seconds)..."
-	curl -o cmd/controller/default.pgo http://localhost:8080/debug/pprof/profile?seconds=30
+	curl -o cmd/haptic/default.pgo http://localhost:8080/debug/pprof/profile?seconds=30
 	@echo ""
-	@echo "Profile saved to cmd/controller/default.pgo"
+	@echo "Profile saved to cmd/haptic/default.pgo"
 	@echo "Rebuild with: make build"
 
 pgo-merge: ## Merge multiple PGO profiles into one
 	@if [ -z "$(PROFILES)" ]; then echo "Usage: make pgo-merge PROFILES='profile1.pgo profile2.pgo'"; exit 1; fi
 	@echo "Merging PGO profiles: $(PROFILES)"
-	$(GO) tool pprof -proto $(PROFILES) > cmd/controller/default.pgo
-	@echo "Merged profile saved to cmd/controller/default.pgo"
+	$(GO) tool pprof -proto $(PROFILES) > cmd/haptic/default.pgo
+	@echo "Merged profile saved to cmd/haptic/default.pgo"

@@ -14,7 +14,7 @@ Modify this package when:
 
 **DO NOT** modify this package for:
 
-- CLI command implementation → Use `cmd/controller`
+- CLI command implementation → Use `cmd/haptic`
 - Webhook integration → Use `pkg/controller/dryrunvalidator`
 - Template rendering → Use `pkg/templating`
 - HAProxy validation → Use `pkg/dataplane`
@@ -23,7 +23,7 @@ Modify this package when:
 
 This package implements a pure test runner component that executes embedded validation tests defined in HAProxyTemplateConfig CRDs. It's designed to be called directly from:
 
-1. **CLI** (`haptic-controller validate` command) - For local development and CI/CD
+1. **CLI** (`haptic validate` command) - For local development and CI/CD
 2. **Webhook** (via DryRunValidator) - For admission control validation
 
 **Key Design Principle**: Pure component with no EventBus dependency. This allows direct function calls without event coordination overhead.
@@ -74,7 +74,7 @@ This package implements a pure test runner component that executes embedded vali
 - `(*Runner).renderWithStores(...)` - Renders the HAProxy config + auxiliary files using fixture stores and a worker-specific engine
 - `(*Runner).buildRenderingContext(...)` - Wraps stores with `StoreWrapper` and assembles the full template context (resources, paths, HTTP store, current config)
 
-**Follows DryRunValidator Pattern**: The rendering logic mirrors `DryRunValidator`'s overlay-store rendering to ensure consistency between admission webhook validation and `haptic-controller validate` runs.
+**Follows DryRunValidator Pattern**: The rendering logic mirrors `DryRunValidator`'s overlay-store rendering to ensure consistency between admission webhook validation and `haptic validate` runs.
 
 ### fixtures.go - Fixture Store Creation
 
@@ -419,13 +419,13 @@ for _, assertion := range test.Assertions {
 
 ```bash
 # 1. Check what was rendered
-haptic-controller validate -f config.yaml --dump-rendered
+haptic validate -f config.yaml --dump-rendered
 
 # 2. See if template executed
-haptic-controller validate -f config.yaml --trace-templates
+haptic validate -f config.yaml --trace-templates
 
 # 3. Look for template errors in verbose output
-haptic-controller validate -f config.yaml --verbose
+haptic validate -f config.yaml --verbose
 ```
 
 **Common causes:**
@@ -439,7 +439,7 @@ haptic-controller validate -f config.yaml --verbose
 
 ```bash
 # See actual content vs expected pattern
-haptic-controller validate -f config.yaml --verbose
+haptic validate -f config.yaml --verbose
 ```
 
 **Look for:**
@@ -460,7 +460,7 @@ Got:      " backend foo"  (extra leading space)
 
 ```bash
 # See template render times
-haptic-controller validate -f config.yaml --trace-templates
+haptic validate -f config.yaml --trace-templates
 ```
 
 **Templates taking >10ms may need optimization:**
@@ -481,7 +481,7 @@ Rendering: backends.cfg (45.123ms)  ← Needs optimization
 
 ```bash
 # Dump rendered content to see if fixtures loaded correctly
-haptic-controller validate -f config.yaml --dump-rendered
+haptic validate -f config.yaml --dump-rendered
 ```
 
 **Common fixture issues:**

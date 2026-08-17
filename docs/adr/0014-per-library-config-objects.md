@@ -147,7 +147,7 @@ logs one line per override. It is not an error: an operator overriding a bundled
 snippet is the documented escape hatch.
 
 **Reading the whole input needs a command.** No single object shows the picture
-any more. `haptic-controller config view --input` prints the merged input;
+any more. `haptic config view --input` prints the merged input;
 `validate --dump-merged` does the same offline.
 
 **More objects, more watches.** One `SingleWatcher` per config, so a default
@@ -171,7 +171,7 @@ config unreadable and un-`kubectl edit`-able, destroying the property that the
 config is a legible API.
 
 **Resolve libraries from the image instead of the cluster.** The whole chart is
-already baked in at `/usr/share/haptic/chart` and `cmd/controller/chartrender.go`
+already baked in at `/usr/share/haptic/chart` and `cmd/haptic/chartrender.go`
 renders it in-process for `migrate-check`. Rejected for now: the libraries are
 parameterised by Helm values, so `run` would have to perform an in-process Helm
 render at startup, and the config would stop being visible in the cluster.

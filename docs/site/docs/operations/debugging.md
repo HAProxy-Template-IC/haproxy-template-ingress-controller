@@ -126,7 +126,7 @@ Note that `haproxy -c` on the fetched file fails on a workstation: the rendered 
 Or read the last *published* config straight from the `HAProxyCfg` CRD — this works even when the debug port is disabled, and the controller binary decompresses it for you (a raw `kubectl get haproxycfg -o yaml` shows a zstd+base64 blob for configs above the 1 MiB compression threshold; smaller ones are stored as plaintext):
 
 ```bash
-kubectl exec -n haptic deployment/haptic-controller -- haptic-controller config view > current.cfg
+kubectl exec -n haptic deployment/haptic-controller -- haptic config view > current.cfg
 ```
 
 **What configuration is the controller actually using?**
@@ -141,7 +141,7 @@ the rendered HAProxy output above:
 ```bash
 kubectl get haproxytemplateconfig -n haptic            # which objects exist
 kubectl exec -n haptic deployment/haptic-controller -- \
-  haptic-controller config view --input > current-input.yaml
+  haptic config view --input > current-input.yaml
 ```
 
 If a snippet isn't behaving as you expect, check the controller's startup logs
@@ -195,7 +195,7 @@ More than a few reconciliations per second under stable input usually means a wa
 
 There's no per-line origin mapping in a running controller. The two production tools stop short of line-level attribution:
 
-- `haptic-controller validate -f config.yaml --trace-templates` lists which templates and snippets rendered and how long each took (render order plus per-template timing), not which output line came from which snippet — see [Performance — Template debugging](./performance.md#template-debugging).
+- `haptic validate -f config.yaml --trace-templates` lists which templates and snippets rendered and how long each took (render order plus per-template timing), not which output line came from which snippet — see [Performance — Template debugging](./performance.md#template-debugging).
 - `/debug/vars/rendered` returns the final `haproxy.cfg` text with no attribution back to the snippets that produced it.
 
 Per-line "this config line came from snippet X" mapping is a feature of the [interactive playground](../templating.md) — its **provenance** control highlights, for a rendered line, the template snippet that emitted it. That mapping runs in the browser and isn't exposed by the in-cluster controller. To trace a line in production, match its content against the snippet names from `--trace-templates` and read that snippet in your `HAProxyTemplateConfig`.

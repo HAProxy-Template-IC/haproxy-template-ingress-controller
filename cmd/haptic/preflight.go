@@ -1,4 +1,4 @@
-// Package main — `haptic-controller preflight`.
+// Package main — `haptic preflight`.
 //
 // Renders the bundled chart with an operator's OWN values and runs the checks
 // the controller runs on startup, before anything reaches the cluster.

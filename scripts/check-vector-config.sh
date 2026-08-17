@@ -15,7 +15,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART="$REPO/charts/haptic"
-CONTROLLER_BIN="${CONTROLLER_BIN:-$REPO/bin/haptic-controller}"
+CONTROLLER_BIN="${CONTROLLER_BIN:-$REPO/bin/haptic}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

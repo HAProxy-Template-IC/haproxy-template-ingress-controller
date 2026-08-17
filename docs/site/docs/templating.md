@@ -682,7 +682,7 @@ A typed field resolves by **either** its Go-PascalCase name **or** its lowercase
 | `resources.<name>.GetSingle(keys...)` | `*resources.<name>.T` (nil if not found) |
 | `resources.<name>.APIVersion()` | `string`, with or without a schema — the group/version this resource is actually watched at — the candidate the effective config resolved to. Pass it to `statusPatch()` instead of hardcoding a version literal |
 
-Without a schema (for example, `haptic-controller validate` without `--schema-dir`), the same calls fall back to `[]any` / `map[string]any` exactly as before. The chart's `dig()`-based snippets work in either mode.
+Without a schema (for example, `haptic validate` without `--schema-dir`), the same calls fall back to `[]any` / `map[string]any` exactly as before. The chart's `dig()`-based snippets work in either mode.
 
 **`<name>.T` is a usable type expression.** Macros, var declarations, type assertions, slice types, and type-switch case clauses all accept it:
 
@@ -820,9 +820,9 @@ Templates write `gw.ApiVersion`, not `gw.APIVersion`. Why the convention works t
 **Schema source.** Typed shapes are generated from each resource's OpenAPI v3 schema:
 
 - **Production:** the controller fetches schemas live from the kube-apiserver — CRDs via their embedded `openAPIV3Schema`, Kubernetes core resources via the apiserver's OpenAPI v3 endpoint.
-- **Offline (`haptic-controller validate` / chart `validationTests` / `scripts/test-templates.sh`):** schemas come from a directory passed via `--schema-dir` (or `HAPTIC_SCHEMA_DIR` env var). The directory accepts full CRD YAMLs (`kubectl get crd X -o yaml` output) and bare OpenAPI v3 `spec.Schema` files with an `x-kubernetes-group-version-kind` extension. Without `--schema-dir`, no resources receive typed support; templates that reach for typed access in that case fail at engine compile time with a clear "no schema for X" pointer back to `--schema-dir`.
+- **Offline (`haptic validate` / chart `validationTests` / `scripts/test-templates.sh`):** schemas come from a directory passed via `--schema-dir` (or `HAPTIC_SCHEMA_DIR` env var). The directory accepts full CRD YAMLs (`kubectl get crd X -o yaml` output) and bare OpenAPI v3 `spec.Schema` files with an `x-kubernetes-group-version-kind` extension. Without `--schema-dir`, no resources receive typed support; templates that reach for typed access in that case fail at engine compile time with a clear "no schema for X" pointer back to `--schema-dir`.
 
-This repo's `tests/schemas/` bundles schemas for both the Gateway API CRDs / haptic CRDs *and* the Kubernetes built-ins the chart watches (Namespace, Service, Secret, EndpointSlice, Ingress). All built-ins are CRD-wrapped so the offline GVK resolver picks up the (`apiVersion`, plural) mapping — `haptic-controller validate --schema-dir tests/schemas` therefore unlocks typed access for every chart-watched resource, not just the CRDs. The chart-test script auto-wires this directory; copy it into your own project's schema-dir if you reuse the bundled libraries. To refresh from a running cluster, run `scripts/fetch-k8s-openapi-schemas.sh` (queries `kubectl get --raw '/openapi/v3/...'`, inlines `$ref`s, emits CRD-wrapped YAML).
+This repo's `tests/schemas/` bundles schemas for both the Gateway API CRDs / haptic CRDs *and* the Kubernetes built-ins the chart watches (Namespace, Service, Secret, EndpointSlice, Ingress). All built-ins are CRD-wrapped so the offline GVK resolver picks up the (`apiVersion`, plural) mapping — `haptic validate --schema-dir tests/schemas` therefore unlocks typed access for every chart-watched resource, not just the CRDs. The chart-test script auto-wires this directory; copy it into your own project's schema-dir if you reuse the bundled libraries. To refresh from a running cluster, run `scripts/fetch-k8s-openapi-schemas.sh` (queries `kubectl get --raw '/openapi/v3/...'`, inlines `$ref`s, emits CRD-wrapped YAML).
 
 ### Index Configuration
 

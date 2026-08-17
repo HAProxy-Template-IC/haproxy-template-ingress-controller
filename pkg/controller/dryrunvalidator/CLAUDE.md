@@ -341,7 +341,7 @@ the chart's embedded `validationTests`: those are chart-author scenarios with
 their own fixtures (often referencing secrets/ingresses that exist only in the
 fixture set, not the live cluster), so running them per-admission would both
 waste work and surface fixture-vs-cluster mismatches as admission denials. The
-`validationTests` are executed instead by `haptic-controller validate` (CLI /
+`validationTests` are executed instead by `haptic validate` (CLI /
 CI) and the `make test-templates` target, via `pkg/controller/testrunner`.
 
 ## Future Enhancements

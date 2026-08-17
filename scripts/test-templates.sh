@@ -13,7 +13,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CHART_DIR="${PROJECT_ROOT}/charts/haptic"
-CONTROLLER_BIN="${CONTROLLER_BIN:-${PROJECT_ROOT}/bin/haptic-controller}"
+CONTROLLER_BIN="${CONTROLLER_BIN:-${PROJECT_ROOT}/bin/haptic}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -143,7 +143,7 @@ fi
 # scrolled past in a few hundred lines of render output.
 #
 # CI is unaffected — `make validate-helm-libraries` depends on `build`.
-if find cmd/controller pkg go.mod go.sum VERSION -newer "$CONTROLLER_BIN" 2>/dev/null | grep -q .; then
+if find cmd/haptic pkg go.mod go.sum VERSION -newer "$CONTROLLER_BIN" 2>/dev/null | grep -q .; then
     echo -e "${RED}Error: $CONTROLLER_BIN is older than the source tree${NC}" >&2
     echo "Run 'make build', then re-run this script." >&2
     echo "(A stale binary reports 'no validation tests found in config' instead of failing recognisably.)" >&2

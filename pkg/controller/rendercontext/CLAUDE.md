@@ -23,7 +23,7 @@ call sites use `NewBuilder` directly:
 | Call site | Usage |
 |-----------|-------|
 | `pkg/controller/testrunner/rendering.go` | Validation tests |
-| `cmd/controller/benchmark_render.go` | Performance benchmarks |
+| `cmd/haptic/benchmark_render.go` | Performance benchmarks |
 
 The production renderer (`pkg/controller/renderer/service.go`) builds its context directly via its own `buildRenderingContext` method. It is kept consistent with `Builder` by sharing the same helpers — `BuildResourcesValue` for `resources`, `CapabilitiesToMap` for `capabilities`, and `MergeExtraContextInto` for `extraContext` (always-set + top-level key promotion). When you add or change a context key, update **both** paths (or move the logic into a shared helper both call) so a template can't pass `controller validate` yet behave differently in production. The dry-run validator delegates to `proposalvalidator` → pipeline → renderer and therefore also does not call `NewBuilder` directly.
 

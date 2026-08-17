@@ -24,7 +24,7 @@ Modify this package when:
 ## Package Structure
 
 ```
-cmd/controller/
+cmd/haptic/
 ├── main.go                    # Cobra root command + init wiring (registers run, validate, benchmark)
 ├── run.go                     # `run` subcommand (controller daemon)
 ├── validate.go                # `validate` subcommand (CLI for embedded tests)
@@ -52,7 +52,7 @@ The primary controller daemon that watches Kubernetes resources and manages HAPr
 
 ### `validate` — CLI (validate.go)
 
-CLI tool for validating HAProxyTemplateConfig CRDs with embedded validation tests. Used both by humans (`haptic-controller validate -f config.yaml`) and CI/CD pipelines.
+CLI tool for validating HAProxyTemplateConfig CRDs with embedded validation tests. Used both by humans (`haptic validate -f config.yaml`) and CI/CD pipelines.
 
 `-f` is repeatable and each file may hold several YAML documents; every
 HAProxyTemplateConfig across them is merged in order through the same
@@ -124,7 +124,7 @@ violation. The chart wires this as a `pre-install`/`pre-upgrade` hook Job
 
 ### `config` — Inspect Live HAProxy Config (config.go)
 
-`haptic-controller config view` fetches the published `HAProxyCfg` CRD from the cluster (the rendered HAProxy configuration the controller deployed last), decompresses it if needed, and prints the raw config to stdout. It is a **live-cluster** command — it talks to the API server, not a local file. Flags: `--crd-name`, `--namespace`, `--kubeconfig`, `--input` (no `-f`).
+`haptic config view` fetches the published `HAProxyCfg` CRD from the cluster (the rendered HAProxy configuration the controller deployed last), decompresses it if needed, and prints the raw config to stdout. It is a **live-cluster** command — it talks to the API server, not a local file. Flags: `--crd-name`, `--namespace`, `--kubeconfig`, `--input` (no `-f`).
 
 `--input` prints the merged **input** config instead: it fetches the named
 `HAProxyTemplateConfig` plus every `HAProxyTemplateLibrary` its ordered
@@ -132,7 +132,7 @@ violation. The chart wires this as a `pre-install`/`pre-upgrade` hook Job
 chart splits the content across one library object per template library, no
 single object shows the whole picture, and this is how an operator gets it back.
 The name defaults via `--crd-name` → `CRD_NAME` env → `haproxy-config`. Useful for
-`haptic-controller config view | bat -l haproxy` style inspection on a running
+`haptic config view | bat -l haproxy` style inspection on a running
 deployment.
 
 ### `version` — Build Info (version.go)
@@ -142,23 +142,23 @@ Prints the build's `version`, `commit`, and `buildDate` (set via ldflags at buil
 **Usage:**
 
 ```bash
-haptic-controller validate -f config.yaml [flags]
+haptic validate -f config.yaml [flags]
 ```
 
 **Observability Flags:**
 
 ```bash
 # Show rendered content preview for failed assertions (first 200 chars)
-haptic-controller validate -f config.yaml --verbose
+haptic validate -f config.yaml --verbose
 
 # Dump complete rendered content (haproxy.cfg, maps, files, certs)
-haptic-controller validate -f config.yaml --dump-rendered
+haptic validate -f config.yaml --dump-rendered
 
 # Show template execution trace with timing
-haptic-controller validate -f config.yaml --trace-templates
+haptic validate -f config.yaml --trace-templates
 
 # Combine flags for comprehensive debugging
-haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-templates
+haptic validate -f config.yaml --verbose --dump-rendered --trace-templates
 ```
 
 **Flag Details:**
@@ -201,19 +201,19 @@ The validate command uses `pkg/controller/testrunner` to execute tests and forma
 
 ```bash
 # 1. Run tests and see enhanced error messages
-haptic-controller validate -f config.yaml
+haptic validate -f config.yaml
 # Output: "pattern X not found in map:foo.map (target size: 61 bytes). Hint: Use --verbose"
 
 # 2. Enable verbose mode to see content preview
-haptic-controller validate -f config.yaml --verbose
+haptic validate -f config.yaml --verbose
 # Output: Shows first 200 chars of map:foo.map
 
 # 3. See full content if needed
-haptic-controller validate -f config.yaml --dump-rendered
+haptic validate -f config.yaml --dump-rendered
 # Output: Complete content of all rendered files
 
 # 4. Identify slow templates
-haptic-controller validate -f config.yaml --trace-templates
+haptic validate -f config.yaml --trace-templates
 # Output: Template execution trace with timing
 ```
 
@@ -294,7 +294,7 @@ restart required).
 
 ## Flags and Environment Variables
 
-Authoritative source: `cmd/controller/run.go` (`init()` registers flags) and `cmd/controller/main.go` (package doc). Each flag falls back to its env var, then to the listed default.
+Authoritative source: `cmd/haptic/run.go` (`init()` registers flags) and `cmd/haptic/main.go` (package doc). Each flag falls back to its env var, then to the listed default.
 
 | Flag | Env var | Default | Purpose |
 |------|---------|---------|---------|
@@ -316,13 +316,13 @@ The chart injects `POD_NAME` and `POD_NAMESPACE` via the downward API (`fieldRef
 
 ## Signal Handling
 
-`cmd/controller/main.go` is a thin Cobra wrapper — it just calls `rootCmd.Execute()`.
-The signal-to-context bridge lives in `cmd/controller/run.go` (`runRun`); the
+`cmd/haptic/main.go` is a thin Cobra wrapper — it just calls `rootCmd.Execute()`.
+The signal-to-context bridge lives in `cmd/haptic/run.go` (`runRun`); the
 errgroup / per-component goroutines are inside `pkg/controller/iteration.go`,
 not here. The shape in `runRun` is intentionally minimal:
 
 ```go
-// cmd/controller/run.go (runRun, paraphrased)
+// cmd/haptic/run.go (runRun, paraphrased)
 ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 defer cancel()
 
@@ -340,7 +340,7 @@ if err := controller.Run(ctx, k8sClient,
 `errgroup`, fans out `Run`/`Start` calls for every component, and exits when
 either the parent context cancels (signal) or the iteration context cancels
 (config change, leader change, etc.). The shutdown deadline lives there too —
-don't add another shutdown-timeout layer in `cmd/controller`.
+don't add another shutdown-timeout layer in `cmd/haptic`.
 
 ## Health and Metrics
 
@@ -352,7 +352,7 @@ The controller doesn't hand-roll its HTTP servers — three reusable infra packa
 - **`pkg/metrics`** — `/metrics` via Prometheus `promhttp` against an instance-based `prometheus.Registerer`. Port comes from the `METRICS_PORT` env var (default 9090, set to 0 to disable; chart owner `controller.ports.metrics`). The instance-scoped registry is critical: every reinitialization iteration creates a fresh registry so metrics get GC'd cleanly when the iteration ends.
 - **`pkg/webhook`** — admission webhook HTTPS (`/validate`) and a sidecar `/healthz`. Disabled when `--webhook-cert-dir` is empty. Port comes from `WEBHOOK_PORT` (default `9443`; chart owner `controller.ports.webhook`).
 
-Don't add new HTTP surfaces in `cmd/controller`. Add a `Var` to `pkg/introspection`, a metric to `pkg/controller/metrics`, or a handler on the existing webhook server.
+Don't add new HTTP surfaces in `cmd/haptic`. Add a `Var` to `pkg/introspection`, a metric to `pkg/controller/metrics`, or a handler on the existing webhook server.
 
 ## Testing Approach
 
@@ -425,7 +425,7 @@ Test complete workflow with kind cluster:
 
 ```bash
 # Run e2e test with real cluster
-KEEP_CLUSTER=true go test ./cmd/controller/... -tags=e2e -v
+KEEP_CLUSTER=true go test ./cmd/haptic/... -tags=e2e -v
 ```
 
 ## Common Pitfalls

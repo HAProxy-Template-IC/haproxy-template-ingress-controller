@@ -43,7 +43,7 @@ Runs the validation tests embedded in the chart's libraries. Equivalent to:
 
 1. `helm template charts/haptic …` (with `--api-versions` for Gateway API)
 2. Extract the single `HAProxyTemplateConfig` with `yq`
-3. `haptic-controller validate -f <merged>.yaml [--test <name>] [--dump-rendered] [--verbose]`
+3. `haptic validate -f <merged>.yaml [--test <name>] [--dump-rendered] [--verbose]`
 
 ```bash
 ./scripts/test-templates.sh                                   # all tests
@@ -52,7 +52,7 @@ Runs the validation tests embedded in the chart's libraries. Equivalent to:
 ./scripts/test-templates.sh --output yaml | yq '.tests[].name'  # list available tests
 ```
 
-Always prefer this over running `haptic-controller validate` against a library file directly — library files are incomplete (no `haproxyConfig`, no cross-library snippets) and will fail validation on their own.
+Always prefer this over running `haptic validate` against a library file directly — library files are incomplete (no `haproxyConfig`, no cross-library snippets) and will fail validation on their own.
 
 ## test-helm-defaults.sh
 

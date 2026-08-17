@@ -62,7 +62,7 @@ this package or any caller.
 - `pkg/controller/testrunner` — pure component, no event coordination.
   Used by the `validate` CLI subcommand and the dryrunvalidator.
 - `pkg/webhook` — synchronous HTTP path; no event publishing.
-- `cmd/controller/benchmark_render.go` — local-only, no bus involved.
+- `cmd/haptic/benchmark_render.go` — local-only, no bus involved.
 
 **What that means in practice:**
 

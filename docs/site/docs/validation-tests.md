@@ -4,7 +4,7 @@
 
 Validation tests render your templates against fixture resources and assert on the output — broken templates and invalid HAProxy config fail before they reach a cluster. Tests are embedded in the HAProxyTemplateConfig CRD. You run them locally with the CLI (this page), and the controller also runs them automatically before any config reaches HAProxy.
 
-Beyond running the controller (`haptic-controller run`), the controller binary provides `validate` (this page) and `benchmark` (template render timing). To audit another controller's Ingresses before switching to HAPTIC, use the migration report in the [playground](/playground/) — see [Migrating: Step 0](migrating.md#step-0-check-what-changes).
+Beyond running the controller (`haptic run`), the controller binary provides `validate` (this page) and `benchmark` (template render timing). To audit another controller's Ingresses before switching to HAPTIC, use the migration report in the [playground](/playground/) — see [Migrating: Step 0](migrating.md#step-0-check-what-changes).
 
 !!! note "Tests also run automatically before deployment"
     The same suite runs at two gates besides the CLI, so a config whose tests fail never reaches HAProxy:
@@ -12,7 +12,7 @@ Beyond running the controller (`haptic-controller run`), the controller binary p
     - **Live config change** — the controller re-runs the suite whenever a config changes. A change whose tests fail is refused, `haptic_config_rejected_total{validator="validationtests"}` increments, and the last-good config keeps serving. The budget scales with suite size (a 25s floor plus ~100 ms per test), so a large suite isn't cut off mid-run.
     - **Startup load gate** — the suite also runs on every fresh or upgraded controller pod, with a much larger budget since there is no scatter-gather deadline. A failing initial config crash-loops the pod rather than serving untested config, and the reason is stamped on `status.conditions[Validated]` with reason `LoadGateFailed`.
 
-    There is **no** admission webhook for `HAProxyTemplateConfig` — a configuration is a set (the config plus its `libraryRefs` libraries), and admission sees one object at a time, so a per-object webhook would deny change sets whose end state is correct. To gate a config *before* it reaches the cluster, run [`haptic-controller preflight`](operations/validate-before-deploy.md) in your pipeline.
+    There is **no** admission webhook for `HAProxyTemplateConfig` — a configuration is a set (the config plus its `libraryRefs` libraries), and admission sees one object at a time, so a per-object webhook would deny change sets whose end state is correct. To gate a config *before* it reaches the cluster, run [`haptic preflight`](operations/validate-before-deploy.md) in your pipeline.
 
     The `validate` CLI, `preflight`, and both in-cluster gates run the identical suite through the same runner, so a passing local `validate` run predicts a clean load.
 
@@ -51,19 +51,19 @@ Beyond running the controller (`haptic-controller run`), the controller binary p
               description: Must have default frontend
     ```
 
-2. Download `haptic-controller` for your platform from the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases). The `validate` subcommand is the controller binary running in validation mode.
+2. Download the `haptic` binary for your platform from the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases). The `validate` subcommand is the controller binary running in validation mode.
 
 3. Run the tests:
 
     ```bash
-    haptic-controller validate -f my-config.yaml
+    haptic validate -f my-config.yaml
     ```
 
 To validate the config currently deployed in your cluster instead of a local file:
 
 ```bash
-haptic-controller config view --input --namespace haptic > /tmp/haptic-config.yaml
-haptic-controller validate -f /tmp/haptic-config.yaml
+haptic config view --input --namespace haptic > /tmp/haptic-config.yaml
+haptic validate -f /tmp/haptic-config.yaml
 ```
 
 A Helm install spreads the configuration across one object per enabled template
@@ -373,24 +373,24 @@ The check covers `haproxy.cfg` and every auxiliary file the template produced; n
 
 ```bash
 # Run all tests
-haptic-controller validate -f config.yaml
+haptic validate -f config.yaml
 
 # Run specific test
-haptic-controller validate -f config.yaml --test test-basic-routing
+haptic validate -f config.yaml --test test-basic-routing
 
 # Output formats
-haptic-controller validate -f config.yaml --output json
-haptic-controller validate -f config.yaml --output yaml
+haptic validate -f config.yaml --output json
+haptic validate -f config.yaml --output yaml
 
 # Parallelism (0=auto-detect CPUs, 1=sequential)
-haptic-controller validate -f config.yaml --workers 4
+haptic validate -f config.yaml --workers 4
 
 # Typed watched-resource access — point at a directory of schemas
-haptic-controller validate -f config.yaml --schema-dir tests/schemas
-# Equivalent: HAPTIC_SCHEMA_DIR=tests/schemas haptic-controller validate ...
+haptic validate -f config.yaml --schema-dir tests/schemas
+# Equivalent: HAPTIC_SCHEMA_DIR=tests/schemas haptic validate ...
 ```
 
-The `haptic-controller validate` command shells out to the `haproxy` binary on your `PATH` — both to detect the HAProxy version during setup (`haproxy -v`) and for the `haproxy_valid` assertions (`haproxy -c`). Install HAProxy locally (for example via your package manager) and ensure it's on `PATH`; if no `haproxy` is found, `validate` fails fast with a clear error (it doesn't silently fall back to a syntax-only check). To validate against a specific HAProxy version, run the matching per-version controller image, which bundles that version.
+The `haptic validate` command shells out to the `haproxy` binary on your `PATH` — both to detect the HAProxy version during setup (`haproxy -v`) and for the `haproxy_valid` assertions (`haproxy -c`). Install HAProxy locally (for example via your package manager) and ensure it's on `PATH`; if no `haproxy` is found, `validate` fails fast with a clear error (it doesn't silently fall back to a syntax-only check). To validate against a specific HAProxy version, run the matching per-version controller image, which bundles that version.
 
 Templates that use typed watched-resource access need `--schema-dir` (or `HAPTIC_SCHEMA_DIR`); without it they fail at engine compile time with a "no schema for X" error, while untyped `dig()`-based templates validate fine — see [Templating — Typed Resource Access](./templating.md#typed-resource-access) for where schemas come from and what the repo's bundled `tests/schemas/` directory covers.
 
@@ -398,7 +398,7 @@ Exit code 0 means all tests passed.
 
 ### Run in CI
 
-Run `validate` as a pipeline step to block a broken config before it merges. The job fails when `validate` exits non-zero, so a template error or a failing test stops the pipeline. Use the per-version controller image: it bundles both `haptic-controller` and the matching `haproxy` binary, so `haproxy_valid` assertions run with no extra setup. Pick the tag whose HAProxy version matches your deployment (see [HAProxy Versions](operations/haproxy-versions.md)).
+Run `validate` as a pipeline step to block a broken config before it merges. The job fails when `validate` exits non-zero, so a template error or a failing test stops the pipeline. Use the per-version controller image: it bundles both the `haptic` binary and the matching `haproxy` binary, so `haproxy_valid` assertions run with no extra setup. Pick the tag whose HAProxy version matches your deployment (see [HAProxy Versions](operations/haproxy-versions.md)).
 
 GitLab CI (`.gitlab-ci.yml`) — override the image entrypoint so the job's `script` shell runs:
 
@@ -408,7 +408,7 @@ validate-haptic-config:
     name: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
     entrypoint: [""]
   script:
-    - haptic-controller validate -f config.yaml
+    - haptic validate -f config.yaml
 ```
 
 GitHub Actions (`.github/workflows/validate.yml`):
@@ -421,7 +421,7 @@ jobs:
       image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
     steps:
       - uses: actions/checkout@v4
-      - run: haptic-controller validate -f config.yaml
+      - run: haptic validate -f config.yaml
 ```
 
 ### Output example
@@ -445,7 +445,7 @@ Tests: 1 passed, 1 failed, 2 total (0.214s)
 Shows content preview for failed assertions:
 
 ```bash
-haptic-controller validate -f config.yaml --verbose
+haptic validate -f config.yaml --verbose
 ```
 
 ```
@@ -461,7 +461,7 @@ haptic-controller validate -f config.yaml --verbose
 Shows all rendered content after test results:
 
 ```bash
-haptic-controller validate -f config.yaml --dump-rendered
+haptic validate -f config.yaml --dump-rendered
 ```
 
 ### `--trace-templates`
@@ -469,7 +469,7 @@ haptic-controller validate -f config.yaml --dump-rendered
 Shows top-level template execution order and timing:
 
 ```bash
-haptic-controller validate -f config.yaml --trace-templates
+haptic validate -f config.yaml --trace-templates
 ```
 
 ```
@@ -484,7 +484,7 @@ Completed: path-prefix.map (3.347ms)
     `render_glob`, `render`, and macro invocations, combine with `--profile-includes`:
 
     ```bash
-    haptic-controller validate -f config.yaml --trace-templates --profile-includes
+    haptic validate -f config.yaml --trace-templates --profile-includes
     ```
 
 ### `--profile-includes`
@@ -492,7 +492,7 @@ Completed: path-prefix.map (3.347ms)
 Lists the slowest 20 `render` / `render_glob` / macro invocations with cumulative timing — useful when `--trace-templates` shows a slow top-level template and you need to find which include is responsible:
 
 ```bash
-haptic-controller validate -f config.yaml --profile-includes
+haptic validate -f config.yaml --profile-includes
 ```
 
 ### `--debug-filters`
@@ -500,14 +500,14 @@ haptic-controller validate -f config.yaml --profile-includes
 Logs every comparison made by sort filters (`sort_by`) and similar operations, with the input types and the comparison result. Useful when route precedence or map ordering doesn't match what you expected:
 
 ```bash
-haptic-controller validate -f config.yaml --debug-filters
+haptic validate -f config.yaml --debug-filters
 ```
 
 ### Combining flags
 
 ```bash
 # Comprehensive end-to-end debugging
-haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-templates --profile-includes
+haptic validate -f config.yaml --verbose --dump-rendered --trace-templates --profile-includes
 ```
 
 **Workflow**: start with `--verbose` to see *what* failed, add `--dump-rendered` to see the *full content* you produced, add `--trace-templates` (and optionally `--profile-includes`) to see *where* time is spent, and reach for `--debug-filters` only when sort behaviour itself is suspect.

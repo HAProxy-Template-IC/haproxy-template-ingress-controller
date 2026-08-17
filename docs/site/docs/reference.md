@@ -36,7 +36,7 @@ topology. Plugin execution remains under `spoaHub.plugins.*`.
 ## CRD lifecycle
 
 Helm installs the CRDs in `crds/` once and never upgrades them on a subsequent
-`helm upgrade`. This hook Job runs `haptic-controller apply-crds` (server-side
+`helm upgrade`. This hook Job runs `haptic apply-crds` (server-side
 apply) so additive CRD schema changes reach the cluster on install and upgrade.
 
 | Parameter | Type | Default | Description |

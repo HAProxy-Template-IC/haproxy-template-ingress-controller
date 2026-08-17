@@ -180,19 +180,19 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 
 ### Validation test failures
 
-**Symptoms**: `haptic-controller validate` fails
+**Symptoms**: `haptic validate` fails
 
 **Quick Debugging**:
 
 ```bash
 # Step 1: Run with verbose output
-haptic-controller validate -f config.yaml --verbose
+haptic validate -f config.yaml --verbose
 
 # Step 2: See full rendered content
-haptic-controller validate -f config.yaml --dump-rendered
+haptic validate -f config.yaml --dump-rendered
 
 # Step 3: Check template execution
-haptic-controller validate -f config.yaml --trace-templates
+haptic validate -f config.yaml --trace-templates
 ```
 
 See [Validation Tests](./validation-tests.md#debugging-failed-tests) for detailed debugging.
@@ -213,13 +213,13 @@ rendered config invalid: [ALERT] config: parsing [/etc/haproxy/haproxy.cfg:214]:
 Fix the reported line in the template or resource, then re-apply. To reproduce and iterate locally without a cluster, run the same render-and-validate over your `HAProxyTemplateConfig` — it prints the identical line-numbered errors and runs the config's `validationTests`:
 
 ```bash
-haptic-controller validate -f config.yaml --verbose
+haptic validate -f config.yaml --verbose
 ```
 
 Two different gates sit behind this, depending on what you applied:
 
 - **Watched resources** (Ingress, Gateway, and every other `watchedResources` entry with `enableValidationWebhook: true`) go through the admission webhook, which uses `failurePolicy: Fail` — a render-breaking apply is rejected, and if the webhook itself is unreachable the apply is blocked.
-- **The `HAProxyTemplateConfig` itself** has no admission webhook, so a bad config is *accepted* by the apiserver and caught afterwards: the controller refuses to load it, keeps serving the last-good one, and increments `haptic_config_rejected_total` (see [Monitoring](./operations/monitoring.md#alerting-rules)). The reason lands on the object — `kubectl describe htplcfg <name>` shows the `Validated` condition with reason `ConfigInvalid`. On a fresh or upgraded pod the same failure is fatal: the pod crash-loops with reason `LoadGateFailed` rather than serving untested config, which leaves the old pods running. Catch it before the apply with [`haptic-controller preflight`](./operations/validate-before-deploy.md).
+- **The `HAProxyTemplateConfig` itself** has no admission webhook, so a bad config is *accepted* by the apiserver and caught afterwards: the controller refuses to load it, keeps serving the last-good one, and increments `haptic_config_rejected_total` (see [Monitoring](./operations/monitoring.md#alerting-rules)). The reason lands on the object — `kubectl describe htplcfg <name>` shows the `Validated` condition with reason `ConfigInvalid`. On a fresh or upgraded pod the same failure is fatal: the pod crash-loops with reason `LoadGateFailed` rather than serving untested config, which leaves the old pods running. Catch it before the apply with [`haptic preflight`](./operations/validate-before-deploy.md).
 
 ## HAProxy Pod Issues
 
@@ -472,7 +472,7 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 
 # Configuration — every object, plus the merged result the controller assembles
 kubectl get haproxytemplateconfig -n haptic -o yaml > config-objects.yaml
-haptic-controller config view --input --namespace haptic > config-merged.yaml
+haptic config view --input --namespace haptic > config-merged.yaml
 
 # HAProxy config (sanitize sensitive data!)
 kubectl exec -n haptic $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg > haproxy.cfg

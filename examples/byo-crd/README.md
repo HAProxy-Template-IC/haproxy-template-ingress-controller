@@ -35,7 +35,7 @@ just the binary and a local `haproxy`:
 
 ```bash
 make build
-./bin/haptic-controller validate -f examples/byo-crd/haproxytemplateconfig.yaml
+./bin/haptic validate -f examples/byo-crd/haproxytemplateconfig.yaml
 ```
 
 You should see `test-webapp-routing` pass: it renders the config from the WebApp

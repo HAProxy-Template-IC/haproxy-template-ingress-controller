@@ -3,7 +3,7 @@ CRD upgrade hook: server-side applies the bundled CRDs on install/upgrade.
 
 Helm never upgrades the CRDs it installed from crds/, so additive schema changes
 in a chart upgrade would otherwise be pruned by the API server. This Job runs
-`haptic-controller apply-crds` (server-side apply) as a pre-install/pre-upgrade
+`haptic apply-crds` (server-side apply) as a pre-install/pre-upgrade
 hook, gated by crds.upgradeJob.enabled.
 
 The Job and its scoped RBAC (ServiceAccount + ClusterRole limited to
@@ -125,7 +125,7 @@ spec:
           {{- end }}
           image: {{ include "haptic.controller.image" . | quote }}
           imagePullPolicy: {{ $controller.image.pullPolicy }}
-          command: ["/usr/local/bin/haptic-controller"]
+          command: ["/usr/local/bin/haptic"]
           args: ["apply-crds"]
           resources:
             {{- toYaml $job.resources | nindent 12 }}

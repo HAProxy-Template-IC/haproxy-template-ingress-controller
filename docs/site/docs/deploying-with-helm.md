@@ -40,7 +40,7 @@ The chart deploys:
 - **IngressClass** and **GatewayClass** -- routing API integration for Ingress and Gateway API resources
 - **RBAC**, **NetworkPolicy**, and **ServiceAccount** -- permissions and network security
 - **Vector sidecar** (on by default) -- receives the HAProxy access log over a Unix datagram socket, derives per-request metrics from it, and re-exports the SPOA hub's Prometheus metrics with its own; HAProxy's exporter is scraped directly
-- **Pre-rollout validation hook** and **CRD upgrade hook** (both on by default) -- `pre-install`/`pre-upgrade` Jobs that run `haptic-controller preflight` against your values and server-side apply the bundled CRDs, so a bad configuration or a stale CRD schema fails the release instead of the running fleet
+- **Pre-rollout validation hook** and **CRD upgrade hook** (both on by default) -- `pre-install`/`pre-upgrade` Jobs that run `haptic preflight` against your values and server-side apply the bundled CRDs, so a bad configuration or a stale CRD schema fails the release instead of the running fleet
 - Optional **ServiceMonitor** and **PodMonitors** -- Prometheus integration for the controller and the HAProxy pods
 - Optional **admission webhook** -- validates watched resources (Ingress, HTTPRoute, …) before they're admitted
 

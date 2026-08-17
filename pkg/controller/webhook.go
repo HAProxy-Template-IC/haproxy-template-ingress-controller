@@ -315,7 +315,7 @@ func buildDryRunValidator(
 	// (Ingress / HTTPRoute / etc.) by rendering with an overlay store and
 	// checking the result. The chart's embedded `validationTests` are NOT
 	// run here — they are chart-author scenarios with their own fixtures,
-	// executed in CI via `haptic-controller validate` / `make test-templates`.
+	// executed in CI via `haptic validate` / `make test-templates`.
 	return dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
 		ProposalValidator: proposalValidatorInstance,
 		RESTMapper:        gvrMapper,

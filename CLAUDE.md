@@ -1086,7 +1086,7 @@ For detailed development context on specific packages, see:
 - `pkg/lifecycle/CLAUDE.md` - Component lifecycle registry and leader gating
 - `pkg/metrics/CLAUDE.md` - Prometheus registry and server primitives
 - `pkg/webhook/CLAUDE.md` - Pure admission-webhook HTTPS server
-- `cmd/controller/CLAUDE.md` - Entry point and startup
+- `cmd/haptic/CLAUDE.md` - Entry point and startup
 - `charts/CLAUDE.md` - Helm chart and template libraries
 - `tests/CLAUDE.md` - Test suites (integration, e2e, acceptance)
 
