@@ -175,6 +175,48 @@ func TestHandleEndpointSuccess_StampsThePlanOntoThePodStatus(t *testing.T) {
 	assert.Equal(t, "plan-abc", applied.SyncMetadata.RunningPlanID)
 }
 
+func TestRuntimeRawApply_AcksThePlanItLanded(t *testing.T) {
+	tests := []struct {
+		name    string
+		lane    lane
+		partial bool
+		wantAck bool
+	}{
+		{name: "complete runtime-raw apply acks", lane: laneRuntimeRaw, wantAck: true},
+		{name: "partial apply does not ack", lane: laneRuntimeRaw, partial: true},
+		{name: "structural render's runtime subset does not ack", lane: laneStructural},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sink := &recordingPlanSink{}
+			plan := &renderplan.Plan{ID: "plan-abc"}
+			bypass := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
+				return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
+					return &dataplane.SyncResult{Success: true}, nil
+				}}, nil
+			})
+			bypass.ackedPlans = sink
+
+			dep := depFor([]dataplane.Endpoint{{URL: "http://a"}})
+			dep.lane = test.lane
+			dep.plan = plan
+			dep.planID = plan.ID
+
+			bypass.applyRuntimeRaw(context.Background(), dep, bypassPush{body: "config", partial: test.partial})
+
+			if test.wantAck {
+				// No reload and no structural deploy follows this lane, so the
+				// renderer would never see the servers it just changed.
+				require.Len(t, sink.plans, 1)
+				assert.Same(t, plan, sink.plans[0])
+				return
+			}
+			assert.Empty(t, sink.plans, "an apply that is not the complete deploy proves nothing about the fleet")
+		})
+	}
+}
+
 func TestNewDeployStack_WiresTheAckedPlanSink(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	sink := &recordingPlanSink{}
@@ -184,4 +226,6 @@ func TestNewDeployStack_WiresTheAckedPlanSink(t *testing.T) {
 
 	assert.Same(t, sink, stack.Deployer.ackedPlans,
 		"without the sink the renderer keeps rendering from its own plans forever")
+	assert.Same(t, sink, stack.Scheduler.runtimeBypass.ackedPlans,
+		"the runtime-raw lane reloads nothing, so its applies reach the renderer only through this sink")
 }

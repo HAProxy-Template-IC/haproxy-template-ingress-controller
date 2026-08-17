@@ -107,28 +107,15 @@ func extractDeployedToPodsFromPatch(patch map[string]any) []haproxyv1alpha1.PodD
 	}
 	result := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(rawPods))
 	for _, raw := range rawPods {
-		entry, ok := raw.(map[string]any)
-		if !ok {
+		// Round-trip through the type's own json tags so a field added to
+		// PodDeploymentStatus is merged here without touching this helper.
+		encoded, err := json.Marshal(raw)
+		if err != nil {
 			continue
 		}
 		var p haproxyv1alpha1.PodDeploymentStatus
-		if v, ok := entry["podName"].(string); ok {
-			p.PodName = v
-		}
-		if v, ok := entry["podUID"].(string); ok {
-			p.PodUID = v
-		}
-		if v, ok := entry["podRuntimeID"].(string); ok {
-			p.PodRuntimeID = v
-		}
-		if v, ok := entry["checksum"].(string); ok {
-			p.Checksum = v
-		}
-		if v, ok := entry["lastError"].(string); ok {
-			p.LastError = v
-		}
-		if v, ok := entry["consecutiveErrors"].(float64); ok {
-			p.ConsecutiveErrors = int(v)
+		if err := json.Unmarshal(encoded, &p); err != nil {
+			continue
 		}
 		result = append(result, p)
 	}

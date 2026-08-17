@@ -61,6 +61,7 @@ func NewDeployStack(
 		cfg.Dataplane.GetDeploymentTimeout())
 
 	deployer.ackedPlans = ackedPlans
+	scheduler.runtimeBypass.ackedPlans = ackedPlans
 	deployer.versionCache = scheduler.runtimeBypass.configCache
 	scheduler.runtimeBypass.recordFastPath = domainMetrics.RecordRuntimeFastPath
 
