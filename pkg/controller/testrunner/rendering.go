@@ -196,9 +196,7 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 		StatusPatches:  statusPatches,
 		Events:         renderedEvents,
 		IncludeStats:   includeStats,
-		Plan: bctx.PlanRegistry.Plan(
-			rendercontext.PlanFiles(haproxyConfig, auxiliaryFiles),
-			rendercontext.MapContents(auxiliaryFiles)),
+		Plan:           bctx.PlanRegistry.Plan(haproxyConfig, auxiliaryFiles),
 	}, nil
 }
 

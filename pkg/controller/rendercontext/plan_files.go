@@ -20,11 +20,12 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
-// PlanFiles lists every file of the render with its digest, in the kinds the
-// deploy side reasons about. ReloadOnChange is true only where a content change
-// cannot be applied over the runtime API.
-func PlanFiles(config string, aux *dataplane.AuxiliaryFiles) []renderplan.File {
-	files := []renderplan.File{{
+// planFiles lists every file of the render with its digest, in the kinds the
+// deploy side reasons about, plus the rendered content of every map keyed by
+// its plan path. ReloadOnChange is true only where a content change cannot be
+// applied over the runtime API.
+func (r *PlanRegistry) planFiles(config string, aux *dataplane.AuxiliaryFiles) (files []renderplan.File, mapContents map[string]string) {
+	files = []renderplan.File{{
 		Path:           names.MainTemplateName,
 		Kind:           renderplan.FileKindConfig,
 		ReloadOnChange: true,
@@ -32,20 +33,23 @@ func PlanFiles(config string, aux *dataplane.AuxiliaryFiles) []renderplan.File {
 		Size:           int64(len(config)),
 	}}
 	if aux == nil {
-		return files
+		return files, nil
 	}
 
+	mapContents = make(map[string]string, len(aux.MapFiles))
 	for _, file := range aux.MapFiles {
-		files = append(files, planFile(file.Path, renderplan.FileKindMap, false, file.Content))
+		mapPath := r.MapPath(file.Path)
+		mapContents[mapPath] = file.Content
+		files = append(files, planFile(mapPath, renderplan.FileKindMap, false, file.Content))
 	}
 	for _, file := range aux.SSLCertificates {
-		files = append(files, planFile(file.Path, renderplan.FileKindCert, false, file.Content))
+		files = append(files, planFile(r.filePath(file.Path, "cert"), renderplan.FileKindCert, false, file.Content))
 	}
 	for _, file := range aux.SSLCaFiles {
 		files = append(files, planFile(file.Path, renderplan.FileKindCA, false, file.Content))
 	}
 	for _, file := range aux.CRTListFiles {
-		files = append(files, planFile(file.Path, renderplan.FileKindCRTList, false, file.Content))
+		files = append(files, planFile(r.filePath(file.Path, "crt-list"), renderplan.FileKindCRTList, false, file.Content))
 	}
 	for _, file := range aux.GeneralFiles {
 		// A ca-file is delivered as a general file but rotates over the runtime
@@ -57,7 +61,7 @@ func PlanFiles(config string, aux *dataplane.AuxiliaryFiles) []renderplan.File {
 		reload := file.ReloadOnPush == nil || *file.ReloadOnPush
 		files = append(files, planFile(file.Path, renderplan.FileKindGeneral, reload, file.Content))
 	}
-	return files
+	return files, mapContents
 }
 
 func planFile(path, kind string, reloadOnChange bool, content string) renderplan.File {
@@ -68,16 +72,4 @@ func planFile(path, kind string, reloadOnChange bool, content string) renderplan
 		Digest:         renderplan.DigestString(content),
 		Size:           int64(len(content)),
 	}
-}
-
-// MapContents keys the rendered map content by the path the plan lists it under.
-func MapContents(aux *dataplane.AuxiliaryFiles) map[string]string {
-	if aux == nil {
-		return nil
-	}
-	contents := make(map[string]string, len(aux.MapFiles))
-	for _, file := range aux.MapFiles {
-		contents[file.Path] = file.Content
-	}
-	return contents
 }

@@ -60,7 +60,7 @@ func TestAssembleWithoutTokens(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			registry := NewPlanRegistry()
+			registry := NewPlanRegistry(nil)
 
 			config, sections, err := registry.Assemble(context.Background(), tc.rendered, failingPost(t))
 
@@ -73,7 +73,7 @@ func TestAssembleWithoutTokens(t *testing.T) {
 }
 
 func TestAssembleSplicesSections(t *testing.T) {
-	registry := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
 	beA, err := registry.Section("backend", "be_a", "backend be_a\n    server s1 10.0.0.1:80\n")
 	require.NoError(t, err)
 	beB, err := registry.Section("backend", "be_b", "backend be_b\n")
@@ -99,7 +99,7 @@ func TestAssembleSplicesSections(t *testing.T) {
 }
 
 func TestAssembleProfileGroup(t *testing.T) {
-	registry := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
 	_, err := registry.Section("profile", "zeta", "defaults zeta\n")
 	require.NoError(t, err)
 	_, err = registry.Section("profile", "alpha", "defaults alpha\n")
@@ -118,7 +118,7 @@ func TestAssembleProfileGroup(t *testing.T) {
 }
 
 func TestAssemblePostProcessesEachSection(t *testing.T) {
-	registry := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
 	token, err := registry.Section("backend", "be_a", "backend be_a\n\tserver s1 10.0.0.1:80")
 	require.NoError(t, err)
 
@@ -135,7 +135,7 @@ func TestAssemblePostProcessesEachSection(t *testing.T) {
 }
 
 func TestAssembleIndentedToken(t *testing.T) {
-	registry := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
 	token, err := registry.Section("backend", "be_a", "backend be_a\n")
 	require.NoError(t, err)
 
@@ -231,7 +231,7 @@ func TestAssembleErrors(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			registry := NewPlanRegistry()
+			registry := NewPlanRegistry(nil)
 			rendered := tc.setup(registry)
 
 			config, sections, err := registry.Assemble(context.Background(), rendered, nil)
@@ -245,8 +245,8 @@ func TestAssembleErrors(t *testing.T) {
 }
 
 func TestAssembleForeignNonceIsNotSpliced(t *testing.T) {
-	registry := NewPlanRegistry()
-	foreign := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
+	foreign := NewPlanRegistry(nil)
 	require.NotEqual(t, registry.nonce, foreign.nonce)
 
 	rendered := "global\n" + foreign.sectionToken("backend", "be_a")
