@@ -26,14 +26,14 @@ validationTests:
     description: |
       Gateway-side mirror of test-ingress-slot-preservation. Existing pod
       parked at SRV_3 for assertion sensitivity to actual preservation.
-    currentConfig: |
-      backend gtw_default_slot-route_slot-svc_80
-          server SRV_1 192.0.2.1:1 disabled
-          server SRV_2 192.0.2.1:1 disabled
-          server SRV_3 10.0.0.1:8080 check
-          server SRV_4 10.0.0.2:8080 check
-          server SRV_5 192.0.2.1:1 disabled
-          server SRV_6 192.0.2.1:1 disabled
+    currentServers:
+      gtw_default_slot-route_slot-svc_80:
+        SRV_1: {address: 192.0.2.1, port: 1}
+        SRV_2: {address: 192.0.2.1, port: 1}
+        SRV_3: {address: 10.0.0.1, port: 8080}
+        SRV_4: {address: 10.0.0.2, port: 8080}
+        SRV_5: {address: 192.0.2.1, port: 1}
+        SRV_6: {address: 192.0.2.1, port: 1}
     fixtures:
       services:
         - apiVersion: v1
@@ -85,15 +85,15 @@ validationTests:
   test-gateway-slot-preservation-lower-ip:
     requires: [httproutes]
     description: Gateway-side mirror of test-ingress-slot-preservation-lower-ip.
-    currentConfig: |
-      # SRV_3=10.0.0.5 kept; SRV_4=10.0.0.6 vacated; 10.0.0.2 → SRV_5.
-      backend gtw_default_slot-lower_slot-svc_80
-          server SRV_1 192.0.2.1:1 disabled
-          server SRV_2 192.0.2.1:1 disabled
-          server SRV_3 10.0.0.5:8080 check
-          server SRV_4 10.0.0.6:8080 check
-          server SRV_5 192.0.2.1:1 disabled
-          server SRV_6 192.0.2.1:1 disabled
+    # SRV_3=10.0.0.5 kept; SRV_4=10.0.0.6 vacated; 10.0.0.2 → SRV_5.
+    currentServers:
+      gtw_default_slot-lower_slot-svc_80:
+        SRV_1: {address: 192.0.2.1, port: 1}
+        SRV_2: {address: 192.0.2.1, port: 1}
+        SRV_3: {address: 10.0.0.5, port: 8080}
+        SRV_4: {address: 10.0.0.6, port: 8080}
+        SRV_5: {address: 192.0.2.1, port: 1}
+        SRV_6: {address: 192.0.2.1, port: 1}
     fixtures:
       services:
         - apiVersion: v1

@@ -60,6 +60,11 @@ var (
 	validateProfileIncludes bool
 	validateDumpMerged      bool
 	validateWorkers         int
+	// validateSnapshotDir is where each test's rendered output is written as
+	// <dir>/<test>/haproxy.cfg plus maps/, files/, certs/, k8s/ and status/,
+	// so the same corpus rendered from two checkouts can be diffed. Written
+	// whether or not the assertions pass — a render is a render.
+	validateSnapshotDir string
 	// validateSchemaDir is the kubeconform-style schema directory the
 	// offline type-bootstrap reads from. Required for typed-access in
 	// templates; without it, watched resources fall back entirely to
@@ -119,6 +124,8 @@ func init() {
 	validateCmd.Flags().BoolVar(&validateDebugFilters, "debug-filters", false, "Show filter operation debugging (sort comparisons, etc.)")
 	validateCmd.Flags().BoolVar(&validateProfileIncludes, "profile-includes", false, "Show include timing statistics (top 20 slowest)")
 	validateCmd.Flags().IntVar(&validateWorkers, "workers", 0, "Number of parallel test workers (0=auto-detect CPUs, 1=sequential)")
+	validateCmd.Flags().StringVar(&validateSnapshotDir, "snapshot-dir", "",
+		"Write each test's rendered output to <dir>/<test>/ so two checkouts can be compared with `diff -r`")
 	validateCmd.Flags().BoolVar(&validateDumpMerged, "dump-merged", false,
 		"Print the merged spec as YAML and exit, without running any test. Shows exactly what the controller "+
 			"assembles from its CRD_NAME list.")
@@ -177,6 +184,12 @@ func validateAndReport(ctx context.Context, schemas schemaSource, logger *slog.L
 	results, err := runValidationTests(ctx, setup.ConfigSpec, setup.Engine, setup.ValidationPaths, setup.Capabilities, setup.HAProxyVersion, setup.TypedResourceTypes, logger)
 	if err != nil {
 		return nil, err
+	}
+
+	if validateSnapshotDir != "" {
+		if err := writeSnapshot(validateSnapshotDir, filepath.Dir(setup.ValidationPaths.ConfigFile), results); err != nil {
+			return results, err
+		}
 	}
 
 	// Output results and optional content

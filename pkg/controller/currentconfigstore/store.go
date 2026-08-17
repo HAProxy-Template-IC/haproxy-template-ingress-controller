@@ -17,6 +17,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
 // Store holds the parsed current HAProxy configuration.
@@ -51,6 +52,36 @@ func (s *Store) Get() *parserconfig.StructuredConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.currentConfig
+}
+
+// CurrentConfig returns the servers of the deployed config in the shape
+// templates read, so the parser's types stay behind this store. Returns nil
+// when nothing is deployed yet.
+func (s *Store) CurrentConfig() *renderplan.CurrentConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return CurrentConfigFrom(s.currentConfig)
+}
+
+// CurrentConfigFrom projects a parsed config into the template-facing shape.
+func CurrentConfigFrom(parsed *parserconfig.StructuredConfig) *renderplan.CurrentConfig {
+	if parsed == nil {
+		return nil
+	}
+	current := renderplan.CurrentConfig{
+		ServerIndex: make(map[string]map[string]renderplan.ServerAddr, len(parsed.ServerIndex)),
+	}
+	for backend, servers := range parsed.ServerIndex {
+		addresses := make(map[string]renderplan.ServerAddr, len(servers))
+		for name, server := range servers {
+			if server == nil {
+				continue
+			}
+			addresses[name] = renderplan.ServerAddr{Address: server.Address, Port: server.Port}
+		}
+		current.ServerIndex[backend] = addresses
+	}
+	return &current
 }
 
 // clear resets the stored config and hash.

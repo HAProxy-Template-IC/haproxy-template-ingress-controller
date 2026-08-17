@@ -1349,25 +1349,151 @@ templateSnippets:
       {% end %}
 
   # ----------------------------------------------------------------------------
+  # Backend Declaration
+  # ----------------------------------------------------------------------------
+
+  util-backend:
+    template: |
+      {#
+        Backend - emits one `backend` section and declares it to the render plan.
+
+        The section text is built from the record, so the plan always describes
+        what HAProxy reads. Emit every backend through it: a section written by
+        hand is opaque to the plan and forces a reload on any change.
+
+        Keys (strict - an unknown key or a missing name fails the render):
+          name          - backend name (required)
+          guid          - value of the `guid` line
+          mode          - `mode` line; omit to inherit http from defaults
+          balance       - `balance` line
+          hashType      - `hash-type` line
+          body          - directive lines that must stay in this section
+          servers       - server records, from BackendServers() or a library's
+                          own list of {name, address, port, weight, disabled,
+                          guid, comment}
+          defaultServer - `default-server` keyword records {name, args}, formatted
+                          into the `default-server` line
+          comments      - provenance lines emitted above the section header
+          shape         - "structural" (default) or "dynamic"
+          shapeReason   - what forced the shape
+
+        Example:
+          {{ Backend(map[string]any{
+               "name":    beKey,
+               "guid":    make_guid("be", beKey),
+               "body":    []any{"default-server check"},
+               "servers": BackendServers(svcName, 0, port, opts, portName, beKey, ns),
+             }) }}
+      #}
+      {#- Adds the directive lines of a rendered block (an extension point's
+          output) to a `body` list, one entry per non-empty line. -#}
+      {%- var AppendLines = func(lines []any, rendered string) []any {
+        for _, line := range split(rendered, "\n") {
+          if trimmed := trimSpace(line); trimmed != "" {
+            lines = append(lines, trimmed)
+          }
+        }
+        return lines
+      } -%}
+      {%- var ServerLine = func(server map[string]any) string {
+        var line = "server " + tostring(server["name"]) + " " + tostring(server["address"])
+        // A unix-socket address has no port; a record without one describes such a line.
+        if server["port"] != nil {
+          line = line + ":" + tostring(server["port"])
+        }
+        if guid := tostring(server | dig("guid") | fallback("")); guid != "" {
+          line = line + " guid " + guid
+        }
+        // Presence of `disabled` decides whether a state keyword is printed at all.
+        if _, has := server["disabled"]; has {
+          if server["disabled"] == true {
+            line = line + " disabled"
+          } else {
+            line = line + " enabled"
+          }
+        }
+        // A weight of 0 is meaningful (takes no traffic), so presence decides.
+        if server["weight"] != nil {
+          line = line + " weight " + tostring(toint(server["weight"]))
+        }
+        for _, keyword := range toSlice(server["extra"]) {
+          var arg = keyword.(map[string]any)
+          line = line + " " + join(append([]any{arg["name"]}, toSlice(arg["args"])...), " ")
+        }
+        if comment := tostring(server | dig("comment") | fallback("")); comment != "" {
+          line = line + "  # " + comment
+        }
+        return line
+      } -%}
+      {% macro Backend(spec map[string]any) %}
+        {%%
+          var name = tostring(spec | dig("name") | fallback(""))
+          if spec["shape"] == nil {
+            spec["shape"] = "structural"
+          }
+
+          var lines = []any{}
+          for _, comment := range toSlice(spec["comments"]) {
+            lines = append(lines, tostring(comment))
+          }
+          lines = append(lines, "backend " + name)
+          if guid := tostring(spec | dig("guid") | fallback("")); guid != "" {
+            lines = append(lines, "    guid " + guid)
+          }
+          if mode := tostring(spec | dig("mode") | fallback("")); mode != "" {
+            lines = append(lines, "    mode " + mode)
+          }
+          if balance := tostring(spec | dig("balance") | fallback("")); balance != "" {
+            lines = append(lines, "    balance " + balance)
+          }
+          if hashType := tostring(spec | dig("hashType") | fallback("")); hashType != "" {
+            lines = append(lines, "    hash-type " + hashType)
+          }
+          var defaultServer = []any{}
+          for _, keyword := range toSlice(spec["defaultServer"]) {
+            var arg = keyword.(map[string]any)
+            defaultServer = append(defaultServer,
+              join(append([]any{arg["name"]}, toSlice(arg["args"])...), " "))
+          }
+          if len(defaultServer) > 0 {
+            lines = append(lines, "    default-server " + join(defaultServer, " "))
+          }
+          for _, line := range toSlice(spec["body"]) {
+            lines = append(lines, "    " + tostring(line))
+          }
+          for _, server := range toSlice(spec["servers"]) {
+            lines = append(lines, "    " + ServerLine(server.(map[string]any)))
+          }
+
+          var token, err = planRegistry.Backend(spec, join(lines, "\n") + "\n")
+          if err != nil {
+            fail(err.Error())
+          }
+          show token
+        %%}
+      {% end %}
+
+  # ----------------------------------------------------------------------------
   # Backend Server Generation - Main Macro
   # ----------------------------------------------------------------------------
 
   util-backend-servers:
     template: |
       {#
-        BackendServers - Generates HAProxy server lines from Kubernetes EndpointSlices.
+        BackendServers - Resolves Kubernetes EndpointSlices into server records
+        for Backend(), which formats them into the server lines.
 
-        This macro handles the complete flow:
+        This helper handles the complete flow:
         1. Resolve the slot block size from parameters or defaults
         2. Look up the Service to find port name (for targetPort resolution)
         3. Fetch EndpointSlices and resolve actual pod ports
         4. Size the slot pool: fit the endpoints plus headroom, keep the current
            pool when it still fits (no reload), grow or shrink otherwise
         5. Assign endpoints to slots, preserving existing assignments
-        6. Generate server lines with proper options
+        6. Return one record per slot
 
         Slot Preservation (Zero-Reload Updates):
-        When currentConfig is available, the macro looks up the existing backend
+        When currentConfig is available, the helper looks up the existing backend
         and preserves server slot assignments during rolling deployments. This
         enables zero-reload updates via HAProxy runtime API by keeping the same
         SRV_N slot for each pod IP:port combination across config changes.
@@ -1393,17 +1519,14 @@ templateSnippets:
           backendName    - HAProxy backend name for slot preservation (nil = disabled)
 
         Example:
-          {{ BackendServers("my-service", 0, 80, serverOpts, nil, "default_my-ingress_svc_my-service_http", "default") }}
+          "servers": BackendServers("my-service", 0, 80, serverOpts, nil, "default_my-ingress_svc_my-service_http", "default")
 
-        Output:
-          server SRV_1 10.0.0.1:8080 enabled  # Pod: my-pod-abc
-          server SRV_2 10.0.0.2:8080 enabled  # Pod: my-pod-def
-          server SRV_3 192.0.2.1:1 disabled  # Placeholder
+        Output (one record per slot, in slot order):
+          {"name": "SRV_1", "address": "10.0.0.1", "port": 8080, "comment": "Pod: my-pod-abc"}
+          {"name": "SRV_2", "address": "192.0.2.1", "port": 1, "disabled": true, "comment": "Placeholder"}
           ...
       #}
-      {% import "util-backend-servers-helpers" for BuildServerOptions %}
-      {% macro BackendServers(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any, backendName any, namespace string) %}
-        {%%
+      {%- var BackendServers = func(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any, backendName any, namespace string) []any {
           // ── 1. Resolve the slot block size ────────────────────────────────
           // Priority: maxServerSlots param > serverOpts.serverSlotsValue >
           // extraContext.serverSlots.increment > 1. haproxytech
@@ -1435,9 +1558,9 @@ templateSnippets:
           if v := serverOpts | dig("slotPrefix"); v != nil && tostring(v) != "" {
             slotPrefix = tostring(v)
           }
-          var weightSuffix = ""
+          var weight any = nil
           if v := serverOpts | dig("weight"); v != nil {
-            weightSuffix = " weight " + tostring(toint(v))
+            weight = toint(v)
           }
 
           // ── 2. Get port name for targetPort resolution ────────────────────
@@ -1690,37 +1813,52 @@ templateSnippets:
               }
             }
           }
-        %%}
-      {#- ── 8. Generate server lines ──────────────────────────────────────
-        Server addresses are CONFIG-DRIVEN across reloads. HAProxy does NOT
-        restore an IP-literal server's address from the server-state-file: the
-        state-file address is only stashed in `srv->lastaddr` and applied via
-        the `init-addr` resolution chain, which `srv_init_addr()` runs ONLY for
-        FQDN / DNS-SRV servers (`if (srv->hostname || srv->srvrq)` in
-        src/server.c). Pod servers are IP literals, so the parsed config
-        address always wins on reload — `init-addr last` + the server-state
-        machinery were a no-op for our address and have been removed. The full
-        analysis and the alternatives we rejected (DNS/server-template) are in
-        docs/adr/0011-no-haproxy-server-state-file.md. Correctness relies on the
-        deploy pipeline rendering the CURRENT endpoints into the config (the
-        single deploy-loop keeps it fresh) plus the runtime fast path for live,
-        reload-free convergence.
 
-        Placeholders use 192.0.2.1 (RFC 5737 TEST-NET-1, guaranteed unroutable),
-        NOT 127.0.0.1 — defense in depth. If anything ever produced a slot with
-        a placeholder address but an active port, 127.0.0.1:<bind-port> would
-        point back at this proxy's own `bind *:80` and loop the request through
-        the h2c loopback until `tune.http.maxhdr` trips → 400. 192.0.2.1 can
-        never reach the bind, so the worst case is a fast `timeout connect` +
-        `option redispatch` failover instead of an unbounded self-loop. -#}
-      {%- for i := 1; i <= slots; i++ %}
-      {%- if ep := slotAssignments[i]; ep != nil %}
-      server {{ slotPrefix }}{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{% if bkName != "" %} guid {{ make_guid("srv", bkName, slotPrefix + tostring(i)) }}{% end %} enabled{{ weightSuffix }}  # Pod: {{ ep["name"] }}
-      {% else %}
-      server {{ slotPrefix }}{{ i }} 192.0.2.1:1{% if bkName != "" %} guid {{ make_guid("srv", bkName, slotPrefix + tostring(i)) }}{% end %} disabled{{ weightSuffix }}  # Placeholder
-      {% end %}
-      {% end %}
-      {% end %}
+          // ── 8. One record per slot ────────────────────────────────────────
+          // Server addresses are CONFIG-DRIVEN across reloads. HAProxy does NOT
+          // restore an IP-literal server's address from the server-state-file: the
+          // state-file address is only stashed in `srv->lastaddr` and applied via
+          // the `init-addr` resolution chain, which `srv_init_addr()` runs ONLY for
+          // FQDN / DNS-SRV servers (`if (srv->hostname || srv->srvrq)` in
+          // src/server.c). Pod servers are IP literals, so the parsed config
+          // address always wins on reload — `init-addr last` + the server-state
+          // machinery were a no-op for our address and have been removed. The full
+          // analysis and the alternatives we rejected (DNS/server-template) are in
+          // docs/adr/0011-no-haproxy-server-state-file.md. Correctness relies on the
+          // deploy pipeline rendering the CURRENT endpoints into the config (the
+          // single deploy-loop keeps it fresh) plus the runtime fast path for live,
+          // reload-free convergence.
+          //
+          // Placeholders use 192.0.2.1 (RFC 5737 TEST-NET-1, guaranteed unroutable),
+          // NOT 127.0.0.1 — defense in depth. If anything ever produced a slot with
+          // a placeholder address but an active port, 127.0.0.1:<bind-port> would
+          // point back at this proxy's own `bind *:80` and loop the request through
+          // the h2c loopback until `tune.http.maxhdr` trips → 400. 192.0.2.1 can
+          // never reach the bind, so the worst case is a fast `timeout connect` +
+          // `option redispatch` failover instead of an unbounded self-loop.
+          var servers = []any{}
+          for i := 1; i <= slots; i++ {
+            var slotName = slotPrefix + tostring(i)
+            var record = map[string]any{
+              "name": slotName, "address": "192.0.2.1", "port": 1,
+              "disabled": true, "comment": "Placeholder",
+            }
+            if ep := slotAssignments[i]; ep != nil {
+              record = map[string]any{
+                "name": slotName, "address": ep["address"], "port": ep["port"],
+                "disabled": false, "comment": "Pod: " + tostring(ep["name"]),
+              }
+            }
+            if bkName != "" {
+              record["guid"] = make_guid("srv", bkName, slotName)
+            }
+            if weight != nil {
+              record["weight"] = weight
+            }
+            servers = append(servers, record)
+          }
+          return servers
+      } -%}
   # ============================================================================
   # Address Discovery
   # ============================================================================
@@ -2396,6 +2534,7 @@ templateSnippets:
 
   util-default-backend:
     template: |
+      {%- import "util-backend" for Backend -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-service-port-resolution" for ResolveServicePort -%}
       {%- var defaultBackendSvc = extraContext | dig("defaultBackendService") | fallback(nil) -%}
@@ -2407,20 +2546,26 @@ templateSnippets:
       {%- var resolvedParts = split(ResolveServicePort(dbNamespace, dbName, defaultBackendSvc | dig("port")), " ") -%}
       {%- var dbPort = toint(resolvedParts[0]) -%}
       {%- var dbPortName = resolvedParts[1] -%}
-      backend default_backend
-          guid be:default_backend
-          default-server check
-          {{ BackendServers(dbName, 0, dbPort, nil, dbPortName, "default_backend", dbNamespace) | indent(2, true) }}
+      {{- Backend(map[string]any{
+            "name": "default_backend",
+            "guid": "be:default_backend",
+            "defaultServer": []any{map[string]any{"name": "check"}},
+            "servers": BackendServers(dbName, 0, dbPort, nil, dbPortName, "default_backend", dbNamespace),
+          }) }}
       {%- else %}
-      backend default_backend
-          guid be:default_backend
-          # gRPC-aware fallback: a trailers-only grpc-status 12 (Unimplemented) for
-          # application/grpc, else a plain 404. content-type is re-added via
-          # http-after-response (the `return` action strips it). See
-          # https://haproxy-haptic.org/docs/latest/libraries/base/#grpc-request-handling
-          http-request return status 200 hdr "grpc-status" "12" hdr "grpc-message" "Unimplemented" if { req.hdr(content-type) -m sub "application/grpc" }
-          http-after-response set-header content-type "application/grpc" if { res.hdr(grpc-status) -m found }
-          http-request return status 404
+      {{- Backend(map[string]any{
+            "name": "default_backend",
+            "guid": "be:default_backend",
+            "body": []any{
+              "# gRPC-aware fallback: a trailers-only grpc-status 12 (Unimplemented) for",
+              "# application/grpc, else a plain 404. content-type is re-added via",
+              "# http-after-response (the `return` action strips it). See",
+              "# https://haproxy-haptic.org/docs/latest/libraries/base/#grpc-request-handling",
+              `http-request return status 200 hdr "grpc-status" "12" hdr "grpc-message" "Unimplemented" if { req.hdr(content-type) -m sub "application/grpc" }`,
+              `http-after-response set-header content-type "application/grpc" if { res.hdr(grpc-status) -m found }`,
+              "http-request return status 404",
+            },
+          }) }}
       {%- end %}
 
   global-top-100-access-log-rings:
@@ -2924,12 +3069,13 @@ k8sResources:
 
 haproxyConfig:
   template: |
+    {%- import "util-backend" for Backend -%}
     global
         {{ render "global-settings" | indent(2, true) }}
 
     defaults
         {{ render "defaults-settings" | indent(2, true) }}
-
+    {{ planRegistry.ProfileGroup() }}
     {#- Phase 1: Feature Registration (side effects only, output discarded) -#}
     {#- Initialize SSL features first (if SSL library is loaded) -#}
     {%- _ = render_glob "features-ssl-initialization" -%}
@@ -3036,16 +3182,21 @@ haproxyConfig:
         use_backend http-h2c-loopback if is_h2c
         default_backend http-h1-loopback
 
-    backend http-h1-loopback
-        guid be:http-h1-loopback
-        mode tcp
-        # send-proxy-v2 preserves the original client IP/port across the unix-socket hop.
-        server loopback unix@/etc/haproxy/http-h1-frontend.sock send-proxy-v2
-
-    backend http-h2c-loopback
-        guid be:http-h2c-loopback
-        mode tcp
-        server loopback unix@/etc/haproxy/http-h2c-frontend.sock send-proxy-v2
+    {{ Backend(map[string]any{
+         "name": "http-h1-loopback",
+         "guid": "be:http-h1-loopback",
+         "mode": "tcp",
+         "body": []any{"# send-proxy-v2 preserves the original client IP/port across the unix-socket hop."},
+         "servers": []any{map[string]any{"name": "loopback", "address": "unix@/etc/haproxy/http-h1-frontend.sock",
+           "extra": []any{map[string]any{"name": "send-proxy-v2"}}}},
+       }) }}
+    {{ Backend(map[string]any{
+         "name": "http-h2c-loopback",
+         "guid": "be:http-h2c-loopback",
+         "mode": "tcp",
+         "servers": []any{map[string]any{"name": "loopback", "address": "unix@/etc/haproxy/http-h2c-frontend.sock",
+           "extra": []any{map[string]any{"name": "send-proxy-v2"}}}},
+       }) }}
 
     frontend http_frontend
         guid fe:http_frontend
@@ -3420,6 +3571,18 @@ validationTests:
         target: rendering_error
         pattern: 'excludeMetrics\.inert has no `enabled`'
 
+  test-render-plan-no-route-backends:
+    description: >-
+      With no routing resource the config still carries base's own registered
+      backend, and no placeholder line survives assembly.
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: "@haptic:"}
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^backend default_backend$.*?^\s+guid be:default_backend$'
+
   test-guid-directives:
     description: GUIDs are present on frontends, backends, and default_backend
     fixtures:
@@ -3445,6 +3608,11 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "guid fe:status"}
       - {type: contains, target: haproxy.cfg, pattern: "guid fe:http_frontend"}
       - {type: contains, target: haproxy.cfg, pattern: "guid be:default_backend"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "@haptic:"}
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^backend http-h1-loopback$.*?^\s+mode tcp$.*?^\s+server loopback unix@/etc/haproxy/http-h1-frontend\.sock send-proxy-v2$'
+        description: The loopback backends are registered sections, spliced back where the token stood.
       - {type: not_contains, target: haproxy.cfg, pattern: "tune\\.ssl\\.default-dh-param"}
       - type: contains
         target: haproxy.cfg

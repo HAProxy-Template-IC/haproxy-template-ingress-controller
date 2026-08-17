@@ -401,6 +401,13 @@ func (e *ScriggoEngine) templateNotFoundError(templateName string) error {
 	return NewTemplateNotFoundError(templateName, available)
 }
 
+// PostProcess applies a template's configured post-processor chain to text
+// that did not come from that render pass. Plan assembly uses it so a section
+// body spliced into the config is normalised exactly like its surroundings.
+func (e *ScriggoEngine) PostProcess(ctx context.Context, templateName, text string) (string, error) {
+	return e.applyPostProcessors(ctx, templateName, text)
+}
+
 // applyPostProcessors applies the post-processor chain to the output.
 func (e *ScriggoEngine) applyPostProcessors(ctx context.Context, templateName, output string) (string, error) {
 	processors, exists := e.postProcessors[templateName]

@@ -36,6 +36,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -53,6 +54,14 @@ type RenderResult struct {
 
 	// AuxiliaryFiles contains all rendered auxiliary files (maps, certs, general).
 	AuxiliaryFiles *dataplane.AuxiliaryFiles
+
+	// Plan is the structure the templates declared about this render: the
+	// ordered sections of the config, the backend records behind them, the map
+	// entries and the file set.
+	Plan *renderplan.Plan
+
+	// PlanID identifies the plan — the digest downstream consumers compare on.
+	PlanID string
 
 	// StatusPatches contains status patches registered by templates during rendering.
 	// Each patch targets a Kubernetes resource and contains outcome-keyed variants.
@@ -104,6 +113,11 @@ type RenderService struct {
 
 	// capabilities defines which features are available for the local HAProxy version.
 	capabilities dataplane.Capabilities
+
+	// planMu guards lastPlan, the newest reconcile render's plan. It is the
+	// primary source for the next render's `currentConfig`.
+	planMu   sync.Mutex
+	lastPlan *renderplan.Plan
 
 	// Optional dependencies for building render context
 	haproxyPodStore         stores.Store
@@ -249,17 +263,19 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	statusPatchCollector, renderedResourceCollector := bctx.StatusPatchCollector, bctx.RenderedResourceCollector
 	eventCollector := bctx.EventCollector
 
-	// Render main HAProxy config. RenderWithProfiling is a superset of Render:
-	// it renders identically and, only when the engine was built with profiling
-	// enabled, additionally returns per-snippet include stats (nil otherwise), so
-	// this is behaviour-neutral in production.
-	haproxyConfig, includeStats, err := s.engine.RenderWithProfiling(ctx, names.MainTemplateName, renderContext)
+	// Render main HAProxy config and assemble the sections the templates
+	// declared. RenderWithProfiling is a superset of Render: it renders
+	// identically and, only when the engine was built with profiling enabled,
+	// additionally returns per-snippet include stats (nil otherwise), so
+	// requesting it is behaviour-neutral in production.
+	mainRender, err := rendercontext.RenderMain(ctx, s.engine, renderContext, bctx.PlanRegistry, true)
 	if resourceErr := bctx.Err(ctx); resourceErr != nil {
 		return nil, resourceErr
 	}
 	if err != nil {
 		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
+	haproxyConfig, includeStats := mainRender.Config, mainRender.IncludeStats
 
 	staticFiles, err := s.renderAuxiliaryFiles(ctx, renderContext)
 	if resourceErr := bctx.Err(ctx); resourceErr != nil {
@@ -321,9 +337,14 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, collectorErr)
 	}
 
+	plan := bctx.PlanRegistry.Plan(rendercontext.PlanFiles(haproxyConfig, auxiliaryFiles), rendercontext.MapContents(auxiliaryFiles))
+	s.rememberPlan(mode, plan)
+
 	result := &RenderResult{
 		HAProxyConfig:     haproxyConfig,
 		AuxiliaryFiles:    auxiliaryFiles,
+		Plan:              plan,
+		PlanID:            plan.ID,
 		StatusPatches:     statusPatchCollector.Patches(),
 		Events:            eventCollector.Events(),
 		RenderedResources: renderedResourceCollector.Resources(),
@@ -393,11 +414,9 @@ func (s *RenderService) buildRenderingContextWithHTTPSourceMode(
 	}
 
 	// Add current config if available (for slot preservation). Passing a nil
-	// *StructuredConfig is fine — the Builder omits the key (Scriggo panics on
+	// *CurrentConfig is fine — the Builder omits the key (Scriggo panics on
 	// nil pointer initializers).
-	if s.currentConfigStore != nil {
-		opts = append(opts, rendercontext.WithCurrentConfig(s.currentConfigStore.Get()))
-	}
+	opts = append(opts, rendercontext.WithCurrentConfig(s.currentConfig()))
 
 	// Add the default auxiliary baseline for self-referential templates.
 	if s.currentAuxFilesProvider != nil {

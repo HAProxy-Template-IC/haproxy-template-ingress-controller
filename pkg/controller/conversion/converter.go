@@ -270,6 +270,7 @@ func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[st
 			Description:       crdTest.Description,
 			Fixtures:          convertFixtures(crdTest.Fixtures),
 			HTTPFixtures:      convertHTTPFixtures(crdTest.HTTPResources),
+			CurrentServers:    convertCurrentServers(crdTest.CurrentServers),
 			CurrentConfig:     crdTest.CurrentConfig,
 			CurrentFiles:      crdTest.CurrentFiles,
 			MinHAProxyVersion: crdTest.MinHAProxyVersion,
@@ -289,6 +290,23 @@ func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[st
 	}
 
 	return validationTests, nil
+}
+
+// convertCurrentServers converts the CRD's currentServers fixture to the
+// internal config format.
+func convertCurrentServers(crdServers map[string]map[string]v1alpha1.ServerAddr) map[string]map[string]config.ServerAddr {
+	if len(crdServers) == 0 {
+		return nil
+	}
+	backends := make(map[string]map[string]config.ServerAddr, len(crdServers))
+	for backend, servers := range crdServers {
+		converted := make(map[string]config.ServerAddr, len(servers))
+		for name := range servers {
+			converted[name] = config.ServerAddr{Address: servers[name].Address, Port: servers[name].Port}
+		}
+		backends[backend] = converted
+	}
+	return backends
 }
 
 // convertFixtures converts CRD fixtures to internal config format.

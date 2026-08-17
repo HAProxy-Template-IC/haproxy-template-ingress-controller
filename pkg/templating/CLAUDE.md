@@ -223,6 +223,7 @@ decl["templateSnippets"] = (*[]string)(nil)           // Not &[]string{}
 | `controller` | `*map[string]ResourceStore` | Controller state |
 | `templateSnippets` | `*[]string` | Available snippet names |
 | `fileRegistry` | `*FileRegistrar` | Dynamic file registration |
+| `planRegistry` | `*PlanRegistrar` | Section / backend / map declarations assembled into the config |
 | `shared` | `*SharedContext` | Cross-template shared state |
 | `dataplane` | `*map[string]any` | Dataplane state |
 | `capabilities` | `*map[string]any` | Capability flags |

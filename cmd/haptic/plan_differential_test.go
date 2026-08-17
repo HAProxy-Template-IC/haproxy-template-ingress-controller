@@ -1,0 +1,719 @@
+// Copyright 2025 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// The differential gate: what a render DECLARES about its output (the plan)
+// must be what the render actually EMITTED. The deploy side computes runtime
+// operations from the plan alone and never reads haproxy.cfg back, so a macro
+// that under-describes its own output would silently ship a wrong fleet.
+//
+// The comparison is total, not field-wise: every declared backend, every
+// section byte and every map entry is re-derived from the rendered artifacts
+// with an INDEPENDENT reader — client-native's config parser for the
+// configuration, a naive key/rest-of-line split for the map files — and
+// compared against the record. client-native is imported here and nowhere in
+// the production path; the plan exists precisely so the controller never has to
+// parse HAProxy configuration.
+//
+// The test lives in cmd/haptic because this is the only package that can render
+// the bundled chart in-process, which is where the fixture corpus comes from.
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+
+	cnparser "github.com/haproxytech/client-native/v6/config-parser"
+	cnparams "github.com/haproxytech/client-native/v6/config-parser/params"
+	cntypes "github.com/haproxytech/client-native/v6/config-parser/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+)
+
+// planMismatches returns one line per disagreement between the plan and the
+// artifacts it was produced with. An empty result is the gate passing.
+func planMismatches(t *testing.T, config string, mapContents map[string]string, plan *renderplan.Plan) []string {
+	t.Helper()
+	parsed := parseBackendServers(t, config)
+
+	mismatches := backendSetMismatches(parsed, plan)
+	mismatches = append(mismatches, declaredServerMismatches(parsed, plan)...)
+	mismatches = append(mismatches, sectionPartitionMismatches(config, plan)...)
+	mismatches = append(mismatches, mapEntryMismatches(mapContents, plan)...)
+	return mismatches
+}
+
+// parsedServer is one server line as client-native read it back.
+type parsedServer struct {
+	Name    string
+	Address string
+	// Options is each server keyword mapped to its argument, "" for a bare
+	// keyword such as `disabled`.
+	Options map[string]string
+	Comment string
+}
+
+// parsedBackend is one backend section as client-native read it back.
+type parsedBackend struct {
+	Servers []parsedServer
+	// DefaultServer is the `default-server` line's keywords, nil when absent.
+	DefaultServer map[string]string
+}
+
+// parseBackendServers reads the backend sections and their server lines out of
+// the rendered configuration, with no help from the plan.
+func parseBackendServers(t *testing.T, config string) map[string]parsedBackend {
+	t.Helper()
+	p, err := cnparser.New()
+	require.NoError(t, err)
+	require.NoError(t, p.Process(strings.NewReader(config)))
+
+	sections, err := p.SectionsGet(cnparser.Backends)
+	require.NoError(t, err)
+
+	backends := make(map[string]parsedBackend, len(sections))
+	for _, name := range sections {
+		var backend parsedBackend
+		if data, err := p.Get(cnparser.Backends, name, "default-server"); err == nil {
+			lines, ok := data.([]cntypes.DefaultServer)
+			require.Truef(t, ok, "backend %q: default-server data is %T", name, data)
+			require.Lenf(t, lines, 1, "backend %q: one default-server line expected", name)
+			backend.DefaultServer = keywordOptions(lines[0].Params)
+		}
+		// No server line in this backend — an empty backend is legal.
+		if data, err := p.Get(cnparser.Backends, name, "server"); err == nil {
+			lines, ok := data.([]cntypes.Server)
+			require.Truef(t, ok, "backend %q: server data is %T", name, data)
+			for i := range lines {
+				backend.Servers = append(backend.Servers, parsedServer{
+					Name:    lines[i].Name,
+					Address: lines[i].Address,
+					Options: keywordOptions(lines[i].Params),
+					Comment: strings.TrimSpace(lines[i].Comment),
+				})
+			}
+		}
+		backends[name] = backend
+	}
+	return backends
+}
+
+func keywordOptions(params []cnparams.ServerOption) map[string]string {
+	options := make(map[string]string, len(params))
+	for _, param := range params {
+		keyword, argument, _ := strings.Cut(param.String(), " ")
+		options[keyword] = argument
+	}
+	return options
+}
+
+// keywordArgs is the record's keyword list in the same shape client-native
+// reports the parsed line: keyword → joined arguments.
+func keywordArgs(args []renderplan.KeywordArg) map[string]string {
+	options := make(map[string]string, len(args))
+	for _, arg := range args {
+		options[arg.Name] = strings.Join(arg.Args, " ")
+	}
+	return options
+}
+
+func backendSetMismatches(parsed map[string]parsedBackend, plan *renderplan.Plan) []string {
+	var mismatches []string
+	for name := range parsed {
+		if _, declared := plan.Backends[name]; !declared {
+			mismatches = append(mismatches, fmt.Sprintf("backend %q is in the config but not in the plan", name))
+		}
+	}
+	for name := range plan.Backends {
+		if _, emitted := parsed[name]; !emitted {
+			mismatches = append(mismatches, fmt.Sprintf("backend %q is in the plan but not in the config", name))
+		}
+	}
+	sort.Strings(mismatches)
+	return mismatches
+}
+
+// declaredServerMismatches compares every declared backend's servers against
+// the server lines the configuration actually carries.
+func declaredServerMismatches(parsed map[string]parsedBackend, plan *renderplan.Plan) []string {
+	var mismatches []string
+	for _, name := range sortedKeys(plan.Backends) {
+		record := plan.Backends[name]
+		backend, found := parsed[name]
+		if !found {
+			mismatches = append(mismatches, fmt.Sprintf("backend %q is in the plan but not in the config", name))
+			continue
+		}
+		mismatches = append(mismatches, defaultServerMismatches(name, &record, backend.DefaultServer)...)
+		if len(record.Servers) != len(backend.Servers) {
+			mismatches = append(mismatches, fmt.Sprintf("backend %q declares %d servers, the config has %d",
+				name, len(record.Servers), len(backend.Servers)))
+			continue
+		}
+		for i := range record.Servers {
+			mismatches = append(mismatches, serverMismatches(name, &record.Servers[i], &backend.Servers[i])...)
+		}
+	}
+	return mismatches
+}
+
+// defaultServerMismatches holds a declared `defaultServer` against the parsed
+// line. A record without one is not compared: in this step most emitters still
+// carry `default-server` as a body line, which the body digest covers.
+func defaultServerMismatches(backend string, record *renderplan.Backend, parsed map[string]string) []string {
+	if len(record.DefaultServer) == 0 {
+		return nil
+	}
+	return optionMismatches(fmt.Sprintf("backend %q default-server", backend), keywordArgs(record.DefaultServer), parsed)
+}
+
+// optionMismatches compares two keyword → argument maps both ways.
+func optionMismatches(where string, declared, parsed map[string]string) []string {
+	var mismatches []string
+	for _, keyword := range sortedKeys(declared) {
+		got, present := parsed[keyword]
+		switch {
+		case !present:
+			mismatches = append(mismatches, fmt.Sprintf("%s: declares %q, the config lacks it", where, keyword))
+		case got != declared[keyword]:
+			mismatches = append(mismatches, fmt.Sprintf("%s: declares %s %q, the config has %q", where, keyword, declared[keyword], got))
+		}
+	}
+	for _, keyword := range sortedKeys(parsed) {
+		if _, present := declared[keyword]; !present {
+			mismatches = append(mismatches, fmt.Sprintf("%s: the config has %q, the record does not declare it", where, keyword))
+		}
+	}
+	return mismatches
+}
+
+func serverMismatches(backend string, declared *renderplan.Server, emitted *parsedServer) []string {
+	var mismatches []string
+	where := fmt.Sprintf("backend %q server %q", backend, declared.Name)
+	if declared.Name != emitted.Name {
+		return []string{fmt.Sprintf("%s: the config has %q in that position", where, emitted.Name)}
+	}
+	if address := declaredAddress(declared); address != emitted.Address {
+		mismatches = append(mismatches, fmt.Sprintf("%s: declared address %q, the config has %q",
+			where, address, emitted.Address))
+	}
+	// `enabled` is HAProxy's explicit opposite of `disabled`; neither keyword
+	// also means enabled.
+	_, disabled := emitted.Options["disabled"]
+	if declared.Disabled != disabled {
+		mismatches = append(mismatches, fmt.Sprintf("%s: declared disabled=%t, the config says %t",
+			where, declared.Disabled, disabled))
+	}
+	declaredWeight := ""
+	if declared.Weight != nil {
+		declaredWeight = fmt.Sprint(*declared.Weight)
+	}
+	if want, got := declaredWeight, emitted.Options["weight"]; want != got {
+		mismatches = append(mismatches, fmt.Sprintf("%s: declared weight %q, the config has %q", where, want, got))
+	}
+	if declared.GUID != emitted.Options["guid"] {
+		mismatches = append(mismatches, fmt.Sprintf("%s: declared guid %q, the config has %q",
+			where, declared.GUID, emitted.Options["guid"]))
+	}
+	if declared.Comment != emitted.Comment {
+		mismatches = append(mismatches, fmt.Sprintf("%s: declared comment %q, the config has %q",
+			where, declared.Comment, emitted.Comment))
+	}
+	// Every other keyword on the line must be declared in Extra, and vice versa.
+	structured := map[string]bool{"guid": true, "weight": true, "disabled": true, "enabled": true}
+	extra := make(map[string]string, len(emitted.Options))
+	for keyword, argument := range emitted.Options {
+		if !structured[keyword] {
+			extra[keyword] = argument
+		}
+	}
+	mismatches = append(mismatches, optionMismatches(where, keywordArgs(declared.Extra), extra)...)
+	return mismatches
+}
+
+// declaredAddress reassembles the address the server line must carry. A record
+// without a port describes a server line without one.
+func declaredAddress(server *renderplan.Server) string {
+	if server.Port == 0 {
+		return server.Address
+	}
+	return fmt.Sprintf("%s:%d", server.Address, server.Port)
+}
+
+// sectionPartitionMismatches checks that the sections tile the configuration:
+// each one's bytes hash to its digest, and together they cover the file exactly.
+func sectionPartitionMismatches(config string, plan *renderplan.Plan) []string {
+	var mismatches []string
+	offset := 0
+	for _, section := range plan.Sections {
+		if section.Length < 0 || offset+section.Length > len(config) {
+			return append(mismatches, fmt.Sprintf("section %q runs past the end of the config (%d bytes at offset %d of %d)",
+				section.Name, section.Length, offset, len(config)))
+		}
+		text := config[offset : offset+section.Length]
+		if digest := renderplan.DigestString(text); digest != section.TextDigest {
+			mismatches = append(mismatches, fmt.Sprintf("section %q: declared digest %s, its bytes hash to %s",
+				section.Name, section.TextDigest, digest))
+		}
+		offset += section.Length
+	}
+	if offset != len(config) {
+		mismatches = append(mismatches, fmt.Sprintf("the sections cover %d of %d config bytes", offset, len(config)))
+	}
+	return mismatches
+}
+
+// mapEntryMismatches compares every map file's declared entries against a naive
+// re-read of the content that was rendered for it.
+func mapEntryMismatches(contents map[string]string, plan *renderplan.Plan) []string {
+	var mismatches []string
+	for _, path := range sortedKeys(contents) {
+		declared, found := plan.Maps[path]
+		if !found {
+			mismatches = append(mismatches, fmt.Sprintf("map %q was rendered but is not in the plan", path))
+			continue
+		}
+		emitted := naiveMapEntries(contents[path])
+		if len(declared.Entries) != len(emitted) {
+			mismatches = append(mismatches, fmt.Sprintf("map %q declares %d entries, its content has %d",
+				path, len(declared.Entries), len(emitted)))
+			continue
+		}
+		for i := range emitted {
+			if declared.Entries[i] != emitted[i] {
+				mismatches = append(mismatches, fmt.Sprintf("map %q entry %d: declared %v, its content has %v",
+					path, i, declared.Entries[i], emitted[i]))
+			}
+		}
+	}
+	for path := range plan.Maps {
+		if _, rendered := contents[path]; !rendered {
+			mismatches = append(mismatches, fmt.Sprintf("map %q is in the plan but was not rendered", path))
+		}
+	}
+	sort.Strings(mismatches)
+	return mismatches
+}
+
+// naiveMapEntries is this test's own reader of HAPTIC's map-file format, kept
+// deliberately independent of renderplan.ParseMapEntries: comparing a function
+// against itself would prove nothing.
+func naiveMapEntries(content string) []renderplan.Entry {
+	var entries []renderplan.Entry
+	for _, line := range strings.Split(content, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
+			continue
+		}
+		key := fields[0]
+		rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), key))
+		entries = append(entries, renderplan.Entry{Key: key, Value: rest})
+	}
+	return entries
+}
+
+// --- synthetic cases -------------------------------------------------------
+
+// renderSynthetic renders one hand-written main template through the same
+// registry + assembly path production uses, and returns the config with its plan.
+func renderSynthetic(t *testing.T, source string, mapContents map[string]string) (string, *renderplan.Plan) {
+	t.Helper()
+	engine, err := templating.New(map[string]string{names.MainTemplateName: source}, nil)
+	require.NoError(t, err)
+
+	registry := rendercontext.NewPlanRegistry()
+	main, err := rendercontext.RenderMain(context.Background(), engine,
+		map[string]any{"planRegistry": registry}, registry, false)
+	require.NoError(t, err)
+
+	return main.Config, registry.Plan(rendercontext.PlanFiles(main.Config, nil), mapContents)
+}
+
+// backendTemplate is a main template that declares one backend as data and
+// emits the section text it claims to describe.
+func backendTemplate(record, text string) string {
+	return `{% var token, err = planRegistry.Backend(` + record + `, "` + text + `") %}` +
+		`{% if err != nil %}{{ fail("backend declaration rejected") }}{% end %}` +
+		"global\n    daemon\n{{ token }}"
+}
+
+const twoServerText = `backend be_api\n    default-server check inter 2s\n    server SRV_1 10.0.0.1:8080 weight 20 guid srv:be_api:SRV_1 send-proxy-v2  # Pod: api-1\n    server SRV_2 10.0.0.2:8080 disabled\n`
+
+// twoServerRecord describes twoServerText exactly.
+const twoServerRecord = `map[string]any{
+	"name": "be_api", "mode": "http", "shape": "dynamic",
+	"defaultServer": []any{map[string]any{"name": "check"}, map[string]any{"name": "inter", "args": []any{"2s"}}},
+	"servers": []any{
+		map[string]any{"name": "SRV_1", "address": "10.0.0.1", "port": 8080, "weight": 20, "guid": "srv:be_api:SRV_1",
+			"comment": "Pod: api-1", "extra": []any{map[string]any{"name": "send-proxy-v2"}}},
+		map[string]any{"name": "SRV_2", "address": "10.0.0.2", "port": 8080, "disabled": true},
+	},
+}`
+
+// twoServerRecordWith returns twoServerRecord with the SRV_1 record replaced.
+func twoServerRecordWith(srv1 string) string {
+	return `map[string]any{
+	"name": "be_api", "mode": "http", "shape": "dynamic",
+	"defaultServer": []any{map[string]any{"name": "check"}, map[string]any{"name": "inter", "args": []any{"2s"}}},
+	"servers": []any{
+		` + srv1 + `,
+		map[string]any{"name": "SRV_2", "address": "10.0.0.2", "port": 8080, "disabled": true},
+	},
+}`
+}
+
+func TestPlanDifferentialSynthetic(t *testing.T) {
+	tests := []struct {
+		name        string
+		record      string
+		text        string
+		maps        map[string]string
+		wantMissing string // "" means the plan must match the config
+	}{
+		{
+			name:   "a record that describes its section exactly",
+			record: twoServerRecord,
+			text:   twoServerText,
+		},
+		{
+			name:   "map entries match the rendered content",
+			record: twoServerRecord,
+			text:   twoServerText,
+			maps: map[string]string{
+				"host.map": "# a comment\nexample.com be_api\n\nother.example.com be_other\n",
+			},
+		},
+		{
+			name: "a record with one server fewer than its text",
+			record: `map[string]any{
+				"name": "be_api", "shape": "dynamic",
+				"servers": []any{
+					map[string]any{"name": "SRV_1", "address": "10.0.0.1", "port": 8080, "weight": 20, "guid": "srv:be_api:SRV_1"},
+				},
+			}`,
+			text:        twoServerText,
+			wantMissing: `backend "be_api" declares 1 servers, the config has 2`,
+		},
+		{
+			name: "a record that drops an extra keyword",
+			record: twoServerRecordWith(
+				`map[string]any{"name": "SRV_1", "address": "10.0.0.1", "port": 8080, "weight": 20, "guid": "srv:be_api:SRV_1", "comment": "Pod: api-1"}`),
+			text:        twoServerText,
+			wantMissing: `the config has "send-proxy-v2", the record does not declare it`,
+		},
+		{
+			name: "a record with a wrong comment",
+			record: twoServerRecordWith(
+				`map[string]any{"name": "SRV_1", "address": "10.0.0.1", "port": 8080, "weight": 20, "guid": "srv:be_api:SRV_1", "comment": "Pod: api-9", "extra": []any{map[string]any{"name": "send-proxy-v2"}}}`),
+			text:        twoServerText,
+			wantMissing: `declared comment "Pod: api-9", the config has "Pod: api-1"`,
+		},
+		{
+			name: "a record with a wrong default-server keyword",
+			record: `map[string]any{
+				"name": "be_api", "mode": "http", "shape": "dynamic",
+				"defaultServer": []any{map[string]any{"name": "check"}, map[string]any{"name": "inter", "args": []any{"5s"}}},
+				"servers": []any{
+					map[string]any{"name": "SRV_1", "address": "10.0.0.1", "port": 8080, "weight": 20, "guid": "srv:be_api:SRV_1",
+						"comment": "Pod: api-1", "extra": []any{map[string]any{"name": "send-proxy-v2"}}},
+					map[string]any{"name": "SRV_2", "address": "10.0.0.2", "port": 8080, "disabled": true},
+				},
+			}`,
+			text:        twoServerText,
+			wantMissing: `default-server: declares inter "5s", the config has "2s"`,
+		},
+		{
+			name: "a record with a wrong server address",
+			record: `map[string]any{
+				"name": "be_api", "shape": "dynamic",
+				"servers": []any{
+					map[string]any{"name": "SRV_1", "address": "10.9.9.9", "port": 8080, "weight": 20, "guid": "srv:be_api:SRV_1"},
+					map[string]any{"name": "SRV_2", "address": "10.0.0.2", "port": 8080, "disabled": true},
+				},
+			}`,
+			text:        twoServerText,
+			wantMissing: `declared address "10.9.9.9:8080", the config has "10.0.0.1:8080"`,
+		},
+		{
+			name: "a record that forgets a server is disabled",
+			record: `map[string]any{
+				"name": "be_api", "shape": "dynamic",
+				"servers": []any{
+					map[string]any{"name": "SRV_1", "address": "10.0.0.1", "port": 8080, "weight": 20, "guid": "srv:be_api:SRV_1"},
+					map[string]any{"name": "SRV_2", "address": "10.0.0.2", "port": 8080},
+				},
+			}`,
+			text:        twoServerText,
+			wantMissing: "declared disabled=false, the config says true",
+		},
+		{
+			name: "a record with a wrong server guid",
+			record: `map[string]any{
+				"name": "be_api", "shape": "dynamic",
+				"servers": []any{
+					map[string]any{"name": "SRV_1", "address": "10.0.0.1", "port": 8080, "weight": 20, "guid": "srv:be_api:SRV_9"},
+					map[string]any{"name": "SRV_2", "address": "10.0.0.2", "port": 8080, "disabled": true},
+				},
+			}`,
+			text:        twoServerText,
+			wantMissing: `declared guid "srv:be_api:SRV_9", the config has "srv:be_api:SRV_1"`,
+		},
+		{
+			name: "a record that omits a declared weight",
+			record: `map[string]any{
+				"name": "be_api", "shape": "dynamic",
+				"servers": []any{
+					map[string]any{"name": "SRV_1", "address": "10.0.0.1", "port": 8080, "guid": "srv:be_api:SRV_1"},
+					map[string]any{"name": "SRV_2", "address": "10.0.0.2", "port": 8080, "disabled": true},
+				},
+			}`,
+			text:        twoServerText,
+			wantMissing: `declared weight "", the config has "20"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config, plan := renderSynthetic(t, backendTemplate(tt.record, tt.text), tt.maps)
+
+			mismatches := planMismatches(t, config, tt.maps, plan)
+
+			if tt.wantMissing == "" {
+				assert.Empty(t, mismatches)
+				return
+			}
+			require.NotEmpty(t, mismatches, "the comparison passed a record that under-describes its section")
+			assert.Contains(t, strings.Join(mismatches, "\n"), tt.wantMissing)
+		})
+	}
+}
+
+// The section list is the deploy side's only map from plan to bytes; a hole in
+// it is a section that could be rewritten without anyone noticing.
+func TestPlanDifferentialCatchesABrokenPartition(t *testing.T) {
+	config, plan := renderSynthetic(t, backendTemplate(twoServerRecord, twoServerText), nil)
+	require.Empty(t, planMismatches(t, config, nil, plan))
+
+	t.Run("a section that under-reports its length", func(t *testing.T) {
+		shortened := *plan
+		shortened.Sections = append([]renderplan.Section(nil), plan.Sections...)
+		shortened.Sections[0].Length--
+
+		assert.NotEmpty(t, planMismatches(t, config, nil, &shortened))
+	})
+
+	t.Run("a section whose digest does not match its bytes", func(t *testing.T) {
+		corrupted := *plan
+		corrupted.Sections = append([]renderplan.Section(nil), plan.Sections...)
+		corrupted.Sections[0].TextDigest = renderplan.DigestString("something else")
+
+		assert.NotEmpty(t, planMismatches(t, config, nil, &corrupted))
+	})
+}
+
+func TestPlanDifferentialCatchesAWrongMapEntry(t *testing.T) {
+	contents := map[string]string{"host.map": "example.com be_api\nother.example.com be_other\n"}
+	config, plan := renderSynthetic(t, backendTemplate(twoServerRecord, twoServerText), contents)
+	require.Empty(t, planMismatches(t, config, contents, plan))
+
+	t.Run("an entry with the wrong value", func(t *testing.T) {
+		wrong := *plan
+		wrong.Maps = map[string]renderplan.Map{"host.map": {
+			Path:    "host.map",
+			Entries: []renderplan.Entry{{Key: "example.com", Value: "be_wrong"}, {Key: "other.example.com", Value: "be_other"}},
+		}}
+
+		assert.NotEmpty(t, planMismatches(t, config, contents, &wrong))
+	})
+
+	t.Run("a map file the plan does not list", func(t *testing.T) {
+		missing := *plan
+		missing.Maps = nil
+
+		assert.NotEmpty(t, planMismatches(t, config, contents, &missing))
+	})
+}
+
+// --- corpus case -----------------------------------------------------------
+
+// TestPlanDifferentialCorpus renders every validationTest of the bundled chart
+// and holds each render's plan against the configuration and map files it
+// produced.
+func TestPlanDifferentialCorpus(t *testing.T) {
+	restoreHAProxy := dataplanetest.InstallFakeHAProxy()
+	t.Cleanup(restoreHAProxy)
+
+	runner, testNames, cleanup := bundledChartRunner(t)
+	t.Cleanup(cleanup)
+	require.NotEmpty(t, testNames, "the bundled chart contributed no validation tests")
+
+	// Rendered in parallel like the runner does, compared serially:
+	// client-native's parser writes a package-level global while parsing.
+	compared := 0
+	for _, rendered := range renderCorpus(t, runner, testNames) {
+		assert.Emptyf(t, planMismatches(t, rendered.config, rendered.maps, rendered.plan),
+			"%s: the plan does not describe what the render emitted", rendered.name)
+		compared++
+	}
+	assert.Greater(t, compared, len(testNames)/2, "most of the corpus must actually render")
+}
+
+// corpusRender is one fixture's rendered output with the plan it declared.
+type corpusRender struct {
+	name   string
+	config string
+	maps   map[string]string
+	plan   *renderplan.Plan
+}
+
+func renderCorpus(t *testing.T, runner *testrunner.Runner, testNames []string) []corpusRender {
+	t.Helper()
+	ctx := context.Background()
+	pending := make(chan string, len(testNames))
+	for _, name := range testNames {
+		pending <- name
+	}
+	close(pending)
+
+	var mu sync.Mutex
+	var renders []corpusRender
+	var wg sync.WaitGroup
+	for range runtime.NumCPU() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for name := range pending {
+				rendered, err := runner.Render(ctx, name)
+				if err != nil {
+					// Tests that assert a rendering_error have no config to compare.
+					continue
+				}
+				maps := make(map[string]string, len(rendered.AuxiliaryFiles.MapFiles))
+				for _, file := range rendered.AuxiliaryFiles.MapFiles {
+					maps[file.Path] = file.Content
+				}
+				mu.Lock()
+				renders = append(renders, corpusRender{
+					name: name, config: rendered.HAProxyConfig, maps: maps, plan: rendered.Plan,
+				})
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	sort.Slice(renders, func(i, j int) bool { return renders[i].name < renders[j].name })
+	for i := range renders {
+		require.NotNilf(t, renders[i].plan, "%s: the render produced no plan", renders[i].name)
+	}
+	return renders
+}
+
+// bundledChartRunner renders the bundled chart with every template library
+// enabled and returns a runner over its validation tests, plus their names in a
+// stable order.
+func bundledChartRunner(t *testing.T) (runner *testrunner.Runner, testNames []string, cleanup func()) {
+	t.Helper()
+	chartDir := repoPath(t, "charts", "haptic")
+	values := filepath.Join(t.TempDir(), "values.yaml")
+	require.NoError(t, os.WriteFile(values, []byte(allLibrariesValues), 0o600))
+
+	manifests, err := renderChartManifests(chartDir, []string{values}, "", offlineCaps())
+	require.NoError(t, err)
+	docs, err := collectConfigDocuments(manifests)
+	require.NoError(t, err)
+
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte(docs), 0o600))
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	restoreFlags := setValidateFlags(t, configFile, repoPath(t, "tests", "schemas"))
+	schemas, err := newDirSchemaSource(validateSchemaDir, logger)
+	require.NoError(t, err)
+	setup, err := setupValidation(context.Background(), schemas, logger)
+	require.NoError(t, err)
+
+	cfg, err := conversion.ConvertSpec(setup.ConfigSpec)
+	require.NoError(t, err)
+	runner = testrunner.New(cfg, setup.Engine, setup.ValidationPaths, &testrunner.Options{
+		Logger:             logger,
+		Capabilities:       setup.Capabilities,
+		HAProxyVersion:     setup.HAProxyVersion,
+		TypedResourceTypes: setup.TypedResourceTypes,
+	})
+
+	// "_global" is a shared fixture baseline, never a render of its own.
+	testNames = make([]string, 0, len(cfg.ValidationTests))
+	for name := range cfg.ValidationTests {
+		if name != "_global" {
+			testNames = append(testNames, name)
+		}
+	}
+	sort.Strings(testNames)
+
+	return runner, testNames, func() {
+		setup.Cleanup()
+		restoreFlags()
+	}
+}
+
+// allLibrariesValues turns on every bundled template library, so the corpus is
+// the whole shipped surface rather than the default subset.
+const allLibrariesValues = `controller:
+  templateLibraries:
+    gateway:
+      enabled: true
+      experimentalChannel: true
+    hapticAnnotations:
+      enabled: true
+    haproxytech:
+      enabled: true
+    haproxyIngress:
+      enabled: true
+    nginxIngress:
+      enabled: true
+`
+
+// setValidateFlags points the command's package-level flags at this test's
+// inputs and restores them afterwards.
+func setValidateFlags(t *testing.T, configFile, schemaDir string) func() {
+	t.Helper()
+	previousFiles, previousSchemaDir := validateConfigFiles, validateSchemaDir
+	validateConfigFiles, validateSchemaDir = []string{configFile}, schemaDir
+	return func() { validateConfigFiles, validateSchemaDir = previousFiles, previousSchemaDir }
+}
+
+// repoPath resolves a path relative to the repository root, which is two levels
+// above this package.
+func repoPath(t *testing.T, elements ...string) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	require.NoError(t, err)
+	return filepath.Join(append([]string{root}, elements...)...)
+}
