@@ -29,8 +29,9 @@ func (c *Client) Inventory(generation uint64) (api.Inventory, error) {
 	maps, mapsErr := c.list("show map", parenthesised)
 	certs, certsErr := c.list("show ssl cert", plainPath)
 	cas, casErr := c.list("show ssl ca-file", plainPath)
+	crls, crlsErr := c.list("show ssl crl-file", plainPath)
 	lists, listsErr := c.list("show ssl crt-list", plainPath)
-	if err := errors.Join(mapsErr, certsErr, casErr, listsErr); err != nil {
+	if err := errors.Join(mapsErr, certsErr, casErr, crlsErr, listsErr); err != nil {
 		return api.Inventory{}, err
 	}
 	return api.Inventory{
@@ -38,6 +39,7 @@ func (c *Client) Inventory(generation uint64) (api.Inventory, error) {
 		Maps:       maps,
 		Certs:      certs,
 		CAFiles:    cas,
+		CRLFiles:   crls,
 		CRTLists:   lists,
 	}, nil
 }

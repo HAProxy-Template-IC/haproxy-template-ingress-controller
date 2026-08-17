@@ -137,9 +137,10 @@ func (s *Store) Digest(rel string) (api.FileAt, error) {
 	return api.FileAt{Digest: renderplan.Digest(content), Size: int64(len(content))}, nil
 }
 
-// HashTree observes the ownership set on disk. Paths that do not exist are
-// absent from the result; that absence is what makes a plan id unknown after a
-// container restart put the bootstrap config back.
+// HashTree observes the ownership set on disk. A path that is absent, or that
+// something else turned into a directory or a symlink, is not in the result:
+// it is not a file the agent wrote, and its absence is what makes a plan id
+// unknown after a container restart put the bootstrap config back.
 func (s *Store) HashTree(paths []string) (map[string]api.FileAt, error) {
 	if len(paths) > api.MaxFiles {
 		return nil, fmt.Errorf("ownership set of %d paths exceeds the %d-file limit", len(paths), api.MaxFiles)
@@ -148,7 +149,7 @@ func (s *Store) HashTree(paths []string) (map[string]api.FileAt, error) {
 	for _, rel := range paths {
 		at, err := s.Digest(rel)
 		switch {
-		case errors.Is(err, fs.ErrNotExist):
+		case errors.Is(err, fs.ErrNotExist), errors.Is(err, ErrInvalidPath):
 			continue
 		case err != nil:
 			return nil, fmt.Errorf("hash %q: %w", rel, err)
@@ -173,7 +174,8 @@ func probeMounts(root string) ([]Mount, error) {
 		if p != root && strings.HasPrefix(d.Name(), ".") {
 			return fs.SkipDir
 		}
-		if seen++; seen > maxProbeDirs {
+		seen++
+		if seen > maxProbeDirs {
 			return fmt.Errorf("mount probe found more than %d directories under %s", maxProbeDirs, root)
 		}
 		dev, err := deviceOf(p)

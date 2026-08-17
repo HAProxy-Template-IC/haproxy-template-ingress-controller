@@ -71,7 +71,7 @@ func (h *HAProxy) unpublish(rest, _ string) reply { return h.setPublished(rest, 
 
 func (h *HAProxy) setPublished(rest string, published bool) reply {
 	kind, name := cut(rest)
-	if kind != "backend" {
+	if kind != objBackend {
 		return failure("Unknown command.")
 	}
 	h.mu.Lock()
@@ -135,7 +135,7 @@ func (h *HAProxy) setServerFlag(rest string, on bool) reply {
 	switch kind {
 	case "health":
 		srv.Health = on
-	case "server":
+	case objServer:
 		srv.Enabled = on
 		srv.State = map[bool]string{true: "ready", false: "maint"}[on]
 	default:
@@ -147,7 +147,7 @@ func (h *HAProxy) setServerFlag(rest string, on bool) reply {
 func (h *HAProxy) shutdownSessions(rest, _ string) reply {
 	scope, args := cut(rest)
 	kind, ref := cut(args)
-	if scope != "sessions" || kind != "server" {
+	if scope != "sessions" || kind != objServer {
 		return failure("Unknown command.")
 	}
 	h.mu.Lock()

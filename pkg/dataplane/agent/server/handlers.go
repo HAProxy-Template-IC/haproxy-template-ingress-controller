@@ -84,9 +84,14 @@ func (s *Server) refreshTree() error {
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		writeText(w, http.StatusInternalServerError, "the agent could not encode its answer")
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
+	_, _ = w.Write(append(raw, '\n'))
 }
 
 func writeText(w http.ResponseWriter, status int, body string) {

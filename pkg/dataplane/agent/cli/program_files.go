@@ -22,7 +22,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 )
 
-func compileMapAdd(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileMapAdd(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	if err := errors.Join(
 		validateToken("map path", op.Path),
 		validateToken("map key", op.Key),
@@ -38,7 +38,7 @@ func compileMapAdd(op api.Op, _ Content) (cmds, abort []Command, err error) {
 
 // compileMapSet uses the line form, which HAProxy truncates at the first
 // space, so the value passes the same check as a command word.
-func compileMapSet(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileMapSet(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	if err := errors.Join(
 		validateToken("map path", op.Path),
 		validateToken("map key", op.Key),
@@ -51,7 +51,7 @@ func compileMapSet(op api.Op, _ Content) (cmds, abort []Command, err error) {
 
 // compileMapDel emits one delete; HAProxy 3.4 removes a single duplicate per
 // call, so the executor repeats the command until the key is gone.
-func compileMapDel(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileMapDel(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	if err := errors.Join(
 		validateToken("map path", op.Path),
 		validateToken("map key", op.Key),
@@ -65,7 +65,7 @@ func compileMapDel(op api.Op, _ Content) (cmds, abort []Command, err error) {
 // not an abort — it clears on 3.0 and is a no-op on 3.4, so a later commit
 // would install what was meant to be discarded — hence a failed chunk leaks
 // the version and the executor only counts it.
-func compileMapReplace(op api.Op, content Content) (cmds, abort []Command, err error) {
+func compileMapReplace(op *api.Op, content Content) (cmds, abort []Command, err error) {
 	if err := validateToken("map path", op.Path); err != nil {
 		return nil, nil, err
 	}
@@ -84,12 +84,12 @@ func compileMapReplace(op api.Op, content Content) (cmds, abort []Command, err e
 			Payload: chunk,
 		})
 	}
-	commit := Command{Text: fmt.Sprintf("commit map @%s %s", VersionPlaceholder, op.Path), Expect: "Done"}
+	commit := Command{Text: fmt.Sprintf("commit map @%s %s", VersionPlaceholder, op.Path), Expect: expectDone}
 	return append(cmds, commit), nil, nil
 }
 
 func compileCert(create bool) compiler {
-	return func(op api.Op, content Content) (cmds, abort []Command, err error) {
+	return func(op *api.Op, content Content) (cmds, abort []Command, err error) {
 		if err := validateToken("certificate path", op.Path); err != nil {
 			return nil, nil, err
 		}
@@ -109,7 +109,7 @@ func compileCert(create bool) compiler {
 }
 
 func compileCA(create bool) compiler {
-	return func(op api.Op, content Content) (cmds, abort []Command, err error) {
+	return func(op *api.Op, content Content) (cmds, abort []Command, err error) {
 		if err := validateToken("ca-file path", op.Path); err != nil {
 			return nil, nil, err
 		}
@@ -130,7 +130,7 @@ func compileCA(create bool) compiler {
 
 // compileCRTListAdd uses the payload form: the line form silently discards
 // options and SNI filters.
-func compileCRTListAdd(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileCRTListAdd(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	if err := errors.Join(
 		validateToken("crt-list path", op.Path),
 		validateToken("certificate", op.Cert),
@@ -148,7 +148,7 @@ func compileCRTListAdd(op api.Op, _ Content) (cmds, abort []Command, err error) 
 	}}, nil, nil
 }
 
-func compileCRTListDel(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileCRTListDel(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	if err := errors.Join(
 		validateToken("crt-list path", op.Path),
 		validateToken("certificate", op.Cert),
@@ -158,7 +158,7 @@ func compileCRTListDel(op api.Op, _ Content) (cmds, abort []Command, err error) 
 	return []Command{{Text: fmt.Sprintf("del ssl crt-list %s %s", op.Path, op.Cert)}}, nil, nil
 }
 
-func crtListEntry(op api.Op) (string, error) {
+func crtListEntry(op *api.Op) (string, error) {
 	var b strings.Builder
 	b.WriteString(op.Cert)
 	if len(op.Options) > 0 {

@@ -26,6 +26,10 @@ import (
 // server refuses the whole batch and falls back to a reload.
 var ErrUnknownOp = errors.New("unknown op kind")
 
+// expectDone is HAProxy's answer to the commands that report completion
+// rather than what they did.
+const expectDone = "Done"
+
 // VersionPlaceholder stands in for the map version `prepare map` allocates.
 // The executor substitutes it in the rest of the program once the allocating
 // command answered.
@@ -66,7 +70,7 @@ type Program struct {
 
 // Compile turns one typed op into its program. Every string that reaches
 // HAProxy passes the negative-space check first.
-func Compile(op api.Op, content Content) (Program, error) {
+func Compile(op *api.Op, content Content) (Program, error) {
 	build, ok := compilers[op.Kind]
 	if !ok {
 		return Program{}, fmt.Errorf("%w: %q", ErrUnknownOp, op.Kind)
@@ -92,35 +96,35 @@ func Compile(op api.Op, content Content) (Program, error) {
 // a whole file through the socket.
 type Content func(path string) ([]byte, error)
 
-type compiler func(api.Op, Content) (cmds, abort []Command, err error)
+type compiler func(*api.Op, Content) (cmds, abort []Command, err error)
 
 // compilers is the op → command table. It is the only place in the agent that
 // knows HAProxy command strings.
 var compilers = map[string]compiler{
-	api.OpBackendAdd:       compileBackendAdd,
-	api.OpBackendPublish:   compileBackendVerb("publish backend", "Backend published"),
-	api.OpBackendUnpublish: compileBackendVerb("unpublish backend", ""),
-	api.OpBackendDel:       compileBackendVerb("del backend", "Backend deleted"),
-	api.OpWaitBeRemovable:  compileWaitBackend,
-	api.OpServerAdd:        compileServerAdd,
-	api.OpServerEnable:     compileServerEnable,
-	api.OpServerDisable:    compileServerVerb("disable server", ""),
-	api.OpServerSetAddr:    compileServerSetAddr,
-	api.OpServerSetWeight:  compileServerSetWeight,
-	api.OpServerSetState:   compileServerSetState,
-	api.OpWaitSrvRemovable: compileWaitServer,
-	api.OpShutdownSessions: compileServerVerb("shutdown sessions server", ""),
-	api.OpServerDel:        compileServerVerb("del server", "Server deleted"),
-	api.OpMapAdd:           compileMapAdd,
-	api.OpMapSet:           compileMapSet,
-	api.OpMapDel:           compileMapDel,
-	api.OpMapReplace:       compileMapReplace,
-	api.OpCertSet:          compileCert(false),
-	api.OpCertNew:          compileCert(true),
-	api.OpCASet:            compileCA(false),
-	api.OpCANew:            compileCA(true),
-	api.OpCRTListAdd:       compileCRTListAdd,
-	api.OpCRTListDel:       compileCRTListDel,
+	api.OpBackendAdd:           compileBackendAdd,
+	api.OpBackendPublish:       compileBackendVerb("publish backend", "Backend published"),
+	api.OpBackendUnpublish:     compileBackendVerb("unpublish backend", ""),
+	api.OpBackendDel:           compileBackendVerb("del backend", "Backend deleted"),
+	api.OpBackendWaitRemovable: compileWaitBackend,
+	api.OpServerAdd:            compileServerAdd,
+	api.OpServerEnable:         compileServerEnable,
+	api.OpServerDisable:        compileServerVerb("disable server", ""),
+	api.OpServerSetAddr:        compileServerSetAddr,
+	api.OpServerSetWeight:      compileServerSetWeight,
+	api.OpServerSetState:       compileServerSetState,
+	api.OpServerWaitRemovable:  compileWaitServer,
+	api.OpShutdownSessions:     compileServerVerb("shutdown sessions server", ""),
+	api.OpServerDel:            compileServerVerb("del server", "Server deleted"),
+	api.OpMapAdd:               compileMapAdd,
+	api.OpMapSet:               compileMapSet,
+	api.OpMapDel:               compileMapDel,
+	api.OpMapReplace:           compileMapReplace,
+	api.OpCertSet:              compileCert(false),
+	api.OpCertNew:              compileCert(true),
+	api.OpCASet:                compileCA(false),
+	api.OpCANew:                compileCA(true),
+	api.OpCRTListAdd:           compileCRTListAdd,
+	api.OpCRTListDel:           compileCRTListDel,
 }
 
 // Kinds lists the op kinds this agent executes, for /v1/state.agent_ops.
@@ -132,7 +136,7 @@ func Kinds() []string {
 	return kinds
 }
 
-func compileBackendAdd(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileBackendAdd(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	if err := errors.Join(
 		validateToken("backend", op.Backend),
 		validateToken("profile", op.Profile),
@@ -151,7 +155,7 @@ func compileBackendAdd(op api.Op, _ Content) (cmds, abort []Command, err error) 
 }
 
 func compileBackendVerb(verb, expect string) compiler {
-	return func(op api.Op, _ Content) (cmds, abort []Command, err error) {
+	return func(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 		if err := validateToken("backend", op.Backend); err != nil {
 			return nil, nil, err
 		}
@@ -160,7 +164,7 @@ func compileBackendVerb(verb, expect string) compiler {
 }
 
 func compileServerVerb(verb, expect string) compiler {
-	return func(op api.Op, _ Content) (cmds, abort []Command, err error) {
+	return func(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 		ref, err := serverRef(op)
 		if err != nil {
 			return nil, nil, err
@@ -169,7 +173,7 @@ func compileServerVerb(verb, expect string) compiler {
 	}
 }
 
-func compileWaitBackend(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileWaitBackend(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	if err := validateToken("backend", op.Backend); err != nil {
 		return nil, nil, err
 	}
@@ -177,10 +181,10 @@ func compileWaitBackend(op api.Op, _ Content) (cmds, abort []Command, err error)
 	if err != nil {
 		return nil, nil, err
 	}
-	return []Command{{Text: fmt.Sprintf("wait %d be-removable %s", ms, op.Backend), Expect: "Done"}}, nil, nil
+	return []Command{{Text: fmt.Sprintf("wait %d be-removable %s", ms, op.Backend), Expect: expectDone}}, nil, nil
 }
 
-func compileWaitServer(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileWaitServer(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	ref, err := serverRef(op)
 	if err != nil {
 		return nil, nil, err
@@ -189,10 +193,10 @@ func compileWaitServer(op api.Op, _ Content) (cmds, abort []Command, err error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	return []Command{{Text: fmt.Sprintf("wait %d srv-removable %s", ms, ref), Expect: "Done"}}, nil, nil
+	return []Command{{Text: fmt.Sprintf("wait %d srv-removable %s", ms, ref), Expect: expectDone}}, nil, nil
 }
 
-func compileServerAdd(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileServerAdd(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	ref, err := serverRef(op)
 	if err != nil {
 		return nil, nil, err
@@ -216,7 +220,7 @@ func compileServerAdd(op api.Op, _ Content) (cmds, abort []Command, err error) {
 	return []Command{{Text: b.String(), Expect: "New server registered"}}, nil, nil
 }
 
-func compileServerEnable(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileServerEnable(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	ref, err := serverRef(op)
 	if err != nil {
 		return nil, nil, err
@@ -227,7 +231,7 @@ func compileServerEnable(op api.Op, _ Content) (cmds, abort []Command, err error
 	return append(cmds, Command{Text: "enable server " + ref}), nil, nil
 }
 
-func compileServerSetAddr(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileServerSetAddr(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	ref, err := serverRef(op)
 	if err != nil {
 		return nil, nil, err
@@ -242,7 +246,7 @@ func compileServerSetAddr(op api.Op, _ Content) (cmds, abort []Command, err erro
 	return []Command{{Text: text}}, nil, nil
 }
 
-func compileServerSetWeight(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileServerSetWeight(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	ref, err := serverRef(op)
 	if err != nil {
 		return nil, nil, err
@@ -253,7 +257,7 @@ func compileServerSetWeight(op api.Op, _ Content) (cmds, abort []Command, err er
 	return []Command{{Text: fmt.Sprintf("set server %s weight %d", ref, *op.Weight)}}, nil, nil
 }
 
-func compileServerSetState(op api.Op, _ Content) (cmds, abort []Command, err error) {
+func compileServerSetState(op *api.Op, _ Content) (cmds, abort []Command, err error) {
 	ref, err := serverRef(op)
 	if err != nil {
 		return nil, nil, err
@@ -264,7 +268,7 @@ func compileServerSetState(op api.Op, _ Content) (cmds, abort []Command, err err
 	return []Command{{Text: fmt.Sprintf("set server %s state %s", ref, op.State)}}, nil, nil
 }
 
-func serverRef(op api.Op) (string, error) {
+func serverRef(op *api.Op) (string, error) {
 	if err := errors.Join(
 		validateToken("backend", op.Backend),
 		validateToken("server", op.Server),

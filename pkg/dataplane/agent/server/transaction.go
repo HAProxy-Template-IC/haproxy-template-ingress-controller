@@ -156,18 +156,18 @@ func (r *applyRun) compile(ops []api.Op) ([]cli.Program, error) {
 		return nil, err
 	}
 	programs := make([]cli.Program, 0, len(inline))
-	for _, op := range inline {
-		program, err := cli.Compile(op, r.readFile)
+	for i := range inline {
+		program, err := cli.Compile(&inline[i], r.readFile)
 		if err != nil {
 			return nil, err
 		}
 		programs = append(programs, program)
-		r.note(op)
+		r.note(&inline[i])
 	}
 	return programs, nil
 }
 
-func (r *applyRun) note(op api.Op) {
+func (r *applyRun) note(op *api.Op) {
 	switch op.Kind {
 	case api.OpMapAdd, api.OpMapSet, api.OpMapDel, api.OpMapReplace:
 		r.touchedMaps = append(r.touchedMaps, op.Path)
@@ -265,7 +265,7 @@ func (r *applyRun) revertLKG() error {
 	}
 	r.server.metrics.rollbacks.Inc()
 	r.result.Rollback = &api.RollbackInfo{Performed: true}
-	if err := r.performReload(); err != nil {
+	if err := r.performReload(r.server.lkgPlanID()); err != nil {
 		return r.abort("revert_reload", err)
 	}
 	r.result.Rollback.Reloaded = true
@@ -293,7 +293,7 @@ func (r *applyRun) abort(stage string, cause error) error {
 	}
 	r.result.Rollback.Performed = true
 	if r.opsRan {
-		if err := r.performReload(); err != nil {
+		if err := r.performReload(r.server.lkgPlanID()); err != nil {
 			r.server.metrics.invariant(false, "recovery_reload")
 			r.server.logger.Error("the recovery reload failed; the worker is running an unknown set", "error", err)
 		} else {
@@ -389,9 +389,11 @@ func (s *Server) checkInvariantsLocked(run *applyRun, generationBefore uint64) {
 	case api.ResultNoop:
 		m.invariant(len(run.result.OpResults) == 0, "noop_runs_no_ops")
 	}
+	// Only this direction holds: a plan id can advance without changing a file
+	// (the drift-prevention noop apply), and then there is nothing to back up.
 	journalled := !s.state.Journal.Empty()
 	diverged := s.state.AppliedPlanID != s.state.LKGPlanID
-	m.invariant(journalled == diverged, "journal_tracks_divergence")
+	m.invariant(!journalled || diverged, "journal_only_while_diverged")
 	m.invariant(s.store.CrossDeviceCopies() == 0, "mount_probe_found_every_mount")
 }
 

@@ -106,7 +106,7 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	registry := prometheus.NewRegistry()
-	agent, err := server.New(ctx, server.Config{
+	agent, err := server.New(ctx, &server.Config{
 		BaseDir:           agentBaseDir,
 		ConfigFile:        agentConfigFile,
 		MasterSocket:      resolveSocket(agentBaseDir, agentMasterSocket),

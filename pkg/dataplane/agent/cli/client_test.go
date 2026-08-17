@@ -55,8 +55,8 @@ func content(files map[string]string) cli.Content {
 func compileAll(t *testing.T, ops []api.Op, files map[string]string) []cli.Program {
 	t.Helper()
 	programs := make([]cli.Program, 0, len(ops))
-	for _, op := range ops {
-		program, err := cli.Compile(op, content(files))
+	for i := range ops {
+		program, err := cli.Compile(&ops[i], content(files))
 		require.NoError(t, err)
 		programs = append(programs, program)
 	}
@@ -291,17 +291,17 @@ func TestSplitSeparatesTheDeleteTail(t *testing.T) {
 	ops := []api.Op{
 		{Kind: api.OpBackendUnpublish, Backend: "be-a"},
 		{Kind: api.OpServerDisable, Backend: "be-a", Server: "srv1"},
-		{Kind: api.OpWaitSrvRemovable, Backend: "be-a", Server: "srv1", TimeoutMs: 2000},
+		{Kind: api.OpServerWaitRemovable, Backend: "be-a", Server: "srv1", TimeoutMs: 2000},
 		{Kind: api.OpShutdownSessions, Backend: "be-a", Server: "srv1"},
 		{Kind: api.OpServerDel, Backend: "be-a", Server: "srv1"},
-		{Kind: api.OpWaitBeRemovable, Backend: "be-a", TimeoutMs: 2000},
+		{Kind: api.OpBackendWaitRemovable, Backend: "be-a", TimeoutMs: 2000},
 		{Kind: api.OpBackendDel, Backend: "be-a"},
 	}
 	inline, servers, backends := cli.Split(ops)
 
-	var kinds []string
-	for _, op := range inline {
-		kinds = append(kinds, op.Kind)
+	kinds := make([]string, 0, len(inline))
+	for i := range inline {
+		kinds = append(kinds, inline[i].Kind)
 	}
 	assert.Equal(t, []string{api.OpBackendUnpublish, api.OpServerDisable}, kinds)
 	assert.Equal(t, []cli.ServerRef{{Backend: "be-a", Server: "srv1"}}, servers)

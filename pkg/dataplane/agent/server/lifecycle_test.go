@@ -41,7 +41,7 @@ func TestARestartBetweenAppliesKeepsTheBaseline(t *testing.T) {
 	m.ExpectedPrevPlanID = state.AppliedPlanID
 	m.ExpectedPrevToken = state.AppliedToken
 	m.Mode = api.ModeReload
-	assert.True(t, restarted.apply(m, files).OK)
+	assert.True(t, restarted.apply(&m, files).OK)
 }
 
 func TestATreeThatChangedWhileTheAgentWasAwayInvalidatesTheBaseline(t *testing.T) {
@@ -90,7 +90,7 @@ func TestAForeignWorkerFallsBackToAReload(t *testing.T) {
 	m.ExpectedPrevToken = first.AppliedToken
 	m.Ops = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "b.example.com", Value: "be-a"}}
 
-	result := h.apply(m, files)
+	result := h.apply(&m, files)
 	require.True(t, result.OK, "%+v", result.Error)
 	assert.Equal(t, api.ResultReload, result.Mode)
 }
@@ -107,8 +107,8 @@ func TestAManifestOverTheOpLimitIsRefused(t *testing.T) {
 		m.Ops = append(m.Ops, api.Op{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "k", Value: "v"})
 	}
 
-	response, raw := h.post(m, files)
-	require.Equal(t, http.StatusBadRequest, response.StatusCode)
+	status, raw := h.post(&m, files)
+	require.Equal(t, http.StatusBadRequest, status)
 	assert.Contains(t, string(raw), "op limit")
 	assert.Equal(t, "global\n", h.read(configPath))
 }
@@ -121,7 +121,7 @@ func TestGeneralOnItsOwnMountIsWrittenAndRolledBack(t *testing.T) {
 	}
 	m := buildManifest("plan-1", files)
 	m.Mode = api.ModeReload
-	first := h.apply(m, files)
+	first := h.apply(&m, files)
 	require.True(t, first.OK, "%+v", first.Error)
 	assert.Equal(t, "HTTP/1.0 503\n", h.read("general/503.http"))
 
@@ -135,7 +135,7 @@ func TestGeneralOnItsOwnMountIsWrittenAndRolledBack(t *testing.T) {
 	bad.ExpectedPrevPlanID = first.AppliedPlanID
 	bad.ExpectedPrevToken = first.AppliedToken
 
-	result := h.apply(bad, next)
+	result := h.apply(&bad, next)
 	require.False(t, result.OK)
 	assert.Equal(t, "global\n", h.read(configPath))
 	assert.Equal(t, "HTTP/1.0 503\n", h.read("general/503.http"), "the second mount rolls back with the first")

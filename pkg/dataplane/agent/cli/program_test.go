@@ -40,8 +40,8 @@ func intPtr(v int) *int { return &v }
 func TestCompileCoversEveryOpKind(t *testing.T) {
 	declared := []string{
 		api.OpBackendAdd, api.OpBackendPublish, api.OpBackendUnpublish, api.OpBackendDel,
-		api.OpWaitBeRemovable, api.OpServerAdd, api.OpServerEnable, api.OpServerDisable,
-		api.OpServerSetAddr, api.OpServerSetWeight, api.OpServerSetState, api.OpWaitSrvRemovable,
+		api.OpBackendWaitRemovable, api.OpServerAdd, api.OpServerEnable, api.OpServerDisable,
+		api.OpServerSetAddr, api.OpServerSetWeight, api.OpServerSetState, api.OpServerWaitRemovable,
 		api.OpShutdownSessions, api.OpServerDel, api.OpMapAdd, api.OpMapSet, api.OpMapDel,
 		api.OpMapReplace, api.OpCertSet, api.OpCertNew, api.OpCASet, api.OpCANew,
 		api.OpCRTListAdd, api.OpCRTListDel,
@@ -86,7 +86,7 @@ func TestCompileCommandTable(t *testing.T) {
 		},
 		{
 			name:  "wait be-removable",
-			op:    api.Op{Kind: api.OpWaitBeRemovable, Backend: "be-a", TimeoutMs: 2000},
+			op:    api.Op{Kind: api.OpBackendWaitRemovable, Backend: "be-a", TimeoutMs: 2000},
 			texts: []string{"wait 2000 be-removable be-a"},
 		},
 		{
@@ -139,7 +139,7 @@ func TestCompileCommandTable(t *testing.T) {
 		},
 		{
 			name:  "wait srv-removable",
-			op:    api.Op{Kind: api.OpWaitSrvRemovable, Backend: "be-a", Server: "srv1", TimeoutMs: 2000},
+			op:    api.Op{Kind: api.OpServerWaitRemovable, Backend: "be-a", Server: "srv1", TimeoutMs: 2000},
 			texts: []string{"wait 2000 srv-removable be-a/srv1"},
 		},
 		{
@@ -217,7 +217,7 @@ func TestCompileCommandTable(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			program, err := Compile(tc.op, content)
+			program, err := Compile(&tc.op, content)
 			require.NoError(t, err)
 			var texts []string
 			for _, c := range program.Commands {
@@ -231,17 +231,17 @@ func TestCompileCommandTable(t *testing.T) {
 func TestCompilePayloadForms(t *testing.T) {
 	content := fileContent(map[string]string{"certs/tls.crt": "PEM\n"})
 
-	mapAdd, err := Compile(api.Op{Kind: api.OpMapAdd, Path: "m", Key: "k", Value: "a value with spaces"}, content)
+	mapAdd, err := Compile(&api.Op{Kind: api.OpMapAdd, Path: "m", Key: "k", Value: "a value with spaces"}, content)
 	require.NoError(t, err)
 	assert.Equal(t, "k a value with spaces\n", mapAdd.Commands[0].Payload)
 
-	cert, err := Compile(api.Op{Kind: api.OpCertSet, Path: "certs/tls.crt"}, content)
+	cert, err := Compile(&api.Op{Kind: api.OpCertSet, Path: "certs/tls.crt"}, content)
 	require.NoError(t, err)
 	assert.Equal(t, "PEM\n", cert.Commands[0].Payload)
 	require.Len(t, cert.Abort, 1)
 	assert.Equal(t, "abort ssl cert certs/tls.crt", cert.Abort[0].Text)
 
-	list, err := Compile(api.Op{
+	list, err := Compile(&api.Op{
 		Kind: api.OpCRTListAdd, Path: "l", Cert: "c",
 		Options:    []api.KeywordArg{{Name: "alpn", Args: []string{"h2"}}},
 		SNIFilters: []string{"*.example.com", "!secret.example.com"},
@@ -264,24 +264,24 @@ func TestCompileRejectsUnsafeTokens(t *testing.T) {
 		{"unknown mode", api.Op{Kind: api.OpBackendAdd, Backend: "be", Profile: "p", Mode: "htp"}},
 		{"unknown state", api.Op{Kind: api.OpServerSetState, Backend: "be", Server: "s", State: "up"}},
 		{"empty backend", api.Op{Kind: api.OpBackendPublish}},
-		{"wait beyond the budget", api.Op{Kind: api.OpWaitBeRemovable, Backend: "be", TimeoutMs: api.MaxWaitBudgetMs + 1}},
+		{"wait beyond the budget", api.Op{Kind: api.OpBackendWaitRemovable, Backend: "be", TimeoutMs: api.MaxWaitBudgetMs + 1}},
 		{"weight unset", api.Op{Kind: api.OpServerSetWeight, Backend: "be", Server: "s"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Compile(tc.op, fileContent(nil))
+			_, err := Compile(&tc.op, fileContent(nil))
 			assert.ErrorIs(t, err, ErrUnsafeToken)
 		})
 	}
 }
 
 func TestCompileRefusesUnknownOpKind(t *testing.T) {
-	_, err := Compile(api.Op{Kind: "backend_teleport"}, fileContent(nil))
+	_, err := Compile(&api.Op{Kind: "backend_teleport"}, fileContent(nil))
 	assert.ErrorIs(t, err, ErrUnknownOp)
 }
 
 func TestCompileRefusesAnOversizedCommand(t *testing.T) {
-	_, err := Compile(api.Op{
+	_, err := Compile(&api.Op{
 		Kind: api.OpMapSet, Path: "m", Key: strings.Repeat("k", api.MaxCommandLineBytes), Value: "v",
 	}, fileContent(nil))
 	require.Error(t, err)
@@ -293,7 +293,7 @@ func TestMapReplaceChunksThePayload(t *testing.T) {
 	for i := 0; i < 2000; i++ {
 		fmt.Fprintf(&body, "key-%04d value-%04d\n", i, i)
 	}
-	program, err := Compile(api.Op{Kind: api.OpMapReplace, Path: "m"}, fileContent(map[string]string{"m": body.String()}))
+	program, err := Compile(&api.Op{Kind: api.OpMapReplace, Path: "m"}, fileContent(map[string]string{"m": body.String()}))
 	require.NoError(t, err)
 
 	require.Greater(t, len(program.Commands), 3, "a 2000-entry map needs more than one chunk")
@@ -311,6 +311,6 @@ func TestMapReplaceChunksThePayload(t *testing.T) {
 
 func TestMapReplaceRefusesALineOverThePayloadLimit(t *testing.T) {
 	huge := "k " + strings.Repeat("v", api.MaxPayloadBytes) + "\n"
-	_, err := Compile(api.Op{Kind: api.OpMapReplace, Path: "m"}, fileContent(map[string]string{"m": huge}))
+	_, err := Compile(&api.Op{Kind: api.OpMapReplace, Path: "m"}, fileContent(map[string]string{"m": huge}))
 	assert.ErrorIs(t, err, ErrUnsafeToken)
 }

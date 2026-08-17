@@ -24,13 +24,13 @@ import (
 func (h *HAProxy) add(rest, payload string) reply {
 	object, args := cut(rest)
 	switch object {
-	case "backend":
+	case objBackend:
 		return h.addBackend(args)
-	case "server":
+	case objServer:
 		return h.addServer(args)
-	case "map":
+	case objMap:
 		return h.addMap(args, payload)
-	case "ssl":
+	case objSSL:
 		return h.addSSL(args, payload)
 	}
 	return failure("Unknown command 'add %s'.", object)
@@ -39,13 +39,13 @@ func (h *HAProxy) add(rest, payload string) reply {
 func (h *HAProxy) del(rest, _ string) reply {
 	object, args := cut(rest)
 	switch object {
-	case "backend":
+	case objBackend:
 		return h.delBackend(args)
-	case "server":
+	case objServer:
 		return h.delServer(args)
-	case "map":
+	case objMap:
 		return h.delMap(args)
-	case "ssl":
+	case objSSL:
 		return h.delSSL(args)
 	}
 	return failure("Unknown command 'del %s'.", object)
@@ -54,11 +54,11 @@ func (h *HAProxy) del(rest, _ string) reply {
 func (h *HAProxy) set(rest, payload string) reply {
 	object, args := cut(rest)
 	switch object {
-	case "server":
+	case objServer:
 		return h.setServer(args)
-	case "map":
+	case objMap:
 		return h.setMap(args)
-	case "ssl":
+	case objSSL:
 		return h.setSSL(args, payload)
 	}
 	return failure("Unknown command 'set %s'.", object)
@@ -66,29 +66,32 @@ func (h *HAProxy) set(rest, payload string) reply {
 
 func (h *HAProxy) create(rest, _ string) reply {
 	object, args := cut(rest)
-	if object != "ssl" {
+	if object != objSSL {
 		return failure("Unknown command 'new %s'.", object)
 	}
 	kind, name := cut(args)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch kind {
-	case "cert":
+	case objCert:
 		h.m.Certs[name] = ""
 		return message("New empty certificate store '%s'!", name)
-	case "ca-file":
+	case objCAFile:
 		h.m.CAFiles[name] = ""
 		return message("New CA file created '%s'!", name)
+	case objCRLFile:
+		h.m.CRLFiles[name] = ""
+		return message("New CRL file created '%s'!", name)
 	}
 	return failure("Unknown command 'new ssl %s'.", kind)
 }
 
 func (h *HAProxy) commit(rest, _ string) reply {
 	object, args := cut(rest)
-	if object == "map" {
+	if object == objMap {
 		return h.commitMap(args)
 	}
-	if object != "ssl" {
+	if object != objSSL {
 		return failure("Unknown command 'commit %s'.", object)
 	}
 	kind, name := cut(args)
@@ -102,7 +105,7 @@ func (h *HAProxy) commit(rest, _ string) reply {
 	if !staged {
 		return failure("No ongoing transaction for '%s'!", name)
 	}
-	if kind == "cert" && !strings.Contains(content, "PRIVATE KEY") {
+	if kind == objCert && !strings.Contains(content, "PRIVATE KEY") {
 		return failure("Missing private key for '%s'.", name)
 	}
 	store[name] = content
@@ -112,7 +115,7 @@ func (h *HAProxy) commit(rest, _ string) reply {
 
 func (h *HAProxy) abort(rest, _ string) reply {
 	object, args := cut(rest)
-	if object != "ssl" {
+	if object != objSSL {
 		return failure("Unknown command 'abort %s'.", object)
 	}
 	kind, name := cut(args)
@@ -128,10 +131,12 @@ func (h *HAProxy) abort(rest, _ string) reply {
 
 func (h *HAProxy) transaction(kind string) (pending, store map[string]string) {
 	switch kind {
-	case "cert":
+	case objCert:
 		return h.m.pendingCert, h.m.Certs
-	case "ca-file":
+	case objCAFile:
 		return h.m.pendingCA, h.m.CAFiles
+	case objCRLFile:
+		return h.m.pendingCRL, h.m.CRLFiles
 	}
 	return nil, nil
 }
@@ -139,7 +144,7 @@ func (h *HAProxy) transaction(kind string) (pending, store map[string]string) {
 func (h *HAProxy) addSSL(rest, payload string) reply {
 	kind, args := cut(rest)
 	switch kind {
-	case "crt-list":
+	case objCRTList:
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		for _, line := range strings.Split(strings.TrimSpace(payload), "\n") {
@@ -148,8 +153,8 @@ func (h *HAProxy) addSSL(rest, payload string) reply {
 			}
 		}
 		return message("Success!")
-	case "ca-file":
-		return h.setSSL("ca-file "+args, payload)
+	case objCAFile:
+		return h.setSSL(objCAFile+" "+args, payload)
 	}
 	return failure("Unknown command 'add ssl %s'.", kind)
 }
@@ -168,7 +173,7 @@ func (h *HAProxy) setSSL(rest, payload string) reply {
 
 func (h *HAProxy) delSSL(rest string) reply {
 	kind, args := cut(rest)
-	if kind != "crt-list" {
+	if kind != objCRTList {
 		return failure("Unknown command 'del ssl %s'.", kind)
 	}
 	list, cert := cut(args)
@@ -239,7 +244,7 @@ func (h *HAProxy) delMap(rest string) reply {
 
 func (h *HAProxy) prepareMap(rest, _ string) reply {
 	object, path := cut(rest)
-	if object != "map" {
+	if object != objMap {
 		return failure("Unknown command 'prepare %s'.", object)
 	}
 	h.mu.Lock()
@@ -273,9 +278,9 @@ func (h *HAProxy) show(rest, _ string) reply {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		return dump(fmt.Sprintf("Name: HAProxy\nVersion: %s\nPid: %d\nUptime: 0d 0h00m01s", h.m.Version, h.m.Pid))
-	case "map":
+	case objMap:
 		return h.showMap(args)
-	case "ssl":
+	case objSSL:
 		return h.showSSL(args)
 	case "servers":
 		return h.showServers(args)
@@ -287,8 +292,10 @@ func (h *HAProxy) showMap(path string) reply {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if path == "" {
-		lines := []string{"# id (file) description"}
-		for _, p := range sortedKeys(h.m.Maps) {
+		paths := sortedKeys(h.m.Maps)
+		lines := make([]string, 0, len(paths)+1)
+		lines = append(lines, "# id (file) description")
+		for _, p := range paths {
 			lines = append(lines, fmt.Sprintf("-1 (%s) pattern loaded from file '%s'", p, p))
 		}
 		return dump(strings.Join(lines, "\n"))
@@ -305,11 +312,13 @@ func (h *HAProxy) showSSL(rest string) reply {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch kind {
-	case "cert":
+	case objCert:
 		return dump("# filename\n" + strings.Join(sortedKeys(h.m.Certs), "\n"))
-	case "ca-file":
+	case objCAFile:
 		return dump("# filename\n" + strings.Join(sortedKeys(h.m.CAFiles), "\n"))
-	case "crt-list":
+	case objCRLFile:
+		return dump("# filename\n" + strings.Join(sortedKeys(h.m.CRLFiles), "\n"))
+	case objCRTList:
 		if entries, ok := h.m.CRTLists[strings.TrimPrefix(name, "-n ")]; ok && name != "" {
 			return dump("# " + name + "\n" + strings.Join(entries, "\n"))
 		}

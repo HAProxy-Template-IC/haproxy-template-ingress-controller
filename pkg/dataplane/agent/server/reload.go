@@ -36,7 +36,7 @@ func (r *applyRun) reload(reason string) error {
 	if due, open := r.server.pacingWindow(); open {
 		return r.schedule(due)
 	}
-	if err := r.performReload(); err != nil {
+	if err := r.performReload(r.manifest.PlanID); err != nil {
 		return r.abort("reload", err)
 	}
 	r.result.Mode = api.ResultReload
@@ -55,8 +55,10 @@ func (r *applyRun) schedule(due time.Time) error {
 }
 
 // performReload asks the master to re-exec and waits until the new worker
-// answers, because an op sent to the outgoing worker would be lost.
-func (r *applyRun) performReload() error {
+// answers, because an op sent to the outgoing worker would be lost. planID
+// names the file set the new worker starts from, which is not always the plan
+// this apply carried: a rollback reloads the last known good one.
+func (r *applyRun) performReload(planID string) error {
 	start := time.Now()
 	logs, err := r.server.runtime.Reload()
 	info := &api.ReloadInfo{Performed: true, OK: err == nil, Output: logs, TookMs: time.Since(start).Milliseconds()}
@@ -73,7 +75,7 @@ func (r *applyRun) performReload() error {
 	if settleErr != nil {
 		return settleErr
 	}
-	r.server.recordReload(r.manifest.PlanID)
+	r.server.recordReload(planID)
 	return nil
 }
 
@@ -126,7 +128,7 @@ func (s *Server) firePendingReload() {
 		result:   api.ApplyResult{PlanID: planID, OK: true, Mode: api.ResultReload, At: time.Now().UTC().Format(time.RFC3339)},
 	}
 	s.clearPendingReload()
-	if err := run.performReload(); err != nil {
+	if err := run.performReload(planID); err != nil {
 		s.logger.Error("the scheduled reload failed", "plan_id", planID, "error", err)
 		_ = run.abort("scheduled_reload", err)
 	}
@@ -207,7 +209,7 @@ func (s *Server) selfReload() {
 		manifest: &api.Manifest{PlanID: planID, Mode: api.ModeReload},
 		result:   api.ApplyResult{PlanID: planID, OK: true, Mode: api.ResultReload},
 	}
-	if err := run.performReload(); err != nil {
+	if err := run.performReload(planID); err != nil {
 		s.logger.Error("the divergence reload failed", "error", err)
 	}
 }

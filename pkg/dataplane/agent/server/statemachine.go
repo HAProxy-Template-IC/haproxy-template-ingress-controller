@@ -112,18 +112,30 @@ func (s *Server) clearPendingReload() {
 	s.state.PendingReloadPlanID = ""
 }
 
-// recordReload is what a completed reload means: the worker is running this
-// plan, its own binary accepted it, and the journal's job is done.
+// recordReload is what a completed reload means: the worker is running the
+// plan whose files were on disk when it re-executed, its own binary accepted
+// them, and the journal's job is done. An empty planID means the agent cannot
+// name that set — after a crash mid-apply — so nothing is promoted.
 func (s *Server) recordReload(planID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastReload = time.Now()
 	s.state.RunningPlanID = planID
 	s.state.WorkerOpsPlanID = planID
+	if planID == "" {
+		return
+	}
 	s.state.LKGPlanID = planID
 	if err := s.store.ClearJournal(&s.state.Journal); err != nil {
 		s.logger.Error("could not clear the backup journal", "error", err)
 	}
+}
+
+// lkgPlanID is the plan whose file set a rollback puts back.
+func (s *Server) lkgPlanID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state.LKGPlanID
 }
 
 func (s *Server) recordWorkerOps(planID string) {
@@ -242,7 +254,9 @@ func (s *Server) restoreJournal() error {
 	defer s.mu.Unlock()
 	s.tree = tree
 	s.state.TreeDigest = treeDigest(tree)
-	return nil
+	// The tree is the last known good set again, so the backups have nothing
+	// left to protect; the next apply starts a fresh journal from here.
+	return s.store.ClearJournal(&s.state.Journal)
 }
 
 // cachedNACK answers a manifest the agent already knows HAProxy rejects,
@@ -290,7 +304,7 @@ func (s *Server) recoverFromCrash() error {
 		manifest: &api.Manifest{PlanID: planID, Mode: api.ModeReload},
 		result:   api.ApplyResult{PlanID: planID, OK: true, Mode: api.ResultReload},
 	}
-	err := run.performReload()
+	err := run.performReload("")
 	s.mu.Lock()
 	s.state.Phase = phaseIdle
 	s.state.InFlightPlanID = ""

@@ -38,6 +38,7 @@ type Model struct {
 	Maps     map[string][]MapEntry
 	Certs    map[string]string
 	CAFiles  map[string]string
+	CRLFiles map[string]string
 	CRTLists map[string][]string
 
 	// ReloadFails makes the master `reload` answer Success=0.
@@ -57,6 +58,7 @@ type Model struct {
 
 	pendingCert map[string]string
 	pendingCA   map[string]string
+	pendingCRL  map[string]string
 	mapVersions map[string][]MapEntry
 	preparedFor map[string]string
 	nextMapVer  int
@@ -96,10 +98,10 @@ type MapEntry struct {
 	Value string
 }
 
-// Start serves the model on two unix sockets under t.TempDir().
-func Start(t *testing.T) *HAProxy {
-	t.Helper()
-	dir := t.TempDir()
+// Start serves the model on two unix sockets under tb.TempDir().
+func Start(tb testing.TB) *HAProxy {
+	tb.Helper()
+	dir := tb.TempDir()
 	h := &HAProxy{
 		m: Model{
 			Version:        "3.4.3-1deb11u1",
@@ -108,19 +110,21 @@ func Start(t *testing.T) *HAProxy {
 			Maps:           map[string][]MapEntry{},
 			Certs:          map[string]string{},
 			CAFiles:        map[string]string{},
+			CRLFiles:       map[string]string{},
 			CRTLists:       map[string][]string{},
 			BlockedServers: map[string]bool{},
 			ReloadLog:      "Loading success.",
 			pendingCert:    map[string]string{},
 			pendingCA:      map[string]string{},
+			pendingCRL:     map[string]string{},
 			mapVersions:    map[string][]MapEntry{},
 			preparedFor:    map[string]string{},
 		},
 		workerPath: filepath.Join(dir, "haproxy-worker.sock"),
 		masterPath: filepath.Join(dir, "haproxy-master.sock"),
 	}
-	h.serve(t, h.workerPath)
-	h.serve(t, h.masterPath)
+	h.serve(tb, h.workerPath)
+	h.serve(tb, h.masterPath)
 	return h
 }
 
@@ -174,13 +178,13 @@ func (h *HAProxy) HasBackend(name string) bool {
 	return exists
 }
 
-func (h *HAProxy) serve(t *testing.T, path string) {
-	t.Helper()
+func (h *HAProxy) serve(tb testing.TB, path string) {
+	tb.Helper()
 	listener, err := net.Listen("unix", path)
 	if err != nil {
-		t.Fatalf("listen on %s: %v", path, err)
+		tb.Fatalf("listen on %s: %v", path, err)
 	}
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		_ = listener.Close()
 		_ = os.Remove(path)
 	})

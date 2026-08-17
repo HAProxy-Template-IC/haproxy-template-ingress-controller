@@ -281,14 +281,18 @@ func TestHashTreeReportsOnlyExistingPaths(t *testing.T) {
 	assert.NotContains(t, tree, "maps/absent.map")
 }
 
-func TestHashTreeRefusesNonRegularFiles(t *testing.T) {
+func TestHashTreeSkipsWhatIsNotAFileTheAgentWrote(t *testing.T) {
 	s := newTestStore(t)
 	abs, err := s.Abs("maps")
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(abs, 0o755))
 
-	_, err = s.HashTree([]string{"maps"})
-	assert.ErrorIs(t, err, ErrInvalidPath)
+	tree, err := s.HashTree([]string{"maps"})
+	require.NoError(t, err)
+	assert.NotContains(t, tree, "maps")
+
+	_, err = s.Digest("maps")
+	assert.ErrorIs(t, err, ErrInvalidPath, "a single-path read still names the problem")
 }
 
 func TestSweepTempRemovesCrashLeftovers(t *testing.T) {

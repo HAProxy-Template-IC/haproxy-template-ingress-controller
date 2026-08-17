@@ -93,6 +93,18 @@ func (h *HAProxy) dispatchWorker(command, payload string) reply {
 	return handler(h, rest, payload)
 }
 
+// The object words the model's dispatchers match on, spelled once.
+const (
+	objBackend = "backend"
+	objServer  = "server"
+	objMap     = "map"
+	objSSL     = "ssl"
+	objCert    = "cert"
+	objCAFile  = "ca-file"
+	objCRLFile = "crl-file"
+	objCRTList = "crt-list"
+)
+
 func cut(s string) (head, rest string) {
 	head, rest, _ = strings.Cut(strings.TrimSpace(s), " ")
 	return head, strings.TrimSpace(rest)

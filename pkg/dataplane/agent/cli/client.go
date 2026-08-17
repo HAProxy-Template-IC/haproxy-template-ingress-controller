@@ -232,7 +232,7 @@ func (e *execution) once(index int, cmd Command) (CommandResult, error) {
 // command's answer decides the text of the commands after it.
 func (e *execution) add(index int, cmd Command) error {
 	solo := cmd.Payload != "" || cmd.Capture
-	if solo || e.length+len(cmd.Text)+1 > api.MaxCommandLineBytes-lineReserve {
+	if solo || e.length+len(cmd.Text) >= api.MaxCommandLineBytes-lineReserve {
 		if err := e.flush(); err != nil {
 			return err
 		}

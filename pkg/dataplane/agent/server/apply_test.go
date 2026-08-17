@@ -41,7 +41,7 @@ func firstApply(t *testing.T, h *harness) api.ApplyResult {
 	files := baseFiles("global\n")
 	m := buildManifest("plan-1", files)
 	m.Mode = api.ModeReload
-	result := h.apply(m, files)
+	result := h.apply(&m, files)
 	require.True(t, result.OK, "%+v", result.Error)
 	return result
 }
@@ -83,7 +83,7 @@ func TestRuntimeApplyRunsOpsWithoutReloading(t *testing.T) {
 		{Kind: api.OpBackendPublish, Backend: "be-b"},
 		{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "new.example.com", Value: "be-b"},
 	}
-	result := h.apply(m, files)
+	result := h.apply(&m, files)
 
 	require.True(t, result.OK, "%+v", result.Error)
 	assert.Equal(t, api.ResultRuntime, result.Mode)
@@ -126,7 +126,7 @@ func TestFencingRefusesAndNeverWrites(t *testing.T) {
 			m := buildManifest("plan-1", files)
 			m.Mode = api.ModeReload
 			m.Token = api.Token{LeaderEpoch: 4, RenderSeq: 1}
-			require.True(t, h.apply(m, files).OK)
+			require.True(t, h.apply(&m, files).OK)
 
 			next := baseFiles("global\n  maxconn 100\n")
 			nextManifest := buildManifest("plan-2", next)
@@ -135,8 +135,8 @@ func TestFencingRefusesAndNeverWrites(t *testing.T) {
 			nextManifest.Token = api.Token{LeaderEpoch: 4, RenderSeq: 2}
 			tc.mutate(&nextManifest)
 
-			response, raw := h.post(nextManifest, next)
-			require.Equal(t, http.StatusConflict, response.StatusCode, string(raw))
+			status, raw := h.post(&nextManifest, next)
+			require.Equal(t, http.StatusConflict, status, string(raw))
 			conflict := api.Conflict{}
 			require.NoError(t, json.Unmarshal(raw, &conflict))
 			assert.Equal(t, tc.reason, conflict.Reason)
@@ -152,8 +152,8 @@ func TestUnknownBaselineIsItsOwnConflictReason(t *testing.T) {
 	m := buildManifest("plan-1", files)
 	m.ExpectedPrevPlanID = "plan-0"
 
-	response, raw := h.post(m, files)
-	require.Equal(t, http.StatusConflict, response.StatusCode)
+	status, raw := h.post(&m, files)
+	require.Equal(t, http.StatusConflict, status)
 	conflict := api.Conflict{}
 	require.NoError(t, json.Unmarshal(raw, &conflict))
 	assert.Equal(t, "unknown_baseline", conflict.Reason)
@@ -166,8 +166,8 @@ func TestMissingPartsAreNamed(t *testing.T) {
 	m := buildManifest("plan-1", files)
 	m.Mode = api.ModeReload
 
-	response, raw := h.post(m, files, "maps/host.map")
-	require.Equal(t, http.StatusConflict, response.StatusCode)
+	status, raw := h.post(&m, files, "maps/host.map")
+	require.Equal(t, http.StatusConflict, status)
 	missing := api.Missing{}
 	require.NoError(t, json.Unmarshal(raw, &missing))
 	assert.Equal(t, []string{"maps/host.map"}, missing.Missing)
@@ -183,8 +183,8 @@ func TestUnchangedFilesNeedNoParts(t *testing.T) {
 	m.ExpectedPrevPlanID = first.AppliedPlanID
 	m.ExpectedPrevToken = first.AppliedToken
 
-	response, raw := h.post(m, files, configPath, "maps/host.map")
-	require.Equal(t, http.StatusOK, response.StatusCode, string(raw))
+	status, raw := h.post(&m, files, configPath, "maps/host.map")
+	require.Equal(t, http.StatusOK, status, string(raw))
 	result := api.ApplyResult{}
 	require.NoError(t, json.Unmarshal(raw, &result))
 	assert.Equal(t, api.ResultNoop, result.Mode)
@@ -198,8 +198,8 @@ func TestAPartThatDoesNotMatchItsDigestIsRefused(t *testing.T) {
 	m.Mode = api.ModeReload
 	files[0].Content = "global\n  tampered\n"
 
-	response, raw := h.post(m, files)
-	require.Equal(t, http.StatusBadRequest, response.StatusCode, string(raw))
+	status, raw := h.post(&m, files)
+	require.Equal(t, http.StatusBadRequest, status, string(raw))
 	assert.Contains(t, string(raw), "manifest digest")
 	assert.False(t, h.exists(configPath))
 }
@@ -213,7 +213,7 @@ func TestAbsenceDeletesAnOwnedPath(t *testing.T) {
 	m.ExpectedPrevPlanID = first.AppliedPlanID
 	m.ExpectedPrevToken = first.AppliedToken
 
-	result := h.apply(m, files)
+	result := h.apply(&m, files)
 	require.True(t, result.OK)
 	assert.False(t, h.exists("maps/host.map"))
 	assert.Equal(t, map[string]string{configPath: "global\n"}, h.tree())
@@ -229,7 +229,7 @@ func TestUnknownOpFallsBackToAReload(t *testing.T) {
 	m.ExpectedPrevToken = first.AppliedToken
 	m.Ops = []api.Op{{Kind: "backend_teleport", Backend: "be-a"}}
 
-	result := h.apply(m, files)
+	result := h.apply(&m, files)
 	require.True(t, result.OK, "%+v", result.Error)
 	assert.Equal(t, api.ResultReload, result.Mode)
 	assert.Equal(t, "plan-2", result.RunningPlanID)
@@ -246,7 +246,7 @@ func TestARejectedOpReloadsTheDesiredSet(t *testing.T) {
 	m.ExpectedPrevToken = first.AppliedToken
 	m.Ops = []api.Op{{Kind: api.OpServerAdd, Backend: "absent", Server: "srv1", Address: "10.0.0.1"}}
 
-	result := h.apply(m, files)
+	result := h.apply(&m, files)
 	require.True(t, result.OK, "%+v", result.Error)
 	assert.Equal(t, api.ResultReload, result.Mode)
 	assert.Equal(t, "global\n  maxconn 300\n", h.read(configPath))
@@ -266,7 +266,7 @@ func TestAFailedReloadRestoresTheLastKnownGoodSet(t *testing.T) {
 	m.Mode = api.ModeReload
 	m.ExpectedPrevPlanID = "plan-1"
 
-	result := h.apply(m, files)
+	result := h.apply(&m, files)
 	require.False(t, result.OK)
 	assert.Equal(t, api.ResultRejected, result.Mode)
 	require.NotNil(t, result.Error)
@@ -287,11 +287,11 @@ func TestTheSameRejectedManifestDoesNoWorkInsideTheCooldown(t *testing.T) {
 	m := buildManifest("plan-bad", files)
 	m.Mode = api.ModeReload
 	m.ExpectedPrevPlanID = "plan-1"
-	require.False(t, h.apply(m, files).OK)
+	require.False(t, h.apply(&m, files).OK)
 	reloadsAfterFirst := h.metric("haptic_agent_reloads_total", "failed")
 
 	m.ExpectedPrevPlanID = ""
-	result := h.apply(m, files)
+	result := h.apply(&m, files)
 	assert.False(t, result.OK)
 	assert.Equal(t, reloadsAfterFirst, h.metric("haptic_agent_reloads_total", "failed"),
 		"a known-bad manifest must not reach HAProxy again")
@@ -307,12 +307,12 @@ func TestRevertLKGRestoresAndReloads(t *testing.T) {
 	m.ExpectedPrevPlanID = first.AppliedPlanID
 	m.ExpectedPrevToken = first.AppliedToken
 	m.Mode = api.ModeReload
-	require.True(t, h.apply(m, files).OK)
+	require.True(t, h.apply(&m, files).OK)
 	require.Equal(t, "global\n  maxconn 400\n", h.read(configPath))
 
 	revert := buildManifest("plan-2", nil)
 	revert.Mode = api.ModeRevertLKG
-	result := h.apply(revert, nil)
+	result := h.apply(&revert, nil)
 
 	require.True(t, result.OK, "%+v", result.Error)
 	require.NotNil(t, result.Rollback)
@@ -329,7 +329,7 @@ func TestLKGPromotionClearsTheJournal(t *testing.T) {
 	m.ExpectedPrevPlanID = first.AppliedPlanID
 	m.ExpectedPrevToken = first.AppliedToken
 	m.Ops = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "example.com", Value: "be-a"}}
-	second := h.apply(m, files)
+	second := h.apply(&m, files)
 	require.True(t, second.OK, "%+v", second.Error)
 	require.Equal(t, "plan-1", second.LKGPlanID, "a runtime apply does not promote by itself")
 
@@ -337,7 +337,7 @@ func TestLKGPromotionClearsTheJournal(t *testing.T) {
 	noop.ExpectedPrevPlanID = second.AppliedPlanID
 	noop.ExpectedPrevToken = second.AppliedToken
 	noop.ValidatedPlanID = "plan-2"
-	promoted := h.apply(noop, files)
+	promoted := h.apply(&noop, files)
 
 	require.True(t, promoted.OK, "%+v", promoted.Error)
 	assert.Equal(t, "plan-2", promoted.LKGPlanID)
@@ -349,7 +349,7 @@ func TestAScheduledReloadCoalescesAndRunsInPlaceOps(t *testing.T) {
 	files := baseFiles("global\n")
 	m := buildManifest("plan-1", files)
 	m.Mode = api.ModeReload
-	first := h.apply(m, files)
+	first := h.apply(&m, files)
 	require.True(t, first.OK)
 
 	next := baseFiles("global\n  maxconn 600\n")
@@ -357,7 +357,7 @@ func TestAScheduledReloadCoalescesAndRunsInPlaceOps(t *testing.T) {
 	second.Mode = api.ModeReload
 	second.ExpectedPrevPlanID = first.AppliedPlanID
 	second.ExpectedPrevToken = first.AppliedToken
-	scheduled := h.apply(second, next)
+	scheduled := h.apply(&second, next)
 	require.True(t, scheduled.OK, "%+v", scheduled.Error)
 	require.Equal(t, api.ResultScheduled, scheduled.Mode)
 	require.NotNil(t, scheduled.Reload)
@@ -369,7 +369,7 @@ func TestAScheduledReloadCoalescesAndRunsInPlaceOps(t *testing.T) {
 	third.ExpectedPrevToken = scheduled.AppliedToken
 	third.ExpectedWorkerOpsPlanID = scheduled.WorkerOpsPlanID
 	third.InPlaceOps = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "example.com", Value: "be-c"}}
-	coalesced := h.apply(third, next)
+	coalesced := h.apply(&third, next)
 
 	require.True(t, coalesced.OK, "%+v", coalesced.Error)
 	assert.Equal(t, api.ResultScheduled, coalesced.Mode)
@@ -382,14 +382,14 @@ func TestAnInPlaceOpOnAStaleWorkerBaselineInvalidatesThePod(t *testing.T) {
 	files := baseFiles("global\n")
 	m := buildManifest("plan-1", files)
 	m.Mode = api.ModeReload
-	first := h.apply(m, files)
+	first := h.apply(&m, files)
 
 	next := baseFiles("global\n  maxconn 700\n")
 	second := buildManifest("plan-2", next)
 	second.Mode = api.ModeReload
 	second.ExpectedPrevPlanID = first.AppliedPlanID
 	second.ExpectedPrevToken = first.AppliedToken
-	scheduled := h.apply(second, next)
+	scheduled := h.apply(&second, next)
 	require.Equal(t, api.ResultScheduled, scheduled.Mode)
 
 	third := buildManifest("plan-3", next)
@@ -397,7 +397,7 @@ func TestAnInPlaceOpOnAStaleWorkerBaselineInvalidatesThePod(t *testing.T) {
 	third.ExpectedPrevToken = scheduled.AppliedToken
 	third.ExpectedWorkerOpsPlanID = "plan-from-another-life"
 	third.InPlaceOps = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "example.com", Value: "be-c"}}
-	result := h.apply(third, next)
+	result := h.apply(&third, next)
 
 	require.NotNil(t, result.Error)
 	assert.Equal(t, "in_place", result.Error.Stage)
@@ -409,14 +409,14 @@ func TestTheScheduledReloadFiresWhenTheWindowPasses(t *testing.T) {
 	files := baseFiles("global\n")
 	m := buildManifest("plan-1", files)
 	m.Mode = api.ModeReload
-	first := h.apply(m, files)
+	first := h.apply(&m, files)
 
 	next := baseFiles("global\n  maxconn 800\n")
 	second := buildManifest("plan-2", next)
 	second.Mode = api.ModeReload
 	second.ExpectedPrevPlanID = first.AppliedPlanID
 	second.ExpectedPrevToken = first.AppliedToken
-	require.Equal(t, api.ResultScheduled, h.apply(second, next).Mode)
+	require.Equal(t, api.ResultScheduled, h.apply(&second, next).Mode)
 
 	require.Eventually(t, func() bool {
 		return h.state(false).RunningPlanID == "plan-2"
@@ -435,14 +435,14 @@ func TestStateVerifyObservesTheTree(t *testing.T) {
 func TestAuthenticationIsRequiredForTheAPIButNotTheProbes(t *testing.T) {
 	h := newHarness(t)
 	for _, path := range []string{api.PathHealthz, api.PathReadyz} {
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, h.url+path, nil)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, h.url+path, http.NoBody)
 		require.NoError(t, err)
 		response, err := h.client.Do(request)
 		require.NoError(t, err)
 		require.NoError(t, response.Body.Close())
 		assert.Equal(t, http.StatusOK, response.StatusCode, path)
 	}
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, h.url+api.PathState, nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, h.url+api.PathState, http.NoBody)
 	require.NoError(t, err)
 	response, err := h.client.Do(request)
 	require.NoError(t, err)

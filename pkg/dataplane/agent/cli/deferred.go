@@ -88,16 +88,17 @@ func NewDeferrals(client *Client, logger *slog.Logger, observer Observer) *Defer
 // `wait`. The controller composes the full A4 sequence; the agent runs the
 // traffic-stopping half now and the removal half later.
 func Split(ops []api.Op) (inline []api.Op, servers []ServerRef, backends []string) {
-	for _, op := range ops {
+	for i := range ops {
+		op := &ops[i]
 		switch op.Kind {
 		case api.OpServerDel:
 			servers = append(servers, ServerRef{Backend: op.Backend, Server: op.Server})
 		case api.OpBackendDel:
 			backends = append(backends, op.Backend)
-		case api.OpWaitSrvRemovable, api.OpWaitBeRemovable, api.OpShutdownSessions:
+		case api.OpServerWaitRemovable, api.OpBackendWaitRemovable, api.OpShutdownSessions:
 			// The queue owns the wait and the session shutdown that follows it.
 		default:
-			inline = append(inline, op)
+			inline = append(inline, *op)
 		}
 	}
 	return inline, servers, backends
@@ -177,20 +178,20 @@ func (d *Deferrals) drain(ctx context.Context) {
 	}
 }
 
-func (d *Deferrals) take() ([]attempt[ServerRef], []attempt[string]) {
+func (d *Deferrals) take() (servers []attempt[ServerRef], backends []attempt[string]) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	servers, backends := d.servers, d.backends
+	servers, backends = d.servers, d.backends
 	d.servers, d.backends = nil, nil
 	return servers, backends
 }
 
 func (d *Deferrals) deleteServer(a attempt[ServerRef]) {
 	ref := a.Target.String()
-	err := d.run(fmt.Sprintf("wait %d srv-removable %s", deferredWaitMs, ref), "Done")
+	err := d.run(fmt.Sprintf("wait %d srv-removable %s", deferredWaitMs, ref), expectDone)
 	if errors.Is(err, ErrWaitExpired) {
 		if err = d.run("shutdown sessions server "+ref, ""); err == nil {
-			err = d.run(fmt.Sprintf("wait %d srv-removable %s", deferredWaitMs, ref), "Done")
+			err = d.run(fmt.Sprintf("wait %d srv-removable %s", deferredWaitMs, ref), expectDone)
 		}
 	}
 	if err != nil {
@@ -205,7 +206,7 @@ func (d *Deferrals) deleteServer(a attempt[ServerRef]) {
 }
 
 func (d *Deferrals) deleteBackend(a attempt[string]) {
-	err := d.run(fmt.Sprintf("wait %d be-removable %s", deferredWaitMs, a.Target), "Done")
+	err := d.run(fmt.Sprintf("wait %d be-removable %s", deferredWaitMs, a.Target), expectDone)
 	if err == nil {
 		err = d.run("del backend "+a.Target, "Backend deleted")
 	}

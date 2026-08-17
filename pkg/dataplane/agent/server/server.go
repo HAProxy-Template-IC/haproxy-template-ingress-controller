@@ -97,7 +97,7 @@ type Server struct {
 // New builds the agent. It probes the mounts under the base directory and
 // loads the state file, but it does not touch HAProxy: Start does that, and
 // readiness is what reports it.
-func New(ctx context.Context, cfg Config) (*Server, error) {
+func New(ctx context.Context, cfg *Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -121,7 +121,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	metrics := NewMetrics(cfg.Registry, cfg.Logger)
 	s := &Server{
-		cfg:        cfg,
+		cfg:        *cfg,
 		logger:     cfg.Logger,
 		store:      store,
 		runtime:    runtimeClient,

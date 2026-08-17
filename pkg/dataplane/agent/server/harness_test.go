@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -25,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -47,7 +49,7 @@ const (
 
 // harness runs a real agent against the HAProxy model over a loopback socket.
 type harness struct {
-	t        *testing.T
+	t        testing.TB
 	agent    *server.Server
 	model    *agenttest.HAProxy
 	baseDir  string
@@ -64,8 +66,9 @@ type options struct {
 	statePrepare      func(baseDir string)
 }
 
-func newHarness(t *testing.T, opts ...func(*options)) *harness {
-	t.Helper()
+func newHarness(tb testing.TB, opts ...func(*options)) *harness {
+	tb.Helper()
+	t := tb
 	settings := options{baseDir: t.TempDir()}
 	for _, opt := range opts {
 		opt(&settings)
@@ -81,7 +84,7 @@ func newHarness(t *testing.T, opts ...func(*options)) *harness {
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 
-	agent, err := server.New(ctx, server.Config{
+	agent, err := server.New(ctx, &server.Config{
 		BaseDir:           settings.baseDir,
 		ConfigFile:        configPath,
 		MasterSocket:      model.MasterSocket(),
@@ -131,12 +134,6 @@ func withModel(model *agenttest.HAProxy) func(*options) {
 	return func(o *options) { o.model = model }
 }
 
-// withState writes a state file before the agent starts, which is how the
-// crash matrix puts the agent back on an interrupted apply.
-func withState(prepare func(baseDir string)) func(*options) {
-	return func(o *options) { o.statePrepare = prepare }
-}
-
 // stop shuts the agent down so a second one can take over the same tree.
 func (h *harness) stop() {
 	h.t.Helper()
@@ -181,16 +178,17 @@ func buildManifest(planID string, list []file) api.Manifest {
 	return m
 }
 
-// post sends an apply. Every file of list travels as a part unless omit names
-// it, which is how the 409-missing path is exercised.
-func (h *harness) post(m api.Manifest, list []file, omit ...string) (*http.Response, []byte) {
+// post sends an apply and returns the status and the body. Every file of list
+// travels as a part unless omit names it, which is how the 409-missing path is
+// exercised.
+func (h *harness) post(m *api.Manifest, list []file, omit ...string) (status int, answer []byte) {
 	h.t.Helper()
 	skip := map[string]struct{}{}
 	for _, path := range omit {
 		skip[path] = struct{}{}
 	}
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
+	payload := &bytes.Buffer{}
+	writer := multipart.NewWriter(payload)
 	manifestPart, err := writer.CreateFormField(api.PartManifest)
 	require.NoError(h.t, err)
 	require.NoError(h.t, json.NewEncoder(manifestPart).Encode(m))
@@ -205,7 +203,7 @@ func (h *harness) post(m api.Manifest, list []file, omit ...string) (*http.Respo
 	}
 	require.NoError(h.t, writer.Close())
 
-	request, err := http.NewRequestWithContext(h.t.Context(), http.MethodPost, h.url+api.PathApply, body)
+	request, err := http.NewRequestWithContext(h.t.Context(), http.MethodPost, h.url+api.PathApply, payload)
 	require.NoError(h.t, err)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	request.SetBasicAuth(testUser, testPassword)
@@ -214,14 +212,14 @@ func (h *harness) post(m api.Manifest, list []file, omit ...string) (*http.Respo
 	defer func() { _ = response.Body.Close() }()
 	raw, err := io.ReadAll(response.Body)
 	require.NoError(h.t, err)
-	return response, raw
+	return response.StatusCode, raw
 }
 
 // apply posts and requires a 200, returning the ACK.
-func (h *harness) apply(m api.Manifest, list []file) api.ApplyResult {
+func (h *harness) apply(m *api.Manifest, list []file) api.ApplyResult {
 	h.t.Helper()
-	response, raw := h.post(m, list)
-	require.Equal(h.t, http.StatusOK, response.StatusCode, string(raw))
+	status, raw := h.post(m, list)
+	require.Equal(h.t, http.StatusOK, status, string(raw))
 	result := api.ApplyResult{}
 	require.NoError(h.t, json.Unmarshal(raw, &result))
 	return result
@@ -233,7 +231,7 @@ func (h *harness) state(verify bool) api.State {
 	if verify {
 		url += "?verify=1"
 	}
-	request, err := http.NewRequestWithContext(h.t.Context(), http.MethodGet, url, nil)
+	request, err := http.NewRequestWithContext(h.t.Context(), http.MethodGet, url, http.NoBody)
 	require.NoError(h.t, err)
 	request.SetBasicAuth(testUser, testPassword)
 	response, err := h.client.Do(request)
@@ -259,18 +257,28 @@ func (h *harness) exists(path string) bool {
 }
 
 // tree lists the manifest-owned files on disk, so a test can assert that the
-// set is the desired one and not a mix.
+// set is the desired one and not a mix. The agent's own dot-prefixed state,
+// temp and backup entries are not part of it.
 func (h *harness) tree() map[string]string {
 	h.t.Helper()
 	out := map[string]string{}
-	entries, err := os.ReadDir(h.baseDir)
-	require.NoError(h.t, err)
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Name()[0] == '.' {
-			continue
+	walk := func(path string, entry os.DirEntry, err error) error {
+		require.NoError(h.t, err)
+		if strings.HasPrefix(entry.Name(), ".") && path != h.baseDir {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
-		out[entry.Name()] = h.read(entry.Name())
+		if entry.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(h.baseDir, path)
+		require.NoError(h.t, relErr)
+		out[filepath.ToSlash(rel)] = h.read(rel)
+		return nil
 	}
+	require.NoError(h.t, filepath.WalkDir(h.baseDir, walk))
 	return out
 }
 
@@ -318,4 +326,25 @@ func matchesLabels(metric *dto.Metric, wanted []string) bool {
 // stand in for a container restart that copied the bootstrap files.
 func writeFile(h *harness, path, content string) error {
 	return os.WriteFile(filepath.Join(h.baseDir, path), []byte(content), 0o600)
+}
+
+// violations names the invariants that fired, which is what a failure needs to
+// be actionable.
+func (h *harness) violations() []string {
+	h.t.Helper()
+	families, err := h.registry.Gather()
+	require.NoError(h.t, err)
+	var names []string
+	for _, family := range families {
+		if family.GetName() != "haptic_agent_invariant_violations_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			for _, pair := range metric.GetLabel() {
+				names = append(names, fmt.Sprintf("%s=%v", pair.GetValue(), metric.GetCounter().GetValue()))
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
 }

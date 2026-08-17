@@ -67,15 +67,14 @@ func NewMetrics(registry prometheus.Registerer, logger *slog.Logger) *Metrics {
 // invariant records a condition that must hold. It never panics: the agent's
 // safety layer refuses or aborts the apply, and its decision layer degrades to
 // a reload, but a data plane must not take itself down over an assertion.
-func (m *Metrics) invariant(cond bool, name string) bool {
+func (m *Metrics) invariant(cond bool, name string) {
 	if cond {
-		return true
+		return
 	}
 	m.invariants.WithLabelValues(name).Inc()
 	m.logger.Error("agent invariant violated", "invariant", name)
 	violated := name
 	m.violation.Store(&violated)
-	return false
 }
 
 // LastViolation is the invariant that failed most recently, for /v1/state.
