@@ -114,6 +114,7 @@ func registerScriggoRuntimeVars(decl native.Declarations) {
 	decl["controller"] = (*map[string]ResourceStore)(nil)
 	decl["templateSnippets"] = (*[]string)(nil)
 	decl["fileRegistry"] = (*FileRegistrar)(nil)
+	decl["planRegistry"] = (*PlanRegistrar)(nil)
 	decl["dataplane"] = (*map[string]any)(nil)
 	decl["capabilities"] = (*map[string]any)(nil)
 	decl["shared"] = (*SharedContext)(nil)
