@@ -117,7 +117,7 @@ Two consequences:
   a library adds an object with nobody deciding anything.
 
 **The controller machinery already exists.** `CRD_NAME` is parsed as a list
-(`cmd/controller/run.go:118`), and `conversion.MergeSpecs`
+(`cmd/haptic/run.go:118`), and `conversion.MergeSpecs`
 (`conversion/merge.go:73`) merges N specs in argument order, later wins. The
 chart renders one object; the controller was never the constraint.
 
@@ -247,13 +247,13 @@ is holding back.
   **102.7% of the hard 1,048,576 cap with the stripper on (121.2% off)**.
   `helm install` fails.
 
-**Chosen mechanism: the Job runs `haptic-controller preflight` against the
+**Chosen mechanism: the Job runs `haptic preflight` against the
 image-embedded chart, fed the release's values.** All parts exist or are small:
 
 - `preflight -f values.yaml` already renders the image-embedded chart
   in-process and runs the full load gate over the result — structural
   validation, the merged `validationTests`, `haproxy -c`
-  (`cmd/controller/preflight.go`). The hook Job is the same pattern as the
+  (`cmd/haptic/preflight.go`). The hook Job is the same pattern as the
   shipped `crd-upgrade-hook.yaml` (a `pre-install,pre-upgrade` Job on the
   controller image, weight -5/0, `before-hook-creation,hook-succeeded`), at a
   later hook weight so CRDs are already upgraded.

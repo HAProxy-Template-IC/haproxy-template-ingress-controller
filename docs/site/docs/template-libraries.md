@@ -17,7 +17,7 @@ later libraries winning over earlier ones for the same key and your config
 winning over all of them. To see the merged result:
 
 ```bash
-haptic-controller config view --input --namespace haptic
+haptic config view --input --namespace haptic
 ```
 
 Splitting the configuration this way keeps each object well clear of the ~1.5 MiB

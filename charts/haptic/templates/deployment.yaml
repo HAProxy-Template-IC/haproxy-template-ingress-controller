@@ -68,7 +68,7 @@ spec:
           {{- end }}
           image: {{ include "haptic.controller.image" . | quote }}
           imagePullPolicy: {{ $controller.image.pullPolicy }}
-          command: ["/usr/local/bin/haptic-controller"]
+          command: ["/usr/local/bin/haptic"]
           args: ["run"]
           ports:
             {{- range $name := list "healthz" "metrics" }}

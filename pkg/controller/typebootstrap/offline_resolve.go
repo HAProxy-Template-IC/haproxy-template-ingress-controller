@@ -37,7 +37,7 @@ import (
 // an `x-kubernetes-group-version-kind` extension contribute theirs.
 // Resources without a matching entry surface as a not-found error
 // pointing the operator at `--schema-dir`. The offline validate caller
-// (cmd/controller/validate.go) skips unresolved entries before passing
+// (cmd/haptic/validate.go) skips unresolved entries before passing
 // the list to Bootstrap, so they never reach the fail-closed
 // schema-fetch path — the chart still validates for them through
 // dig().

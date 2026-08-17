@@ -7,7 +7,7 @@
 #
 # Validate it offline (no cluster needed):
 #   make build
-#   ./bin/haptic-controller validate -f examples/byo-crd/haproxytemplateconfig.yaml
+#   ./bin/haptic validate -f examples/byo-crd/haproxytemplateconfig.yaml
 #
 # The embedded validationTest renders the config from a WebApp fixture, runs
 # `haproxy -c` on the result, and checks the generated backend, host map, and

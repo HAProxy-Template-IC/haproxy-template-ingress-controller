@@ -398,13 +398,13 @@ Profile template rendering with the `validate` subcommand's tracing flags (the t
 
 ```bash
 # Top-level render order with per-template timing
-./bin/haptic-controller validate -f config.yaml --trace-templates
+./bin/haptic validate -f config.yaml --trace-templates
 
 # Full call tree including nested render/render_glob
-./bin/haptic-controller validate -f config.yaml --trace-templates --profile-includes
+./bin/haptic validate -f config.yaml --trace-templates --profile-includes
 
 # Combine with --verbose and --dump-rendered for end-to-end diagnosis
-./bin/haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-templates
+./bin/haptic validate -f config.yaml --verbose --dump-rendered --trace-templates
 ```
 
 ### Measuring render time (`benchmark`)
@@ -413,13 +413,13 @@ Profile template rendering with the `validate` subcommand's tracing flags (the t
 
 ```bash
 # Every validation test in the config, 2 iterations each (the default)
-./bin/haptic-controller benchmark -f config.yaml
+./bin/haptic benchmark -f config.yaml
 
 # One test, more iterations for a tighter median
-./bin/haptic-controller benchmark -f config.yaml --test benchmark-ingress-100 --iterations 10
+./bin/haptic benchmark -f config.yaml --test benchmark-ingress-100 --iterations 10
 
 # Rank the 20 slowest template includes
-./bin/haptic-controller benchmark -f config.yaml --profile-includes
+./bin/haptic benchmark -f config.yaml --profile-includes
 ```
 
 | Flag | Default | Purpose |

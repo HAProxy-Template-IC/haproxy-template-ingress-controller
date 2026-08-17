@@ -35,9 +35,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// binaryName is the cobra root command name; the Deployment/labels keep
+// the historical "haptic-controller" name, only the binary is "haptic".
+const binaryName = "haptic"
+
 // rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
-	Use:   "haptic-controller",
+	Use:   binaryName,
 	Short: "HAProxy Template Ingress Controller",
 	Long: `HAProxy Template Ingress Controller - Template-driven HAProxy configuration management.
 
@@ -47,7 +51,7 @@ Commands:
   validate      - Validate a HAProxyTemplateConfig with embedded tests
   benchmark     - Measure template render performance
 
-Use "haptic-controller [command] --help" for more information about a command.`,
+Use "haptic [command] --help" for more information about a command.`,
 }
 
 const (

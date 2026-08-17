@@ -2,13 +2,13 @@
 
 ## Purpose
 
-The `haptic-controller` binary provides the following subcommands: `run` (main controller daemon), `validate` (local template/config validation), `benchmark` (rendering performance analysis), `config` (inspect the live published HAProxy config), and `version` (build info).
+The `haptic` binary provides the following subcommands: `run` (main controller daemon), `validate` (local template/config validation), `benchmark` (rendering performance analysis), `config` (inspect the live published HAProxy config), and `version` (build info).
 
 ## Requirements
 
 ### Requirement: Run Command
 
-The `haptic-controller run` command SHALL start the main controller daemon that watches Kubernetes resources, renders HAProxy configurations from templates, and synchronizes them to HAProxy instances. The command SHALL accept the following flags: `--crd-name` (HAProxyTemplateConfig names, repeatable or comma-separated, merged in the order given), `--secret-name` (credentials Secret name), `--webhook-cert-dir` (directory holding the webhook TLS certificate files; empty disables the webhook), `--kubeconfig` (path to kubeconfig for out-of-cluster development), and `--debug-port` (debug HTTP server port, 0 to disable).
+The `haptic run` command SHALL start the main controller daemon that watches Kubernetes resources, renders HAProxy configurations from templates, and synchronizes them to HAProxy instances. The command SHALL accept the following flags: `--crd-name` (HAProxyTemplateConfig names, repeatable or comma-separated, merged in the order given), `--secret-name` (credentials Secret name), `--webhook-cert-dir` (directory holding the webhook TLS certificate files; empty disables the webhook), `--kubeconfig` (path to kubeconfig for out-of-cluster development), and `--debug-port` (debug HTTP server port, 0 to disable).
 
 #### Scenario: Flag and environment variable defaults
 
@@ -41,7 +41,7 @@ THEN the controller SHALL produce debug-level log output.
 
 ### Requirement: Validate Command
 
-The `haptic-controller validate` command SHALL load HAProxyTemplateConfigs from YAML files, compile their templates, and execute embedded validation tests. The `-f`/`--file` flag SHALL be required, SHALL be repeatable, and each file MAY contain several YAML documents; every HAProxyTemplateConfig across all files SHALL be merged in order using the same merge the controller performs. `--dump-merged` SHALL print the merged spec and exit without running tests. Optional flags SHALL include: `--test` (run a specific test by name), `--verbose` (show content preview for failed assertions, first 200 characters), `--dump-rendered` (dump all rendered content: haproxy.cfg, maps, files, certs), `--trace-templates` (show template execution trace, top-level only), `--debug-filters` (show filter operation debugging), `--profile-includes` (show include timing statistics, top 20 slowest), `--workers` (parallel test workers, 0 = auto-detect CPUs, 1 = sequential), and `-o`/`--output` (output format: `summary`, `json`, or `yaml`). The `haproxy` binary is discovered from `PATH` (no `--haproxy-binary` flag); version selection is done by running the matching per-version controller image.
+The `haptic validate` command SHALL load HAProxyTemplateConfigs from YAML files, compile their templates, and execute embedded validation tests. The `-f`/`--file` flag SHALL be required, SHALL be repeatable, and each file MAY contain several YAML documents; every HAProxyTemplateConfig across all files SHALL be merged in order using the same merge the controller performs. `--dump-merged` SHALL print the merged spec and exit without running tests. Optional flags SHALL include: `--test` (run a specific test by name), `--verbose` (show content preview for failed assertions, first 200 characters), `--dump-rendered` (dump all rendered content: haproxy.cfg, maps, files, certs), `--trace-templates` (show template execution trace, top-level only), `--debug-filters` (show filter operation debugging), `--profile-includes` (show include timing statistics, top 20 slowest), `--workers` (parallel test workers, 0 = auto-detect CPUs, 1 = sequential), and `-o`/`--output` (output format: `summary`, `json`, or `yaml`). The `haproxy` binary is discovered from `PATH` (no `--haproxy-binary` flag); version selection is done by running the matching per-version controller image.
 
 #### Scenario: Required file flag
 
@@ -99,7 +99,7 @@ THEN the command SHALL attempt to parse it as a raw `HAProxyTemplateConfigSpec`.
 
 ### Requirement: Benchmark Command
 
-The `haptic-controller benchmark` command SHALL measure template rendering performance. The `-f`/`--file` flag SHALL be required. Optional flags SHALL include: `--test` (repeatable, select specific tests to benchmark; omit to run all tests excluding `_global`), `--iterations` (number of render iterations, default 2), and `--profile-includes` (show include timing statistics). The command SHALL compile templates once (timed separately), perform a warm-up render, then time each iteration individually.
+The `haptic benchmark` command SHALL measure template rendering performance. The `-f`/`--file` flag SHALL be required. Optional flags SHALL include: `--test` (repeatable, select specific tests to benchmark; omit to run all tests excluding `_global`), `--iterations` (number of render iterations, default 2), and `--profile-includes` (show include timing statistics). The command SHALL compile templates once (timed separately), perform a warm-up render, then time each iteration individually.
 
 #### Scenario: Default iterations count
 

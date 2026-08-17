@@ -12,7 +12,7 @@ The validating admission webhook needs a synchronous answer to "would this propo
 4. Delegating render+validate to `pkg/controller/proposalvalidator.Component`, which merges the overlays on top of the live stores for the duration of the call.
 5. Returning a flat allow/deny + simplified reason string (plus soft warnings) for the webhook response. Pluggable validators run inside the shared pipeline before this component receives the result.
 
-The component does not subscribe to any events. It does **not** run the chart's embedded `validationTests` — those are chart-author scenarios with their own fixtures, run in CI via `haptic-controller validate` / `make test-templates`, not per admission request.
+The component does not subscribe to any events. It does **not** run the chart's embedded `validationTests` — those are chart-author scenarios with their own fixtures, run in CI via `haptic validate` / `make test-templates`, not per admission request.
 
 ## Quick Start
 

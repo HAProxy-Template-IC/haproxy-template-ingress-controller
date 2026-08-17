@@ -240,7 +240,7 @@ func foldGlobalExtraContext(cfg *config.Config, testExtra map[string]any) map[st
 // "extraContext" key holds the deployment's production extraContext), matching
 // runSingleTest's production < _global < per-test precedence. Render sites that
 // build their own context outside the Runner — the benchmark path in
-// cmd/controller — call this so they render each test exactly as the load gate does.
+// cmd/haptic — call this so they render each test exactly as the load gate does.
 func ApplyTestExtraContext(renderCtx map[string]any, cfg *config.Config, testExtra map[string]any) {
 	mergeTestExtraContext(renderCtx, foldGlobalExtraContext(cfg, testExtra))
 }
@@ -370,7 +370,7 @@ func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]
 	}
 
 	// Build context using centralized builder. typedResourceTypes is
-	// nil unless the CLI wired typebootstrap (see cmd/controller/
+	// nil unless the CLI wired typebootstrap (see cmd/haptic/
 	// validate.go) — when populated, the builder emits one *[]*T
 	// top-level global per typed resource so chart templates that
 	// use the typed shape compile against the same surface the

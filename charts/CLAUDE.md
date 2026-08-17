@@ -697,10 +697,10 @@ helm template charts/haptic \
 
 # 2. Validate merged configuration
 make build
-./bin/haptic-controller validate -f /tmp/merged-config.yaml
+./bin/haptic validate -f /tmp/merged-config.yaml
 
 # 3. Run specific validation test
-./bin/haptic-controller validate -f /tmp/merged-config.yaml \
+./bin/haptic validate -f /tmp/merged-config.yaml \
   --test test-ingress-duplicate-backend-different-ports
 ```
 
@@ -839,7 +839,7 @@ Before bumping a chart an operator already runs, validate against **their** valu
 ```bash
 helm template <release> charts/haptic -f /path/to/their/values.yaml \
   | yq 'select(.kind == "HAProxyTemplateConfig")' > /tmp/cfg.yaml
-./bin/haptic-controller validate -f /tmp/cfg.yaml --schema-dir tests/schemas
+./bin/haptic validate -f /tmp/cfg.yaml --schema-dir tests/schemas
 ```
 
 ## Common Patterns
@@ -2376,7 +2376,7 @@ haproxyConfig:
 
 ```bash
 # WRONG - library file is incomplete!
-./bin/haptic-controller validate -f charts/haptic/charts/ingress/library.yaml
+./bin/haptic validate -f charts/haptic/charts/ingress/library.yaml
 ```
 
 **Why Bad**: Library files are meant to be merged. Testing them individually will fail because:
@@ -2391,7 +2391,7 @@ haproxyConfig:
 # CORRECT
 helm template charts/haptic \
   | yq 'select(.kind == "HAProxyTemplateConfig")' \
-  | ./bin/haptic-controller validate -f -
+  | ./bin/haptic validate -f -
 ```
 
 ### Missing watchedResources
