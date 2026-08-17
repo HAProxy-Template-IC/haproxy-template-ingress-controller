@@ -37,7 +37,8 @@ var (
 )
 
 var (
-	backendModes  = []string{"http", "tcp"}
+	// spop is the SPOE backend mode HAProxy 3.1 added; the bundled chart emits it.
+	backendModes  = []string{"http", "tcp", "spop"}
 	backendShapes = []string{renderplan.ShapeDynamic, renderplan.ShapeStructural}
 )
 

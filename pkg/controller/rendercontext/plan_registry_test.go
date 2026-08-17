@@ -137,7 +137,7 @@ func TestPlanRegistryBackendStrictKeys(t *testing.T) {
 		{
 			name:    "unknown mode",
 			record:  map[string]any{"name": "be_app", "mode": "htp"},
-			wantErr: `mode "htp", want one of http, tcp`,
+			wantErr: `mode "htp", want one of http, tcp, spop`,
 		},
 		{
 			name:    "unknown shape",

@@ -408,6 +408,7 @@ templateSnippets:
 
   backends-810-haptic-cache-rate-limit-tables:
     template: |
+      {%- import "util-backend" for Backend -%}
       {#- Table proxies for the client-leg per-pod limiter
           (frontend-filters-863). Same table shape as backend-directives-810,
           including `peers localinstance` reload survival. -#}
@@ -416,13 +417,20 @@ templateSnippets:
       {%- var rl = limits["rl"].(map[string]any) %}
       {%- for _, key := range keys(rl) %}
         {%- var cfg = rl[key].(map[string]any) %}
-      {{ "\n" }}# haptic/rate-limiting client-leg table ({{ key }})
-      backend {{ cfg["table"] }}
-          stick-table type ip size {{ cfg["size"] }} expire {{ cfg["window"] }} store {{ cfg["store"] }}{% if tostring(cfg["store"]) == "http_req_rate" %}({{ cfg["window"] }}){% end %} peers localinstance
+        {%- var window = tostring(cfg["window"]) %}
+        {%- var store = tostring(cfg["store"]) %}
+        {%- if store == "http_req_rate" %}{%- store = store + "(" + window + ")" %}{%- end %}
+      {{ "\n" }}{{ Backend(map[string]any{
+           "name": tostring(cfg["table"]),
+           "comments": []any{"# haptic/rate-limiting client-leg table (" + tostring(key) + ")"},
+           "body": []any{"stick-table type ip size " + tostring(cfg["size"]) + " expire " + window +
+             " store " + store + " peers localinstance"},
+         }) }}
       {%- end %}
 
   backends-815-haptic-cache-bandwidth-tables:
     template: |
+      {%- import "util-backend" for Backend -%}
       {#- Table proxies for the client-leg shared-scope bandwidth limits
           (frontend-filters-864). No peers: see backend-directives-815. -#}
       {{- render "util-haptic-cache-local-limits" -}}
@@ -431,8 +439,11 @@ templateSnippets:
       {%- for _, key := range keys(bw) %}
         {%- var cfg = bw[key].(map[string]any) %}
         {%- if tostring(cfg["tableKey"]) != "" %}
-      {{ "\n" }}# haptic/bandwidth-limit client-leg table ({{ key }})
-      backend haptic_bwlim_tbl_{{ cfg["ns"] }}_{{ cfg["name"] }}
-          stick-table type {{ cfg["tableType"] }} size 100k expire 60s store bytes_in_rate(1s),bytes_out_rate(1s)
+      {{ "\n" }}{{ Backend(map[string]any{
+           "name": "haptic_bwlim_tbl_" + tostring(cfg["ns"]) + "_" + tostring(cfg["name"]),
+           "comments": []any{"# haptic/bandwidth-limit client-leg table (" + tostring(key) + ")"},
+           "body": []any{"stick-table type " + tostring(cfg["tableType"]) +
+             " size 100k expire 60s store bytes_in_rate(1s),bytes_out_rate(1s)"},
+         }) }}
         {%- end %}
       {%- end %}
