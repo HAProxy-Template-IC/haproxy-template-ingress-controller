@@ -424,7 +424,8 @@ Embedded validation tests (optional; run by the pre-rollout validation Job, the 
 | `fixtures` | `map[string][]object` | No | — (keys must name `watchedResources` entries, plus the reserved `haproxy-pods` key) |
 | `assertions` | `[]Assertion` | Yes | — |
 | `httpResources` | `[]object` | No | — (mocked responses for `http.Fetch()` calls) |
-| `currentConfig` | string | No | — (simulated live HAProxy config for runtime-context assertions) |
+| `currentServers` | `map[string]map[string]object` | No | — (backend → server → `{address, port}` of a previous deployment, exposed to templates as `currentConfig.ServerIndex`) |
+| `currentConfig` | string | No | — (deprecated: a raw HAProxy config parsed down to the same server index as `currentServers`) |
 | `currentFiles` | `map[string]string` | No | — (filename → content of the general files currently deployed, exposed to templates as `currentFiles`) |
 | `extraContext` | object | No | — (per-test overrides of `templatingSettings.extraContext`) |
 | `minHAProxyVersion` | string | No | — (skip the test on older HAProxy) |

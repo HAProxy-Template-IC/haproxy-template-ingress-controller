@@ -727,11 +727,24 @@ type ValidationTest struct {
 	// +optional
 	HTTPResources []HTTPResourceFixture `json:"httpResources,omitempty"`
 
+	// CurrentServers are the servers of a previous deployment, keyed by backend
+	// name and then by server name, exposed to templates as
+	// `currentConfig.ServerIndex`. Use it to test slot-aware server assignment
+	// during rolling deployments.
+	//
+	// Example:
+	//   currentServers:
+	//     my-backend:
+	//       srv1: {address: 10.0.0.1, port: 8080}
+	//       srv2: {address: 10.0.0.2, port: 8080}
+	// +optional
+	CurrentServers map[string]map[string]ServerAddr `json:"currentServers,omitempty"`
+
 	// CurrentConfig contains the raw HAProxy configuration from a previous deployment.
 	//
-	// This is used for testing slot-aware server assignment during rolling deployments.
-	// When provided, templates can access currentConfig to preserve server slot ordering.
-	// The content is parsed using the HAProxy config parser before being passed to templates.
+	// This field is deprecated: use CurrentServers. The text is parsed with the
+	// HAProxy config parser, which reads far more than the servers templates can
+	// see; a later release drops the parser and with it this field.
 	//
 	// Example:
 	//   currentConfig: |
@@ -802,6 +815,19 @@ type ValidationTest struct {
 	// the merge.
 	// +optional
 	Assertions []ValidationAssertion `json:"assertions,omitempty"`
+}
+
+// ServerAddr is one server of a previously deployed backend, as templates see
+// it in currentConfig.ServerIndex.
+type ServerAddr struct {
+	// Address is the server's address — an IP or a hostname.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Address string `json:"address"`
+
+	// Port is the server's port. Omit it for a server line that carries none.
+	// +optional
+	Port *int64 `json:"port,omitempty"`
 }
 
 // HTTPResourceFixture defines mock HTTP content for validation tests.

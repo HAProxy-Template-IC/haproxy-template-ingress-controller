@@ -127,10 +127,15 @@ type ValidationTest struct {
 	// the fixture content is returned instead of making an actual HTTP request.
 	HTTPFixtures []HTTPResourceFixture `yaml:"httpResources,omitempty"`
 
+	// CurrentServers are the servers of a previous deployment, keyed by backend
+	// name and then by server name, exposed to templates as
+	// `currentConfig.ServerIndex` for testing slot-aware server assignment.
+	CurrentServers map[string]map[string]ServerAddr `yaml:"currentServers,omitempty" json:"currentServers,omitempty"`
+
 	// CurrentConfig contains the raw HAProxy configuration from a previous deployment.
-	// This is used for testing slot-aware server assignment during rolling deployments.
-	// When provided, templates can access currentConfig to preserve server slot ordering.
-	// The content is parsed using the HAProxy config parser before being passed to templates.
+	//
+	// This field is deprecated: use CurrentServers. The text is parsed with the
+	// HAProxy config parser, which a later release drops.
 	CurrentConfig string `yaml:"currentConfig,omitempty"`
 
 	// CurrentFiles are the currently-deployed general auxiliary files
@@ -167,6 +172,16 @@ type ValidationTest struct {
 
 	// Assertions contains validation checks to run against the rendered config.
 	Assertions []ValidationAssertion `yaml:"assertions"`
+}
+
+// ServerAddr is one server of a previously deployed backend, as templates see
+// it in currentConfig.ServerIndex.
+type ServerAddr struct {
+	// Address is the server's address — an IP or a hostname.
+	Address string `yaml:"address" json:"address"`
+
+	// Port is the server's port. Nil for a server line that carries none.
+	Port *int64 `yaml:"port,omitempty" json:"port,omitempty"`
 }
 
 // HTTPResourceFixture defines mock HTTP content for validation tests.

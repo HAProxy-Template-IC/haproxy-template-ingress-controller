@@ -12,19 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package renderer
+package rendercontext
 
 import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
-// planFiles lists every file of the render with its digest, in the kinds the
+// PlanFiles lists every file of the render with its digest, in the kinds the
 // deploy side reasons about. ReloadOnChange is true only where a content change
 // cannot be applied over the runtime API.
-func planFiles(config string, aux *dataplane.AuxiliaryFiles) []renderplan.File {
+func PlanFiles(config string, aux *dataplane.AuxiliaryFiles) []renderplan.File {
 	files := []renderplan.File{{
 		Path:           names.MainTemplateName,
 		Kind:           renderplan.FileKindConfig,
@@ -71,8 +70,8 @@ func planFile(path, kind string, reloadOnChange bool, content string) renderplan
 	}
 }
 
-// mapContents keys the rendered map content by the path the plan lists it under.
-func mapContents(aux *dataplane.AuxiliaryFiles) map[string]string {
+// MapContents keys the rendered map content by the path the plan lists it under.
+func MapContents(aux *dataplane.AuxiliaryFiles) map[string]string {
 	if aux == nil {
 		return nil
 	}
@@ -81,46 +80,4 @@ func mapContents(aux *dataplane.AuxiliaryFiles) map[string]string {
 		contents[file.Path] = file.Content
 	}
 	return contents
-}
-
-// rememberPlan keeps the newest reconcile plan so the next render can read its
-// servers as `currentConfig`. Admission renders are proposals and must not
-// displace the state the fleet was last rendered from.
-func (s *RenderService) rememberPlan(mode rendercontext.RenderMode, plan *renderplan.Plan) {
-	if mode != rendercontext.RenderModeReconcile || plan == nil {
-		return
-	}
-	s.planMu.Lock()
-	defer s.planMu.Unlock()
-	s.lastPlan = plan
-}
-
-// currentConfig is what templates read as `currentConfig`: the servers of the
-// last reconcile plan, filled in from the deployed HAProxyCfg for every backend
-// the plan does not describe. Until the chart macros declare their backends
-// (they do not yet), the plan contributes nothing and the store is the only
-// source.
-func (s *RenderService) currentConfig() *renderplan.CurrentConfig {
-	var fromStore *renderplan.CurrentConfig
-	if s.currentConfigStore != nil {
-		fromStore = s.currentConfigStore.CurrentConfig()
-	}
-
-	s.planMu.Lock()
-	plan := s.lastPlan
-	s.planMu.Unlock()
-	if plan == nil {
-		return fromStore
-	}
-
-	current := plan.CurrentConfig()
-	if fromStore == nil {
-		return &current
-	}
-	for backend, servers := range fromStore.ServerIndex {
-		if _, described := current.ServerIndex[backend]; !described {
-			current.ServerIndex[backend] = servers
-		}
-	}
-	return &current
 }

@@ -24,7 +24,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -36,7 +36,7 @@ type RenderDependencies struct {
 	Stores          map[string]stores.Store
 	ValidationPaths *dataplane.ValidationPaths
 	HTTPStore       *FixtureHTTPStoreWrapper
-	CurrentConfig   *parserconfig.StructuredConfig
+	CurrentConfig   *renderplan.CurrentConfig
 	CurrentFiles    map[string]string
 	ExtraContext    map[string]any
 }

@@ -24,7 +24,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -32,7 +31,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -106,6 +105,10 @@ type RenderOutput struct {
 	// can assert on them with the `target: events` resolver.
 	Events       string
 	IncludeStats []templating.IncludeStats
+
+	// Plan is what the templates declared about this render, built exactly as
+	// the production renderer builds it.
+	Plan *renderplan.Plan
 }
 
 // renderWithStores renders HAProxy configuration using test fixture stores and worker-specific engine.
@@ -118,7 +121,7 @@ type RenderOutput struct {
 // Returns rendered haproxy.cfg, auxiliary files, k8sResources (template name → YAML),
 // status patches (key `<ns>/<name>:<phase>` → JSON-marshalled status content), and
 // include-stats (when profiling) bundled in a RenderOutput, plus the render error.
-func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string, testExtraContext map[string]any) (RenderOutput, error) {
+func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *renderplan.CurrentConfig, currentFiles map[string]string, testExtraContext map[string]any) (RenderOutput, error) {
 	// Build rendering context with fixture stores
 	bctx := r.buildRenderingContext(ctx, storeMap, validationPaths, httpStore, currentConfig, currentFiles)
 	renderCtx := bctx.Context
@@ -193,6 +196,9 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 		StatusPatches:  statusPatches,
 		Events:         renderedEvents,
 		IncludeStats:   includeStats,
+		Plan: bctx.PlanRegistry.Plan(
+			rendercontext.PlanFiles(haproxyConfig, auxiliaryFiles),
+			rendercontext.MapContents(auxiliaryFiles)),
 	}, nil
 }
 
@@ -353,7 +359,7 @@ func collectEvents(renderCtx map[string]any) string {
 //   - Creates PathResolver from ValidationPaths (not from config.Dataplane)
 //   - Separates haproxy-pods store from resource stores
 //   - Accepts optional currentConfig for slot-aware server assignment testing
-func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string) *rendercontext.BuildResult {
+func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *renderplan.CurrentConfig, currentFiles map[string]string) *rendercontext.BuildResult {
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
@@ -377,7 +383,7 @@ func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]
 		rendercontext.WithStores(resourceStores),
 		rendercontext.WithHAProxyPodStore(haproxyPodStore),
 		rendercontext.WithHTTPFetcher(httpStore),
-		rendercontext.WithCurrentConfig(currentconfigstore.CurrentConfigFrom(currentConfig)),
+		rendercontext.WithCurrentConfig(currentConfig),
 		rendercontext.WithCurrentAuxFiles(currentFiles),
 		rendercontext.WithTypedResources(r.typedResourceTypes),
 		rendercontext.WithCapabilities(r.capabilities),
