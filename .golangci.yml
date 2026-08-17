@@ -273,13 +273,6 @@ linters:
         linters:
           - gosec
         text: "G101"
-      # G101: the OpWait* op-kind constants match gosec's credential-name
-      # pattern through the "pw" in "OpWait"; they are HAProxy runtime command
-      # kinds, and the wire contract's names are fixed.
-      - path: pkg/dataplane/agent/api/api\.go
-        linters:
-          - gosec
-        text: "G101"
 
       # G602: slice index out of range — false positive when index is validated
       # by the enclosing loop that found the element

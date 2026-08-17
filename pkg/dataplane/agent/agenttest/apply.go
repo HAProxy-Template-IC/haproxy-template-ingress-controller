@@ -322,7 +322,12 @@ func (a *Agent) performReload() {
 	a.state.HAProxy.WorkerPID++
 	a.reloadPending = false
 	a.state.ReloadPendingAt = ""
-	inventory := api.Inventory{Generation: a.state.Inventory.Generation + 1}
+	// CRL files carry over: no file kind identifies them, so a manifest cannot
+	// reconstruct what WithInventory seeded.
+	inventory := api.Inventory{
+		Generation: a.state.Inventory.Generation + 1,
+		CRLFiles:   a.state.Inventory.CRLFiles,
+	}
 	for _, path := range slices.Sorted(maps.Keys(a.state.Files)) {
 		switch a.kinds[path] {
 		case api.FileKindMap:

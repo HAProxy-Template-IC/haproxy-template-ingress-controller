@@ -132,6 +132,7 @@ nav:
       - Leader Election: development/design/leader-election.md
       - Introspection: development/design/introspection.md
     - CRD Validation: development/crd-validation-design.md
+    - HAPTIC Agent: development/agent.md
     - Design Decisions: development/design/design-decisions.md
     - Linting: development/linting.md
     - Releasing: development/releasing.md

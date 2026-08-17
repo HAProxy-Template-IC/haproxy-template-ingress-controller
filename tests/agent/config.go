@@ -28,8 +28,10 @@ import (
 	"time"
 )
 
-// Paths inside the pod, as the manifest carries them (relative to the base
-// dir) and as HAProxy sees them (absolute).
+// Paths inside the pod. Under `default-path origin`, HAProxy names a map, a
+// certificate and a crt-list at runtime by the literal base-relative string the
+// config references — the same string the manifest and every op carry, so no
+// path translation exists anywhere.
 const (
 	baseDir          = "/etc/haproxy"
 	configPath       = "haproxy.cfg"
@@ -105,7 +107,6 @@ const renderedConfig = `global
     stats socket ` + workerSocketPath + ` mode 600 level admin
     hard-stop-after 10s
     default-path origin ` + baseDir + `
-    crt-base ` + baseDir + `/ssl
 
 defaults ` + defaultsProfile + `
     mode http
@@ -126,12 +127,12 @@ frontend upstream from ` + defaultsProfile + `
 
 frontend http_frontend from ` + defaultsProfile + `
     bind *:8080
-    http-request return status 200 content-type text/plain hdr x-note "%[req.hdr(host),lower,map(` + baseDir + `/maps/note.map,none)]" string "noted" if { path ` + notePath + ` }
-    use_backend %[req.hdr(host),lower,map(` + baseDir + `/maps/host.map)]
+    http-request return status 200 content-type text/plain hdr x-note "%[req.hdr(host),lower,map(` + noteMapPath + `,none)]" string "noted" if { path ` + notePath + ` }
+    use_backend %[req.hdr(host),lower,map(` + hostMapPath + `)]
     default_backend be-1
 
 frontend https_frontend from ` + defaultsProfile + `
-    bind *:8443 ssl crt-list ` + baseDir + `/ssl/crt-list.txt
+    bind *:8443 ssl crt-list ` + crtListPath + `
     default_backend be-1
 
 backend be-1 from ` + defaultsProfile + `

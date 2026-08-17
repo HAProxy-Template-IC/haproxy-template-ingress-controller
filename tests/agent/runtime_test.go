@@ -40,6 +40,23 @@ func converged(t *testing.T) (*env, *session) {
 	return e, s
 }
 
+// TestRuntimeNamesAreTheManifestPaths pins the convention the whole op surface
+// rests on: under `default-path origin`, HAProxy names a map, a certificate and
+// a crt-list by the literal base-relative string the config references, which is
+// the manifest File.Path and therefore the Op.Path. No translation anywhere.
+func TestRuntimeNamesAreTheManifestPaths(t *testing.T) {
+	e, _ := converged(t)
+
+	loaded := e.worker("show map")
+	assert.Contains(t, loaded, "("+hostMapPath+")")
+	assert.Contains(t, loaded, "("+noteMapPath+")")
+	assert.NotContains(t, loaded, baseDir+"/"+hostMapPath,
+		"an absolute runtime name would mean the agent has to translate paths")
+
+	assert.Contains(t, e.worker("show ssl cert"), defaultCertPath)
+	assert.Contains(t, e.worker("show ssl crt-list"), crtListPath)
+}
+
 func TestMapOpsRunAtRuntimeAndKeepEveryByte(t *testing.T) {
 	e, s := converged(t)
 	worker := e.workerPID()
@@ -63,7 +80,7 @@ func TestMapOpsRunAtRuntimeAndKeepEveryByte(t *testing.T) {
 	assert.Equal(t, worker, e.workerPID(), "a map-only apply must not reload")
 	assert.Equal(t, result.PlanID, result.AppliedPlanID)
 
-	entries := mapEntries(e.worker("show map " + baseDir + "/" + noteMapPath))
+	entries := mapEntries(e.worker("show map " + noteMapPath))
 	assert.Equal(t, map[string]string{
 		"a.example.com": "first value",
 		"b.example.com": changed,
@@ -116,7 +133,7 @@ func TestServerOpsRunAtRuntime(t *testing.T) {
 	removed := s.next(api.ModeAuto)
 	removed.Ops = []api.Op{
 		{Kind: api.OpServerDisable, Backend: "be-1", Server: "srv2"},
-		{Kind: api.OpWaitSrvRemovable, Backend: "be-1", Server: "srv2", TimeoutMs: 3000},
+		{Kind: api.OpServerWaitRemovable, Backend: "be-1", Server: "srv2", TimeoutMs: 3000},
 		{Kind: api.OpServerDel, Backend: "be-1", Server: "srv2"},
 	}
 	result = s.apply(removed, nil)
@@ -178,9 +195,9 @@ func TestDynamicBackendLifecycle(t *testing.T) {
 		{Kind: api.OpMapDel, Path: hostMapPath, Key: host},
 		{Kind: api.OpBackendUnpublish, Backend: "be-3"},
 		{Kind: api.OpServerDisable, Backend: "be-3", Server: "srv1"},
-		{Kind: api.OpWaitSrvRemovable, Backend: "be-3", Server: "srv1", TimeoutMs: 3000},
+		{Kind: api.OpServerWaitRemovable, Backend: "be-3", Server: "srv1", TimeoutMs: 3000},
 		{Kind: api.OpServerDel, Backend: "be-3", Server: "srv1"},
-		{Kind: api.OpWaitBeRemovable, Backend: "be-3", TimeoutMs: 3000},
+		{Kind: api.OpBackendWaitRemovable, Backend: "be-3", TimeoutMs: 3000},
 		{Kind: api.OpBackendDel, Backend: "be-3"},
 	}
 	result = s.apply(retired, s.allParts())

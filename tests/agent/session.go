@@ -58,7 +58,7 @@ func newSession(e *env) *session {
 			hostMapPath:     hostMapContent,
 			noteMapPath:     noteMapContent,
 			defaultCertPath: defaultCert.pem,
-			crtListPath:     baseDir + "/" + defaultCertPath + "\n",
+			crtListPath:     defaultCertPath + "\n",
 			generalFilePath: generalFileContent,
 		},
 	}

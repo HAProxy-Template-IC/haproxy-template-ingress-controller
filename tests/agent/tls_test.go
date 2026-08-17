@@ -43,7 +43,7 @@ func TestCertificateOpsRunAtRuntime(t *testing.T) {
 
 	extra := makeCertificate(t, "extra.test", 2001)
 	s.set(extraCertPath, extra.pem)
-	s.set(crtListPath, baseDir+"/"+defaultCertPath+"\n"+baseDir+"/"+extraCertPath+" extra.test\n")
+	s.set(crtListPath, defaultCertPath+"\n"+extraCertPath+" extra.test\n")
 	introduced := s.next(api.ModeAuto)
 	introduced.Ops = []api.Op{
 		{Kind: api.OpCertNew, Path: extraCertPath},
@@ -54,7 +54,7 @@ func TestCertificateOpsRunAtRuntime(t *testing.T) {
 	assert.Equal(t, worker, e.workerPID(), "serving a new SNI must not reload")
 	assert.Equal(t, "extra.test", e.peerCertificate("extra.test").Subject.CommonName)
 
-	s.set(crtListPath, baseDir+"/"+defaultCertPath+"\n")
+	s.set(crtListPath, defaultCertPath+"\n")
 	s.remove(extraCertPath)
 	withdrawn := s.next(api.ModeAuto)
 	withdrawn.Ops = []api.Op{{Kind: api.OpCRTListDel, Path: crtListPath, Cert: extraCertPath}}
