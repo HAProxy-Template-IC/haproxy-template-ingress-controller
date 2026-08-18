@@ -60,6 +60,10 @@ type Session struct {
 	seq      uint64
 	files    map[string]podFile
 	crtLists map[string][]renderplan.CRTListEntry
+	// declared is every path this session ever put in a manifest, which is the
+	// ownership set: the agent deletes a path it owns and no longer sees, and
+	// leaves everything else — including files HAProxy itself writes — alone.
+	declared map[string]struct{}
 
 	applied   *renderplan.Plan
 	appliedID string
@@ -79,23 +83,29 @@ func NewSession(t *testing.T, env fixenv.Env) *Session {
 		epoch:    1,
 		files:    map[string]podFile{},
 		crtLists: map[string][]renderplan.CRTListEntry{},
+		declared: map[string]struct{}{},
 	}
 }
 
 // SetConfig declares the rendered HAProxy configuration.
 func (s *Session) SetConfig(content string) {
-	s.files[ConfigPath] = podFile{content: content, kind: renderplan.FileKindConfig}
+	s.put(ConfigPath, podFile{content: content, kind: renderplan.FileKindConfig})
 }
 
 // Set declares one auxiliary file, its kind derived from its directory.
 func (s *Session) Set(path, content string) {
-	s.files[path] = podFile{content: content, kind: kindForPath(path)}
+	s.put(path, podFile{content: content, kind: kindForPath(path)})
+}
+
+func (s *Session) put(path string, file podFile) {
+	s.files[path] = file
+	s.declared[path] = struct{}{}
 }
 
 // SetOfKind declares one auxiliary file whose kind its directory does not
 // imply — a CA bundle lives beside ordinary general files.
 func (s *Session) SetOfKind(path, content, kind string) {
-	s.files[path] = podFile{content: content, kind: kind}
+	s.put(path, podFile{content: content, kind: kind})
 }
 
 // SetCRTList declares a crt-list the way a generator macro does: as entries,
@@ -107,7 +117,7 @@ func (s *Session) SetOfKind(path, content, kind string) {
 // certificate itself is declared under.
 func (s *Session) SetCRTList(path string, entries ...renderplan.CRTListEntry) {
 	s.crtLists[path] = entries
-	s.files[path] = podFile{content: crtListContent(entries), kind: renderplan.FileKindCRTList}
+	s.put(path, podFile{content: crtListContent(entries), kind: renderplan.FileKindCRTList})
 }
 
 // crtListContent renders entries into the file HAProxy parses: the
@@ -153,6 +163,19 @@ func (s *Session) RemoveDir(dir string) {
 // Paths lists the declared manifest paths in apply order.
 func (s *Session) Paths() []string {
 	return slices.Sorted(maps.Keys(s.files))
+}
+
+// Dropped lists the paths this session owns but no longer declares: the agent
+// must have deleted each one from the pod.
+func (s *Session) Dropped() []string {
+	var gone []string
+	for path := range s.declared {
+		if _, kept := s.files[path]; !kept {
+			gone = append(gone, path)
+		}
+	}
+	slices.Sort(gone)
+	return gone
 }
 
 // Content returns a declared file's content.

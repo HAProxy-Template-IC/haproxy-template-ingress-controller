@@ -6,6 +6,11 @@ import (
 	"testing"
 )
 
+// quicCertificate is what the QUIC frontend's bind needs on disk. The path is
+// the manifest path; the configuration names it by its bare filename, which
+// HAProxy resolves against `crt-base`.
+var quicCertificate = map[string]string{"ssl/example_com.pem": "ssl-certs/example.com.pem"}
+
 // TestSyncObservability tests synchronization of observability sections that
 // later HAProxy releases introduced; a case is skipped below the release that
 // can parse its directives.
@@ -40,12 +45,18 @@ func TestSyncObservability(t *testing.T) {
 			initialConfigFile: "quic-rules/frontend-base.cfg",
 			desiredConfigFile: "quic-rules/frontend-with-quic-rules.cfg",
 			minHAProxy:        "3.1",
+			// A QUIC bind is a TLS bind: without a certificate HAProxy
+			// refuses to load the configuration at all.
+			initialSSLCertificates: quicCertificate,
+			sslCertificates:        quicCertificate,
 		},
 		{
-			name:              "quic-initial-rule-remove",
-			initialConfigFile: "quic-rules/frontend-with-quic-rules.cfg",
-			desiredConfigFile: "quic-rules/frontend-base.cfg",
-			minHAProxy:        "3.1",
+			name:                   "quic-initial-rule-remove",
+			initialConfigFile:      "quic-rules/frontend-with-quic-rules.cfg",
+			desiredConfigFile:      "quic-rules/frontend-base.cfg",
+			minHAProxy:             "3.1",
+			initialSSLCertificates: quicCertificate,
+			sslCertificates:        quicCertificate,
 		},
 
 		// ==================== ACME PROVIDERS (HAProxy 3.2+) ====================

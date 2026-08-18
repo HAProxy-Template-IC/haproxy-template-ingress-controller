@@ -18,7 +18,6 @@ package integration
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/rekby/fixenv"
@@ -160,8 +159,9 @@ func declareFiles(t *testing.T, session *Session, general, certificates, maps ma
 }
 
 // assertTree compares the pod's tree with the desired set: every declared file
-// is present with its exact content, and every auxiliary file the previous set
-// had and this one dropped is gone.
+// is present with its exact content, and every file this session owns and no
+// longer declares is gone. Files the agent never put there — its own dot
+// directories, and anything HAProxy writes itself — are not its to delete.
 func assertTree(t *testing.T, ctx context.Context, session *Session) {
 	t.Helper()
 	for _, path := range session.Paths() {
@@ -169,20 +169,9 @@ func assertTree(t *testing.T, ctx context.Context, session *Session) {
 		require.NoError(t, err, "reading %s from the pod", path)
 		assert.Equal(t, session.Content(path), actual, "%s on the pod differs from the desired content", path)
 	}
-	for _, dir := range []string{MapsDir, SSLDir, GeneralDir} {
-		entries, err := session.haproxy.ListDir(ctx, dir)
-		require.NoError(t, err, "listing %s on the pod", dir)
-		for _, entry := range entries {
-			// The agent's own temp and last-known-good directories are
-			// dot-prefixed, which is exactly what keeps them out of every
-			// manifest — no manifest path may name them.
-			if strings.HasPrefix(entry, ".") {
-				continue
-			}
-			path := dir + "/" + entry
-			assert.Contains(t, session.Paths(), path,
-				"%s is on the pod but not in the desired set — absence means delete", path)
-		}
+	for _, path := range session.Dropped() {
+		assert.False(t, session.haproxy.FileExists(ctx, path),
+			"%s is still on the pod though the manifest dropped it — absence means delete", path)
 	}
 }
 
