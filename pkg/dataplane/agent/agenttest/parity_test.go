@@ -176,6 +176,13 @@ func lifecycleScenario(t *testing.T, p *parityAgent) {
 	// missing: the agent stores files by path.
 	delete(parts, "maps/other.map")
 	p.apply(t, "a part the agent does not hold", added, parts)
+
+	// The deployer sends only the parts the agent lacks; an unchanged render
+	// therefore arrives with no parts at all and is a noop, config included.
+	unchanged, _ := build("plan-4", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 4}, grown)
+	unchanged.ExpectedPrevPlanID = "plan-3"
+	unchanged.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 3}
+	p.apply(t, "an unchanged render with no parts", unchanged, map[string]io.Reader{})
 }
 
 func pendingReloadScenario(t *testing.T, p *parityAgent) {

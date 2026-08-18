@@ -273,13 +273,14 @@ func (r *deployRequest) manifest(decision *deployplan.Decision, ops []api.Op, pr
 }
 
 // parts carries the content of every file the agent does not already hold at
-// the manifest's digest. haproxy.cfg always travels whole: it is the file the
-// reload reads, and the renderer's exact bytes are what the pod must run.
+// the manifest's digest — haproxy.cfg included, so an unchanged render is a
+// noop on the pod. When it does travel it travels whole: the renderer's exact
+// bytes are what the pod runs.
 func (r *deployRequest) parts(files []api.File, held map[string]api.FileAt) (map[string]io.Reader, error) {
 	parts := make(map[string]io.Reader, len(files))
 	for i := range files {
 		file := &files[i]
-		if at, ok := held[file.Path]; ok && at.Digest == file.Digest && file.Kind != api.FileKindConfig {
+		if at, ok := held[file.Path]; ok && at.Digest == file.Digest {
 			continue
 		}
 		content, ok := r.contents[file.Digest]
