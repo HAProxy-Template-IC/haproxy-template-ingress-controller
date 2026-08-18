@@ -233,6 +233,14 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 	}
 }
 
+// withRenderTimeout bounds a render by the configured timeout, if any.
+func (s *RenderService) withRenderTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.renderTimeout > 0 {
+		return context.WithTimeout(ctx, s.renderTimeout)
+	}
+	return ctx, func() {}
+}
+
 // Render transforms the stores into HAProxy configuration.
 //
 // Parameters:
@@ -244,13 +252,8 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 //   - Error if rendering fails
 func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*RenderResult, error) {
 	startTime := time.Now()
-
-	// Apply render timeout if configured
-	if s.renderTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.renderTimeout)
-		defer cancel()
-	}
+	ctx, cancel := s.withRenderTimeout(ctx)
+	defer cancel()
 
 	// Build rendering context from stores
 	bctx := s.buildRenderingContext(ctx, provider, mode, extraOpts...)
