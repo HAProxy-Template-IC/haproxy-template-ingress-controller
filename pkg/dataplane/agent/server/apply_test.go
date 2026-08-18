@@ -649,6 +649,13 @@ func TestAScheduledReloadCoalescesAndRunsInPlaceOps(t *testing.T) {
 	require.NotNil(t, scheduled.Reload)
 	assert.NotEmpty(t, scheduled.Reload.ScheduledAt)
 	assert.NotEmpty(t, h.state(false).ReloadPendingAt)
+	// The controller follows up at this instant; a second-granular stamp made
+	// it arrive up to a second early and re-apply every 250 ms until the pacer
+	// fired.
+	due, err := time.Parse(time.RFC3339, scheduled.Reload.ScheduledAt)
+	require.NoError(t, err)
+	assert.Equal(t, scheduled.Reload.ScheduledAt, due.UTC().Format(time.RFC3339Nano), "scheduled_at keeps sub-second precision")
+	assert.Equal(t, scheduled.Reload.ScheduledAt, h.state(false).ReloadPendingAt)
 
 	third := buildManifest("plan-3", next)
 	third.ExpectedPrevPlanID = scheduled.AppliedPlanID

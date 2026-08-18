@@ -51,7 +51,7 @@ func (r *applyRun) reload(reason string) error {
 func (r *applyRun) schedule(due time.Time) error {
 	r.server.schedulePendingReload(due, r.manifest.PlanID)
 	r.result.Mode = api.ResultScheduled
-	r.result.Reload = &api.ReloadInfo{ScheduledAt: due.UTC().Format(time.RFC3339)}
+	r.result.Reload = &api.ReloadInfo{ScheduledAt: due.UTC().Format(time.RFC3339Nano)}
 	r.server.setPhase(phaseScheduled, r.manifest.PlanID)
 	return nil
 }

@@ -252,7 +252,7 @@ func (r *applyRun) inPlace() error {
 	r.result.Mode = api.ResultScheduled
 	r.server.coalesceIntoPendingReload(r.manifest.PlanID)
 	_, due := r.server.pendingReload()
-	r.result.Reload = &api.ReloadInfo{ScheduledAt: due.UTC().Format(time.RFC3339)}
+	r.result.Reload = &api.ReloadInfo{ScheduledAt: due.UTC().Format(time.RFC3339Nano)}
 	if len(r.manifest.InPlaceOps) == 0 {
 		return nil
 	}
