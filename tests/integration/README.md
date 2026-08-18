@@ -50,7 +50,7 @@ KEEP_CLUSTER=true go test -tags=integration ./tests/integration -run TestXxx -v
 
 `KEEP_CLUSTER=true` (the default) reuses the Kind cluster between runs; set it to `false` to always tear down. The Kind context is `kind-haproxy-test` — switch to it with `kubectl config use-context kind-haproxy-test` when you want to poke at state from a failing run.
 
-`HAPTIC_BINARY=/path/to/haptic` skips the binary build and lays the given one into the pod image; CI passes the artifact it already built.
+The suite builds the `haptic` binary itself and lays it into the pod image, in CI as well as locally. `HAPTIC_BINARY=/path/to/haptic` skips that build and uses the given one instead.
 
 ## Adding a case
 
