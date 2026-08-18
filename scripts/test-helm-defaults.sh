@@ -564,7 +564,7 @@ verify_controller_applies_clean() {
 
     # Deliberately narrow: these two messages are unambiguous defects on a default
     # install. A bare `level=ERROR` match would be flaky — a real run showed transient
-    # "Dataplane API request failed" errors during pod churn.
+    # apply failures against pods that were still coming up.
     local failures
     failures=$(grep -E 'level=ERROR.*(Failed to apply rendered resource|Failed to resolve GVR for rendered resource)' <<<"$logs" || true)
 
@@ -860,15 +860,15 @@ dump_debug_info() {
     kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=controller" --all-containers --prefix --tail=50000 2>/dev/null || true
     echo ""
 
-    # --all-containers + --prefix so dataplane and spoa-hub stdout are visible
+    # --all-containers + --prefix so agent and spoa-hub stdout are visible
     # and tagged with their container; default kubectl logs only emits the
-    # first container's output, which is haproxy — masking dataplane crashes.
+    # first container's output, which is haproxy — masking agent crashes.
     # --previous gets stdout from the last terminated instance of crashlooping
     # containers (the current instance might still be starting / not have
     # written anything yet when the smoke test gives up).
-    # --tail=50000: dataplane at log_level=trace can emit hundreds of lines
-    # per second under load; small tails clip the failure window out of the
-    # artifact entirely (see tests/e2e/cleanup.go for the same reasoning).
+    # --tail=50000: the spoa-hub can emit hundreds of lines per second under
+    # load; small tails clip the failure window out of the artifact entirely
+    # (see tests/e2e/cleanup.go for the same reasoning).
     echo "=== HAProxy Pod Logs (current) ==="
     kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=loadbalancer" --all-containers --prefix --tail=50000 2>/dev/null || true
     echo ""

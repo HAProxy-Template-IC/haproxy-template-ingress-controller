@@ -57,19 +57,6 @@ class ChildDefinition:
 
 
 CHILDREN = {
-    "dataplane": ChildDefinition(
-        re.compile(
-            r"(?m)^\s*((?:/usr/local/bin/dataplaneapi|"
-            r"/opt/hapee-extras/sbin/hapee-dataplaneapi)) "
-            r"-f /etc/haproxy/dataplaneapi\.yaml &$"
-        ),
-        "dataplane",
-        "dataplane",
-        "GET",
-        "/v2/info",
-        ("any-http",),
-        "unauthenticated listener response; not authenticated API functionality",
-    ),
     "spoa-hub": ChildDefinition(
         re.compile(
             r"(?m)^\s*(/usr/local/bin/haproxy-spoa-hub) "
@@ -219,8 +206,8 @@ def extract_topology(workloads: dict, pods: dict) -> dict:
             "command": container["command"],
             "args": container["args"],
         }
-    if "dataplane" not in supervised:
-        fail("topology", "load-balancer Deployment has no supervised dataplane container")
+    if "spoa-hub" not in supervised:
+        fail("topology", "load-balancer Deployment has no supervised spoa-hub container")
 
     for name, item in supervised.items():
         definition = CHILDREN[name]
