@@ -357,7 +357,7 @@ meaning with the agent; the paths didn't.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.config.dataplane.minDeploymentInterval` | duration | `5s` | Shortest interval between two reloads of one pod. The chart passes it to the agent as `--reload-interval-min`: a reload inside the window is scheduled, never dropped, and the controller polls the pod at the scheduled time |
+| `controller.config.dataplane.minDeploymentInterval` | duration | `5s` | Shortest interval between two reloads of one pod. The chart passes it to the agent as `--reload-interval-min`: a reload inside the window is scheduled, never dropped, and the controller polls the pod at the scheduled time. With `haproxy.enabled=true` the agent's 60-second ceiling applies, and the chart fails the render above it |
 | `controller.config.dataplane.driftPreventionInterval` | duration | `60s` | How often the controller asks each pod to re-hash its tree (`GET /v1/state?verify=1`) and re-applies when a digest disagrees. The same call carries the newest validated plan, so a pod's rollback baseline never lags by more than one interval |
 | `controller.config.dataplane.reloadVerificationTimeout` | duration | `60s` | How long the agent waits for HAProxy's master to report a reload finished before calling it failed and restoring the last known good file set. The chart passes it to the agent as `--reload-timeout`; unset, the agent uses its 60-second ceiling |
 | `controller.config.dataplane.syncTimeout` | duration | `2m` | How long the controller waits for one pod to answer an apply |
@@ -365,7 +365,6 @@ meaning with the agent; the paths didn't.
 | `controller.config.dataplane.sslCertsDir` | string | `/etc/haproxy/ssl` | SSL certificates directory. Same `/etc/haproxy` constraint as `mapsDir` when the bundled fleet is enabled; the directory name itself is free |
 | `controller.config.dataplane.generalStorageDir` | string | `/etc/haproxy/general` | General storage directory. With the bundled fleet this exact path is required: it's a separate volume the spoa-hub and vector sidecars mount to read rendered files without reaching SSL private keys. The chart fails the render rather than deploy a pod where those sidecars see an empty directory |
 | `controller.config.dataplane.configFile` | string | `/etc/haproxy/haproxy.cfg` | HAProxy config file path. Same `/etc/haproxy` constraint as `mapsDir` when the bundled fleet is enabled |
-| `controller.config.dataplane.reloadVerificationTimeout` | duration | `1m` | How long the agent waits for the new HAProxy worker after a reload before the apply reports what it knows. Unset leaves the agent's own ceiling, which is also its maximum |
 
 ## Watched Resources
 

@@ -259,7 +259,7 @@ CRD fields on `spec.dataplane` bound how often each pod reloads and how long the
 | `dataplane.minDeploymentInterval` | `2s` (Helm chart ships `5s`) | Shortest interval between two reloads of one pod. A reload inside the window is scheduled, never dropped |
 | `dataplane.driftPreventionInterval` | `60s` | How often each pod re-hashes its tree and the controller re-applies on a disagreement; corrects external drift |
 | `dataplane.configPublishInterval` | `10s` | Throttle for republishing the rendered config as the `HAProxyCfg` observability CRD; not on the deployment hot path |
-| `dataplane.reloadVerificationTimeout` | `10s` | How long the agent waits for HAProxy to confirm a graceful reload before restoring the last known good file set |
+| `dataplane.reloadVerificationTimeout` | `60s` (the agent's ceiling) | How long the agent waits for HAProxy to confirm a graceful reload before restoring the last known good file set |
 | `dataplane.syncTimeout` | 2m | How long the controller waits for one pod to answer an apply |
 
 ```yaml
@@ -300,9 +300,9 @@ Resource deletions take the same path as any structural change: the watch delete
 
 **Tuning guidelines:**
 
-- Raise `minDeploymentInterval` in very high-churn environments to absorb more updates per reload (trades latency for fewer reloads). It doesn't pace reload-free applies, which never fork the process.
+- Raise `minDeploymentInterval` in very high-churn environments to absorb more updates per reload (trades latency for fewer reloads), up to the agent's 60-second ceiling. It doesn't pace reload-free applies, which never fork the process.
 - Keep `driftPreventionInterval` at or below 2 minutes so that a misbehaving external client can't hold HAProxy in a drifted state for long.
-- Raise `reloadVerificationTimeout` on a pod whose configuration takes long to parse — a very large map set or a slow filesystem; the timeout must exceed the time HAProxy needs to bind its listeners.
+- Lower `reloadVerificationTimeout` to fail a stuck reload sooner and restore the last known good file set earlier. You can't raise it: the default is already the agent's 60-second ceiling, and the agent exits at startup on a larger value.
 
 ### Reconciliation metrics
 
@@ -733,7 +733,7 @@ Controller images ship built with Profile-Guided Optimization (PGO), which typic
 
 - Profile to find hot spots (`/debug/pprof/profile?seconds=30`)
 - Optimize template complexity — see [Template Optimization](#template-optimization)
-- Raise `dataplane.minDeploymentInterval` to absorb more updates per push, and consider raising `spec.watchedResources.<name>.debounceInterval` for high-churn resources (for example, EndpointSlices on a large cluster) so each watcher batches more aggressively before triggering reconciliation
+- Raise `dataplane.minDeploymentInterval` (up to the agent's 60-second ceiling) to absorb more updates per push, and consider raising `spec.watchedResources.<name>.debounceInterval` for high-churn resources (for example, EndpointSlices on a large cluster) so each watcher batches more aggressively before triggering reconciliation
 
 **Slow deployments:**
 
