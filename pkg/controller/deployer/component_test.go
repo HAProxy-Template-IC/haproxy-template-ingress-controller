@@ -217,7 +217,15 @@ func TestComponent_ApplyResultToMetadataCapsReasons(t *testing.T) {
 		decision: deployplan.Decision{Reasons: reasons},
 	}
 
-	assert.Len(t, applyResultToMetadata(outcome).Reasons, maxStatusReasons)
+	capped := applyResultToMetadata(outcome).Reasons
+	assert.Len(t, capped, maxStatusReasons)
+	assert.Equal(t, "… 5 more reasons omitted", capped[maxStatusReasons-1], "the cap is visible in the status")
+
+	few := &podOutcome{
+		result:   &api.ApplyResult{OK: true, Mode: api.ResultReload},
+		decision: deployplan.Decision{Reasons: []string{"one", "two"}},
+	}
+	assert.Equal(t, []string{"one", "two"}, applyResultToMetadata(few).Reasons)
 }
 
 func TestComponent_HandleEvent(t *testing.T) {

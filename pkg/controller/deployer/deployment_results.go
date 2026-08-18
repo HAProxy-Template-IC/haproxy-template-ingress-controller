@@ -15,6 +15,7 @@
 package deployer
 
 import (
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -245,12 +246,16 @@ func applyResultToMetadata(outcome *podOutcome) *events.SyncMetadata {
 
 // cappedReasons truncates in Go as well as in the CRD: MaxItems rejects a
 // longer list rather than trimming it, and a rejected status patch is a silent
-// status stall.
+// status stall. The last kept entry says how many were dropped, so the status
+// never reads as complete when it is not.
 func cappedReasons(reasons []string) []string {
 	if len(reasons) <= maxStatusReasons {
 		return reasons
 	}
-	return reasons[:maxStatusReasons]
+	kept := maxStatusReasons - 1
+	capped := make([]string, 0, maxStatusReasons)
+	capped = append(capped, reasons[:kept]...)
+	return append(capped, fmt.Sprintf("… %d more reasons omitted", len(reasons)-kept))
 }
 
 // operationCounts groups the ops that went out by what they changed, which is

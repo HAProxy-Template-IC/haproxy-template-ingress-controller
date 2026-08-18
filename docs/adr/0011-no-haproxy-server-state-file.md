@@ -101,10 +101,9 @@ failover rather than an unbounded self-loop.
   re-evaluate health on reload. With reserved slots that are `enabled` in config
   and an optimistic initial check state this is normally a non-event; verified
   under e2e reload churn.
-- **The `reload_cmd` / `master_worker_mode: false` plumbing is now vestigial** —
-  `reload.sh` is a plain master-socket reload, functionally identical to
-  dataplaneapi's internal reload. A follow-up may set `master_worker_mode: true`
-  and drop the custom `reload_cmd` entirely.
+- **The `reload_cmd` / `master_worker_mode: false` plumbing is gone** — the
+  HAPTIC agent reloads over the master socket itself ([ADR-0022](0022-haptic-agent.md));
+  the `reload.sh` wrapper and dataplaneapi's `reload_cmd` no longer exist.
 
 ## Alternatives considered
 

@@ -629,7 +629,7 @@ The controller publishes the rendered configuration as an `HAProxyCfg` resource 
 | `appliedPlanID` | string | The render plan the pod last accepted |
 | `runningPlanID` | string | The render plan the pod's running HAProxy serves. It trails `appliedPlanID` while a reload is still pending |
 | `mode` | string | How the plan was applied: `runtime`, `file_only`, `reload`, `scheduled`, `noop`, or `rejected`. Empty when the applier reports no mode |
-| `reasons` | `[]string` | Why the apply took that mode, most significant first, at most 8 entries |
+| `reasons` | `[]string` | Why the apply took that mode, most significant first, at most 8 entries; when more were recorded the last entry says how many were omitted |
 | `lastError` | string | Error message from the most recent failed sync, cleared when a sync succeeds |
 | `consecutiveErrors` | int | Number of consecutive sync failures, reset to 0 on success |
 
