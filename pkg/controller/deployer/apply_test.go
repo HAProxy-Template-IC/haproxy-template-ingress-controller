@@ -16,6 +16,7 @@ package deployer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -308,13 +309,16 @@ func TestApply_UnknownBaselineFallsBackToFullState(t *testing.T) {
 	assert.Equal(t, 1, completed.Succeeded)
 }
 
-// A newer leader epoch owns the fleet: this controller stops dispatching
-// instead of racing its successor.
+// A newer leader epoch owns the fleet: this controller gives leadership up
+// rather than racing its successor. Only releasing the Lease re-arms it — a
+// replica that just stopped dispatching keeps renewing the Lease it holds, and
+// nothing would ever start it leading again.
 func TestApply_StaleEpochStandsDown(t *testing.T) {
 	agent := agenttest.New(t)
 	bus := newTestBus(t)
 	component := createTestDeployer(bus.EventBus)
-	component.fence = fixedFence{epoch: 1}
+	fence := &fixedFence{epoch: 1, reclaimErr: errors.New("the lease is held at a newer epoch")}
+	component.fence = fence
 	endpoint := agentEndpoint(agent, "haproxy-0")
 
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
@@ -322,20 +326,73 @@ func TestApply_StaleEpochStandsDown(t *testing.T) {
 
 	// A newer leader has spoken to this pod at a higher epoch.
 	agent.ConflictOnce("stale_epoch")
-	lostCh := bus.SubscribeTypes("stand-down", 4, events.EventTypeLostLeadership)
 
 	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
 	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
 
 	assert.Equal(t, 1, completed.Failed)
 	assert.Equal(t, 0, completed.Succeeded)
-	lost := testutil.WaitForEvent[*events.LostLeadershipEvent](t, lostCh, testutil.LongTimeout)
-	assert.Equal(t, "stale_leader_epoch", lost.Reason)
+	assert.Equal(t, []string{"stale_leader_epoch"}, fence.standDowns(),
+		"standing down must release the lease, not only announce that leadership was lost")
 
 	applies := agent.Applies()
 	require.Len(t, applies, 2, "a stood-down controller does not try again")
 	assert.Equal(t, "stale_epoch", applies[1].Conflict.Reason)
 	assert.Nil(t, applies[1].Result, "a stood-down controller must write nothing")
+}
+
+// Without leader election there is no Lease to hand back, so the event is all
+// the leader-only components have to stop on.
+func TestApply_StaleEpochWithoutAFenceReportsLostLeadership(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+
+	agent.ConflictOnce("stale_epoch")
+	lostCh := bus.SubscribeTypes("stand-down", 4, events.EventTypeLostLeadership)
+
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+
+	assert.Equal(t, 1, completed.Failed)
+	lost := testutil.WaitForEvent[*events.LostLeadershipEvent](t, lostCh, testutil.LongTimeout)
+	assert.Equal(t, "stale_leader_epoch", lost.Reason)
+	assert.Equal(t, standaloneIdentity, lost.Identity)
+}
+
+// A pod outranks the controller because the epoch counter regressed — a Lease
+// deleted and recreated loses the annotation — and no rival exists. Giving
+// leadership up would freeze the fleet at the low epoch forever, so the epoch is
+// lifted past the fleet's instead and the deployment fails into the retry.
+func TestApply_StaleEpochFromARegressedCounterReclaimsTheEpoch(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	fence := &fixedFence{epoch: 1}
+	component.fence = fence
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+
+	agent.SetAppliedEpoch(12)
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+
+	assert.Equal(t, 1, completed.Failed)
+	assert.Empty(t, fence.standDowns(), "no rival owns the fleet, so leadership must not be given up")
+	assert.Equal(t, []uint64{12}, fence.reclaims(), "the epoch must be lifted past the one the pod holds")
+
+	// The retry the scheduler drives now carries the reclaimed epoch.
+	plan3, config3, aux3 := renderFor("plan-3", "10.0.0.3", mapEntry)
+	completed = deployTo(t, component, bus, plan3, config3, aux3, "config_validation", endpoint)
+	assert.Equal(t, 1, completed.Succeeded)
+	applies := agent.Applies()
+	assert.Equal(t, uint64(13), applies[len(applies)-1].Manifest.Token.LeaderEpoch)
 }
 
 // The agent answers a manifest whose parts it does not hold with the list of
@@ -499,7 +556,7 @@ func TestApply_ManifestCarriesTheFencingToken(t *testing.T) {
 	agent := agenttest.New(t)
 	bus := newTestBus(t)
 	component := createTestDeployer(bus.EventBus)
-	component.fence = fixedFence{epoch: 4}
+	component.fence = &fixedFence{epoch: 4}
 	endpoint := agentEndpoint(agent, "haproxy-0")
 
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
@@ -540,13 +597,13 @@ func TestApply_LeaderChangeReloadsNothing(t *testing.T) {
 	endpoint := agentEndpoint(agent, "haproxy-0")
 
 	previousLeader := createTestDeployer(bus.EventBus)
-	previousLeader.fence = fixedFence{epoch: 1}
+	previousLeader.fence = &fixedFence{epoch: 1}
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
 	deployTo(t, previousLeader, bus, plan1, config1, aux1, "config_validation", endpoint)
 
 	// A different process, a higher epoch, and no memory of plan-1.
 	newLeader := createTestDeployer(bus.EventBus)
-	newLeader.fence = fixedFence{epoch: 2}
+	newLeader.fence = &fixedFence{epoch: 2}
 	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
 	completed := deployTo(t, newLeader, bus, plan2, config2, aux2, "config_validation", endpoint)
 

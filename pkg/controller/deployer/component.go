@@ -53,12 +53,19 @@ const (
 	standaloneIdentity = "standalone"
 )
 
-// LeadershipFence is the current leadership term: who this controller is, and
-// the epoch every apply it sends is fenced by. A pod that has seen a higher
-// epoch refuses this controller's writes.
+// LeadershipFence is the current leadership term: who this controller is, the
+// epoch every apply it sends is fenced by, and the two answers to a pod that
+// refuses that epoch. A pod that has seen a higher epoch refuses this
+// controller's writes.
 type LeadershipFence interface {
 	Identity() string
 	LeaderEpoch() uint64
+	// Reclaim lifts the epoch past one a pod already accepted. It errors when
+	// a newer leader — not a regressed counter — is behind the refusal, which
+	// is the one case where the pod is right and this controller must stop.
+	Reclaim(ctx context.Context, floor uint64) (uint64, error)
+	// StandDown gives leadership up so a fresh term claims a fresh epoch.
+	StandDown(reason string)
 }
 
 // Component implements the deployer component.

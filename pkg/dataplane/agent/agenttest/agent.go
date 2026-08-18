@@ -174,6 +174,15 @@ func (a *Agent) SetReloadPending(pending bool) {
 	}
 }
 
+// SetAppliedEpoch raises the leader epoch the fake has accepted. The agent
+// persists the applied token, so a pod a previous leader wrote to outranks a
+// controller whose epoch counter is behind — every apply below it is a 409.
+func (a *Agent) SetAppliedEpoch(epoch uint64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.state.AppliedToken.LeaderEpoch = epoch
+}
+
 // RejectOp makes every apply carrying this op kind come back as a NACK, the
 // way HAProxy refusing a runtime command does.
 func (a *Agent) RejectOp(kind string) {

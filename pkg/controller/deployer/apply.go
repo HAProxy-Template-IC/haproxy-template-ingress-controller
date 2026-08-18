@@ -52,6 +52,33 @@ const (
 // controller is no longer the fleet's writer and must stop dispatching.
 var errStaleEpoch = errors.New("a newer leader epoch owns this pod")
 
+// errEpochReclaimed reports a pod that outranked this controller because the
+// epoch counter regressed, not because a rival exists: the epoch was lifted
+// past the fleet's and the next deployment carries it.
+var errEpochReclaimed = errors.New("the leader epoch had regressed below the fleet and was reclaimed")
+
+// epochRefused decides what a pod refusing this controller's epoch means. A
+// Lease this controller still holds at the epoch it claimed proves there is no
+// rival — the counter regressed, which a recreated or restored Lease does — so
+// the epoch is lifted past the fleet's and this deployment fails into the
+// scheduler's retry. Anything else is a newer leader, and standing down is the
+// only correct answer to it.
+func (c *Component) epochRefused(ctx context.Context, endpoint *dataplane.Endpoint, podEpoch, ourEpoch uint64) error {
+	outranked := fmt.Errorf("pod is at epoch %d, this controller at %d", podEpoch, ourEpoch)
+	if c.fence == nil {
+		return fmt.Errorf("%w: %w", errStaleEpoch, outranked)
+	}
+	claimed, err := c.fence.Reclaim(ctx, podEpoch)
+	if err != nil {
+		c.Logger().Error("A pod outranks this controller's leader epoch and the lease agrees",
+			"pod", endpoint.PodName, "error", err)
+		return fmt.Errorf("%w: %w", errStaleEpoch, outranked)
+	}
+	c.Logger().Warn("The leader epoch had regressed below the fleet, reclaimed it",
+		"pod", endpoint.PodName, "pod_epoch", podEpoch, "epoch", claimed)
+	return fmt.Errorf("%w: %w", errEpochReclaimed, outranked)
+}
+
 // podOutcome is what one pod answered, and whether it now runs the render.
 type podOutcome struct {
 	result   *api.ApplyResult
@@ -94,8 +121,7 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 			return outcome, err
 		}
 		if conflict.Conflict.Reason == conflictStaleEpoch {
-			return nil, fmt.Errorf("%w: pod is at epoch %d, this controller at %d",
-				errStaleEpoch, conflict.Conflict.AppliedToken.LeaderEpoch, req.token.LeaderEpoch)
+			return nil, c.epochRefused(ctx, endpoint, conflict.Conflict.AppliedToken.LeaderEpoch, req.token.LeaderEpoch)
 		}
 		if round == maxApplyAttempts {
 			return nil, err

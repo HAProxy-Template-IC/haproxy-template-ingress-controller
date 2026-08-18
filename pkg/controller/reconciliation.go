@@ -78,13 +78,21 @@ type reconciliationWiring struct {
 // leadershipFence builds the epoch every apply is fenced by and hands it to
 // the leader-election component through setup, so both halves share one
 // counter. Nil without leader election: a single writer needs no fence.
+//
+// Standing down cancels the iteration with the cause a lost lease carries, so
+// the Lease is released (ReleaseOnCancel) and the run loop re-elects: nothing
+// short of a fresh acquisition claims a fresh epoch.
 func leadershipFence(setup *componentSetup, cfg *coreconfig.Config, k8sClient *client.Client, logger *slog.Logger) deployer.LeadershipFence {
 	if !cfg.Controller.LeaderElection.Enabled {
 		return nil
 	}
 	podName, podNamespace := leaderIdentity(k8sClient, logger)
-	setup.LeaderEpoch = leaderelectionctrl.NewLeaseEpoch(k8sClient.Clientset(),
+	epoch := leaderelectionctrl.NewLeaseEpoch(k8sClient.Clientset(),
 		podNamespace, cfg.Controller.LeaderElection.LeaseName, podName, logger)
+	setup.LeaderEpoch = leaderelectionctrl.NewTerm(epoch, func(reason string) {
+		logger.Error("Giving up leadership, re-electing", "reason", reason, "identity", podName)
+		setup.CancelCause(&leadershipLostError{})
+	})
 	return setup.LeaderEpoch
 }
 
