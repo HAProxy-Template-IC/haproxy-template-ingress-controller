@@ -107,25 +107,17 @@ func (p *parityAgent) apply(t *testing.T, step string, m *api.Manifest, parts ma
 func TestFakeAndRealAgentAnswerAlike(t *testing.T) {
 	scenarios := []struct {
 		name string
-		skip string
 		run  func(t *testing.T, p *parityAgent)
 	}{
 		{name: "first apply, runtime ops, a stale baseline and a missing part", run: lifecycleScenario},
 		{name: "a pending reload coalesces and only in-place ops run", run: pendingReloadScenario},
-		{
-			name: "a revert restores the last known good set",
-			skip: "fixed on fix/0.2-agent: revert_lkg records the reverted-from plan as applied_plan_id",
-			run:  revertScenario,
-		},
+		{name: "a revert restores the last known good set", run: revertScenario},
 	}
 
 	for _, sc := range scenarios {
 		// Serial on purpose: two concurrent server.New calls race inside
 		// client-native's runtime version cache (vendor/.../runtime_client.go).
 		t.Run(sc.name, func(t *testing.T) {
-			if sc.skip != "" {
-				t.Skip(sc.skip)
-			}
 			fake := newFakeParityAgent(t)
 			sc.run(t, fake)
 			production := newRealParityAgent(t)
@@ -247,7 +239,7 @@ func newRealParityAgent(t *testing.T) *parityAgent {
 		WorkerSocket:      model.WorkerSocket(),
 		StateFile:         ".haptic-agent.json",
 		Listen:            "127.0.0.1:0",
-		ReloadIntervalMin: time.Hour,
+		ReloadIntervalMin: time.Minute,
 		Username:          agenttest.DefaultUsername,
 		Password:          agenttest.DefaultPassword,
 		AgentVersion:      "parity",

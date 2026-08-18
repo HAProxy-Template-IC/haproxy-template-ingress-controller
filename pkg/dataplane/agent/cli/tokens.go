@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 )
 
 // ErrUnsafeToken is what every negative-space rejection wraps. A token that
@@ -28,33 +30,23 @@ import (
 // command, so the check is a refusal, never a sanitisation.
 var ErrUnsafeToken = errors.New("unsafe runtime token")
 
-// unsafeRunes are the characters that change the meaning of a CLI line: the
-// command separator, the payload introducer's parts, the line terminators and
-// the escape HAProxy's line form consumes.
-const unsafeRunes = ";<>\\\n\r\t\x00"
-
 // validateToken accepts one command word: a name, a path, a map key, a keyword
-// or a keyword argument. Whitespace is rejected because HAProxy splits the
-// line on it, which would silently turn one word into two.
+// or a keyword argument. The verdict is api.SafeToken, the predicate the
+// controller composes against, so the two ends cannot disagree.
 func validateToken(field, s string) error {
 	if s == "" {
 		return fmt.Errorf("%w: %s is empty", ErrUnsafeToken, field)
 	}
-	if strings.ContainsAny(s, unsafeRunes) || strings.ContainsRune(s, ' ') {
+	if !api.SafeToken(s) {
 		return fmt.Errorf("%w: %s %q", ErrUnsafeToken, field, s)
-	}
-	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
-			return fmt.Errorf("%w: %s %q has a control character", ErrUnsafeToken, field, s)
-		}
 	}
 	return nil
 }
 
 // validatePayloadValue accepts a value that travels in a payload block, where
-// only the line framing is significant.
+// only the line framing is significant (api.SafePayloadValue).
 func validatePayloadValue(field, s string) error {
-	if strings.ContainsAny(s, "\n\r\x00") {
+	if !api.SafePayloadValue(s) {
 		return fmt.Errorf("%w: %s spans lines", ErrUnsafeToken, field)
 	}
 	return nil
