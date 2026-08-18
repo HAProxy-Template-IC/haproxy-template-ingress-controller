@@ -211,7 +211,7 @@ the agent executes the traffic-stopping half immediately (`unpublish backend`,
 caps at 1000 servers and 100 backends per pod; past that the apply reloads
 instead of growing the queue.
 
-## Pacing, rollback and the known-bad cache
+## Pacing, rollback, and the known-bad cache
 
 `--reload-interval-min` is the shortest interval between two reloads. A reload
 inside the window is scheduled, never dropped and never cancelled by a later
@@ -295,7 +295,7 @@ Four layers cover the agent, and each answers a different question.
 | Layer | Question it answers | Where |
 | --- | --- | --- |
 | Unit tests | Does the client hold the contract's limits and classify every answer? | `pkg/dataplane/agent/client` |
-| Fake HAProxy | Does the agent's transaction, fencing and op execution behave against a modelled worker and master socket, including under injected faults? | `pkg/dataplane/agent/haproxytest`, used by `server` and `cli` tests |
+| Fake HAProxy | Does the agent's transaction, fencing, and op execution behave against a modelled worker and master socket, including under injected faults? | `pkg/dataplane/agent/haproxytest`, used by `server` and `cli` tests |
 | Fake agent | Does the controller's deployer react correctly to fencing, conflicts and rejections? | `pkg/dataplane/agent/agenttest` |
 | Docker suite | Does a real HAProxy do what the contract says it does? | `tests/agent` |
 

@@ -260,11 +260,18 @@ func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 // across pods. Same wire behavior as before (one skip_version push + actions);
 // only the body content differs.
 func (s *DeploymentScheduler) applyRuntimeSubset(ctx context.Context, dep *scheduledDeployment) {
-	if contextCancelled(ctx) || dep == nil || dep.runtimeUpdates.ServerOpCount() == 0 {
+	if contextCancelled(ctx) || dep == nil {
 		return
 	}
 
+	// dep is the pending deployment: a timeout re-classifies it structural
+	// under the mutex, so its runtime updates are read there too.
 	s.schedulerMutex.Lock()
+	updates := dep.runtimeUpdates
+	if updates.ServerOpCount() == 0 {
+		s.schedulerMutex.Unlock()
+		return
+	}
 	baseline := s.lastActivatedConfig
 	// A structural deploy in flight has already written its render to disk. Patching
 	// the older ACTIVATED config would roll that write back — the deploy's read-back
@@ -286,7 +293,7 @@ func (s *DeploymentScheduler) applyRuntimeSubset(ctx context.Context, dep *sched
 	}
 
 	s.runtimeBypass.applyRuntimeRaw(ctx, dep, bypassPush{
-		body:    dep.runtimeUpdates.BuildRuntimeBypassBody(baseline, dep.config),
+		body:    updates.BuildRuntimeBypassBody(baseline, dep.config),
 		partial: true,
 		// The structural half of this body is on disk but NOT loaded by any worker
 		// until the in-flight deploy's reload lands, so the push proves nothing about
