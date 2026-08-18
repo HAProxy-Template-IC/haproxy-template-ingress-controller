@@ -51,6 +51,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -321,6 +323,31 @@ func mapEntryMismatches(contents map[string]string, plan *renderplan.Plan) []str
 	return mismatches
 }
 
+// mapContentsByPlanPath keys the rendered map contents by the path the plan
+// lists them under (`maps/<name>`), matching content by digest so the test
+// never re-derives the resolver's naming. A map the plan lacks stays keyed by
+// its rendered name and shows up as "not in the plan".
+func mapContentsByPlanPath(files []auxiliaryfiles.MapFile, plan *renderplan.Plan) map[string]string {
+	planned := make(map[string][]string, len(files))
+	if plan != nil {
+		for _, file := range plan.Files {
+			if file.Kind == renderplan.FileKindMap {
+				planned[file.Digest] = append(planned[file.Digest], file.Path)
+			}
+		}
+	}
+	contents := make(map[string]string, len(files))
+	for _, file := range files {
+		key := file.Path
+		digest := renderplan.DigestString(file.Content)
+		if paths := planned[digest]; len(paths) > 0 {
+			key, planned[digest] = paths[0], paths[1:]
+		}
+		contents[key] = file.Content
+	}
+	return contents
+}
+
 // naiveMapEntries is this test's own reader of HAPTIC's map-file format, kept
 // deliberately independent of renderplan.ParseMapEntries: comparing a function
 // against itself would prove nothing.
@@ -347,12 +374,18 @@ func renderSynthetic(t *testing.T, source string, mapContents map[string]string)
 	engine, err := templating.New(map[string]string{names.MainTemplateName: source}, nil)
 	require.NoError(t, err)
 
-	registry := rendercontext.NewPlanRegistry()
+	registry := rendercontext.NewPlanRegistry(nil)
 	main, err := rendercontext.RenderMain(context.Background(), engine,
 		map[string]any{"planRegistry": registry}, registry, false)
 	require.NoError(t, err)
 
-	return main.Config, registry.Plan(rendercontext.PlanFiles(main.Config, nil), mapContents)
+	aux := &dataplane.AuxiliaryFiles{}
+	for _, name := range sortedKeys(mapContents) {
+		aux.MapFiles = append(aux.MapFiles, auxiliaryfiles.MapFile{Path: name, Content: mapContents[name]})
+	}
+	plan, err := registry.Plan(main.Config, aux)
+	require.NoError(t, err)
+	return main.Config, plan
 }
 
 // backendTemplate is a main template that declares one backend as data and
@@ -614,10 +647,7 @@ func renderCorpus(t *testing.T, runner *testrunner.Runner, testNames []string) [
 					// Tests that assert a rendering_error have no config to compare.
 					continue
 				}
-				maps := make(map[string]string, len(rendered.AuxiliaryFiles.MapFiles))
-				for _, file := range rendered.AuxiliaryFiles.MapFiles {
-					maps[file.Path] = file.Content
-				}
+				maps := mapContentsByPlanPath(rendered.AuxiliaryFiles.MapFiles, rendered.Plan)
 				mu.Lock()
 				renders = append(renders, corpusRender{
 					name: name, config: rendered.HAProxyConfig, maps: maps, plan: rendered.Plan,

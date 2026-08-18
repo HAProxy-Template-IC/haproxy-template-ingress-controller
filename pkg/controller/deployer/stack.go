@@ -19,8 +19,15 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
+
+// AckedPlanSink receives the plan the fleet confirmed it is running. The
+// renderer implements it; the deployer calls it after a deployment lands.
+type AckedPlanSink interface {
+	SetAckedPlan(*renderplan.Plan)
+}
 
 // DeployStack is the deploy-side component set, already wired together.
 type DeployStack struct {
@@ -36,11 +43,13 @@ type DeployStack struct {
 // The wiring lives here so both pod writers share one fenced observation.
 //
 // domainMetrics is required; the fast-path counters have no other source.
+// ackedPlans may be nil; the renderer then keeps rendering from its own plans.
 func NewDeployStack(
 	eventBus *busevents.EventBus,
 	cfg *coreconfig.Config,
 	logger *slog.Logger,
 	domainMetrics *metrics.Metrics,
+	ackedPlans AckedPlanSink,
 ) *DeployStack {
 	deployer := New(eventBus, logger,
 		cfg.Dataplane.GetReloadVerificationTimeout(),
@@ -51,6 +60,8 @@ func NewDeployStack(
 		cfg.Dataplane.GetMinDeploymentInterval(),
 		cfg.Dataplane.GetDeploymentTimeout())
 
+	deployer.ackedPlans = ackedPlans
+	scheduler.runtimeBypass.ackedPlans = ackedPlans
 	deployer.versionCache = scheduler.runtimeBypass.configCache
 	scheduler.runtimeBypass.recordFastPath = domainMetrics.RecordRuntimeFastPath
 

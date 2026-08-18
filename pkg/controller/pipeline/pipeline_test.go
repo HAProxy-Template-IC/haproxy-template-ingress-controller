@@ -165,6 +165,20 @@ func TestPipeline_Execute_ValidConfig(t *testing.T) {
 	assert.GreaterOrEqual(t, result.TotalDurationMs, int64(0))
 }
 
+func TestPipeline_Execute_CarriesTheRenderPlan(t *testing.T) {
+	pipeline := createTestPipeline(t, testutil.MinimalHAProxyConfig)
+	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
+
+	result, err := pipeline.Execute(context.Background(), provider, rendercontext.RenderModeReconcile)
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Plan,
+		"the deployer diffs this plan against what each pod applied; a pipeline "+
+			"that drops it degrades every deploy to a full push")
+	assert.Equal(t, result.Plan.ID, result.PlanID)
+	assert.NotEmpty(t, result.PlanID)
+}
+
 func TestPipeline_Execute_InvalidConfig(t *testing.T) {
 	// Simulate haproxy rejecting the config (unit tests never shell out).
 	t.Cleanup(dataplanetest.InstallFakeHAProxy(

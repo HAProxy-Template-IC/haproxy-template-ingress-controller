@@ -48,6 +48,7 @@ var rootCmd = &cobra.Command{
 Commands:
 
   run           - Run the controller (watches CRDs and manages HAProxy)
+  agent         - Run the HAPTIC agent inside an HAProxy pod
   validate      - Validate a HAProxyTemplateConfig with embedded tests
   benchmark     - Measure template render performance
 
@@ -72,6 +73,7 @@ func init() {
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(benchmarkCmd)
 	rootCmd.AddCommand(applyCRDsCmd)
+	rootCmd.AddCommand(agentCmd)
 }
 
 func main() {

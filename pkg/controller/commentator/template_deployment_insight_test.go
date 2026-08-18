@@ -87,7 +87,7 @@ func TestTemplateInsight_RenderedEvent_TriggerReasonConditional(t *testing.T) {
 				42, // 42ms render
 				tt.triggerReason,
 				"checksum",
-				true,
+				nil, "", true,
 			)
 
 			insight, _ := ec.templateInsight(evt, nil)

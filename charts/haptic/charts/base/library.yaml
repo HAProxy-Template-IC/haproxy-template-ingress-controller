@@ -2054,6 +2054,12 @@ templateSnippets:
       shm-stats-file-max-objects {{ extraContext | dig("shmStatsMaxObjects") | fallback(50000) }}
       {%- end %}
 
+  global-settings-260-runtime-socket:
+    template: |
+      {# The agent's runtime socket: the master socket relays only the first command #}
+      {# of a ';'-joined line and holds no session state (`wait`, payload commands). #}
+      stats socket {{ pathResolver.GetBaseDir() }}/haproxy-worker.sock mode 600 level admin
+
   global-settings-300-paths:
     template: |
       default-path origin {{ pathResolver.GetBaseDir() }}
@@ -3641,6 +3647,18 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "shm-stats-file /dev/shm/haproxy-stats"}
       - {type: contains, target: haproxy.cfg, pattern: "shm-stats-file-max-objects 50000"}
+
+  test-global-worker-runtime-socket:
+    description: The rendered global carries the agent's worker runtime socket
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+stats socket \S+/haproxy-worker\.sock mode 600 level admin$'
+        description: >-
+          The base dir is the operator's dataplane.mapsDir parent, and offline
+          validation swaps it for a sandbox, so only the tail is fixed.
 
   test-default-backend-cross-namespace:
     description: Default backend resolves endpoints from a different namespace

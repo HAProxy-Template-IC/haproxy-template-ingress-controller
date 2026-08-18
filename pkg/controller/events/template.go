@@ -16,6 +16,7 @@ package events
 
 import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -53,6 +54,13 @@ type TemplateRenderedEvent struct {
 	// Computed once in the pipeline and propagated to downstream consumers to avoid
 	// redundant hashing in config publisher and deployment scheduler.
 	ContentChecksum string
+
+	// Plan is the structure this render declared, carried to the deployer so it
+	// can diff against what each pod applied. Nil for renders that produced none.
+	Plan *renderplan.Plan
+
+	// PlanID is the digest identifying Plan.
+	PlanID string
 
 	// Metrics for observability
 	ConfigBytes        int   // Size of HAProxyConfig
@@ -93,6 +101,8 @@ func NewTemplateRenderedEvent(
 	durationMs int64,
 	triggerReason string,
 	contentChecksum string,
+	plan *renderplan.Plan,
+	planID string,
 	coalescible bool,
 	opts ...CorrelationOption,
 ) *TemplateRenderedEvent {
@@ -102,6 +112,8 @@ func NewTemplateRenderedEvent(
 		StatusPatches:      statusPatches,
 		RenderedResources:  renderedResources,
 		ContentChecksum:    contentChecksum,
+		Plan:               plan,
+		PlanID:             planID,
 		ConfigBytes:        len(haproxyConfig),
 		AuxiliaryFileCount: auxFileCount,
 		DurationMs:         durationMs,

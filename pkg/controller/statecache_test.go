@@ -208,6 +208,8 @@ func TestStateCache_HandleTemplateRendered(t *testing.T) {
 		100,
 		"",
 		"",   // contentChecksum
+		nil,  // plan
+		"",   // planID
 		true, // coalescible
 	))
 
@@ -291,7 +293,7 @@ func TestStateCache_HandleValidationCompleted(t *testing.T) {
 
 	// First set rendered config (validation stores this as validated config)
 	testConfig := "global\n  daemon\n"
-	bus.Publish(events.NewTemplateRenderedEvent(testConfig, nil, nil, nil, 0, 100, "", "", true))
+	bus.Publish(events.NewTemplateRenderedEvent(testConfig, nil, nil, nil, 0, 100, "", "", nil, "", true))
 	time.Sleep(50 * time.Millisecond)
 
 	bus.Publish(events.NewValidationCompletedEvent([]string{"warning1"}, 150, "", nil, true))
@@ -762,7 +764,7 @@ func TestStateCache_ReconciliationResetsPipelineState(t *testing.T) {
 	bus.Start()
 
 	// Set up some pipeline state
-	bus.Publish(events.NewTemplateRenderedEvent("config", nil, nil, nil, 0, 100, "", "", true))
+	bus.Publish(events.NewTemplateRenderedEvent("config", nil, nil, nil, 0, 100, "", "", nil, "", true))
 	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", nil, true))
 	bus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,

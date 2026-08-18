@@ -1477,6 +1477,38 @@ test-integration-extra-versions:
       when: never
     - !reference [.rules-go, rules]
 
+# The agent docker suite: a real HAProxy container in master-worker mode plus an
+# agent container against the same mounts, driven through the wire contract. No
+# cluster and no controller image — the job builds the haptic binary and lays it
+# into the HAProxy image — so a medium runner with dind is enough. Same 3.0/3.4
+# bracket as test-integration: those are the versions whose runtime CLI differs.
+test-agent-docker:
+  stage: integration
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
+  extends:
+    - .docker-dind
+  tags:
+    - saas-linux-medium-amd64
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-go, rules]
+  timeout: 30 minutes
+  interruptible: true
+  needs:
+    - compute-ci-image-tag
+    - job: build-ci
+  parallel:
+    matrix:
+      - HAPROXY_VERSION: ["3.0", "3.4"]
+  script:
+    - make test-agent-docker
+  artifacts:
+    reports:
+      junit: report-agent-docker.xml
+    when: always
+    expire_in: 1 week
+
 # Combined unit + integration coverage report (merges all HAProxy version coverage files)
 coverage-combined:
   stage: integration

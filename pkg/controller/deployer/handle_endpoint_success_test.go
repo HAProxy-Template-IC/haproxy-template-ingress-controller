@@ -73,7 +73,7 @@ func TestHandleEndpointSuccess_PublishesAppliedWhenNotNoOp(t *testing.T) {
 
 	c.handleEndpointSuccess(
 		ep, syncResult, 250, "checksum-abc", false,
-		"rt-cfg-1", "haptic", "corr-1", state,
+		"rt-cfg-1", "haptic", "", "corr-1", state,
 	)
 
 	// ConfigAppliedToPodEvent fires because !isNoOp (operations > 0).
@@ -125,7 +125,7 @@ func TestHandleEndpointSuccess_PublishesAppliedEventOnNoOpDeployment(t *testing.
 
 	c.handleEndpointSuccess(
 		ep, noOpResult, 50, "checksum-abc", false,
-		"rt-cfg-1", "haptic", "corr-1", state,
+		"rt-cfg-1", "haptic", "", "corr-1", state,
 	)
 
 	// ConfigAppliedToPodEvent MUST fire on a no-op too. status-applier
@@ -183,13 +183,13 @@ func TestHandleEndpointSuccess_BackendDiffFieldsCapturedOnceFirstWriterWins(t *t
 		operationBreakdown: make(map[string]int),
 	}
 
-	c.handleEndpointSuccess(ep1, first, 100, "k", false, "", "", "corr-1", state)
+	c.handleEndpointSuccess(ep1, first, 100, "k", false, "", "", "", "corr-1", state)
 	captured := state.backendDiffFields
 	require.NotEmpty(t, captured,
 		"first call MUST populate backendDiffFields — it's how the "+
 			"aggregator surfaces 'which backends differ' in operator output")
 
-	c.handleEndpointSuccess(ep2, second, 100, "k", false, "", "", "corr-2", state)
+	c.handleEndpointSuccess(ep2, second, 100, "k", false, "", "", "", "corr-2", state)
 
 	state.breakdownMu.Lock()
 	defer state.breakdownMu.Unlock()
@@ -226,7 +226,7 @@ func TestHandleEndpointSuccess_CountsRuntimeMapDivergence(t *testing.T) {
 
 	c.handleEndpointSuccess(
 		ep, syncResult, 250, "checksum-abc", false,
-		"rt-cfg-1", "haptic", "corr-1", state,
+		"rt-cfg-1", "haptic", "", "corr-1", state,
 	)
 
 	assert.Equal(t, 1.0,
@@ -251,7 +251,7 @@ func TestHandleEndpointSuccess_NoDivergenceCountWhenConverged(t *testing.T) {
 
 	c.handleEndpointSuccess(
 		ep, syncResult, 250, "checksum-abc", false,
-		"rt-cfg-1", "haptic", "corr-1", state,
+		"rt-cfg-1", "haptic", "", "corr-1", state,
 	)
 
 	// A converged sync must count nothing, or the counter measures noise.

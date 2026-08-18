@@ -570,6 +570,10 @@ func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem)
 	// Extract error information from sync metadata if available
 	if event.SyncMetadata != nil {
 		update.Error = event.SyncMetadata.Error
+		update.AppliedPlanID = event.SyncMetadata.AppliedPlanID
+		update.RunningPlanID = event.SyncMetadata.RunningPlanID
+		update.Mode = event.SyncMetadata.Mode
+		update.Reasons = event.SyncMetadata.Reasons
 	}
 
 	// Call pure publisher with timeout context

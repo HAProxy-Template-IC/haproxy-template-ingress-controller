@@ -114,10 +114,12 @@ type RenderService struct {
 	// capabilities defines which features are available for the local HAProxy version.
 	capabilities dataplane.Capabilities
 
-	// planMu guards lastPlan, the newest reconcile render's plan. It is the
-	// primary source for the next render's `currentConfig`.
-	planMu   sync.Mutex
-	lastPlan *renderplan.Plan
+	// planMu guards both plans below. ackedPlan — the newest plan the fleet
+	// confirmed running — is the source for the next render's `currentConfig`;
+	// lastPlan, the newest reconcile render's plan, stands in until the first ACK.
+	planMu    sync.Mutex
+	ackedPlan *renderplan.Plan
+	lastPlan  *renderplan.Plan
 
 	// Optional dependencies for building render context
 	haproxyPodStore         stores.Store
@@ -231,6 +233,14 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 	}
 }
 
+// withRenderTimeout bounds a render by the configured timeout, if any.
+func (s *RenderService) withRenderTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.renderTimeout > 0 {
+		return context.WithTimeout(ctx, s.renderTimeout)
+	}
+	return ctx, func() {}
+}
+
 // Render transforms the stores into HAProxy configuration.
 //
 // Parameters:
@@ -242,13 +252,8 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 //   - Error if rendering fails
 func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*RenderResult, error) {
 	startTime := time.Now()
-
-	// Apply render timeout if configured
-	if s.renderTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.renderTimeout)
-		defer cancel()
-	}
+	ctx, cancel := s.withRenderTimeout(ctx)
+	defer cancel()
 
 	// Build rendering context from stores
 	bctx := s.buildRenderingContext(ctx, provider, mode, extraOpts...)
@@ -337,8 +342,10 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, collectorErr)
 	}
 
-	plan := bctx.PlanRegistry.Plan(rendercontext.PlanFiles(haproxyConfig, auxiliaryFiles), rendercontext.MapContents(auxiliaryFiles))
-	s.rememberPlan(mode, plan)
+	plan, err := s.buildPlan(bctx.PlanRegistry, mode, haproxyConfig, auxiliaryFiles)
+	if err != nil {
+		return nil, err
+	}
 
 	result := &RenderResult{
 		HAProxyConfig:     haproxyConfig,

@@ -205,6 +205,8 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 		100,  // duration ms
 		"",   // trigger reason
 		"",   // contentChecksum
+		nil,  // plan
+		"",   // planID
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
@@ -279,7 +281,7 @@ func TestComponent_RetriesIncompletePublicationWithoutCompletingEarly(t *testing
 	correlationID := t.Name()
 	bus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
 	bus.Publish(events.NewTemplateRenderedEvent(
-		"global\n  daemon\n", auxFiles, nil, nil, 1, 1, "", "checksum-v1", true,
+		"global\n  daemon\n", auxFiles, nil, nil, 1, 1, "", "checksum-v1", nil, "", true,
 		events.WithCorrelation(correlationID, ""),
 	))
 	bus.Publish(events.NewValidationCompletedEvent(
@@ -625,6 +627,8 @@ func TestComponent_LostLeadership(t *testing.T) {
 		100,
 		"",
 		"",   // contentChecksum
+		nil,  // plan
+		"",   // planID
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
@@ -703,6 +707,8 @@ func TestComponent_ValidationFailed(t *testing.T) {
 		100,
 		"",
 		"",   // contentChecksum
+		nil,  // plan
+		"",   // planID
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))

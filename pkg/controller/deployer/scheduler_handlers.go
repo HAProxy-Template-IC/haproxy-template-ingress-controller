@@ -52,6 +52,8 @@ func (s *DeploymentScheduler) handleTemplateRendered(event *events.TemplateRende
 	s.lastAuxiliaryFiles = event.AuxiliaryFiles
 	s.lastContentChecksum = event.ContentChecksum
 	s.lastRenderedEventID = event.EventID()
+	s.lastRenderedPlan = event.Plan
+	s.lastRenderedPlanID = event.PlanID
 	s.lastValidatedStatusPatches = event.StatusPatches
 
 	s.logger.Debug("Cached rendered config for deployment after validation",
@@ -144,6 +146,8 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	endpoints := s.currentEndpoints
 	statusPatches := s.lastValidatedStatusPatches
 	configChecksum := s.lastContentChecksum
+	plan := s.lastRenderedPlan
+	planID := s.lastRenderedPlanID
 	// Cache validated config immediately to prevent race condition.
 	// `lastValidatedContentChecksum` must be captured AT THE SAME POINT as
 	// `lastValidatedConfig` — otherwise pod-discovery reads (which fall
@@ -153,6 +157,8 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	s.lastValidatedConfig = config
 	s.lastValidatedAux = auxFiles
 	s.lastValidatedContentChecksum = configChecksum
+	s.lastValidatedPlan = plan
+	s.lastValidatedPlanID = planID
 	s.lastParsedConfig = event.ParsedConfig // Cache pre-parsed config for sync optimization
 	s.lastCorrelationID = correlationID
 	s.lastCoalescible = event.Coalescible()
@@ -222,7 +228,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	// so the eventual deploy records THIS hash, not whatever
 	// `s.lastContentChecksum` holds at deploy-time (which a later reconcile
 	// will have overwritten under sustained parallel-test load).
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "config_validation", correlationID, statusPatches, event.Coalescible(), configHash)
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "config_validation", correlationID, statusPatches, event.Coalescible(), configHash, plan, planID)
 }
 
 // handlePodsDiscovered handles HAProxy pod discovery/changes with coalescing.
@@ -285,6 +291,8 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 	parsedConfig := s.lastParsedConfig
 	statusPatches := s.lastValidatedStatusPatches
 	contentChecksum := s.lastValidatedContentChecksum
+	plan := s.lastValidatedPlan
+	planID := s.lastValidatedPlanID
 	correlationID := s.lastCorrelationID
 	coalescible := s.lastCoalescible
 	hasValidConfig := s.hasValidConfig
@@ -309,7 +317,7 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 	// handleValidationCompleted — so the deploy records the hash that
 	// matches the config it actually carries, not whatever
 	// `lastContentChecksum` holds now (later renders' values).
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, event.Endpoints, "pod_discovery", correlationID, statusPatches, coalescible, contentChecksum)
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, event.Endpoints, "pod_discovery", correlationID, statusPatches, coalescible, contentChecksum, plan, planID)
 }
 
 // handleValidationFailed handles validation failure events.
@@ -330,6 +338,8 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 	parsedConfig := s.lastParsedConfig
 	statusPatches := s.lastValidatedStatusPatches
 	contentChecksum := s.lastValidatedContentChecksum
+	plan := s.lastValidatedPlan
+	planID := s.lastValidatedPlanID
 	endpoints := s.currentEndpoints
 	hasValidConfig := s.hasValidConfig
 	s.mu.RUnlock()
@@ -356,7 +366,7 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 	// consistency. The contentChecksum threaded here is the hash of the
 	// last-validated config (NOT the failed-validation render), so the
 	// deploy records the correct hash for what's actually being applied.
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "validation_fallback", correlationID, statusPatches, false, contentChecksum)
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "validation_fallback", correlationID, statusPatches, false, contentChecksum, plan, planID)
 }
 
 // handleDeploymentCompleted handles deployment completion events.
@@ -589,6 +599,8 @@ func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision u
 	parsedConfig := s.lastParsedConfig
 	statusPatches := s.lastValidatedStatusPatches
 	contentChecksum := s.lastValidatedContentChecksum
+	plan := s.lastValidatedPlan
+	planID := s.lastValidatedPlanID
 	correlationID := s.lastCorrelationID
 	endpoints := s.currentEndpoints
 	hasValidConfig := s.hasValidConfig
@@ -605,6 +617,8 @@ func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision u
 		config:          config,
 		auxFiles:        auxFiles,
 		parsedConfig:    parsedConfig,
+		plan:            plan,
+		planID:          planID,
 		endpoints:       endpoints,
 		reason:          "deploy_failure_retry",
 		correlationID:   correlationID,

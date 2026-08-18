@@ -97,9 +97,16 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 	// pod correctly reads as never-converged.
 	if update.Error != "" {
 		podStatus.Checksum = ""
+		// The plan the pod still runs is unchanged by a failed sync, and it is
+		// the baseline the next apply diffs against — same re-emit rule as the
+		// checksum above, or SSA deletes it.
 		if existing, ok := p.existingPodStatus(ctx, update.RuntimeConfigNamespace, update.RuntimeConfigName, update.PodName); ok &&
 			existing.PodUID == update.PodUID && existing.PodRuntimeID == update.PodRuntimeID {
 			podStatus.Checksum = existing.Checksum
+			podStatus.AppliedPlanID = existing.AppliedPlanID
+			podStatus.RunningPlanID = existing.RunningPlanID
+			podStatus.Mode = existing.Mode
+			podStatus.Reasons = existing.Reasons
 		}
 	}
 
@@ -367,6 +374,18 @@ func buildPodStatusSSAPayload(kind, name, namespace string, podStatus *haproxyv1
 	}
 	if podStatus.Checksum != "" {
 		entry["checksum"] = podStatus.Checksum
+	}
+	if podStatus.AppliedPlanID != "" {
+		entry["appliedPlanID"] = podStatus.AppliedPlanID
+	}
+	if podStatus.RunningPlanID != "" {
+		entry["runningPlanID"] = podStatus.RunningPlanID
+	}
+	if podStatus.Mode != "" {
+		entry["mode"] = podStatus.Mode
+	}
+	if len(podStatus.Reasons) > 0 {
+		entry["reasons"] = podStatus.Reasons
 	}
 	if podStatus.LastError != "" {
 		entry["lastError"] = podStatus.LastError
