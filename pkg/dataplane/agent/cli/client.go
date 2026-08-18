@@ -31,6 +31,12 @@ import (
 // `del backend` are documented experimental and the setting is per connection.
 const experimentalPrefix = "experimental-mode on"
 
+// PayloadTerminator ends a payload block. HAProxy's default terminator is an
+// empty line, which a blank line inside a certificate or a map would trip; a
+// custom pattern (max 7 characters) is what makes the content irrelevant to
+// the framing.
+const PayloadTerminator = "HAPTIC"
+
 // lineReserve leaves room for the experimental prefix and for the
 // `set severity-output number;` prologue client-native puts on every line.
 const lineReserve = 64
@@ -46,6 +52,7 @@ type Config struct {
 
 // Client is the agent's runtime plumbing.
 type Client struct {
+	cfg      Config
 	worker   *runtime.SingleRuntime
 	masterRT *runtime.SingleRuntime
 	master   runtime.Runtime
@@ -68,7 +75,15 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("master socket %s: %w", cfg.MasterSocket, err)
 	}
-	return &Client{worker: worker, masterRT: masterRT, master: master, logger: cfg.Logger}, nil
+	return &Client{cfg: cfg, worker: worker, masterRT: masterRT, master: master, logger: cfg.Logger}, nil
+}
+
+// Sibling is a second client on the same sockets. client-native serialises
+// every command of one client behind one mutex, so work that blocks for
+// seconds — a `wait …-removable` — needs a connection of its own or an apply
+// queues behind it.
+func (c *Client) Sibling(ctx context.Context) (*Client, error) {
+	return New(ctx, c.cfg)
 }
 
 // Info reads the worker's identity. The pid is the agent's evidence that the
@@ -289,7 +304,8 @@ func (e *execution) record(program int, r CommandResult) error {
 }
 
 // joinLine renders one worker line: the experimental prefix, the commands
-// joined by ';' and, when the last one carries a payload, its heredoc.
+// joined by ';' and, when the last one carries a payload, its heredoc. The
+// caller's transport appends the newline that ends the terminator line.
 func joinLine(pending []pendingCommand) string {
 	var b strings.Builder
 	b.WriteString(experimentalPrefix)
@@ -299,12 +315,12 @@ func joinLine(pending []pendingCommand) string {
 	}
 	last := pending[len(pending)-1]
 	if last.Payload != "" {
-		b.WriteString(" <<\n")
+		b.WriteString(" <<" + PayloadTerminator + "\n")
 		b.WriteString(last.Payload)
 		if !strings.HasSuffix(last.Payload, "\n") {
 			b.WriteByte('\n')
 		}
-		b.WriteByte('\n')
+		b.WriteString(PayloadTerminator)
 	}
 	return b.String()
 }

@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
 func compileMapAdd(op *api.Op, _ Content) (cmds, abort []Command, err error) {
@@ -74,7 +75,7 @@ func compileMapReplace(op *api.Op, content Content) (cmds, abort []Command, err 
 		return nil, nil, err
 	}
 	cmds = []Command{{Text: "prepare map " + op.Path, Expect: "version created", Capture: true}}
-	chunks, err := chunkLines(body, api.MaxPayloadBytes)
+	chunks, err := chunkLines(mapPayload(body), api.MaxPayloadBytes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -84,7 +85,9 @@ func compileMapReplace(op *api.Op, content Content) (cmds, abort []Command, err 
 			Payload: chunk,
 		})
 	}
-	commit := Command{Text: fmt.Sprintf("commit map @%s %s", VersionPlaceholder, op.Path), Expect: expectDone}
+	// `commit map` answers nothing at all on success (verified on 3.0 and
+	// 3.4), so any message it does return is a refusal.
+	commit := Command{Text: fmt.Sprintf("commit map @%s %s", VersionPlaceholder, op.Path)}
 	return append(cmds, commit), nil, nil
 }
 
@@ -191,13 +194,29 @@ func crtListEntry(op *api.Op) (string, error) {
 	return b.String(), nil
 }
 
-// chunkLines splits a file into payload blocks of at most limit bytes without
-// ever cutting a line, because HAProxy applies zero entries of a payload that
+// mapPayload renders a map file as the entries the worker is to hold. What
+// travels is the plan's own reading of the file: the payload parser has no
+// comment syntax, so a '#' header would be stored as a key.
+func mapPayload(body []byte) string {
+	var b strings.Builder
+	for _, entry := range renderplan.ParseMapEntries(string(body)) {
+		b.WriteString(entry.Key)
+		if entry.Value != "" {
+			b.WriteByte(' ')
+			b.WriteString(entry.Value)
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// chunkLines splits a payload into blocks of at most limit bytes without ever
+// cutting a line, because HAProxy applies zero entries of a payload that
 // exceeds its buffer.
-func chunkLines(body []byte, limit int) ([]string, error) {
+func chunkLines(body string, limit int) ([]string, error) {
 	var chunks []string
 	var current strings.Builder
-	for _, line := range strings.SplitAfter(string(body), "\n") {
+	for _, line := range strings.SplitAfter(body, "\n") {
 		if line == "" {
 			continue
 		}

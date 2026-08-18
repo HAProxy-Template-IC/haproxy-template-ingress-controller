@@ -88,6 +88,9 @@ func Compile(op *api.Op, content Content) (Program, error) {
 			return Program{}, fmt.Errorf("op %s: payload is %d bytes, over the %d-byte limit",
 				op.Kind, len(c.Payload), api.MaxPayloadBytes)
 		}
+		if err := validatePayloadBlock(c.Payload); err != nil {
+			return Program{}, fmt.Errorf("op %s: %w", op.Kind, err)
+		}
 	}
 	return Program{Kind: op.Kind, Commands: cmds, Abort: abort}, nil
 }

@@ -268,7 +268,8 @@ func (h *HAProxy) commitMap(rest string) reply {
 	h.m.Maps[path] = entries
 	delete(h.m.mapVersions, version)
 	delete(h.m.preparedFor, version)
-	return message("Done.")
+	// A committed version answers nothing, like the real runtime.
+	return silent()
 }
 
 func (h *HAProxy) show(rest, _ string) reply {
@@ -316,7 +317,13 @@ func (h *HAProxy) showSSL(rest string) reply {
 	case objCert:
 		return dump("# filename\n" + strings.Join(sortedKeys(h.m.Certs), "\n"))
 	case objCAFile:
-		return dump("# filename\n" + strings.Join(sortedKeys(h.m.CAFiles), "\n"))
+		// Real shape: every row carries a certificate count, and the built-in
+		// store is listed alongside the files (verified on 3.0 and 3.4).
+		rows := []string{"# filename"}
+		for _, name := range sortedKeys(h.m.CAFiles) {
+			rows = append(rows, fmt.Sprintf("%s - %d certificate(s)", name, 1))
+		}
+		return dump(strings.Join(append(rows, "@system-ca - 150 certificate(s)"), "\n"))
 	case objCRLFile:
 		return dump("# filename\n" + strings.Join(sortedKeys(h.m.CRLFiles), "\n"))
 	case objCRTList:
@@ -353,14 +360,16 @@ func boolToState(enabled bool) int {
 	return 0
 }
 
+// parseEntries reads a map payload the way the runtime does: every line is a
+// record with no comment syntax, so a '#' header becomes a key and a blank
+// line becomes an entry with none.
 func parseEntries(payload string) []MapEntry {
+	if payload == "" {
+		return nil
+	}
 	var entries []MapEntry
-	for _, line := range strings.Split(payload, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
-		}
-		key, value, _ := strings.Cut(line, " ")
+	for _, line := range strings.Split(strings.TrimSuffix(payload, "\n"), "\n") {
+		key, value, _ := strings.Cut(strings.TrimRight(line, "\r"), " ")
 		entries = append(entries, MapEntry{Key: key, Value: value})
 	}
 	return entries

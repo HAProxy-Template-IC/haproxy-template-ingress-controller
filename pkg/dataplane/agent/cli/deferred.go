@@ -68,7 +68,11 @@ type Deferrals struct {
 	mu       sync.Mutex
 	servers  []attempt[ServerRef]
 	backends []attempt[string]
-	wake     chan struct{}
+	// inFlight* is the item the single drain goroutine is working on. It is
+	// still outstanding, so the caps and /v1/state have to count it.
+	inFlightServer  *ServerRef
+	inFlightBackend *string
+	wake            chan struct{}
 }
 
 type attempt[T any] struct {
@@ -107,13 +111,28 @@ func Split(ops []api.Op) (inline []api.Op, servers []ServerRef, backends []strin
 // Enqueue adds a batch of deletes. Past the caps the caller must reload: an
 // unbounded queue would hide a leak until the pod ran out of proxies.
 func (d *Deferrals) Enqueue(servers []ServerRef, backends []string) error {
+	// The queue builds its own command lines later, out of reach of the
+	// compilers' checks, so the names pass the same grammar here.
+	for _, s := range servers {
+		if err := errors.Join(
+			validateToken("backend", s.Backend),
+			validateToken("server", s.Server),
+		); err != nil {
+			return err
+		}
+	}
+	for _, b := range backends {
+		if err := validateToken("backend", b); err != nil {
+			return err
+		}
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if len(d.servers)+len(servers) > api.MaxPendingServerDeletes {
-		return fmt.Errorf("%w: %d pending server deletes", ErrDeferralOverflow, len(d.servers))
+	if pending := d.outstandingServersLocked(); pending+len(servers) > api.MaxPendingServerDeletes {
+		return fmt.Errorf("%w: %d pending server deletes", ErrDeferralOverflow, pending)
 	}
-	if len(d.backends)+len(backends) > api.MaxPendingBackendDeletes {
-		return fmt.Errorf("%w: %d pending backend deletes", ErrDeferralOverflow, len(d.backends))
+	if pending := d.outstandingBackendsLocked(); pending+len(backends) > api.MaxPendingBackendDeletes {
+		return fmt.Errorf("%w: %d pending backend deletes", ErrDeferralOverflow, pending)
 	}
 	for _, s := range servers {
 		d.servers = append(d.servers, attempt[ServerRef]{Target: s})
@@ -121,25 +140,53 @@ func (d *Deferrals) Enqueue(servers []ServerRef, backends []string) error {
 	for _, b := range backends {
 		d.backends = append(d.backends, attempt[string]{Target: b})
 	}
+	return nil
+}
+
+// Wake starts the drain. It is separate from Enqueue because the queue holds
+// the tail of a sequence whose head — `disable server` — the apply still has
+// to run: a `wait …-removable` issued before it would burn its budget on a
+// server that is still taking traffic. A missed wake costs one ticker period.
+func (d *Deferrals) Wake() {
 	select {
 	case d.wake <- struct{}{}:
 	default:
 	}
-	return nil
 }
 
-// Pending reports what is still queued, for /v1/state.
+// Pending reports what is still to happen, for /v1/state: the queue plus the
+// delete the drain is inside, which is outstanding until it reports back.
 func (d *Deferrals) Pending() api.PendingDeletes {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	out := api.PendingDeletes{}
+	if d.inFlightServer != nil {
+		out.Servers = append(out.Servers, d.inFlightServer.String())
+	}
 	for _, s := range d.servers {
 		out.Servers = append(out.Servers, s.Target.String())
+	}
+	if d.inFlightBackend != nil {
+		out.Backends = append(out.Backends, *d.inFlightBackend)
 	}
 	for _, b := range d.backends {
 		out.Backends = append(out.Backends, b.Target)
 	}
 	return out
+}
+
+func (d *Deferrals) outstandingServersLocked() int {
+	if d.inFlightServer == nil {
+		return len(d.servers)
+	}
+	return len(d.servers) + 1
+}
+
+func (d *Deferrals) outstandingBackendsLocked() int {
+	if d.inFlightBackend == nil {
+		return len(d.backends)
+	}
+	return len(d.backends) + 1
 }
 
 // Start drains the queue until the context ends. The ticker is what picks up
@@ -160,33 +207,88 @@ func (d *Deferrals) Start(ctx context.Context) error {
 	}
 }
 
-// drain empties the queue once. Every iteration is bounded by the snapshot it
-// took, so a requeue cannot spin.
+// drain works the queue once, one item at a time, so a delete that is still
+// running counts against the caps and shows up in /v1/state. The pass is
+// bounded by the queue it found, so a requeue cannot spin.
 func (d *Deferrals) drain(ctx context.Context) {
-	servers, backends := d.take()
-	for _, s := range servers {
+	servers, backends := d.queued()
+	for range servers {
 		if ctx.Err() != nil {
 			return
 		}
-		d.deleteServer(s)
+		a, took := d.takeServer()
+		if !took {
+			break
+		}
+		if err := d.deleteServer(a); err != nil {
+			d.requeueServer(a, err)
+			continue
+		}
+		d.completeServer()
 	}
-	for _, b := range backends {
+	for range backends {
 		if ctx.Err() != nil {
 			return
 		}
-		d.deleteBackend(b)
+		a, took := d.takeBackend()
+		if !took {
+			return
+		}
+		if err := d.deleteBackend(a); err != nil {
+			d.requeueBackend(a, err)
+			continue
+		}
+		d.completeBackend()
 	}
 }
 
-func (d *Deferrals) take() (servers []attempt[ServerRef], backends []attempt[string]) {
+func (d *Deferrals) queued() (servers, backends int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	servers, backends = d.servers, d.backends
-	d.servers, d.backends = nil, nil
-	return servers, backends
+	return len(d.servers), len(d.backends)
 }
 
-func (d *Deferrals) deleteServer(a attempt[ServerRef]) {
+func (d *Deferrals) takeServer() (attempt[ServerRef], bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.servers) == 0 {
+		return attempt[ServerRef]{}, false
+	}
+	a := d.servers[0]
+	d.servers = d.servers[1:]
+	target := a.Target
+	d.inFlightServer = &target
+	return a, true
+}
+
+func (d *Deferrals) takeBackend() (attempt[string], bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.backends) == 0 {
+		return attempt[string]{}, false
+	}
+	a := d.backends[0]
+	d.backends = d.backends[1:]
+	target := a.Target
+	d.inFlightBackend = &target
+	return a, true
+}
+
+func (d *Deferrals) completeServer() {
+	d.mu.Lock()
+	d.inFlightServer = nil
+	d.mu.Unlock()
+	d.observer.DeferredDeleteDone("server")
+}
+
+func (d *Deferrals) completeBackend() {
+	d.mu.Lock()
+	d.inFlightBackend = nil
+	d.mu.Unlock()
+	d.observer.DeferredDeleteDone("backend")
+}
+
+func (d *Deferrals) deleteServer(a attempt[ServerRef]) error {
 	ref := a.Target.String()
 	err := d.run(fmt.Sprintf("wait %d srv-removable %s", deferredWaitMs, ref), expectDone)
 	if errors.Is(err, ErrWaitExpired) {
@@ -195,26 +297,17 @@ func (d *Deferrals) deleteServer(a attempt[ServerRef]) {
 		}
 	}
 	if err != nil {
-		d.requeueServer(a, err)
-		return
+		return err
 	}
-	if err := d.run("del server "+ref, "Server deleted"); err != nil {
-		d.requeueServer(a, err)
-		return
-	}
-	d.observer.DeferredDeleteDone("server")
+	return d.run("del server "+ref, "Server deleted")
 }
 
-func (d *Deferrals) deleteBackend(a attempt[string]) {
+func (d *Deferrals) deleteBackend(a attempt[string]) error {
 	err := d.run(fmt.Sprintf("wait %d be-removable %s", deferredWaitMs, a.Target), expectDone)
 	if err == nil {
 		err = d.run("del backend "+a.Target, "Backend deleted")
 	}
-	if err != nil {
-		d.requeueBackend(a, err)
-		return
-	}
-	d.observer.DeferredDeleteDone("backend")
+	return err
 }
 
 // run executes one deferred command and applies the same verdict rules as the
@@ -230,13 +323,15 @@ func (d *Deferrals) run(command, expect string) error {
 
 func (d *Deferrals) requeueServer(a attempt[ServerRef], cause error) {
 	a.Tries++
-	if a.Tries >= api.MaxDeferredAttempts {
+	give := a.Tries >= api.MaxDeferredAttempts
+	if give {
 		d.logger.Warn("giving up on a deferred server delete", "server", a.Target.String(), "error", cause)
-		d.observer.DeferredDeleteDeferred("server")
-		return
 	}
 	d.mu.Lock()
-	d.servers = append(d.servers, a)
+	if !give {
+		d.servers = append(d.servers, a)
+	}
+	d.inFlightServer = nil
 	d.mu.Unlock()
 	d.observer.DeferredDeleteDeferred("server")
 }
@@ -246,13 +341,15 @@ func (d *Deferrals) requeueServer(a attempt[ServerRef], cause error) {
 // reload removes it for good.
 func (d *Deferrals) requeueBackend(a attempt[string], cause error) {
 	a.Tries++
-	if a.Tries >= api.MaxDeferredAttempts {
+	give := a.Tries >= api.MaxDeferredAttempts
+	if give {
 		d.logger.Warn("giving up on a deferred backend delete", "backend", a.Target, "error", cause)
-		d.observer.DeferredDeleteDeferred("backend")
-		return
 	}
 	d.mu.Lock()
-	d.backends = append(d.backends, a)
+	if !give {
+		d.backends = append(d.backends, a)
+	}
+	d.inFlightBackend = nil
 	d.mu.Unlock()
 	d.observer.DeferredDeleteDeferred("backend")
 }

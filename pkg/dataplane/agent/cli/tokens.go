@@ -60,6 +60,18 @@ func validatePayloadValue(field, s string) error {
 	return nil
 }
 
+// validatePayloadBlock refuses content that would end its own payload block.
+// It is a refusal, never a rewrite: the bytes are a certificate or a map the
+// controller composed, and the agent edits neither.
+func validatePayloadBlock(payload string) error {
+	for line := range strings.SplitSeq(payload, "\n") {
+		if strings.TrimRight(line, "\r") == PayloadTerminator {
+			return fmt.Errorf("%w: a payload line is the terminator %q", ErrUnsafeToken, PayloadTerminator)
+		}
+	}
+	return nil
+}
+
 // validateEnum accepts one of a fixed set, so a typo cannot reach HAProxy as a
 // silently different command.
 func validateEnum(field, s string, allowed ...string) error {
