@@ -188,7 +188,8 @@ func TestApply_SecondApplyRunsAtRuntime(t *testing.T) {
 	assert.Equal(t, api.ResultRuntime, second.Result.Mode)
 	assert.Contains(t, second.Parts, "haproxy.cfg", "haproxy.cfg always travels whole")
 	assert.NotContains(t, second.Parts, "maps/host.map", "an unchanged file the agent holds must not travel")
-	assert.Empty(t, second.Plan, "a pod that holds a readable baseline needs no plan blob")
+	assert.NotEmpty(t, second.Plan,
+		"this apply moves the pod's applied plan, and a pod hands back only the blob of the plan it applied")
 	assert.Equal(t, plan1.ID, second.Manifest.ExpectedPrevPlanID)
 }
 
@@ -601,20 +602,64 @@ func TestApply_LeaderChangeReloadsNothing(t *testing.T) {
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
 	deployTo(t, previousLeader, bus, plan1, config1, aux1, "config_validation", endpoint)
 
-	// A different process, a higher epoch, and no memory of plan-1.
+	// Two deployments in the term, which is the normal case: the pod's stored
+	// blob has to follow its applied plan, not the epoch that first wrote it.
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	deployTo(t, previousLeader, bus, plan2, config2, aux2, "config_validation", endpoint)
+
+	// A different process, a higher epoch, and no memory of either plan.
 	newLeader := createTestDeployer(bus.EventBus)
 	newLeader.fence = &fixedFence{epoch: 2}
-	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
-	completed := deployTo(t, newLeader, bus, plan2, config2, aux2, "config_validation", endpoint)
+	plan3, config3, aux3 := renderFor("plan-3", "10.0.0.3", mapEntry)
+	completed := deployTo(t, newLeader, bus, plan3, config3, aux3, "config_validation", endpoint)
 
 	require.Equal(t, 1, completed.Succeeded)
 	applies := agent.Applies()
-	require.Len(t, applies, 2)
-	assert.Equal(t, api.ResultRuntime, applies[1].Result.Mode,
+	require.Len(t, applies, 3)
+	assert.Equal(t, api.ResultRuntime, applies[2].Result.Mode,
 		"a leader change must cost no reload: the pod's own blob is the baseline")
-	assert.Equal(t, uint64(2), applies[1].Manifest.Token.LeaderEpoch)
-	assert.NotEmpty(t, applies[1].Plan, "the new leader restamps the blob with its own epoch")
+	assert.Equal(t, uint64(2), applies[2].Manifest.Token.LeaderEpoch)
+	assert.NotEmpty(t, applies[2].Plan, "the new leader restamps the blob with its own epoch")
 	assert.Equal(t, 0, completed.ReloadsTriggered)
+}
+
+// A pod already on this render holds the blob that describes it, so the apply
+// that changes nothing must not repeat it.
+func TestApply_UnchangedRenderDoesNotRepeatThePlanBlob(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan, config, aux := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan, config, aux, "config_validation", endpoint)
+	deployTo(t, component, bus, plan, config, aux, "config_validation", endpoint)
+
+	applies := agent.Applies()
+	require.Len(t, applies, 2)
+	assert.NotEmpty(t, applies[0].Plan)
+	assert.Empty(t, applies[1].Plan, "the pod already reports the blob for this plan")
+}
+
+// One deployment that needs several fenced applies stores one blob: every chunk
+// carries the same plan id, so repeating it would send the same 100-200 KB
+// again per chunk.
+func TestApply_ChunkedApplyCarriesThePlanBlobOnce(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderWithServers("plan-1", 10)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	plan2, config2, aux2 := renderWithServers("plan-2", 20)
+	deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+
+	applies := agent.Applies()
+	require.Len(t, applies, 3)
+	assert.NotEmpty(t, applies[1].Plan)
+	assert.Empty(t, applies[2].Plan)
+	assert.NotEmpty(t, agent.State().AppliedPlan, "the pod must still answer with a baseline")
 }
 
 // More ops than one apply may carry are split into fenced chunks, each one

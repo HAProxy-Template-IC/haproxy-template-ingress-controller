@@ -135,10 +135,30 @@ func (a *Agent) apply(req *applyRequest) outcome {
 		return a.nack(m, "verify", fmt.Sprintf("part %q does not match its manifest digest", path))
 	}
 	a.promoteLKG(m)
-	if m.Mode == api.ModeRevertLKG {
-		return a.revertLKG(m)
+	out := a.runMode(req)
+	a.commitPlanBlob(req)
+	return out
+}
+
+// runMode is the apply itself: a revert lands the last known good set, anything
+// else the manifest's own.
+func (a *Agent) runMode(req *applyRequest) outcome {
+	if req.manifest.Mode == api.ModeRevertLKG {
+		return a.revertLKG(&req.manifest)
 	}
 	return a.transact(req)
+}
+
+// commitPlanBlob keeps the plan of the apply that just landed, and only while
+// it is the plan the pod applied: an apply that moves the applied plan on
+// without carrying one leaves the pod with no baseline to hand back, which is
+// what the real agent's PlanBlobPlanID does.
+func (a *Agent) commitPlanBlob(req *applyRequest) {
+	if len(req.plan) == 0 || a.state.AppliedPlanID != req.manifest.PlanID {
+		return
+	}
+	a.appliedPlan = req.plan
+	a.planBlobPlanID = req.manifest.PlanID
 }
 
 // fence is the write gate, and the only three reasons an apply is answered with
@@ -351,9 +371,6 @@ func (a *Agent) storeFiles(req *applyRequest) bool {
 		// Kinds accumulate rather than replace, so a revert to the LKG set
 		// still classifies paths this manifest happens not to carry.
 		a.kinds[f.Path] = f.Kind
-	}
-	if len(req.plan) > 0 {
-		a.state.AppliedPlan = req.plan
 	}
 	changed := !maps.Equal(a.state.Files, next)
 	a.state.Files = next

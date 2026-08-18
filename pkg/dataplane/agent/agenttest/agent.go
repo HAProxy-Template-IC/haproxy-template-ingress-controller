@@ -62,10 +62,14 @@ type Agent struct {
 	username string
 	password string
 
-	mu            sync.Mutex
-	state         api.State
-	kinds         map[string]string
-	lkgFiles      map[string]api.FileAt
+	mu sync.Mutex
+	// state carries no AppliedPlan: the stored blob is handed back only while
+	// it describes the applied plan, which snapshot decides.
+	state          api.State
+	appliedPlan    []byte
+	planBlobPlanID string
+	kinds          map[string]string
+	lkgFiles       map[string]api.FileAt
 	reloadPending bool
 	rejectedOps   map[string]struct{}
 	conflictOnce  string
@@ -262,6 +266,9 @@ func (a *Agent) snapshot() api.State {
 	state.Files = make(map[string]api.FileAt, len(a.state.Files))
 	for path, at := range a.state.Files {
 		state.Files[path] = at
+	}
+	if a.planBlobPlanID != "" && a.planBlobPlanID == a.state.AppliedPlanID {
+		state.AppliedPlan = a.appliedPlan
 	}
 	return state
 }

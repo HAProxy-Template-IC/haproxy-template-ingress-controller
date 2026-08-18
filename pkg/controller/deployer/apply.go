@@ -162,12 +162,15 @@ func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutco
 	if attempt.full || len(chunks) == 0 {
 		chunks = [][]api.Op{nil}
 	}
+	// The blob rides the first chunk only: every chunk carries the same plan id,
+	// so the pod stores it once and the other chunks would repeat 100-200 KB.
+	blob := attempt.sendsPlanBlob()
 	for i, ops := range chunks {
 		manifest := attempt.req.manifest(&decision, ops, prev, attempt.full)
 		if i > 0 {
 			manifest.InPlaceOps = nil
 		}
-		result, err := c.send(ctx, attempt, manifest)
+		result, err := c.send(ctx, attempt, manifest, blob && i == 0)
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +190,7 @@ func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutco
 // send performs one apply, resending the file parts the agent turns out not to
 // hold. Only that resend is retried here; a baseline conflict belongs to the
 // caller, which has to diff again.
-func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.Manifest) (*api.ApplyResult, error) {
+func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.Manifest, withBlob bool) (*api.ApplyResult, error) {
 	held := attempt.state.Files
 	if attempt.full {
 		held = nil
@@ -197,7 +200,7 @@ func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.M
 		if err != nil {
 			return nil, err
 		}
-		result, err := attempt.client.Apply(ctx, manifest, parts, attempt.planBlob())
+		result, err := attempt.client.Apply(ctx, manifest, parts, attempt.planBlob(withBlob))
 		var missing *agentclient.MissingError
 		if !errors.As(err, &missing) || held == nil {
 			return result, err
@@ -208,15 +211,23 @@ func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.M
 	}
 }
 
-// planBlob carries the plan to a pod that could otherwise not answer with a
-// usable baseline later: it holds none, it stored one from another leader, a
-// conflict proved its copy stale, or this is the drift pass that refreshes it.
-func (a *podApply) planBlob() io.Reader {
+// sendsPlanBlob reports whether this apply has to carry the plan. A pod hands
+// its stored blob back only while it describes the plan it applied, so every
+// apply that moves that plan on has to bring the new one: the pod is what a
+// leader with a cold cache reads its baseline from, and a pod with none costs
+// a full-state reload.
+func (a *podApply) sendsPlanBlob() bool {
 	if len(a.req.blob) == 0 {
-		return nil
+		return false
 	}
-	if !a.full && !a.resend && !a.req.verify &&
-		a.state.AppliedPlanID != "" && a.state.AppliedToken.LeaderEpoch == a.req.token.LeaderEpoch {
+	if a.full || a.resend || a.req.verify {
+		return true
+	}
+	return a.state.AppliedPlanID != a.req.planID || len(a.state.AppliedPlan) == 0
+}
+
+func (a *podApply) planBlob(send bool) io.Reader {
+	if !send {
 		return nil
 	}
 	return bytes.NewReader(a.req.blob)
