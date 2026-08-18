@@ -31,9 +31,10 @@ import (
 
 // The agent's 409 reasons (api.Conflict.Reason).
 const (
-	conflictPrevMismatch    = "prev_mismatch"
-	conflictStaleEpoch      = "stale_epoch"
-	conflictUnknownBaseline = "unknown_baseline"
+	conflictPrevMismatch      = "prev_mismatch"
+	conflictStaleEpoch        = "stale_epoch"
+	conflictUnknownBaseline   = "unknown_baseline"
+	conflictWorkerOpsMismatch = "worker_ops_mismatch"
 )
 
 const (
@@ -128,13 +129,18 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 			return nil, err
 		}
 		attempt.full = attempt.full || conflict.Conflict.Reason == conflictUnknownBaseline
-		attempt.notes = append(attempt.notes, "the agent's baseline had moved on ("+conflict.Conflict.Reason+")")
 		c.Logger().Info("Agent rejected the apply against its baseline, re-reading its state",
 			"pod", endpoint.PodName, "reason", conflict.Conflict.Reason, "full_state", attempt.full)
 		if attempt.state, err = client.State(ctx, false); err != nil {
 			return nil, fmt.Errorf("re-reading agent state: %w", err)
 		}
 		c.notePodPlans(endpoint, attempt.state.AppliedPlanID, attempt.state.RunningPlanID, attempt.state.WorkerOpsPlanID)
+		if conflict.Conflict.Reason == conflictWorkerOpsMismatch {
+			// Only the worker moved on (its pacer fired between the state read
+			// and the apply); the applied plan the blob describes is intact.
+			continue
+		}
+		attempt.notes = append(attempt.notes, "the agent's baseline had moved on ("+conflict.Conflict.Reason+")")
 		// A conflict means this pod's stored plan is not the one this
 		// controller composed against; the next apply carries it again.
 		attempt.resend = true

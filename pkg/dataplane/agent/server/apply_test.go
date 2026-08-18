@@ -703,7 +703,7 @@ func TestAPacedReloadRunsTheInPlaceOpsAtOnce(t *testing.T) {
 	assert.Contains(t, h.model.MapEntries("maps/host.map"), haproxytest.MapEntry{Key: "new.example.com", Value: "be-b"})
 }
 
-func TestAnInPlaceOpOnAStaleWorkerBaselineInvalidatesThePod(t *testing.T) {
+func TestAnInPlaceOpOnAStaleWorkerBaselineIsAConflict(t *testing.T) {
 	h := newHarness(t, withReloadInterval(time.Minute))
 	files := baseFiles("global\n")
 	m := buildManifest("plan-1", files)
@@ -724,11 +724,11 @@ func TestAnInPlaceOpOnAStaleWorkerBaselineInvalidatesThePod(t *testing.T) {
 	third.ExpectedWorkerOpsPlanID = "plan-from-another-life"
 	third.WorkerOpsPlanID = "plan-from-another-life-after"
 	third.InPlaceOps = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "example.com", Value: "be-c"}}
-	result := h.apply(&third, next)
+	conflict := h.applyConflict(&third, next)
 
-	require.NotNil(t, result.Error)
-	assert.Equal(t, "in_place", result.Error.Stage)
-	assert.Empty(t, h.state(false).AppliedPlanID, "the pod's baseline is invalidated, not silently reused")
+	assert.Equal(t, "worker_ops_mismatch", conflict.Reason)
+	assert.Equal(t, scheduled.WorkerOpsPlanID, conflict.WorkerOpsPlanID, "the caller re-diffs against this worker")
+	assert.Equal(t, scheduled.AppliedPlanID, h.state(false).AppliedPlanID, "nothing was written or invalidated")
 }
 
 // A runtime apply moves the worker to the applied plan, so an in-place batch

@@ -172,8 +172,8 @@ func (a *Agent) commitPlanBlob(req *applyRequest) {
 }
 
 // fence is the write gate, and the only three reasons an apply is answered with
-// a 409. The worker-ops baseline is not one of them: it guards the in-place
-// batch, which is answered after the files have landed.
+// a 409, the worker-ops baseline included when the in-place batch is going to
+// run: nothing is written, the caller re-diffs against the worker as it is.
 func (a *Agent) fence(m *api.Manifest) *api.Conflict {
 	if reason := a.conflictOnce; reason != "" {
 		a.conflictOnce = ""
@@ -191,6 +191,8 @@ func (a *Agent) fence(m *api.Manifest) *api.Conflict {
 		return a.conflict("prev_mismatch")
 	case m.ExpectedPrevToken != a.state.AppliedToken:
 		return a.conflict("prev_mismatch")
+	case a.inPlaceWillRun(m) && m.ExpectedWorkerOpsPlanID != a.state.WorkerOpsPlanID:
+		return a.conflict("worker_ops_mismatch")
 	}
 	return nil
 }
@@ -301,6 +303,12 @@ func (a *Agent) scheduled(m *api.Manifest) outcome {
 	a.advance(m)
 	a.state.WorkerOpsPlanID = m.WorkerOpsPlanID
 	return a.ack(m, api.ResultScheduled, m.InPlaceOps, reload)
+}
+
+// inPlaceWillRun mirrors the real agent's activate: the in-place batch runs
+// while a reload is pending. The fake never paces, so that is the only case.
+func (a *Agent) inPlaceWillRun(m *api.Manifest) bool {
+	return len(m.InPlaceOps) > 0 && a.reloadPending
 }
 
 // invalidate answers an in-place batch the worker did not take: an ACK that

@@ -316,6 +316,38 @@ func TestApply_PrevMismatchRediffsFromTheAgentState(t *testing.T) {
 	assert.NotEmpty(t, applies[2].Plan, "after a conflict the pod's stored plan is not known to be this controller's")
 }
 
+// The worker moved on between the state read and the apply (its pacer fired):
+// the in-place batch is composed against a worker the pod no longer has, the
+// agent refuses without writing, and the deployer re-diffs against the worker
+// as it is now — the pod's applied baseline is intact, so nothing degrades to
+// a full-state reload.
+func TestApply_WorkerOpsMismatchRediffsAgainstTheWorker(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	agent.SetReloadPending(true)
+	agent.ConflictOnce("worker_ops_mismatch")
+
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+
+	applies := agent.Applies()
+	require.Len(t, applies, 3, "the conflicting apply, then the re-diffed one")
+	assert.Equal(t, "worker_ops_mismatch", applies[1].Conflict.Reason)
+	assert.Nil(t, applies[1].Result, "a conflicted apply writes nothing")
+	third := applies[2]
+	assert.Equal(t, api.ModeAuto, third.Manifest.Mode, "the applied baseline is intact: no full-state reload")
+	assert.Equal(t, []string{api.OpServerSetAddr}, opKinds(third.Manifest.InPlaceOps), "re-diffed in-place batch")
+	require.NotNil(t, third.Result)
+	assert.True(t, third.Result.OK)
+	assert.Equal(t, 0, completed.Failed)
+	assert.Equal(t, 1, completed.PendingReloads)
+}
+
 // A baseline the agent dropped (a refused apply, a restart) cannot be diffed
 // against: the retry carries the complete file set and a reload.
 func TestApply_UnknownBaselineFallsBackToFullState(t *testing.T) {

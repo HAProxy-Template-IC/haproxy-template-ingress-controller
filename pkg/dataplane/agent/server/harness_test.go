@@ -234,6 +234,16 @@ func (h *harness) postWithPlan(m *api.Manifest, list []file, plan []byte, omit .
 	return response.StatusCode, raw
 }
 
+// applyConflict posts and requires a 409, returning the conflict.
+func (h *harness) applyConflict(m *api.Manifest, list []file) api.Conflict {
+	h.t.Helper()
+	status, raw := h.post(m, list)
+	require.Equal(h.t, http.StatusConflict, status, string(raw))
+	conflict := api.Conflict{}
+	require.NoError(h.t, json.Unmarshal(raw, &conflict))
+	return conflict
+}
+
 // apply posts and requires a 200, returning the ACK.
 func (h *harness) apply(m *api.Manifest, list []file) api.ApplyResult {
 	h.t.Helper()

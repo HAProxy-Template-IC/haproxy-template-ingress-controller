@@ -273,7 +273,7 @@ type Conflict struct {
 	RunningPlanID   string `json:"running_plan_id"`
 	WorkerOpsPlanID string `json:"worker_ops_plan_id"`
 	LKGPlanID       string `json:"lkg_plan_id"`
-	Reason          string `json:"reason"` // prev_mismatch|stale_epoch|unknown_baseline
+	Reason          string `json:"reason"` // prev_mismatch|stale_epoch|unknown_baseline|worker_ops_mismatch
 }
 
 // Missing is the body of a 409 when file parts are missing: resend these.

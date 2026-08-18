@@ -306,10 +306,11 @@ func TestPendingReloadCoalescesAndRunsOnlyInPlaceOps(t *testing.T) {
 	assert.Len(t, applies[1].Manifest.InPlaceOps, 1)
 }
 
-// TestInPlaceOpsOnAStaleWorkerBaselineAreNotAConflict pins the shape the real
-// agent answers with: the files land, the apply is scheduled, and the error
-// invalidates the pod instead of coming back as a 409 the caller would retry.
-func TestInPlaceOpsOnAStaleWorkerBaselineAreNotAConflict(t *testing.T) {
+// TestInPlaceOpsOnAStaleWorkerBaselineAreAConflict pins the shape the real
+// agent answers with: the worker moved on since the controller looked (its
+// pacer fired), so nothing is written and the caller re-diffs against the
+// worker as it is now — a 409 like any other baseline mismatch.
+func TestInPlaceOpsOnAStaleWorkerBaselineAreAConflict(t *testing.T) {
 	t.Parallel()
 	agent := agenttest.New(t)
 	c := newClient(t, agent)
@@ -326,19 +327,16 @@ func TestInPlaceOpsOnAStaleWorkerBaselineAreNotAConflict(t *testing.T) {
 	m.WorkerOpsPlanID = "plan-from-another-life-after"
 	m.InPlaceOps = []api.Op{{Kind: api.OpMapSet, Path: "maps/host.map", Key: "a", Value: "b"}}
 
-	result, err := c.Apply(context.Background(), m, parts, nil)
-	require.NoError(t, err)
-	assert.True(t, result.OK)
-	assert.Equal(t, api.ResultScheduled, result.Mode)
-	require.NotNil(t, result.Error)
-	assert.Equal(t, "in_place", result.Error.Stage)
-	assert.Empty(t, result.OpResults, "the batch never reached the worker")
+	_, err := c.Apply(context.Background(), m, parts, nil)
+	var conflict *client.ConflictError
+	require.ErrorAs(t, err, &conflict)
+	assert.Equal(t, "worker_ops_mismatch", conflict.Conflict.Reason)
+	assert.Equal(t, "plan-1", conflict.Conflict.WorkerOpsPlanID, "the caller re-diffs against this worker")
 
 	state := agent.State()
-	assert.Empty(t, state.AppliedPlanID, "the next apply must be full state plus a reload")
-	assert.Empty(t, state.WorkerOpsPlanID)
-	assert.Equal(t, "global\n  nbthread 4\n", string(agent.Applies()[1].Parts["haproxy.cfg"]))
-	assert.Equal(t, renderplan.DigestString("global\n  nbthread 4\n"), state.Files["haproxy.cfg"].Digest)
+	assert.Equal(t, "plan-1", state.AppliedPlanID, "nothing was written or invalidated")
+	assert.Equal(t, "plan-1", state.WorkerOpsPlanID)
+	assert.Equal(t, renderplan.DigestString("global\n"), state.Files["haproxy.cfg"].Digest)
 }
 
 // TestScheduledApplyWithoutInPlaceOpsKeepsTheWorkerBaseline pins that nothing
