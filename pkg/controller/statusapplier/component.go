@@ -315,13 +315,16 @@ func (c *Component) handleResourcesApplied(ctx context.Context, event *events.Re
 // Outcome mapping:
 //   - Total == 0: nothing was deployed (no HAProxy pods yet). No-op — not a
 //     failure; leave the status where it is.
-//   - Succeeded == Total: every instance took the config, so "deployed"
+//   - Succeeded == Total: every instance runs the config, so "deployed"
 //     (Programmed=True) is true of the whole data plane.
-//   - Succeeded < Total: apply "deployFailed". Gateway API defines Programmed as
-//     the data plane being configured, and a fleet where one replica still serves
+//   - Failed > 0: apply "deployFailed". Gateway API defines Programmed as the
+//     data plane being configured, and a fleet where one replica still serves
 //     the old config is not that — a request round-robined to it gets the old
 //     routing (503 SC--, see ingress_rolling_restart_test.go). Per-endpoint detail
 //     surfaces independently via InstanceDeploymentFailedEvent.
+//   - Otherwise every pod accepted the config behind a paced reload: neither
+//     variant applies yet. The Deployer publishes a DeploymentSkippedEvent
+//     once the fleet is observed running it.
 func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events.DeploymentCompletedEvent) {
 	// Zero-endpoint deployment (no HAProxy pods discovered yet) doesn't actually
 	// put any HAProxy on the new config — that's "nothing deployed", not a
@@ -332,14 +335,15 @@ func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events
 	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
 		return
 	}
-	// Anything short of the whole fleet is not Programmed. Reporting it as
-	// deployed advertises an address the fleet does not uniformly serve, which
-	// external-dns and cert-manager then act on.
-	if event.Succeeded < event.Total {
+	switch {
+	case event.Succeeded == event.Total:
+		c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseDeployed)
+	case event.Failed > 0:
+		// Anything short of the whole fleet is not Programmed. Reporting it as
+		// deployed advertises an address the fleet does not uniformly serve,
+		// which external-dns and cert-manager then act on.
 		c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseDeployFailed)
-		return
 	}
-	c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseDeployed)
 }
 
 // handleDeploymentSkipped applies the "deployed" variant when the deployer

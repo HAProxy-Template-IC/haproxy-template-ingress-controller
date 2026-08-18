@@ -149,6 +149,7 @@ func (c *Component) deployToEndpoints(
 
 	c.publishCompleted(event, deploymentID, podSetHash, state, time.Since(startTime).Milliseconds())
 	c.publishDeployedConfig(event, int(atomic.LoadInt32(&state.ackCount)))
+	c.observeConvergence(event, podSetHash, state)
 }
 
 // reportUndeployable completes a deployment that cannot be executed: a render
@@ -244,6 +245,39 @@ type deploymentState struct {
 	operationBreakdown map[string]int
 	stoodDown          bool
 	pendingReloadUntil time.Time
+	running            map[string]string // pod → the plan its worker runs, from its ACK
+}
+
+// noteRunning records which plan a pod's worker runs after its apply.
+func (s *deploymentState) noteRunning(endpoint *dataplane.Endpoint, planID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running == nil {
+		s.running = map[string]string{}
+	}
+	s.running[podKey(endpoint)] = planID
+}
+
+// fleetRunningPlan is the plan every pod reported running, or "" when a pod
+// did not answer or the fleet disagrees.
+func (s *deploymentState) fleetRunningPlan(total int) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if total == 0 || len(s.running) != total {
+		return ""
+	}
+	consensus := ""
+	for _, planID := range s.running {
+		switch {
+		case planID == "":
+			return ""
+		case consensus == "":
+			consensus = planID
+		case consensus != planID:
+			return ""
+		}
+	}
+	return consensus
 }
 
 // notePendingReload records a pod that scheduled its reload for later.

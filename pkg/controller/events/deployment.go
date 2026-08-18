@@ -285,10 +285,8 @@ type DeploymentSkippedEvent struct {
 	// can apply the same "is there actually a data plane to talk to?" guard.
 	Total int
 
-	// Reason is a short tag describing why the deployment was skipped.
-	// Currently always "config_unchanged"; left as a string to leave room
-	// for future skip causes (e.g. "drift_check_only") without an event
-	// schema change.
+	// Reason is a short tag describing why no deployment ran for this
+	// config: SkipReasonConfigUnchanged or SkipReasonReloadObserved.
 	Reason string
 
 	// ConfigHash is the content checksum of the rendered HAProxy

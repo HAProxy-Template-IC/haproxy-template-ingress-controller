@@ -916,6 +916,47 @@ func opKinds(ops []api.Op) []string {
 	return kinds
 }
 
+// Under continuous change a render's paced reload fires between two
+// deployments, and the deployment after it is itself dispatched behind the
+// next reload — so its own completion never says "the fleet runs it". The
+// deployer reads that from the ACKs of the deployment that follows and
+// publishes the earlier render's deployed status then.
+func TestApply_ObservedReloadPublishesTheEarlierRendersStatus(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	agent.SetReloadPending(true)
+
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	require.Equal(t, 1, completed.PendingReloads)
+	testutil.AssertNoEvent[*events.DeploymentSkippedEvent](t, bus.Events, testutil.NoEventTimeout)
+
+	// The reload fires and the next render arrives inside the next window.
+	agent.FirePendingReload()
+	agent.SetReloadPending(true)
+	plan3, config3, aux3 := renderFor("plan-3", "10.0.0.3", mapEntry)
+	completed = deployTo(t, component, bus, plan3, config3, aux3, "config_validation", endpoint)
+	require.Equal(t, 1, completed.PendingReloads)
+	require.Equal(t, 0, completed.Succeeded, "the third render itself is not running yet")
+
+	observed := testutil.WaitForEvent[*events.DeploymentSkippedEvent](t, bus.Events, testutil.LongTimeout)
+	assert.Equal(t, events.SkipReasonReloadObserved, observed.Reason)
+	assert.Equal(t, "checksum-"+plan2.ID, observed.ConfigHash, "the render the fleet was observed running")
+	assert.Equal(t, 1, observed.Total)
+
+	// Once the fleet converges on the newest render its own completion
+	// carries the status; nothing older is re-published.
+	agent.FirePendingReload()
+	completed = deployTo(t, component, bus, plan3, config3, aux3, "config_validation", endpoint)
+	require.Equal(t, 1, completed.Succeeded)
+	testutil.AssertNoEvent[*events.DeploymentSkippedEvent](t, bus.Events, testutil.NoEventTimeout)
+}
+
 // A runtime apply moves the worker to the applied plan. When a reload is
 // scheduled afterwards, the in-place batch is composed against that plan —
 // not against the plan of the last reload — so nothing the runtime apply

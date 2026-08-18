@@ -26,6 +26,7 @@ package agenttest
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -177,6 +178,21 @@ func (a *Agent) SetReloadPending(pending bool) {
 	if pending {
 		a.state.ReloadPendingAt = fixedTimestamp
 	}
+}
+
+// FirePendingReload is the pacer firing: the worker re-executes from the
+// applied file set, so the applied plan becomes the running one.
+func (a *Agent) FirePendingReload() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.reloadPending {
+		return
+	}
+	a.performReload()
+	a.state.RunningPlanID = a.state.AppliedPlanID
+	a.state.WorkerOpsPlanID = a.state.AppliedPlanID
+	a.state.LKGPlanID = a.state.AppliedPlanID
+	a.lkgFiles = maps.Clone(a.state.Files)
 }
 
 // SetAppliedEpoch raises the leader epoch the fake has accepted. The agent

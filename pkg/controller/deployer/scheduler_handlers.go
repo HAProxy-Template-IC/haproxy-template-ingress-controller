@@ -206,7 +206,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 		// signal the status would stay at the CRD default forever.
 		s.eventBus.Publish(events.NewDeploymentSkippedEvent(
 			len(endpoints),
-			"config_unchanged",
+			events.SkipReasonConfigUnchanged,
 			configHash,
 			podSetHash,
 			statusPatches,

@@ -112,6 +112,9 @@ type Component struct {
 	invalidBaseline map[string]struct{}
 	validatedPlanID string
 	observedPlans   map[string][]string
+	// awaiting are the renders the fleet accepted behind a paced reload, in
+	// dispatch order, until a later deployment observes the fleet running one.
+	awaiting []awaitingRender
 
 	// Deployment cancellation support
 	cancelMu            sync.Mutex
@@ -184,6 +187,7 @@ func (c *Component) Start(ctx context.Context) error {
 	c.clients.Close()
 	c.renderSeq.Store(0)
 	c.clearBaselineInvalidations()
+	c.forgetAwaitingConvergence()
 
 	c.ctx = ctx
 	controlCtx, stopControl := context.WithCancel(ctx)

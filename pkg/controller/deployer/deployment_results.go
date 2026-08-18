@@ -103,6 +103,7 @@ func (c *Component) handleEndpointSuccess(
 
 	c.clearBaselineInvalidation(endpoint)
 	c.recordAppliedOps(endpoint, result.Mode, outcome.sent)
+	state.noteRunning(endpoint, result.RunningPlanID)
 
 	c.publishPodStatus(endpoint, event, applyResultToMetadata(outcome))
 
