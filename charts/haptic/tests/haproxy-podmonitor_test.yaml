@@ -8,7 +8,7 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: should scrape HAProxy's exporter and both vector exporters with the sidecar on
+  - it: should scrape HAProxy's exporter, the agent's, and both vector exporters with the sidecar on
     set:
       haproxy.monitoring.podMonitor.enabled: true
     asserts:
@@ -21,15 +21,18 @@ tests:
       - equal:
           path: spec.selector.matchLabels['app.kubernetes.io/component']
           value: loadbalancer
-      # HAProxy first: it is the endpoint every configuration has.
+      # HAProxy and the agent first: both are in every configuration.
       - equal:
           path: spec.podMetricsEndpoints[0].port
           value: stats
       - equal:
           path: spec.podMetricsEndpoints[1].port
-          value: vector-metrics
+          value: agent-metrics
       - equal:
           path: spec.podMetricsEndpoints[2].port
+          value: vector-metrics
+      - equal:
+          path: spec.podMetricsEndpoints[3].port
           value: vector-sizes
       # No scrape params: HAProxy applies the exclusion policy itself, so a
       # hand-written job gets the same exposition as this PodMonitor.
@@ -38,7 +41,7 @@ tests:
       # Every endpoint takes the same settings, so tuning `interval` never
       # requires knowing how many there are.
       - equal:
-          path: spec.podMetricsEndpoints[2].interval
+          path: spec.podMetricsEndpoints[3].interval
           value: 30s
 
   - it: should drop the sizes endpoint when no size family is enabled
@@ -48,12 +51,12 @@ tests:
     asserts:
       - lengthEqual:
           path: spec.podMetricsEndpoints
-          count: 2
+          count: 3
       - equal:
-          path: spec.podMetricsEndpoints[1].port
+          path: spec.podMetricsEndpoints[2].port
           value: vector-metrics
 
-  - it: should scrape only HAProxy with the sidecar off and no hub
+  - it: should scrape only HAProxy and the agent with the sidecar off and no hub
     set:
       haproxy.monitoring.podMonitor.enabled: true
       vector.enabled: false
@@ -63,10 +66,13 @@ tests:
     asserts:
       - lengthEqual:
           path: spec.podMetricsEndpoints
-          count: 1
+          count: 2
       - equal:
           path: spec.podMetricsEndpoints[0].port
           value: stats
+      - equal:
+          path: spec.podMetricsEndpoints[1].port
+          value: agent-metrics
 
   - it: should scrape the hub directly only when vector is off (auto resolves pod-routable)
     set:
@@ -76,12 +82,12 @@ tests:
     asserts:
       - lengthEqual:
           path: spec.podMetricsEndpoints
-          count: 2
+          count: 3
       - equal:
           path: spec.podMetricsEndpoints[0].port
           value: stats
       - equal:
-          path: spec.podMetricsEndpoints[1].port
+          path: spec.podMetricsEndpoints[2].port
           value: metrics
 
   - it: should leave the hub to vector's re-export when both are on
@@ -89,11 +95,12 @@ tests:
       haproxy.monitoring.podMonitor.enabled: true
       spoaHub.enabled: true
     asserts:
-      # stats + vector-metrics + vector-sizes; the hub is reached over loopback
-      # by vector, so a direct hub endpoint would double every spoa_* series.
+      # stats + agent-metrics + vector-metrics + vector-sizes; the hub is
+      # reached over loopback by vector, so a direct hub endpoint would double
+      # every spoa_* series.
       - lengthEqual:
           path: spec.podMetricsEndpoints
-          count: 3
+          count: 4
       - notContains:
           path: spec.podMetricsEndpoints
           content:
@@ -133,7 +140,7 @@ tests:
       - hasDocuments:
           count: 1
       - equal:
-          path: spec.podMetricsEndpoints[1].port
+          path: spec.podMetricsEndpoints[2].port
           value: metrics
 
   - it: should render on routable IPv6 addresses that a lossy zero-strip would mistake for loopback
@@ -148,7 +155,7 @@ tests:
       - hasDocuments:
           count: 1
       - equal:
-          path: spec.podMetricsEndpoints[1].port
+          path: spec.podMetricsEndpoints[2].port
           value: metrics
 
   - it: should render on [10::] too

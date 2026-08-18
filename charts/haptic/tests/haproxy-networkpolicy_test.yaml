@@ -106,3 +106,30 @@ tests:
               protocol: TCP
             - port: 443
               protocol: TCP
+
+  # The agent's Prometheus endpoint is a scrape target, so it rides the metrics
+  # rule rather than the controller-only rule, and it is NOT fenced out of the
+  # permissive rule.
+  - it: opens the agent metrics port to the metrics sources in restrictive mode
+    set:
+      haproxy.networkPolicy.allowExternal: false
+      haproxy.networkPolicy.allowedSources:
+        - podSelector: {}
+    asserts:
+      - contains:
+          path: spec.ingress[1].ports
+          content:
+            port: 5557
+            protocol: TCP
+
+  - it: does not fence the agent metrics port out of the permissive rule
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - protocol: TCP
+              port: 1
+              endPort: 5554
+            - protocol: TCP
+              port: 5556
+              endPort: 65535
