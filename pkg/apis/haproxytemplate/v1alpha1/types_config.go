@@ -321,11 +321,14 @@ type DataplaneConfig struct {
 	// +optional
 	Port int `json:"port,omitempty"`
 
-	// MinDeploymentInterval enforces minimum time between consecutive deployments.
+	// MinDeploymentInterval is the shortest interval between two HAProxy
+	// reloads of one pod. The chart passes it to the HAPTIC agent as
+	// --reload-interval-min: a reload inside the window is scheduled, never
+	// dropped, and the controller holds further renders until it fires. Runtime
+	// applies are never paced by it. At most 60s.
 	//
-	// This prevents rapid-fire deployments from hammering HAProxy instances.
-	// Format: Go duration string (e.g., "2s", "500ms")
-	// Default: 2s
+	// Format: Go duration string (e.g., "5s", "500ms")
+	// Default: 5s
 	// +optional
 	MinDeploymentInterval string `json:"minDeploymentInterval,omitempty"`
 
