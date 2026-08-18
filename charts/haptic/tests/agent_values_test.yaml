@@ -82,6 +82,55 @@ tests:
       - failedTemplate:
           errorMessage: 'haproxy.agent.logLevel "verbose" is invalid. Valid: trace, debug, info, warning, error.'
 
+  # haproxy.agent is the landing zone the migration guard above sends every
+  # operator to, so a typo lands here on exactly the values file that was just
+  # hand-edited.
+  - it: should reject an unknown haproxy.agent field
+    set:
+      haproxy.agent.loglevel: debug
+    asserts:
+      - failedTemplate:
+          errorMessage: 'haproxy.agent contains unknown field "loglevel". Valid fields: logLevel, service, resources, extraEnv.'
+
+  # Both durations become agent flags; above 60s the agent exits at startup and
+  # every HAProxy pod crash-loops.
+  - it: should reject a minDeploymentInterval above the agent ceiling
+    set:
+      controller.config.dataplane.minDeploymentInterval: 2m
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.dataplane.minDeploymentInterval is "2m"; the chart passes it to the agent, which accepts a Go duration of at most 60s and exits at startup on anything else. Set a value between 0 and 60s, for example 5s.'
+
+  - it: should reject a unitless minDeploymentInterval
+    set:
+      controller.config.dataplane.minDeploymentInterval: "120"
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.dataplane.minDeploymentInterval is "120"; the chart passes it to the agent, which accepts a Go duration of at most 60s and exits at startup on anything else. Set a value between 0 and 60s, for example 5s.'
+
+  - it: should reject a reloadVerificationTimeout above the agent ceiling
+    set:
+      controller.config.dataplane.reloadVerificationTimeout: 90s
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.dataplane.reloadVerificationTimeout is "90s"; the chart passes it to the agent, which accepts a Go duration of at most 60s and exits at startup on anything else. Set a value between 0 and 60s, for example 5s.'
+
+  - it: should accept both durations at the agent ceiling
+    set:
+      controller.config.dataplane.minDeploymentInterval: 60s
+      controller.config.dataplane.reloadVerificationTimeout: 1m
+    asserts:
+      - notFailedTemplate: {}
+
+  # Without the bundled fleet neither key becomes an agent flag; it paces the
+  # controller's own scheduler, where no ceiling applies.
+  - it: should accept a longer minDeploymentInterval when haproxy.enabled is false
+    set:
+      haproxy.enabled: false
+      controller.config.dataplane.minDeploymentInterval: 2m
+    asserts:
+      - notFailedTemplate: {}
+
   - it: should reject an agent metrics port that duplicates another pod listener
     set:
       haproxy.ports.agentMetrics: 8404

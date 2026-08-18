@@ -267,6 +267,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared source-IP rate limits run before Coraza and request-schema validation, so rejected floods do not consume API-gateway processing; consumer-keyed quotas run after native API-key/JWT authentication instead of falling back to source IP before the identity existed.
 - `spoaHub.plugins.<name>.enabled` template strings must resolve to exactly `true` or `false`; any other value fails the render instead of being silently coerced to disabled.
 - The chart fails the render when `controller.config.dataplane.mapsDir`, `sslCertsDir` or `generalStorageDir` point somewhere the bundled HAProxy pod cannot honour — a value outside the mounted volumes silently landed rendered files where the sidecars could not read them. Unaffected with `haproxy.enabled=false`.
+- The chart fails the render when `controller.config.dataplane.minDeploymentInterval` or `reloadVerificationTimeout` is not a Go duration of at most 60s. The chart passes both to the agent, which refuses a larger value and exits at startup, so every HAProxy pod would crash-loop. Unaffected with `haproxy.enabled=false`, where neither key becomes an agent flag.
+- An unknown key under `haproxy.agent` fails the render naming it, alongside the existing guard on the `haproxy.dataplane.*` keys it replaced.
 - The `app-root.map`, `mtls-error.map` and `hsts.map` builders collapse into one shared macro, and `pod-names.map` is built from a collection pipeline. Rendered output is unchanged.
 
 #### Removed
