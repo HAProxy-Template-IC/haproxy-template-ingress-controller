@@ -69,8 +69,9 @@ type HAProxy struct {
 	mu sync.Mutex
 	m  Model
 
-	workerPath string
-	masterPath string
+	workerPath     string
+	masterPath     string
+	masterListener net.Listener
 }
 
 // Backend is one proxy of the model.
@@ -130,8 +131,16 @@ func Start(tb testing.TB) *HAProxy {
 		masterPath: filepath.Join(dir, "haproxy-master.sock"),
 	}
 	h.serve(tb, h.workerPath)
-	h.serve(tb, h.masterPath)
+	h.masterListener = h.serve(tb, h.masterPath)
 	return h
+}
+
+// StopMaster closes the master socket, which is what the agent sees while the
+// HAProxy container is restarting: reload and show proc fail at the transport,
+// with no verdict on any configuration.
+func (h *HAProxy) StopMaster() {
+	_ = h.masterListener.Close()
+	_ = os.Remove(h.masterPath)
 }
 
 // WorkerSocket is the stats socket every runtime command goes to.
@@ -184,7 +193,7 @@ func (h *HAProxy) HasBackend(name string) bool {
 	return exists
 }
 
-func (h *HAProxy) serve(tb testing.TB, path string) {
+func (h *HAProxy) serve(tb testing.TB, path string) net.Listener {
 	tb.Helper()
 	listener, err := net.Listen("unix", path)
 	if err != nil {
@@ -204,23 +213,25 @@ func (h *HAProxy) serve(tb testing.TB, path string) {
 			go h.handle(conn, master)
 		}
 	}()
+	return listener
 }
 
 func (h *HAProxy) handle(conn net.Conn, master bool) {
 	defer func() { _ = conn.Close() }()
 	reader := bufio.NewReader(conn)
-	line, err := reader.ReadString('\n')
+	first, err := reader.ReadString('\n')
 	if err != nil {
 		return
 	}
-	payload := ""
-	if strings.HasSuffix(strings.TrimRight(line, "\n"), "<<") {
-		payload = readPayload(reader)
+	line, payload := strings.TrimRight(first, "\n"), ""
+	if head, pattern, framed := strings.Cut(line, " <<"); framed {
+		line = head
+		payload = readPayload(reader, strings.TrimSpace(pattern))
 	}
 	var out strings.Builder
 	severity := false
-	for _, command := range strings.Split(strings.TrimRight(line, "\n"), ";") {
-		command = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(command), "<<"))
+	for _, command := range strings.Split(line, ";") {
+		command = strings.TrimSpace(command)
 		if command == "set severity-output number" {
 			severity = true
 			out.WriteString("\n")
@@ -231,11 +242,14 @@ func (h *HAProxy) handle(conn net.Conn, master bool) {
 	_, _ = conn.Write([]byte(out.String()))
 }
 
-func readPayload(reader *bufio.Reader) string {
+// readPayload reads a payload block, which ends at a line equal to the pattern
+// the command named — an empty line when it named none, which is HAProxy's
+// default and the reason a blank line inside content truncates it.
+func readPayload(reader *bufio.Reader, pattern string) string {
 	var b strings.Builder
 	for {
 		line, err := reader.ReadString('\n')
-		if err != nil || line == "\n" {
+		if err != nil || strings.TrimRight(line, "\n") == pattern {
 			return b.String()
 		}
 		b.WriteString(line)

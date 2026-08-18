@@ -100,6 +100,9 @@ func (s *Store) install(staged *Staged) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseNonRegular(abs); err != nil {
+		return fmt.Errorf("install %q: %w", staged.Rel, err)
+	}
 	if err := os.MkdirAll(filepath.Dir(abs), dirPerm); err != nil {
 		return fmt.Errorf("install %q: %w", staged.Rel, err)
 	}
@@ -157,7 +160,7 @@ func (s *Store) backup(rel string, j *Journal) error {
 	case err != nil:
 		return fmt.Errorf("back up %q: %w", rel, err)
 	}
-	link, err := s.linkAside(rel, abs)
+	link, err := s.linkAside(rel, abs, j)
 	if err != nil {
 		return err
 	}
@@ -181,7 +184,7 @@ func (s *Store) backupDeleted(rel string, j *Journal) error {
 	case err != nil:
 		return fmt.Errorf("back up %q: %w", rel, err)
 	}
-	link, err := s.linkAside(rel, abs)
+	link, err := s.linkAside(rel, abs, j)
 	if err != nil {
 		return err
 	}
@@ -195,18 +198,40 @@ func (s *Store) unlink(rel string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseNonRegular(abs); err != nil {
+		return fmt.Errorf("delete %q: %w", rel, err)
+	}
 	if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("delete %q: %w", rel, err)
 	}
 	return nil
 }
 
-// linkAside hardlinks a file into its own mount's LKG directory. The backup
-// name is derived from the path, so a name clash means two paths collided and
-// the link fails rather than silently backing up the wrong content.
-func (s *Store) linkAside(rel, abs string) (string, error) {
+// refuseNonRegular keeps the tree to the files the agent may own. A socket, a
+// directory or a symlink at a manifest path belongs to something else, and
+// replacing it would take that something else away.
+func refuseNonRegular(abs string) error {
+	info, err := os.Lstat(abs)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: %q is not a regular file", ErrInvalidPath, abs)
+	}
+	return nil
+}
+
+// linkAside hardlinks a file into its own mount's LKG directory. The journal
+// position makes the name unique within the journal, so two paths that hash
+// alike keep their own backup; only a leftover from a cleared journal can be
+// at that name, and the caller's j.Has check keeps a live one out of reach.
+func (s *Store) linkAside(rel, abs string, j *Journal) (string, error) {
 	m := s.mountFor(abs)
-	link := filepath.Join(m.Root, LKGDirName, renderplan.DigestString(rel)+".bak")
+	name := fmt.Sprintf("%d-%s.bak", len(j.Entries), renderplan.DigestString(rel))
+	link := filepath.Join(m.Root, LKGDirName, name)
 	if err := os.Remove(link); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("back up %q: %w", rel, err)
 	}
@@ -236,21 +261,32 @@ func (s *Store) Restore(j *Journal, configRel string) error {
 	return errors.Join(errs...)
 }
 
+// restoreEntry puts one path back. The backup is linked beside the path and
+// renamed onto it, so a restore that fails leaves the old content in place
+// instead of leaving the path missing.
 func (s *Store) restoreEntry(e Entry) error {
 	abs, err := s.Abs(e.Path)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("restore %q: %w", e.Path, err)
-	}
 	if e.Kind == KindCreated {
+		if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("restore %q: %w", e.Path, err)
+		}
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), dirPerm); err != nil {
 		return fmt.Errorf("restore %q: %w", e.Path, err)
 	}
-	if err := os.Link(e.Backup, abs); err != nil {
+	staging := filepath.Join(filepath.Dir(abs), ".haptic-restore-"+filepath.Base(abs))
+	if err := os.Remove(staging); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("restore %q: %w", e.Path, err)
+	}
+	if err := os.Link(e.Backup, staging); err != nil {
+		return fmt.Errorf("restore %q: %w", e.Path, err)
+	}
+	if err := os.Rename(staging, abs); err != nil {
+		_ = os.Remove(staging)
 		return fmt.Errorf("restore %q: %w", e.Path, err)
 	}
 	return nil

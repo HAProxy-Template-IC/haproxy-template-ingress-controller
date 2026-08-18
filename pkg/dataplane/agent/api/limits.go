@@ -24,11 +24,10 @@ const (
 	MaxOpsPerApply           = 1000     // deployplan chunks beyond this; the agent never refuses a well-formed batch
 	MaxCommandLineBytes      = 12 << 10 // ';'-joined CLI line; tune.bufsize is 16 KiB all-or-nothing
 	MaxPayloadBytes          = 12 << 10 // one payload command; HAProxy 3.0 caps payloads at tune.bufsize
-	MaxCLIRoundTripMs        = 5000
-	MaxWaitBudgetMs          = 30000 // total wait …-removable per apply
+	MaxWaitBudgetMs          = 30000    // total wait …-removable per apply
 	MaxReloadMs              = 60000
-	MaxReloadIntervalMs      = 60000
-	MaxPendingServerDeletes  = 1000 // per pod, beyond → forced reload
+	MaxReloadIntervalMs      = 60000 // --reload-interval-min, refused above it
+	MaxPendingServerDeletes  = 1000  // per pod, beyond → forced reload
 	MaxPendingBackendDeletes = 100
 	ConnectRetries           = 3
 	ConnectRetryBackoffMs    = 100
@@ -36,4 +35,10 @@ const (
 	MaxMapDelRepeat          = 64 // 3.4 deletes one duplicate per `del map` call
 	MaxDeferredAttempts      = 5  // per queued delete before the agent gives up on it
 	MaxInventoryEntries      = 4096
+	MaxMapEntries            = 1 << 18 // one map's entries; the design target is one per route
 )
+
+// A per-command round trip is bounded by client-native's own 30 s task
+// timeout (runtime.taskTimeout), which is not configurable; the agent adds no
+// second deadline, because a deadline it cannot enforce on the socket read
+// would report a timeout for a command that still lands.

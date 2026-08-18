@@ -179,6 +179,23 @@ func buildManifest(planID string, list []file) api.Manifest {
 // exercised.
 func (h *harness) post(m *api.Manifest, list []file, omit ...string) (status int, answer []byte) {
 	h.t.Helper()
+	return h.postWithPlan(m, list, nil, omit...)
+}
+
+// applyWithPlan sends the opaque plan blob alongside the manifest, which is
+// what the controller does when a pod may have to answer the baseline
+// question for it.
+func (h *harness) applyWithPlan(m *api.Manifest, list []file, plan []byte) api.ApplyResult {
+	h.t.Helper()
+	status, raw := h.postWithPlan(m, list, plan)
+	require.Equal(h.t, http.StatusOK, status, string(raw))
+	result := api.ApplyResult{}
+	require.NoError(h.t, json.Unmarshal(raw, &result))
+	return result
+}
+
+func (h *harness) postWithPlan(m *api.Manifest, list []file, plan []byte, omit ...string) (status int, answer []byte) {
+	h.t.Helper()
 	skip := map[string]struct{}{}
 	for _, path := range omit {
 		skip[path] = struct{}{}
@@ -188,6 +205,12 @@ func (h *harness) post(m *api.Manifest, list []file, omit ...string) (status int
 	manifestPart, err := writer.CreateFormField(api.PartManifest)
 	require.NoError(h.t, err)
 	require.NoError(h.t, json.NewEncoder(manifestPart).Encode(m))
+	if plan != nil {
+		planPart, planErr := writer.CreateFormField(api.PartPlan)
+		require.NoError(h.t, planErr)
+		_, planErr = planPart.Write(plan)
+		require.NoError(h.t, planErr)
+	}
 	for _, f := range list {
 		if _, omitted := skip[f.Path]; omitted {
 			continue
@@ -237,6 +260,17 @@ func (h *harness) state(verify bool) api.State {
 	state := api.State{}
 	require.NoError(h.t, json.NewDecoder(response.Body).Decode(&state))
 	return state
+}
+
+// persisted decodes the agent's state file, which is what a restart reads and
+// therefore the only evidence that in-memory state was recorded.
+func (h *harness) persisted() map[string]any {
+	h.t.Helper()
+	raw, err := os.ReadFile(filepath.Join(h.baseDir, ".haptic-agent.json"))
+	require.NoError(h.t, err)
+	out := map[string]any{}
+	require.NoError(h.t, json.Unmarshal(raw, &out))
+	return out
 }
 
 func (h *harness) read(path string) string {

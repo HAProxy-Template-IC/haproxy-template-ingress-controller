@@ -64,6 +64,7 @@ type persistentState struct {
 	Phase               phase              `json:"phase,omitempty"`
 	InFlightPlanID      string             `json:"in_flight_plan_id,omitempty"`
 	PendingReloadPlanID string             `json:"pending_reload_plan_id,omitempty"`
+	PlanBlobPlanID      string             `json:"plan_blob_plan_id,omitempty"`
 	NACK                *nackRecord        `json:"nack,omitempty"`
 	LastApply           *api.ApplyResult   `json:"last_apply,omitempty"`
 	ReloadPendingAt     time.Time          `json:"reload_pending_at,omitzero"`

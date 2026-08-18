@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -160,6 +161,34 @@ func TestExecuteSwitchesAMapAtomically(t *testing.T) {
 	require.Len(t, entries, 1500)
 	assert.Equal(t, haproxytest.MapEntry{Key: "key-0000", Value: "value-0000"}, entries[0])
 	assert.Equal(t, haproxytest.MapEntry{Key: "key-1499", Value: "value-1499"}, entries[1499])
+}
+
+// A blank line inside a payload ends HAProxy's default block; the agent frames
+// its payloads with a pattern instead, so a certificate keeps every byte.
+func TestACertificateWithABlankLineArrivesWhole(t *testing.T) {
+	client, model := newClient(t)
+	pem := "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n\n" +
+		"-----BEGIN PRIVATE KEY-----\nBBB\n-----END PRIVATE KEY-----\n"
+	ops := []api.Op{{Kind: api.OpCertNew, Path: "ssl/a.pem"}}
+
+	_, err := client.Execute(compileAll(t, ops, map[string]string{"ssl/a.pem": pem}))
+	require.NoError(t, err)
+
+	var stored string
+	model.With(func(m *haproxytest.Model) { stored = m.Certs["ssl/a.pem"] })
+	assert.Equal(t, pem, stored)
+}
+
+// The CA listing carries a certificate count per row and HAProxy's built-in
+// store, which is not a file any op can name.
+func TestInventoryReadsTheCAListing(t *testing.T) {
+	client, model := newClient(t)
+	model.With(func(m *haproxytest.Model) { m.CAFiles["ssl/ca.crt"] = "" })
+
+	inventory, err := client.Inventory(3)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ssl/ca.crt"}, inventory.CAFiles)
+	assert.Equal(t, uint64(3), inventory.Generation)
 }
 
 func TestExecuteRepeatsMapDelUntilTheKeyIsGone(t *testing.T) {
@@ -323,6 +352,7 @@ func TestDeferralsRemoveServersAndBackendsOffTheApplyPath(t *testing.T) {
 	go func() { _ = deferrals.Start(ctx) }()
 
 	require.NoError(t, deferrals.Enqueue([]cli.ServerRef{{Backend: "be-a", Server: "srv1"}}, []string{"be-a"}))
+	deferrals.Wake()
 	if !assert.Eventually(t, func() bool {
 		return !model.HasBackend("be-a")
 	}, 10*time.Second, 20*time.Millisecond) {
@@ -347,6 +377,7 @@ func TestDeferralsShutDownSessionsWhenTheWaitExpires(t *testing.T) {
 	go func() { _ = deferrals.Start(ctx) }()
 
 	require.NoError(t, deferrals.Enqueue([]cli.ServerRef{{Backend: "be-a", Server: "srv1"}}, nil))
+	deferrals.Wake()
 	if !assert.Eventually(t, func() bool {
 		return len(model.ServerNames("be-a")) == 0
 	}, 10*time.Second, 20*time.Millisecond) {
@@ -366,11 +397,76 @@ func TestDeferralsRefuseMoreThanTheCap(t *testing.T) {
 	client, _ := newClient(t)
 	deferrals := cli.NewDeferrals(client, slog.New(slog.DiscardHandler), nil)
 
-	servers := make([]cli.ServerRef, api.MaxPendingServerDeletes+1)
+	servers := make([]cli.ServerRef, 0, api.MaxPendingServerDeletes+1)
+	for i := range api.MaxPendingServerDeletes + 1 {
+		servers = append(servers, cli.ServerRef{Backend: "be-a", Server: fmt.Sprintf("srv%d", i)})
+	}
 	assert.ErrorIs(t, deferrals.Enqueue(servers, nil), cli.ErrDeferralOverflow)
 
-	backends := make([]string, api.MaxPendingBackendDeletes+1)
+	backends := make([]string, 0, api.MaxPendingBackendDeletes+1)
+	for i := range api.MaxPendingBackendDeletes + 1 {
+		backends = append(backends, fmt.Sprintf("be-%d", i))
+	}
 	assert.ErrorIs(t, deferrals.Enqueue(nil, backends), cli.ErrDeferralOverflow)
+}
+
+// A name the agent would have to quote never reaches the queue: the deferred
+// delete builds its command line itself, so a ';' would run a second command.
+func TestDeferralsRefuseAnUnsafeName(t *testing.T) {
+	client, _ := newClient(t)
+	deferrals := cli.NewDeferrals(client, slog.New(slog.DiscardHandler), nil)
+
+	injected := []cli.ServerRef{{Backend: "be-a", Server: "srv1;shutdown sessions server be-a/srv2"}}
+	assert.ErrorIs(t, deferrals.Enqueue(injected, nil), cli.ErrUnsafeToken)
+	assert.ErrorIs(t, deferrals.Enqueue(nil, []string{"be-a;del backend be-b"}), cli.ErrUnsafeToken)
+	assert.Empty(t, deferrals.Pending().Servers)
+	assert.Empty(t, deferrals.Pending().Backends)
+}
+
+// A delete the drain is inside is still outstanding: it has to count against
+// the per-pod caps and show up in /v1/state, or the caps never fire and the
+// runbook's diagnostic reports nothing while thousands are queued.
+func TestADeleteInFlightStaysOutstanding(t *testing.T) {
+	client, model := newClient(t)
+	setup := []api.Op{
+		{Kind: api.OpBackendAdd, Backend: "be-a", Profile: "prof", Mode: "http"},
+		{Kind: api.OpServerAdd, Backend: "be-a", Server: "srv1", Address: "10.0.0.1", Port: 80},
+	}
+	_, err := client.Execute(compileAll(t, setup, nil))
+	require.NoError(t, err)
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	model.With(func(m *haproxytest.Model) {
+		m.Reject = func(command string) (string, bool) {
+			if strings.HasPrefix(command, "wait ") {
+				once.Do(func() { close(entered) })
+				<-release
+			}
+			return "", false
+		}
+	})
+	deferrals := cli.NewDeferrals(client, slog.New(slog.DiscardHandler), nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = deferrals.Start(ctx) }()
+
+	require.NoError(t, deferrals.Enqueue([]cli.ServerRef{{Backend: "be-a", Server: "srv1"}}, nil))
+	deferrals.Wake()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the drain never reached the wait")
+	}
+
+	assert.Equal(t, []string{"be-a/srv1"}, deferrals.Pending().Servers)
+	full := make([]cli.ServerRef, 0, api.MaxPendingServerDeletes)
+	for i := range api.MaxPendingServerDeletes {
+		full = append(full, cli.ServerRef{Backend: "be-a", Server: fmt.Sprintf("s%d", i)})
+	}
+	assert.ErrorIs(t, deferrals.Enqueue(full, nil), cli.ErrDeferralOverflow,
+		"the cap has to see the delete that is running")
+	close(release)
 }
 
 // waitForWorker primes client-native's process-wide version cache, which its

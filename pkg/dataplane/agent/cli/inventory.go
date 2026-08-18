@@ -22,15 +22,19 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 )
 
+// ErrTooManyEntries means a listing is above the agent's limit, which is a
+// refusal to read it, not a statement about what the worker holds.
+var ErrTooManyEntries = errors.New("runtime listing exceeds the entry limit")
+
 // Inventory reads what the running worker has loaded. The controller needs it
 // to know whether a certificate or map it wants to touch at runtime exists at
 // all; a path that is not in here is structural.
 func (c *Client) Inventory(generation uint64) (api.Inventory, error) {
 	maps, mapsErr := c.list("show map", parenthesised)
-	certs, certsErr := c.list("show ssl cert", plainPath)
-	cas, casErr := c.list("show ssl ca-file", plainPath)
-	crls, crlsErr := c.list("show ssl crl-file", plainPath)
-	lists, listsErr := c.list("show ssl crt-list", plainPath)
+	certs, certsErr := c.list("show ssl cert", storeName)
+	cas, casErr := c.list("show ssl ca-file", storeName)
+	crls, crlsErr := c.list("show ssl crl-file", storeName)
+	lists, listsErr := c.list("show ssl crt-list", storeName)
 	if err := errors.Join(mapsErr, certsErr, casErr, crlsErr, listsErr); err != nil {
 		return api.Inventory{}, err
 	}
@@ -57,8 +61,9 @@ func (c *Client) MapEntries(path string) (map[string][]string, error) {
 	}
 	entries := map[string][]string{}
 	for i, line := range dataLines(raw) {
-		if i >= api.MaxInventoryEntries {
-			return nil, fmt.Errorf("show map %s returned more than %d entries", path, api.MaxInventoryEntries)
+		if i >= api.MaxMapEntries {
+			return nil, fmt.Errorf("%w: show map %s returned more than %d entries",
+				ErrTooManyEntries, path, api.MaxMapEntries)
 		}
 		// `show map <name>` prints `<entry address> <key> <value>` per line;
 		// the value is the rest of the line (verified on 3.0 and 3.4).
@@ -84,7 +89,8 @@ func (c *Client) ServerNames(backend string) (map[string]struct{}, error) {
 	names := map[string]struct{}{}
 	for i, line := range dataLines(raw) {
 		if i >= api.MaxInventoryEntries {
-			return nil, fmt.Errorf("show servers state %s returned more than %d rows", backend, api.MaxInventoryEntries)
+			return nil, fmt.Errorf("%w: show servers state %s returned more than %d rows",
+				ErrTooManyEntries, backend, api.MaxInventoryEntries)
 		}
 		fields := strings.Fields(line)
 		if len(fields) < 4 {
@@ -103,7 +109,8 @@ func (c *Client) list(command string, extract func(string) string) ([]string, er
 	var out []string
 	for i, line := range dataLines(raw) {
 		if i >= api.MaxInventoryEntries {
-			return nil, fmt.Errorf("%s returned more than %d entries", command, api.MaxInventoryEntries)
+			return nil, fmt.Errorf("%w: %s returned more than %d entries",
+				ErrTooManyEntries, command, api.MaxInventoryEntries)
 		}
 		if value := extract(line); value != "" {
 			out = append(out, value)
@@ -139,11 +146,18 @@ func parenthesised(line string) string {
 	return path
 }
 
-// plainPath is the whole row, which is how the certificate, CA and crt-list
-// listings report their storage names.
-func plainPath(line string) string {
-	if strings.ContainsAny(line, " \t") {
+// systemCA is HAProxy's built-in CA store. It is not a file, so no op can name
+// it and it never belongs in the inventory.
+const systemCA = "@system-ca"
+
+// storeName reads the runtime name out of a `show ssl …` row: the name is the
+// first field, an open transaction prefixes it with '*', and the CA listing
+// appends " - N certificate(s)".
+func storeName(line string) string {
+	name, _, _ := strings.Cut(line, " ")
+	name = strings.TrimPrefix(name, "*")
+	if name == systemCA {
 		return ""
 	}
-	return line
+	return name
 }

@@ -39,6 +39,7 @@ type applyRun struct {
 	server   *Server
 	manifest *api.Manifest
 	staged   map[string]*files.Staged
+	planBlob []byte
 	digest   string
 	result   api.ApplyResult
 
@@ -47,29 +48,38 @@ type applyRun struct {
 	// deterministic marks a failure that was HAProxy's own verdict on these
 	// exact bytes, which is the only kind worth remembering as known-bad.
 	deterministic bool
-	// invalidated marks an apply that landed its files but left the running
-	// worker unexplained, so the next apply has to be full state plus a reload.
-	invalidated bool
+	// invalidations is the count the server had when the run started. A
+	// higher one at the end means something declared the running worker
+	// unexplained while the run was in flight, from this run or from the
+	// concurrent verify path, and the pod may claim no baseline.
+	invalidations uint64
 	// touchedMaps and touchedBackends drive the asynchronous read-back;
 	// retiringBackends are excluded from it because their deferred delete
 	// legitimately makes them disappear.
 	touchedMaps      []string
 	touchedBackends  []string
 	retiringBackends []string
+	// createdCerts and createdCAs are the runtime stores the batch brings into
+	// existence, which the inventory has to learn without a reload.
+	createdCerts []string
+	createdCAs   []string
 }
 
-func (s *Server) runApply(m *api.Manifest, staged map[string]*files.Staged, digest string) api.ApplyResult {
+func (s *Server) runApply(m *api.Manifest, got *received, digest string) api.ApplyResult {
 	run := &applyRun{
-		server:   s,
-		manifest: m,
-		staged:   staged,
-		digest:   digest,
-		result:   api.ApplyResult{PlanID: m.PlanID, OK: true, At: time.Now().UTC().Format(time.RFC3339)},
+		server:        s,
+		manifest:      m,
+		staged:        got.files,
+		planBlob:      got.plan,
+		digest:        digest,
+		invalidations: s.invalidationCount(),
+		result:        api.ApplyResult{PlanID: m.PlanID, OK: true, At: time.Now().UTC().Format(time.RFC3339)},
 	}
 	if err := run.execute(); err != nil {
 		s.logger.Error("apply failed", "plan_id", m.PlanID, "error", err)
 	}
 	s.finish(run)
+	s.commitPlanBlob(run)
 	go s.readBack(run)
 	return run.result
 }
@@ -178,6 +188,10 @@ func (r *applyRun) note(op *api.Op) {
 	case api.OpServerAdd, api.OpServerDel, api.OpServerEnable, api.OpServerDisable,
 		api.OpServerSetAddr, api.OpServerSetWeight, api.OpServerSetState:
 		r.touchedBackends = append(r.touchedBackends, op.Backend)
+	case api.OpCertNew:
+		r.createdCerts = append(r.createdCerts, op.Path)
+	case api.OpCANew:
+		r.createdCAs = append(r.createdCAs, op.Path)
 	}
 }
 
@@ -209,6 +223,8 @@ func (r *applyRun) runOps(programs []cli.Program) error {
 	if err := r.server.checkWorker(); err != nil {
 		return r.reload("worker_changed")
 	}
+	r.server.foldCreated(r)
+	r.server.deferrals.Wake()
 	r.result.Mode = api.ResultRuntime
 	r.server.setPhase(phaseApplied, r.manifest.PlanID)
 	return nil
@@ -239,7 +255,6 @@ func (r *applyRun) inPlace() error {
 			Stage:   "in_place",
 			Message: "in-place ops were composed against a different worker baseline",
 		}
-		r.invalidated = true
 		r.server.invalidateBaseline()
 		return nil
 	}
@@ -252,10 +267,11 @@ func (r *applyRun) inPlace() error {
 	}
 	if err != nil {
 		r.result.Error = &api.ApplyError{Stage: "in_place", Message: err.Error()}
-		r.invalidated = true
 		r.server.invalidateBaseline()
 		return err
 	}
+	r.server.foldCreated(r)
+	r.server.deferrals.Wake()
 	r.server.recordWorkerOps(r.manifest.PlanID)
 	return nil
 }
@@ -325,19 +341,10 @@ func (s *Server) finish(run *applyRun) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	before := s.state.Generation
-	switch {
-	case run.result.OK:
+	if run.result.OK {
 		s.state.Generation++
-		s.state.PlanSchemaVersion = run.manifest.PlanSchemaVersion
-		s.state.ManifestPaths = manifestPaths(run.manifest)
-		s.state.TreeDigest = treeDigest(s.tree)
-		if run.invalidated {
-			s.state.AppliedPlanID = ""
-		} else {
-			s.state.AppliedPlanID = run.manifest.PlanID
-			s.state.AppliedToken = run.manifest.Token
-		}
-	default:
+		s.commitLocked(run)
+	} else {
 		s.state.AppliedPlanID = ""
 	}
 	s.state.Phase = phaseIdle
@@ -350,6 +357,25 @@ func (s *Server) finish(run *applyRun) {
 	s.metrics.applies.WithLabelValues(run.result.Mode).Inc()
 	s.metrics.generation.Set(float64(s.state.Generation))
 	s.checkInvariantsLocked(run, before)
+}
+
+// commitLocked records what a successful apply means for the baseline. A
+// revert lands the last known good set, whose paths and digests restoreJournal
+// already recorded, not the set the manifest names.
+func (s *Server) commitLocked(run *applyRun) {
+	applied := run.manifest.PlanID
+	if run.manifest.Mode == api.ModeRevertLKG {
+		applied = s.state.LKGPlanID
+	} else {
+		s.state.PlanSchemaVersion = run.manifest.PlanSchemaVersion
+		s.state.ManifestPaths = manifestPaths(run.manifest)
+		s.state.TreeDigest = treeDigest(s.tree)
+	}
+	if s.baselineInvalidations != run.invalidations {
+		s.state.AppliedPlanID = ""
+		return
+	}
+	s.state.AppliedPlanID, s.state.AppliedToken = applied, run.manifest.Token
 }
 
 // applyResultLocked fills the fields every response reports from the state.
@@ -382,7 +408,11 @@ func (s *Server) checkInvariantsLocked(run *applyRun, generationBefore uint64) {
 	m := s.metrics
 	if run.result.OK {
 		m.invariant(s.state.Generation == generationBefore+1, "generation_monotonic")
-		m.invariant(s.treeMatchesLocked(run.manifest), "disk_is_the_desired_set")
+		// A revert's desired set is the last known good one, which the
+		// manifest it arrived on does not describe.
+		if run.manifest.Mode != api.ModeRevertLKG {
+			m.invariant(s.treeMatchesLocked(run.manifest), "disk_is_the_desired_set")
+		}
 	}
 	reloaded := run.result.Reload != nil && (run.result.Reload.Performed || run.result.Reload.ScheduledAt != "")
 	switch run.result.Mode {
@@ -416,15 +446,57 @@ func (s *Server) treeMatchesLocked(m *api.Manifest) bool {
 	return true
 }
 
-// storePlanBlob keeps the opaque plan next to the state file. It is what
-// `haptic agent state` and a later diff read back.
-func (s *Server) storePlanBlob(part io.Reader) error {
+// readPlanBlob takes the opaque plan part into memory. It is written to disk
+// on commit, so what /v1/state hands back always belongs to the applied plan.
+func readPlanBlob(part io.Reader) ([]byte, error) {
 	blob, err := io.ReadAll(io.LimitReader(part, api.MaxPlanBlobBytes+1))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(blob) > api.MaxPlanBlobBytes {
-		return fmt.Errorf("plan blob exceeds the %d-byte limit", api.MaxPlanBlobBytes)
+		return nil, fmt.Errorf("plan blob exceeds the %d-byte limit", api.MaxPlanBlobBytes)
 	}
-	return os.WriteFile(filepath.Join(s.store.BaseDir(), planBlobName), blob, 0o600)
+	return blob, nil
+}
+
+// commitPlanBlob keeps the plan of the apply that just landed, next to the
+// state file. A blob for any other plan id is dropped: it describes a set this
+// pod is not on, and the controller reads it back as a baseline.
+func (s *Server) commitPlanBlob(run *applyRun) {
+	if run.planBlob == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.AppliedPlanID != run.manifest.PlanID {
+		return
+	}
+	if err := os.WriteFile(s.planBlobPath(), run.planBlob, 0o600); err != nil {
+		s.logger.Error("could not store the applied plan", "error", err)
+		return
+	}
+	s.appliedPlan = run.planBlob
+	s.state.PlanBlobPlanID = run.manifest.PlanID
+	if err := s.states.save(s.state); err != nil {
+		s.logger.Error("could not persist the agent state", "error", err)
+	}
+}
+
+// loadPlanBlob reads back the plan blob a previous run stored, so a restarted
+// agent still answers the baseline question.
+func (s *Server) loadPlanBlob() {
+	if s.state.PlanBlobPlanID == "" {
+		return
+	}
+	blob, err := os.ReadFile(s.planBlobPath())
+	if err != nil {
+		s.logger.Warn("could not read back the applied plan", "error", err)
+		s.state.PlanBlobPlanID = ""
+		return
+	}
+	s.appliedPlan = blob
+}
+
+func (s *Server) planBlobPath() string {
+	return filepath.Join(s.store.BaseDir(), planBlobName)
 }

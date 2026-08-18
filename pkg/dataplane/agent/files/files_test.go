@@ -19,6 +19,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -206,6 +207,92 @@ func TestRestoreReturnsTheLastKnownGoodSet(t *testing.T) {
 	require.NoError(t, err)
 	_, err = os.Lstat(extra)
 	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+// A restore whose backup is gone must leave the path as it is. Removing it
+// first and failing to link would leave the tree neither the desired set nor
+// the last known good one.
+func TestRestoreLeavesThePathWhenTheBackupIsGone(t *testing.T) {
+	s := newTestStore(t)
+	j := &Journal{}
+
+	good := s.Begin(j, "haproxy.cfg")
+	good.Install(stage(t, s, "haproxy.cfg", "good\n"))
+	require.NoError(t, good.Backup())
+	require.NoError(t, good.Write())
+	require.NoError(t, s.ClearJournal(j))
+
+	bad := s.Begin(j, "haproxy.cfg")
+	bad.Install(stage(t, s, "haproxy.cfg", "bad\n"))
+	require.NoError(t, bad.Backup())
+	require.NoError(t, bad.Write())
+	require.Len(t, j.Entries, 1)
+	require.NoError(t, os.Remove(j.Entries[0].Backup))
+
+	require.Error(t, s.Restore(j, "haproxy.cfg"))
+	assert.Equal(t, "bad\n", readFile(t, s, "haproxy.cfg"), "a failed restore must not delete the path")
+}
+
+// Two paths whose digests collide are backed up separately: the journal
+// position, not the hash, is what makes a backup name unique.
+func TestCollidingPathsKeepSeparateBackups(t *testing.T) {
+	s := newTestStore(t)
+	j := &Journal{}
+	// Both digest to 9ff5793cac578118 under xxhash64.
+	first, second := "maps/11c714b2cc3f873f.map", "maps/71b06949baa8f2ff.map"
+	require.Equal(t, renderplan.DigestString(first), renderplan.DigestString(second),
+		"the fixture no longer collides; pick another pair")
+
+	seed := s.Begin(j, "haproxy.cfg")
+	seed.Install(stage(t, s, first, "one\n"))
+	seed.Install(stage(t, s, second, "two\n"))
+	require.NoError(t, seed.Backup())
+	require.NoError(t, seed.Write())
+	require.NoError(t, s.ClearJournal(j))
+
+	change := s.Begin(j, "haproxy.cfg")
+	change.Install(stage(t, s, first, "one-changed\n"))
+	change.Install(stage(t, s, second, "two-changed\n"))
+	require.NoError(t, change.Backup())
+	require.NoError(t, change.Write())
+	require.NoError(t, s.Restore(j, "haproxy.cfg"))
+
+	assert.Equal(t, "one\n", readFile(t, s, first))
+	assert.Equal(t, "two\n", readFile(t, s, second))
+}
+
+// The manifest owns files, not the sockets the agent itself talks to: writing
+// a regular file over the worker socket would cut the agent off from HAProxy.
+func TestAReservedPathIsRefused(t *testing.T) {
+	base := t.TempDir()
+	s, err := NewStore(base, slog.New(slog.DiscardHandler), filepath.Join(base, "haproxy-worker.sock"))
+	require.NoError(t, err)
+
+	_, err = s.Abs("haproxy-worker.sock")
+	assert.ErrorIs(t, err, ErrInvalidPath)
+	_, err = s.Abs("haproxy.cfg")
+	assert.NoError(t, err)
+}
+
+// Anything that is not a regular file at a manifest path belongs to something
+// else, so the agent refuses the write instead of replacing it.
+func TestInstallRefusesANonRegularPath(t *testing.T) {
+	s := newTestStore(t)
+	abs, err := s.Abs("general/socket")
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(abs), 0o755))
+	listener, err := net.Listen("unix", abs)
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+
+	tx := s.Begin(&Journal{}, "haproxy.cfg")
+	tx.Install(stage(t, s, "general/socket", "content\n"))
+	require.NoError(t, tx.Backup())
+
+	assert.ErrorIs(t, tx.Write(), ErrInvalidPath)
+	info, err := os.Lstat(abs)
+	require.NoError(t, err)
+	assert.Equal(t, fs.ModeSocket, info.Mode()&fs.ModeType, "the socket is still a socket")
 }
 
 func TestFirstJournalEntryPerPathWins(t *testing.T) {
