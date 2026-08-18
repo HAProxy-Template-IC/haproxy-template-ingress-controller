@@ -283,7 +283,7 @@ The agent exports its own metrics on `--metrics-listen`.
 | `haptic_agent_invariant_violations_total` | `name` | Invariants that failed. |
 | `haptic_agent_reloads_total` | `result` | Reloads asked of the master process. |
 | `haptic_agent_rollbacks_total` | — | File sets restored to the last known good one. |
-| `haptic_agent_deferred_deletes_total` | `kind`, `outcome` | Deferred runtime deletes. |
+| `haptic_agent_deferred_deletes_total` | `kind`, `outcome` | Deferred runtime deletes: `done`, `deferred` (still draining, retried), or `abandoned` (given up; the object stays until the next reload). |
 | `haptic_agent_op_errors_total` | `kind` | Ops HAProxy rejected. |
 | `haptic_agent_generation` | — | The apply generation. |
 | `haptic_runtime_map_divergence_total` | — | Read-backs that found the worker out of step. |

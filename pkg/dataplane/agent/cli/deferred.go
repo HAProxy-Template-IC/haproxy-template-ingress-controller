@@ -50,12 +50,16 @@ func (r ServerRef) String() string { return r.Backend + "/" + r.Server }
 type Observer interface {
 	DeferredDeleteDone(kind string)
 	DeferredDeleteDeferred(kind string)
+	// DeferredDeleteAbandoned is a delete the agent gave up on: the object
+	// stays until the next reload, which is a distinct fact from "retrying".
+	DeferredDeleteAbandoned(kind string)
 }
 
 type noopObserver struct{}
 
-func (noopObserver) DeferredDeleteDone(string)     {}
-func (noopObserver) DeferredDeleteDeferred(string) {}
+func (noopObserver) DeferredDeleteDone(string)      {}
+func (noopObserver) DeferredDeleteDeferred(string)  {}
+func (noopObserver) DeferredDeleteAbandoned(string) {}
 
 // Deferrals drains the delete tail of an apply off the apply path: `wait
 // …-removable` blocks for as long as a client keeps a connection, and no apply
@@ -324,15 +328,17 @@ func (d *Deferrals) run(command, expect string) error {
 func (d *Deferrals) requeueServer(a attempt[ServerRef], cause error) {
 	a.Tries++
 	give := a.Tries >= api.MaxDeferredAttempts
-	if give {
-		d.logger.Warn("giving up on a deferred server delete", "server", a.Target.String(), "error", cause)
-	}
 	d.mu.Lock()
 	if !give {
 		d.servers = append(d.servers, a)
 	}
 	d.inFlightServer = nil
 	d.mu.Unlock()
+	if give {
+		d.logger.Warn("giving up on a deferred server delete", "server", a.Target.String(), "error", cause)
+		d.observer.DeferredDeleteAbandoned("server")
+		return
+	}
 	d.observer.DeferredDeleteDeferred("server")
 }
 
@@ -342,14 +348,16 @@ func (d *Deferrals) requeueServer(a attempt[ServerRef], cause error) {
 func (d *Deferrals) requeueBackend(a attempt[string], cause error) {
 	a.Tries++
 	give := a.Tries >= api.MaxDeferredAttempts
-	if give {
-		d.logger.Warn("giving up on a deferred backend delete", "backend", a.Target, "error", cause)
-	}
 	d.mu.Lock()
 	if !give {
 		d.backends = append(d.backends, a)
 	}
 	d.inFlightBackend = nil
 	d.mu.Unlock()
+	if give {
+		d.logger.Warn("giving up on a deferred backend delete", "backend", a.Target, "error", cause)
+		d.observer.DeferredDeleteAbandoned("backend")
+		return
+	}
 	d.observer.DeferredDeleteDeferred("backend")
 }

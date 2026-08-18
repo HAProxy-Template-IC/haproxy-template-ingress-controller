@@ -95,6 +95,11 @@ func (m *Metrics) DeferredDeleteDeferred(kind string) {
 	m.deferred.WithLabelValues(kind, "deferred").Inc()
 }
 
+// DeferredDeleteAbandoned implements cli.Observer.
+func (m *Metrics) DeferredDeleteAbandoned(kind string) {
+	m.deferred.WithLabelValues(kind, "abandoned").Inc()
+}
+
 func counterVec(registry prometheus.Registerer, name, help string, labels ...string) *prometheus.CounterVec {
 	c := prometheus.NewCounterVec(prometheus.CounterOpts{Name: name, Help: help}, labels)
 	registry.MustRegister(c)
