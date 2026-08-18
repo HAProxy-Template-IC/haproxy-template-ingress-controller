@@ -164,12 +164,14 @@ func TestIngressRollingRestartZeroDowntime(t *testing.T) {
 				if err := triggerRollingRestart(ctx, client, namespace, deploymentName); err != nil {
 					stopProber()
 					probeWG.Wait()
+					results.waitForSnapshots()
 					t.Fatalf("trigger rollout restart: %v", err)
 				}
 
 				if err := waitForDeploymentRolloutComplete(ctx, client, namespace, deploymentName, 90*time.Second); err != nil {
 					stopProber()
 					probeWG.Wait()
+					results.waitForSnapshots()
 					t.Fatalf("rollout did not complete cleanly: %v", err)
 				}
 
@@ -181,6 +183,7 @@ func TestIngressRollingRestartZeroDowntime(t *testing.T) {
 				time.Sleep(5 * time.Second)
 				stopProber()
 				probeWG.Wait()
+				results.waitForSnapshots()
 
 				assertProbeRunClean(t, results, baselineCount)
 				return ctx
@@ -200,6 +203,7 @@ type probeRecorder struct {
 	failures    []probeFailure
 	total       atomic.Int64
 	snapshotter *proberSnapshotter
+	snapshots   sync.WaitGroup
 }
 
 type probeFailure struct {
@@ -217,18 +221,22 @@ func (r *probeRecorder) recordFailure(f probeFailure) {
 	r.total.Add(1)
 	snap := r.snapshotter
 	r.mu.Unlock()
-	// Capture HAProxy + controller state immediately. Synchronous —
-	// blocks the next probe interval by ~5–10 s while kubectl exec
-	// fans out to both HAProxy pods + dumps EPS/logs. That's
-	// intentional: by the time the prober's next 200 ms tick fires,
-	// reload churn from sibling parallel tests will have moved
-	// HAProxy's runtime state on, and the data we need to root-cause
-	// THIS failure is already stale. We deliberately trade probe
-	// cadence for evidence quality.
+	// Capture HAProxy + controller state immediately, off the probe loop:
+	// the kubectl exec fan-out takes 5–10 s, longer than a whole rollout,
+	// and a loop blocked on it records nothing of the window it exists to
+	// observe. The capture still starts at the failure's instant.
 	if snap != nil {
-		snap.snapshot(f)
+		r.snapshots.Add(1)
+		go func() {
+			defer r.snapshots.Done()
+			snap.snapshot(f)
+		}()
 	}
 }
+
+// waitForSnapshots blocks until every failure capture has landed, so the
+// diagnostics are on disk before the test reports.
+func (r *probeRecorder) waitForSnapshots() { r.snapshots.Wait() }
 
 func (r *probeRecorder) count() int64 { return r.total.Load() }
 

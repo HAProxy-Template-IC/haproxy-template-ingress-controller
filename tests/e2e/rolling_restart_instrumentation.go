@@ -67,10 +67,10 @@ func newProberSnapshotter(t *testing.T, namespace string) *proberSnapshotter {
 	return &proberSnapshotter{t: t, namespace: namespace, rootDir: dir}
 }
 
-// snapshot dumps state synchronously. Called from runProbeLoop on every
-// failing probe so each failure has its own folder. Synchronous deliberately:
-// the failure is already recorded, we want the data ASAP before reload
-// churn moves the runtime state further.
+// snapshot dumps state for one failing probe into its own folder. It runs
+// off the probe loop and starts at the failure's instant, before reload churn
+// moves the runtime state further; concurrent captures are safe, they only
+// share the counter.
 func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	if s == nil {
 		return
