@@ -16,6 +16,43 @@ The agent is the same binary as the controller: `haptic agent`.
 Source: `pkg/dataplane/agent/{api,server,files,cli}`; the controller's end is
 `pkg/dataplane/agent/client`.
 
+## The controller's side
+
+The controller decides, the agent executes. Between a render and an apply there
+are three pure steps and one round trip.
+
+1. **The render declares its structure.** Chart macros register what they emit —
+   the sections of `haproxy.cfg`, the backend and server records behind them, the
+   entries of every map and crt-list, the file set — and the result is a
+   `renderplan.Plan` (`pkg/dataplane/renderplan`). Nothing parses HAProxy
+   configuration: the generator knows what it generated. A plan's ID is the
+   digest of its canonical encoding, so two identical renders produce the same
+   ID and the second apply changes nothing.
+2. **The controller reads the pod's baseline.** `GET /v1/state` answers with the
+   plan the pod acknowledged, the plan its worker runs, the digest of every file it
+   holds, and the runtime inventory — the maps, certificates, CA files and
+   crt-lists the worker actually loaded. A path that isn't in that inventory is
+   a file write, never a runtime command.
+3. **`deployplan.Diff` decides.** It compares the render with that baseline and
+   returns a `Decision`: a verdict (`runtime`, `file_only` or `reload`), the
+   typed ops for this pod, the complete file set, and a reason for every change
+   that couldn't run at runtime. It's pure data in, data out — table tested per
+   rule, and the playground runs the same function in a browser to answer "does
+   this change reload?".
+4. **The deployer applies.** One `POST /v1/apply` per pod, in parallel across the
+   fleet, fenced with the leader epoch and the render sequence. Content travels
+   only for the files the agent answers that it lacks. A `409` carrying the pod's
+   actual baseline means the ops were composed against a state the pod no longer
+   has: re-diff from what it returned. Nothing was written.
+
+A pod whose agent speaks a different API major, or doesn't execute an op kind
+the decision needs, gets the complete file set plus a reload. Version skew
+degrades the change; it never refuses it.
+
+Which macros declare what, and what takes a backend off the reload-free lane, is
+the template author's side of the same contract; the chart's `Backend()`,
+`BackendServers()` and `RegisterMap()` macros are where a render states it.
+
 ## Running it
 
 ```console
@@ -48,6 +85,24 @@ recovery has run, and the runtime inventory is built. It stays true afterwards:
 it means `this agent accepts applies`, never `the last apply succeeded`. A
 readiness that tracked apply outcomes would drain the Service and fence the
 repair path exactly when an operator needs it.
+
+## Reading its state
+
+`haptic agent state` reads `/v1/state` and prints it: the plans the pod applied,
+runs and can fall back to, the runtime inventory, the deletes still outstanding,
+and the last apply's outcome. It takes the credentials from the same
+`DATAPLANE_USERNAME` and `DATAPLANE_PASSWORD` the agent itself was given, so it
+needs no arguments inside the pod:
+
+```console
+kubectl exec -n haptic haptic-haproxy-0 -c agent -- haptic agent state
+```
+
+`--verify` makes the agent re-hash its tree first, so the digests are
+observations rather than its last-known set. `--files` lists every file it holds
+with its digest and size, and `--output json` prints the raw response.
+`--url` reaches another endpoint; it defaults to `http://127.0.0.1:<--listen
+port>`.
 
 ## Paths
 
@@ -100,13 +155,14 @@ sequenceDiagram
 Nothing is written before the fence passes. The fence accepts an apply only when
 `expected_prev_plan_id` and `expected_prev_token` equal what the agent has
 applied and `token.leader_epoch` isn't older than the epoch it last accepted.
-The three refusals are distinct because the controller's answers differ:
+The refusals are distinct because the controller's answers differ:
 
 | `reason` | What happened | What the controller does |
 |---|---|---|
 | `prev_mismatch` | The pod is on a different plan than the ops assumed. | Re-diff from the returned state. |
 | `stale_epoch` | A newer leader has already spoken to this pod. | Stand down until it re-acquires leadership. |
 | `unknown_baseline` | The agent doesn't know what this pod runs. | Send full state with `mode: reload`. |
+| `worker_ops_mismatch` | The in-place batch was composed against a worker this pod no longer has: its pacer fired between the state read and the apply. Only refused when the batch would run — a reload is pending, or the apply asks for one the pod has to pace. | Re-diff against the worker as it's now; the applied baseline is intact. |
 
 ## The state machine
 
@@ -218,8 +274,17 @@ inside the window is scheduled, never dropped and never cancelled by a later
 apply. While one is pending the files of a newer apply still land, its `ops` are
 skipped, and its `in_place_ops` run against the running worker — guarded by
 `expected_worker_ops_plan_id`, because those ops were composed against the
-worker's state, not the file set's. A rejected in-place op invalidates the pod's
-baseline and is reported; it never triggers a second reload.
+worker's state, not the file set's. An apply that asks for a reload inside the
+window is scheduled the same way and its `in_place_ops` run at once, so the
+worker that keeps serving until the reload fires gets the endpoint changes
+immediately. Once they ran the pod records the manifest's
+`worker_ops_plan_id`: the worker's plan with exactly those ops applied, which
+the controller derives and keeps. It's never the render's own id, because an
+in-place batch carries only part of the change — a new map key waits for the
+reload — and the next batch has to be composed against what the worker holds.
+The answer says when the reload fires (`reload.scheduled_at`), so the
+controller can follow up. A rejected in-place op invalidates the pod's baseline
+and is reported; it never triggers a second reload.
 
 A reload that answers `Success=0` restores the journal, reloads the restored set
 when an op had already changed the running worker, and reports the failure with
@@ -274,7 +339,10 @@ They live in `pkg/dataplane/agent/api/limits.go` and are asserted at both ends.
 
 ## Metrics
 
-The agent exports its own metrics on `--metrics-listen`.
+The agent exports its own metrics on `--metrics-listen`, scraped by the chart's
+PodMonitor. The controller's own view of the same applies is in
+[Monitoring](../operations/monitoring.md#deployment-metrics); these are the
+per-pod facts it can't see.
 
 | Metric | Labels | Meaning |
 |---|---|---|
@@ -286,7 +354,7 @@ The agent exports its own metrics on `--metrics-listen`.
 | `haptic_agent_deferred_deletes_total` | `kind`, `outcome` | Deferred runtime deletes: `done`, `deferred` (still draining, retried), or `abandoned` (given up; the object stays until the next reload). |
 | `haptic_agent_op_errors_total` | `kind` | Ops HAProxy rejected. |
 | `haptic_agent_generation` | — | The apply generation. |
-| `haptic_runtime_map_divergence_total` | — | Read-backs that found the worker out of step. |
+| `haptic_agent_map_divergence_total` | — | Read-backs that found the worker out of step. |
 
 ## Testing
 
@@ -298,6 +366,7 @@ Four layers cover the agent, and each answers a different question.
 | Fake HAProxy | Does the agent's transaction, fencing, and op execution behave against a modelled worker and master socket, including under injected faults? | `pkg/dataplane/agent/haproxytest`, used by `server` and `cli` tests |
 | Fake agent | Does the controller's deployer react correctly to fencing, conflicts and rejections? | `pkg/dataplane/agent/agenttest` |
 | Docker suite | Does a real HAProxy do what the contract says it does? | `tests/agent` |
+| Integration suite | Does a real HAProxy pod in a cluster converge on what a render declares? | `tests/integration` |
 
 ### The in-process fake agent
 
@@ -369,3 +438,22 @@ go test -tags=agentdocker -run TestMapOpsRunAtRuntimeAndKeepEveryByte -v ./tests
 
 Each test dumps the agent's and HAProxy's logs when it fails, then removes its
 containers and volumes.
+
+### The integration suite
+
+`tests/integration` deploys the same topology into a Kind cluster — the HAProxy
+container plus an `agent` container against the same mounts — and drives it
+through `deployplan.Diff` and the client, one pod per test. It asserts what an
+operator can observe: the pod's file tree through `kubectl exec … cat`, HAProxy's
+runtime state through `show map` and `show info` on the worker stats socket, and
+the runtime inventory through `GET /v1/state`.
+
+Where the docker suite hand-writes ops to pin one behaviour, the integration
+suite declares two file sets and lets the diff compose the ops — so it covers
+the decision and the execution together, against 120 configuration fixtures.
+
+```bash
+make test-integration HAPROXY_VERSION=3.4
+```
+
+CI runs it on 3.0 and 3.4 on merge requests, and on 3.1 to 3.3 on main.

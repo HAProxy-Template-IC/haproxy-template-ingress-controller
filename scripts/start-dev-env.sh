@@ -838,7 +838,7 @@ deploy_haproxy() {
         warn "HAProxy deployment rollout did not complete in ${TIMEOUT}s."
         echo "  - Check HAProxy deployment: kubectl -n ${CTRL_NAMESPACE} describe deploy/${HELM_RELEASE_NAME}-haproxy"
         echo "  - Check HAProxy pod logs: kubectl -n ${CTRL_NAMESPACE} logs deploy/${HELM_RELEASE_NAME}-haproxy -c haproxy"
-        echo "  - Check dataplane logs: kubectl -n ${CTRL_NAMESPACE} logs deploy/${HELM_RELEASE_NAME}-haproxy -c dataplane"
+        echo "  - Check agent logs: kubectl -n ${CTRL_NAMESPACE} logs deploy/${HELM_RELEASE_NAME}-haproxy -c agent"
         return 1
     fi
     ok "HAProxy deployment is ready."
@@ -1303,7 +1303,7 @@ test_ingress() {
             echo "Troubleshooting steps:"
             echo "  1. Check HAProxy status: kubectl -n $CTRL_NAMESPACE get pods -l app.kubernetes.io/component=loadbalancer"
             echo "  2. Check HAProxy logs: kubectl -n $CTRL_NAMESPACE logs deploy/haproxy-production -c haproxy"
-            echo "  3. Check dataplane logs: kubectl -n $CTRL_NAMESPACE logs deploy/haproxy-production -c dataplane"
+            echo "  3. Check agent logs: kubectl -n $CTRL_NAMESPACE logs deploy/haproxy-production -c agent"
             echo "  4. Check controller logs: $0 logs"
             echo "  5. Check echo service: kubectl -n $ECHO_NAMESPACE get pods -l app=$ECHO_APP_NAME"
             echo "  6. Verify ingress: kubectl -n $ECHO_NAMESPACE get ingress $ECHO_APP_NAME -o wide"
@@ -1357,7 +1357,7 @@ port_forward_haproxy() {
     echo "Available port forwarding options:"
     echo "  1. HAProxy HTTP (port 8080 -> 80)"
     echo "  2. HAProxy Health (port 8404 -> 8404)"
-    echo "  3. HAProxy Dataplane API (port 5555 -> 5555)"
+    echo "  3. HAPTIC agent (port 5555 -> 5555)"
 
     if [[ "$ctrl_deploy" != "(not available)" ]]; then
         echo "  4. Controller Health (port 8081 -> 8080)"
@@ -1383,8 +1383,8 @@ port_forward_haproxy() {
             kubectl -n "$CTRL_NAMESPACE" port-forward svc/haproxy-production 8404:8404
             ;;
         3)
-            log INFO "Starting port forwarding: localhost:5555 -> HAProxy Dataplane API"
-            echo "Test with: curl -u admin:adminpass http://localhost:5555/v3/info"
+            log INFO "Starting port forwarding: localhost:5555 -> HAPTIC agent"
+            echo "Test with: curl -u admin:adminpass http://localhost:5555/v1/state"
             kubectl -n "$CTRL_NAMESPACE" port-forward svc/haproxy-production-dataplane 5555:5555
             ;;
         4)
@@ -1422,7 +1422,7 @@ post_deploy_tips() {
 	echo "  - Watch resources: kubectl get pods -A -w"
 	echo "  - Controller logs: $0 logs"
 	echo "  - HAProxy production logs: kubectl -n ${CTRL_NAMESPACE} logs deploy/haproxy-production -f -c haproxy"
-	echo "  - Dataplane logs: kubectl -n ${CTRL_NAMESPACE} logs deploy/haproxy-production -f -c dataplane"
+	echo "  - Agent logs: kubectl -n ${CTRL_NAMESPACE} logs deploy/haproxy-production -f -c agent"
 	echo "  - Echo service: kubectl -n ${ECHO_NAMESPACE} get svc ${ECHO_APP_NAME}"
 	echo "  - Ingress: kubectl -n ${ECHO_NAMESPACE} get ingress ${ECHO_APP_NAME} -o wide"
 	echo
@@ -1502,9 +1502,9 @@ post_deploy_tips() {
 	ok "🎛️  HAProxy Production Environment:"
 	echo "  - Production HAProxy pods: kubectl -n ${CTRL_NAMESPACE} get deploy/haproxy-production"
 	echo "  - HAProxy service: kubectl -n ${CTRL_NAMESPACE} get svc/haproxy-production"
-	echo "  - Dataplane API service: kubectl -n ${CTRL_NAMESPACE} get svc/haproxy-production-dataplane"
-	echo "  - Dataplane API access: kubectl -n ${CTRL_NAMESPACE} port-forward svc/haproxy-production-dataplane 5555:5555"
-	echo "    Access at: http://localhost:5555/v3/info (admin/adminpass)"
+	echo "  - Agent service: kubectl -n ${CTRL_NAMESPACE} get svc/haproxy-production-dataplane"
+	echo "  - Agent access: kubectl -n ${CTRL_NAMESPACE} port-forward svc/haproxy-production-dataplane 5555:5555"
+	echo "    Test with: curl -u admin:adminpass http://localhost:5555/v1/state"
 	echo
 
 	ok "📊 Monitoring:"

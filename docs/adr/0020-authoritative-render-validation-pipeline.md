@@ -5,6 +5,12 @@
 Accepted 2026-08-10. Supersedes ADR-0016's strict-first/fast-later validation
 implementation; its other decisions stand.
 
+[ADR-0022](0022-haptic-agent.md) supersedes decision steps 1 to 3 — the syntax
+parse, the schema check and the synchronous `haproxy -c` — for the reconcile
+path only: that render is now render-only, and the same `haproxy -c` runs
+asynchronously in `rendergate`. The webhook and the config-load gate keep every
+step of this ADR.
+
 ## Context
 
 Validation depended on the trigger path. Watched-resource admission and HTTP
@@ -57,5 +63,5 @@ output is denied.
   and ordinary reconciliation, not only admission requests.
 - Changed output pays the semantic and external-validator cost. Content-cache
   hits avoid repeated work for drift checks and no-op renders.
-- The Dataplane API's validation remains a second gate, not justification for
+- HAProxy's own parse at reload remains a second gate, not justification for
   skipping the controller gate.

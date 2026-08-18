@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 
 	corev1 "k8s.io/api/core/v1"
@@ -108,6 +109,39 @@ func TestComponent_handleReconciliationCompleted(t *testing.T) {
 				Events: []templating.RenderedEvent{newRenderedEvent("ns", "n")},
 			})
 		})
+	})
+}
+
+func TestComponent_handleInstanceDeploymentFailed(t *testing.T) {
+	endpoint := &dataplane.Endpoint{PodName: "haproxy-0", PodNamespace: "edge", PodUID: "uid-1"}
+
+	t.Run("leader emits a Warning on the pod with the agent's message", func(t *testing.T) {
+		rec := &fakeRecorder{}
+		c := &Component{recorder: rec, isLeader: true}
+		c.handleInstanceDeploymentFailed(events.NewInstanceDeploymentFailedEvent(endpoint, "reload: [ALERT] parsing [haproxy.cfg:12]: unknown keyword", true))
+		require.Len(t, rec.events, 1)
+		ref, ok := rec.events[0].obj.(*corev1.ObjectReference)
+		require.True(t, ok)
+		assert.Equal(t, "Pod", ref.Kind)
+		assert.Equal(t, "edge", ref.Namespace)
+		assert.Equal(t, "haproxy-0", ref.Name)
+		assert.Equal(t, corev1.EventTypeWarning, rec.events[0].etype)
+		assert.Equal(t, applyFailedReason, rec.events[0].reason)
+		assert.Contains(t, rec.events[0].message, "unknown keyword")
+	})
+
+	t.Run("follower emits nothing", func(t *testing.T) {
+		rec := &fakeRecorder{}
+		c := &Component{recorder: rec, isLeader: false}
+		c.handleInstanceDeploymentFailed(events.NewInstanceDeploymentFailedEvent(endpoint, "x", true))
+		assert.Empty(t, rec.events)
+	})
+
+	t.Run("an endpoint that is not a pod is skipped", func(t *testing.T) {
+		rec := &fakeRecorder{}
+		c := &Component{recorder: rec, isLeader: true}
+		c.handleInstanceDeploymentFailed(events.NewInstanceDeploymentFailedEvent("http://10.0.0.1:5555", "x", true))
+		assert.Empty(t, rec.events)
 	})
 }
 

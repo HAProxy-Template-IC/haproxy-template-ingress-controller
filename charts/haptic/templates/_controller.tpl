@@ -80,7 +80,7 @@ the process listens somewhere else.
 
 {{- $dataplane := $config.dataplane | default dict -}}
 {{- if not (kindIs "map" $dataplane) -}}{{- fail "controller.config.dataplane must be a map." -}}{{- end -}}
-{{- if hasKey $dataplane "port" -}}{{- fail "controller.config.dataplane.port was removed; haproxy.ports.dataplane is now the single source of truth for both the Dataplane API listener and controller connection." -}}{{- end -}}
+{{- if hasKey $dataplane "port" -}}{{- fail "controller.config.dataplane.port was removed; haproxy.ports.dataplane is now the single source of truth for both the agent listener and the controller connection." -}}{{- end -}}
 {{- if hasKey $config "routing" -}}{{- fail "controller.config.routing moved to controller.config.templatingSettings.extraContext.routing because it controls template-library behavior; use extraContext.routing.regexMatchOrder." -}}{{- end -}}
 
 {{- $extraContext := dig "templatingSettings" "extraContext" dict $config -}}
@@ -298,10 +298,68 @@ the process listens somewhere else.
 {{- end -}}
 
 {{- define "haptic.haproxy.validateValues" -}}
+{{- /* The Dataplane API sidecar became the HAPTIC agent container. Every key
+       that configured the sidecar is named here with its replacement, so an
+       upgrade fails loudly instead of silently ignoring the old setting. */ -}}
 {{- $hapDataplane := .Values.haproxy.dataplane | default dict -}}
-{{- $dpLogLevels := list "trace" "debug" "info" "warning" "error" -}}
-{{- if and (hasKey $hapDataplane "logLevel") (not (has ($hapDataplane.logLevel | toString) $dpLogLevels)) -}}
-  {{- fail (printf "haproxy.dataplane.logLevel %q is invalid. Valid: %s." (toString $hapDataplane.logLevel) (join ", " $dpLogLevels)) -}}
+{{- $movedDataplaneKeys := dict
+      "logLevel" "haproxy.agent.logLevel"
+      "extraEnv" "haproxy.agent.extraEnv"
+      "service" "haproxy.agent.service"
+      "resources" "haproxy.agent.resources" -}}
+{{- $removedDataplaneKeys := dict
+      "validateConfig" "the controller validates every config before it sends it, and the agent re-validates through HAProxy itself"
+      "debugSocketPath" "the agent reports its state at GET /v1/state and exports Prometheus metrics on haproxy.ports.agentMetrics"
+      "aclFormat" "the agent logs JSON on stdout; set haproxy.agent.logLevel instead" -}}
+{{- range $old, $new := $movedDataplaneKeys -}}
+  {{- if hasKey $hapDataplane $old -}}
+    {{- fail (printf "haproxy.dataplane.%s moved to %s: the Dataplane API sidecar is now the HAPTIC agent container." $old $new) -}}
+  {{- end -}}
+{{- end -}}
+{{- range $old, $why := $removedDataplaneKeys -}}
+  {{- if hasKey $hapDataplane $old -}}
+    {{- fail (printf "haproxy.dataplane.%s was removed with the Dataplane API sidecar: %s. Delete the key." $old $why) -}}
+  {{- end -}}
+{{- end -}}
+{{- range $leftover := keys $hapDataplane -}}
+  {{- fail (printf "haproxy.dataplane.%s is unknown: the Dataplane API sidecar is now the HAPTIC agent container, configured under haproxy.agent." $leftover) -}}
+{{- end -}}
+{{- if hasKey .Values.haproxy "dataplaneBin" -}}
+  {{- fail "haproxy.dataplaneBin was removed: the agent runs from the HAPTIC controller image (controller.image), not from a binary in the HAProxy image. Delete the key." -}}
+{{- end -}}
+{{- $hapAgent := .Values.haproxy.agent | default dict -}}
+{{- $agentFields := list "logLevel" "service" "resources" "extraEnv" -}}
+{{- range $field := keys $hapAgent -}}
+  {{- if not (has $field $agentFields) -}}
+    {{- fail (printf "haproxy.agent contains unknown field %q. Valid fields: %s." $field (join ", " $agentFields)) -}}
+  {{- end -}}
+{{- end -}}
+{{- $agentLogLevels := list "trace" "debug" "info" "warning" "error" -}}
+{{- if and (hasKey $hapAgent "logLevel") (not (has ($hapAgent.logLevel | toString) $agentLogLevels)) -}}
+  {{- fail (printf "haproxy.agent.logLevel %q is invalid. Valid: %s." (toString $hapAgent.logLevel) (join ", " $agentLogLevels)) -}}
+{{- end -}}
+{{- if .Values.haproxy.enabled -}}
+  {{- /* Only the bundled fleet turns these into agent flags, and the agent
+         exits at startup above its 60s ceiling. */ -}}
+  {{- $dataplaneConfig := dig "config" "dataplane" dict .Values.controller -}}
+  {{- range $field := list "minDeploymentInterval" "reloadVerificationTimeout" -}}
+    {{- $raw := index $dataplaneConfig $field | default "" | toString -}}
+    {{- if ne $raw "" -}}
+      {{- $seconds := -1.0 -}}
+      {{- if eq $raw "0" -}}
+        {{- $seconds = 0.0 -}}
+      {{- else if regexMatch "^[0-9]+(\\.[0-9]+)?ms$" $raw -}}
+        {{- $seconds = divf (trimSuffix "ms" $raw | float64) 1000.0 -}}
+      {{- else if regexMatch "^[0-9]+(\\.[0-9]+)?s$" $raw -}}
+        {{- $seconds = trimSuffix "s" $raw | float64 -}}
+      {{- else if regexMatch "^[0-9]+(\\.[0-9]+)?m$" $raw -}}
+        {{- $seconds = mulf (trimSuffix "m" $raw | float64) 60.0 -}}
+      {{- end -}}
+      {{- if or (lt $seconds 0.0) (gt $seconds 60.0) -}}
+        {{- fail (printf "controller.config.dataplane.%s is %q; the chart passes it to the agent, which accepts a Go duration of at most 60s and exits at startup on anything else. Set a value between 0 and 60s, for example 5s." $field $raw) -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
 {{- end -}}
 {{- $haproxy := .Values.haproxy -}}
 {{- if not (kindIs "map" $haproxy) -}}{{- fail "haproxy must be a map." -}}{{- end -}}
@@ -313,9 +371,9 @@ the process listens somewhere else.
 
 {{- $ports := $haproxy.ports | default dict -}}
 {{- if not (kindIs "map" $ports) -}}{{- fail "haproxy.ports must be a map." -}}{{- end -}}
-{{- range $field := keys $ports -}}{{- if not (has $field (list "http" "https" "stats" "dataplane")) -}}{{- fail (printf "haproxy.ports contains unknown field %q. Valid fields: http, https, stats, dataplane." $field) -}}{{- end -}}{{- end -}}
+{{- range $field := keys $ports -}}{{- if not (has $field (list "http" "https" "stats" "dataplane" "agentMetrics")) -}}{{- fail (printf "haproxy.ports contains unknown field %q. Valid fields: http, https, stats, dataplane, agentMetrics." $field) -}}{{- end -}}{{- end -}}
 {{- $seenPorts := dict -}}
-{{- range $field := list "http" "https" "stats" "dataplane" -}}
+{{- range $field := list "http" "https" "stats" "dataplane" "agentMetrics" -}}
   {{- $raw := index $ports $field | toString -}}
   {{- if not (regexMatch "^[0-9]+$" $raw) -}}{{- fail (printf "haproxy.ports.%s must be an integer between 1 and 65535." $field) -}}{{- end -}}
   {{- $port := int $raw -}}

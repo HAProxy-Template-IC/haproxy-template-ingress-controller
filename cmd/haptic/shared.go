@@ -24,6 +24,12 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
+// Output formats the commands that print one answer accept.
+const (
+	outputHuman = "human"
+	outputJSON  = "json"
+)
+
 const (
 	// separatorDouble is a double-line separator for major sections.
 	separatorDouble = "================================================================================"

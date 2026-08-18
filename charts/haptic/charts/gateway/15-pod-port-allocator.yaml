@@ -401,8 +401,8 @@ templateSnippets:
           port-omit rule. Set here UNCONDITIONALLY (not in the redirect filter
           snippet) so the map_int converter is present in the startup config and
           HAProxy loads the map file — a converter that only appears once a
-          redirect route exists is added at runtime by the DataPlane API without
-          the map ever being loaded, so the lookup silently misses and the pod
+          redirect route exists is added at runtime without the map ever
+          being loaded, so the lookup silently misses and the pod
           port leaks into Location. map_int (not map): the key is the integer
           dst_port. Chart-static binds miss the map and fall back to dst_port,
           which already IS the listener port there. #}

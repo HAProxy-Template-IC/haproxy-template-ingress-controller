@@ -404,7 +404,7 @@ The library classifies 56 `haproxy.org/*` annotations: 38 supported, 14 with beh
 | Annotation | Status | What to check |
 |------------|--------|---------------|
 | `haproxy.org/allow-list` | Behaviour differs | Host-scoped source-IP allowlist — only gates rules with an explicit host; invalid CIDRs fail the render. |
-| `haproxy.org/auth-realm` | Behaviour differs | Default "Protected-Content" (matching the upstream controller); spaces in the realm are replaced with dashes, as upstream does, since the DataPlane API forbids spaces. |
+| `haproxy.org/auth-realm` | Behaviour differs | Default "Protected-Content" (matching the upstream controller); spaces in the realm are replaced with dashes, as upstream does. |
 | `haproxy.org/auth-secret` | Behaviour differs | Secret format is one key per username with a base64(hash) value — different from ingress-nginx's htpasswd. A missing Secret makes the route serve 503 until it appears, and writing such an Ingress is rejected by the admission webhook. |
 | `haproxy.org/auth-type` | Behaviour differs | Only "basic-auth" is supported; other values fail the render (note the value differs from ingress-nginx's "basic"). |
 | `haproxy.org/blacklist` | Behaviour differs | Deprecated alias of deny-list, honoured only when deny-list is absent; host-scoped. |

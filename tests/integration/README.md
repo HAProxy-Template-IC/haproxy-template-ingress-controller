@@ -1,77 +1,73 @@
 # tests/integration
 
-Integration tests that run against a real Kind cluster with real HAProxy + Dataplane API pods. Every test file is tagged `//go:build integration`, so a plain `go test` skips them — use `make test-integration` or pass `-tags=integration` explicitly.
+Integration tests that run against a real Kind cluster with real HAProxy pods, each with the HAPTIC agent as its second container — the topology the chart deploys. Every test file is tagged `//go:build integration`, so a plain `go test` skips them — use `make test-integration` or pass `-tags=integration` explicitly.
 
-## What's Tested
+## What's tested
 
 Grouped by the `*_test.go` files in this directory:
 
 | File group | Scope |
 |------------|-------|
-| `env_test.go` | Fixture-level smoke tests (cluster comes up, HAProxy responds) |
-| `sync_backends_test.go`, `sync_frontends_test.go`, `sync_servers_test.go`, `sync_global_defaults_test.go`, `sync_sections_test.go`, `sync_observability_test.go`, `sync_auxiliary_test.go`, `sync_idempotency_test.go`, `sync_common_test.go` | Dataplane-sync coverage of every HAProxy section the comparator knows about, plus idempotency (re-sync is a no-op) |
-| `auxiliaryfiles_test.go` | Map/SSL/general/crt-list file handling through the three-phase sync |
-| `enterprise_botmgmt_test.go`, `enterprise_keepalived_test.go`, `enterprise_misc_test.go`, `enterprise_udplb_test.go`, `enterprise_waf_test.go` | Enterprise-only sections; skipped via `skipIfNotEnterprise` + capability-specific skips when the test cluster runs community HAProxy |
+| `env_test.go` | Fixture-level smoke tests (namespace names stay RFC 1123 compliant) |
+| `sync_backends_test.go`, `sync_frontends_test.go`, `sync_servers_test.go`, `sync_global_defaults_test.go`, `sync_sections_test.go`, `sync_observability_test.go`, `sync_auxiliary_test.go` | One transition per case: apply an initial file set, apply a second one, and assert the pod's tree and HAProxy's runtime state converged |
+| `sync_idempotency_test.go` | A re-applied render is a noop: no write, no reload |
+| `sync_ca_file_test.go` | An mTLS trust bundle rotates on the running worker |
+| `auxiliaryfiles_test.go` | The life cycle of every file kind: map, certificate, crt-list, CA file, general file |
 
-Per-section YAML fixtures live under `testdata/` — one subdirectory per HAProxy concept (acls, backends, binds, http-checks, waf, etc.).
+Per-section fixtures live under `testdata/` — one subdirectory per HAProxy concept (acls, backends, binds, http-checks, map-files, ssl-certs, …).
+
+## What the suite asserts
+
+The agent exposes no file or configuration endpoint, so every assertion reads the pod itself: `kubectl exec … cat` for the tree, `socat` over HAProxy's worker stats socket for `show map` / `show info`, and `GET /v1/state` for the runtime inventory the controller diffs against.
+
+A case declares two file sets. The suite renders each as a `renderplan.Plan`, asks `deployplan.Diff` what the pod has to do, and sends the resulting apply. Because nothing here parses HAProxy syntax, a plan declares the whole configuration as one section: any configuration change is a reload, while a change confined to auxiliary files runs on the live worker. Cases that pin that distinction set `expectedVerdict`.
 
 ## Fixture API
 
-`env.go` exposes a handful of `fixenv.CacheResult`-backed constructors:
+`env.go` exposes `fixenv.CacheResult`-backed constructors:
 
 ```go
-cluster  := SharedCluster(env)                 // Kind cluster, shared across tests
-ns       := TestNamespace(env)                 // per-test namespace (auto-cleaned)
-haproxy  := TestHAProxy(env)                   // HAProxy pod + Dataplane API ready
-raw      := TestDataplaneClient(env)           // low-level *client.DataplaneClient
-hi       := TestDataplaneHighLevelClient(env)  // public *dataplane.Client
-parser   := TestParser(env)
-cmp      := TestComparator(env)
+cluster := SharedCluster(env)   // Kind cluster, shared across the package
+image   := AgentImage(env)      // HAProxy image + haptic binary, built and loaded once
+ns      := TestNamespace(env)   // per-test namespace (auto-cleaned)
+haproxy := TestHAProxy(env)     // HAProxy pod + agent, both ready
+client  := TestAgentClient(env) // the controller's end of the wire contract
 ```
 
-Each fixture resolves its dependencies lazily and caches per-scope. A test that calls `TestHAProxy(env)` transparently gets a cluster, a namespace, and a running HAProxy — without paying for them in tests that don't need them.
+Each fixture resolves its dependencies lazily and caches per scope. A test that calls `TestHAProxy(env)` transparently gets a cluster, an image, a namespace, and a running pod.
 
-Capability gates (Enterprise-only features, version-specific API surface) are handled by the `skipIf*` helpers in the same file. The common ones:
+`NewSession(t, env)` wraps those into the controller's side of one pod: a desired file set, the plan describing it, and the baseline the pod's last ACK reported.
 
-| Helper | Skip condition |
-|--------|----------------|
-| `skipIfNotEnterprise` | Cluster runs community HAProxy |
-| `skipIfWAFNotSupported` / `skipIfWAFGlobalNotSupported` / `skipIfWAFProfilesNotSupported` | WAF feature not on this Enterprise version |
-| `skipIfUDPLBNotSupported` / `skipIfUDPLBACLsNotSupported` | UDP load-balancer sections not supported |
-| `skipIfKeepalivedNotSupported` / `skipIfBotManagementNotSupported` / `skipIfALOHANotSupported` | Other Enterprise feature gates |
-| `skipIfPingNotSupported` / `skipIfGitIntegrationNotSupported` / `skipIfDynamicUpdateNotSupported` / `skipIfAdvancedLoggingNotSupported` | v3.2+ or misc Enterprise features |
-
-Exhaustive list: grep `func skipIf` in `env.go`.
+Version gates use `skipBelowHAProxy(t, "3.1")` or the `minHAProxy` field of a table case. The bound is an HAProxy release, and it comes from the same `HAPROXY_VERSION` that selects the image, so the gate and the pod can never disagree.
 
 ## Running
 
 ```bash
 make test-integration                                       # all
-go test -tags=integration ./tests/integration -run TestSyncBackendAdd -v
+go test -tags=integration ./tests/integration -run TestSyncBackends -v
 KEEP_CLUSTER=true go test -tags=integration ./tests/integration -run TestXxx -v
 ```
 
 `KEEP_CLUSTER=true` (the default) reuses the Kind cluster between runs; set it to `false` to always tear down. The Kind context is `kind-haproxy-test` — switch to it with `kubectl config use-context kind-haproxy-test` when you want to poke at state from a failing run.
 
-## Adding a Section
+The suite builds the `haptic` binary itself and lays it into the pod image, in CI as well as locally. `HAPTIC_BINARY=/path/to/haptic` skips that build and uses the given one instead.
 
-Most integration tests follow the same shape — render a minimal HAProxy config for the feature, sync it via the high-level client, then assert the Dataplane API reports the expected shape:
+## Adding a case
 
-1. Drop a YAML or HAProxy-config fixture under `testdata/<section>/`.
-2. Add a `sync_<section>_test.go` (or extend an existing grouping) that pulls the fixture, calls `hi.Sync(...)`, and verifies the resulting state.
-3. If the section is Enterprise-only, guard the test with the appropriate `skipIf*` helper — or add a new one to `env.go` if the capability isn't already represented.
-4. If the section is new to the comparator, `pkg/dataplane/comparator/README.md` describes the comparator's role and `pkg/dataplane/comparator/sections/executors/` is the per-section dispatch layer to extend.
+1. Drop an HAProxy-config fixture under `testdata/<section>/`. Reference auxiliary files by their base-relative path (`maps/x.map`, `general/x.http`) and certificates by their bare filename — the harness adds `default-path origin`, `crt-base` and the worker stats socket to every `global` section it loads.
+2. Add a `syncTestCase` to the matching `sync_<section>_test.go` with the two configuration fixtures.
+3. Declare any auxiliary file the configuration references, keyed by its manifest path.
+4. Set `expectedVerdict` only when the case pins the runtime-versus-reload distinction, and `minHAProxy` when the directive needs a later release.
 
-See `tests/integration/CLAUDE.md` for fixture-design conventions (when to hit `SharedCluster` vs. when to isolate, parallel-test safety, how the HAProxy-version matrix in CI selects fixtures).
-
-## Flaky-Test Policy
+## Flaky-test policy
 
 Flakes are bugs. `tests/CLAUDE.md` has the investigation checklist — never "retry and merge".
 
-## See Also
+## See also
 
 - [`tests/README.md`](../README.md) — top-level test layout and Makefile targets
-- `tests/integration/CLAUDE.md` — fixture-design conventions, enterprise-test patterns
-- [`pkg/dataplane/comparator`](../../pkg/dataplane/comparator/) — what these tests exercise
+- `tests/integration/CLAUDE.md` — fixture-design conventions and parallel-test safety
+- [`tests/agent`](../agent/) — the same contract without a cluster: HAProxy and the agent as docker containers
+- [`docs/site/docs/development/agent.md`](../../docs/site/docs/development/agent.md) — the wire contract
 - [fixenv](https://github.com/rekby/fixenv) — fixture library
 - [Kind](https://kind.sigs.k8s.io/) — local Kubernetes

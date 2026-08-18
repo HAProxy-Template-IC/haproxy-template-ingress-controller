@@ -302,7 +302,7 @@ func TestDeployFailureRetry_NewerWorkRejectsRunningCallback(t *testing.T) {
 		return s.retryTimer == nil
 	}, testutil.LongTimeout, time.Millisecond)
 
-	s.scheduleOrQueue(context.Background(), "newer-B", nil, nil, oneEndpoint(), "config_validation", "correlation-B", nil, true, "checksum-B", nil, "")
+	s.scheduleOrQueue(context.Background(), "newer-B", nil, oneEndpoint(), "config_validation", "correlation-B", nil, true, "checksum-B", nil, "")
 	s.mu.Unlock()
 	locked = false
 	waitForRetryCallbacks(t, s)

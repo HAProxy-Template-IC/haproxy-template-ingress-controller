@@ -148,27 +148,6 @@ func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 	// This runs asynchronously and doesn't block test execution
 	cluster.CleanupOldTestNamespacesAsync()
 
-	// Load HAProxy Enterprise image if enterprise mode is enabled
-	// This is necessary because the enterprise registry requires authentication
-	// and Kind cannot pull from it directly
-	if os.Getenv("HAPROXY_ENTERPRISE") == "true" {
-		haproxyImage := getHAProxyEnterpriseImage()
-
-		// Pull the image from the registry first
-		fmt.Printf("📥 Pulling HAProxy Enterprise image '%s'...\n", haproxyImage)
-		if err := PullDockerImage(haproxyImage); err != nil {
-			return nil, fmt.Errorf("failed to pull HAProxy Enterprise image (ensure you are logged in to hapee-registry.haproxy.com): %w", err)
-		}
-		fmt.Printf("✓ HAProxy Enterprise image pulled\n")
-
-		// Load into Kind cluster
-		fmt.Printf("📦 Loading HAProxy Enterprise image into Kind cluster...\n")
-		if err := cluster.LoadDockerImage(haproxyImage); err != nil {
-			return nil, fmt.Errorf("failed to load HAProxy Enterprise image: %w", err)
-		}
-		fmt.Printf("✓ HAProxy Enterprise image loaded\n")
-	}
-
 	return cluster, nil
 }
 
@@ -350,25 +329,8 @@ func ShouldKeepCluster() string {
 	return val
 }
 
-// PullDockerImage pulls a Docker image from a registry to the local Docker daemon.
-// This is required for private registry images before loading into Kind.
-func PullDockerImage(image string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "docker", "pull", image)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to pull image: %w\nOutput: %s", err, output)
-	}
-
-	return nil
-}
-
-// LoadDockerImage loads a Docker image from the host into the Kind cluster.
-// This is necessary for images from private registries that require authentication,
-// as Kind nodes cannot authenticate to pull images directly.
-// The image must already be pulled locally (e.g., via `docker pull`).
+// LoadDockerImage loads a locally built image into the Kind cluster, which has
+// no registry to pull it from.
 func (k *KindCluster) LoadDockerImage(image string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -380,28 +342,4 @@ func (k *KindCluster) LoadDockerImage(image string) error {
 	}
 
 	return nil
-}
-
-// getHAProxyEnterpriseImage returns the HAProxy Enterprise image name based on
-// the HAPROXY_VERSION environment variable.
-func getHAProxyEnterpriseImage() string {
-	version := os.Getenv("HAPROXY_VERSION")
-	if version == "" {
-		version = "3.2"
-	}
-
-	// Map community version to enterprise version format
-	var tag string
-	switch {
-	case len(version) >= 3 && version[:3] == "3.0":
-		tag = "3.0r1"
-	case len(version) >= 3 && version[:3] == "3.1":
-		tag = "3.1r1"
-	case len(version) >= 3 && version[:3] == "3.2":
-		tag = "3.2r1"
-	default:
-		tag = version
-	}
-
-	return fmt.Sprintf("hapee-registry.haproxy.com/haproxy-enterprise:%s", tag)
 }

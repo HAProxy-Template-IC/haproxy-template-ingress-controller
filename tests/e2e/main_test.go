@@ -868,11 +868,12 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		args = append(args, "--set-string",
 			"controller.config.templatingSettings.extraContext.dumpPodPortAllocations=true")
 	}
-	// Dataplane API debug logging on request: the reload agent then logs
-	// "Reload started"/"Reload finished in", which is the server-side half of
-	// diagnosing a stalled raw push (#159). Set in the nightly-scale job.
-	if os.Getenv("HAPTIC_E2E_DPAPI_DEBUG") == "1" {
-		args = append(args, "--set", "haproxy.dataplane.logLevel=debug")
+	// Agent debug logging on request: the agent then logs a line per apply
+	// with its verdict, the ops it ran and the reload it performed, which is
+	// the pod-side half of diagnosing a stalled deploy (#159). Set in the
+	// nightly-scale job.
+	if os.Getenv("HAPTIC_E2E_AGENT_DEBUG") == "1" {
+		args = append(args, "--set", "haproxy.agent.logLevel=debug")
 	}
 	// Scale tier: TestScale measures controller RSS against a 1 GiB budget
 	// and times convergence at 800+ Ingresses. Two deviations from the

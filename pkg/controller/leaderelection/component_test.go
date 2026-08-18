@@ -47,7 +47,7 @@ func TestNew_NilConfig(t *testing.T) {
 
 	callbacks := k8sleaderelection.Callbacks{}
 
-	component, err := New(nil, clientset, bus, callbacks, logger)
+	component, err := New(nil, clientset, bus, callbacks, nil, logger)
 
 	require.Error(t, err)
 	assert.Nil(t, component)
@@ -68,7 +68,7 @@ func TestNew_NilClientset(t *testing.T) {
 	}
 	callbacks := k8sleaderelection.Callbacks{}
 
-	component, err := New(config, nil, bus, callbacks, logger)
+	component, err := New(config, nil, bus, callbacks, nil, logger)
 
 	require.Error(t, err)
 	assert.Nil(t, component)
@@ -90,7 +90,7 @@ func TestNew_NilEventBus(t *testing.T) {
 	}
 	callbacks := k8sleaderelection.Callbacks{}
 
-	component, err := New(config, clientset, nil, callbacks, logger)
+	component, err := New(config, clientset, nil, callbacks, nil, logger)
 
 	require.Error(t, err)
 	assert.Nil(t, component)
@@ -112,7 +112,7 @@ func TestNew_NilLogger(t *testing.T) {
 	}
 	callbacks := k8sleaderelection.Callbacks{}
 
-	component, err := New(config, clientset, bus, callbacks, nil)
+	component, err := New(config, clientset, bus, callbacks, nil, nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, component)
@@ -135,7 +135,7 @@ func TestNew_ValidConfig(t *testing.T) {
 	}
 	callbacks := k8sleaderelection.Callbacks{}
 
-	component, err := New(config, clientset, bus, callbacks, logger)
+	component, err := New(config, clientset, bus, callbacks, nil, logger)
 
 	require.NoError(t, err)
 	require.NotNil(t, component)
@@ -172,7 +172,7 @@ func TestNew_CallbackWrapping_OnStartedLeading(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	component, err := New(config, clientset, bus, callbacks, logger)
+	component, err := New(config, clientset, bus, callbacks, nil, logger)
 	require.NoError(t, err)
 
 	// Simulate OnStartedLeading callback by accessing the elector's internal callback
@@ -235,7 +235,7 @@ func TestNew_CallbackWrapping_OnStoppedLeading(t *testing.T) {
 		},
 	}
 
-	_, err := New(config, clientset, bus, callbacks, logger)
+	_, err := New(config, clientset, bus, callbacks, nil, logger)
 	require.NoError(t, err)
 
 	assert.False(t, callbackCalled) // Not called yet - would be called when losing leadership
@@ -262,7 +262,7 @@ func TestNew_CallbackWrapping_OnNewLeader(t *testing.T) {
 		},
 	}
 
-	_, err := New(config, clientset, bus, callbacks, logger)
+	_, err := New(config, clientset, bus, callbacks, nil, logger)
 	require.NoError(t, err)
 
 	assert.Empty(t, observedLeader) // Not called yet - would be called when new leader observed
@@ -285,7 +285,7 @@ func TestNew_CallbackWrapping_NilCallbacks(t *testing.T) {
 	// All nil callbacks
 	callbacks := k8sleaderelection.Callbacks{}
 
-	component, err := New(config, clientset, bus, callbacks, logger)
+	component, err := New(config, clientset, bus, callbacks, nil, logger)
 
 	// Should succeed even with nil callbacks
 	require.NoError(t, err)
@@ -311,7 +311,7 @@ func TestComponent_Run_PublishesLeaderElectionStartedEvent(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	component, err := New(config, clientset, bus, callbacks, logger)
+	component, err := New(config, clientset, bus, callbacks, nil, logger)
 	require.NoError(t, err)
 
 	// Cancel context immediately to prevent Start() from blocking forever

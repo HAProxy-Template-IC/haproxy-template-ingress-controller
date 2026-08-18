@@ -24,12 +24,14 @@ package agent
 import (
 	"os"
 	"testing"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
 // TestMain drops the image the suite builds; containers and volumes are each
 // test's own cleanup.
 func TestMain(m *testing.M) {
 	code := m.Run()
-	removeImage(imageName)
+	kindutil.RemoveImage(imageName)
 	os.Exit(code)
 }

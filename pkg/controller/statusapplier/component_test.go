@@ -291,6 +291,30 @@ func TestHandleDeploymentCompleted_SkipsWithoutPatches(t *testing.T) {
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
+// A fleet that accepted the config behind a paced reload is neither deployed
+// nor failed: no variant applies until the deployer observes the fleet running
+// it and publishes a DeploymentSkippedEvent.
+func TestHandleDeploymentCompleted_PendingReloadsApplyNoVariant(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	setLeader(comp)
+
+	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+		Total: 2, Succeeded: 0, Failed: 0, PendingReloads: 2, StatusPatches: deployedPatches(),
+	}))
+	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
+
+	comp.handleDeploymentSkipped(context.Background(), events.NewDeploymentSkippedEvent(
+		2, events.SkipReasonReloadObserved, "hash", "pods", deployedPatches()))
+	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.LongTimeout)
+	assert.Equal(t, events.StatusPatchPhaseDeployed, completedEvent.Phase)
+}
+
 // TestHandleDeploymentCompleted_SkipsZeroEndpoints exercises the "no HAProxy
 // pods reachable" path. The deployer publishes DeploymentCompletedEvent with
 // Total=0 in that case; the status-applier must NOT flip Accepted=True since

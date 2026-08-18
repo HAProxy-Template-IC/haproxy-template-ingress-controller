@@ -1,6 +1,6 @@
 {{/*
-Resource math: CPU/memory quantity parsing, HAProxy nbthread, dataplane
-GOMAXPROCS / maxParallel, HAProxy shm-stats sizing, and the
+Resource math: CPU/memory quantity parsing, HAProxy nbthread, agent
+GOMAXPROCS, HAProxy shm-stats sizing, and the
 bootstrap-config checksum (which depends on several of these values, so
 it lives next to them).
 */}}
@@ -111,16 +111,16 @@ Returns: integer megabytes, or 0 if parsing fails
 {{- end -}}
 
 {{/*
-Calculate the effective GOMAXPROCS value for the dataplane container.
+Calculate the effective GOMAXPROCS value for the agent container.
 Returns the numeric value in ALL cases (for use in calculations like maxParallel).
 Priority:
   1. If user set GOMAXPROCS in extraEnv → use that
   2. If CPU limit exists → estimate from CPU (ceil of limit)
   3. If memory limit exists → calculate from memory (mem_MB / 64)
   4. Fallback → 2
-Input: .Values.haproxy.dataplane context
+Input: .Values.haproxy.agent context
 */}}
-{{- define "haptic.dataplane.gomaxprocsValue" -}}
+{{- define "haptic.agent.gomaxprocsValue" -}}
 {{- $result := 0 -}}
 {{- /* 1. Check if user explicitly set GOMAXPROCS */ -}}
 {{- range .extraEnv | default list -}}
@@ -143,21 +143,21 @@ Input: .Values.haproxy.dataplane context
 {{- end -}}
 
 {{/*
-Auto-calculate GOMAXPROCS for dataplane container.
+Auto-calculate GOMAXPROCS for the agent container.
 Returns env var YAML if:
   - No CPU limit is set (automaxprocs won't work correctly)
   - User hasn't provided GOMAXPROCS in extraEnv
   - A memory limit is set (otherwise there's no signal to derive from)
-Value comes from haptic.dataplane.gomaxprocsValue, which uses the same
+Value comes from haptic.agent.gomaxprocsValue, which uses the same
 mem_MB / 64 formula (min 2) when only a memory limit is present.
-Input: .Values.haproxy.dataplane context
+Input: .Values.haproxy.agent context
 */}}
-{{- define "haptic.dataplane.autoGomaxprocs" -}}
+{{- define "haptic.agent.autoGomaxprocs" -}}
 {{- $limits := .resources.limits | default dict -}}
 {{- $envNames := list -}}
 {{- range .extraEnv | default list -}}{{- $envNames = append $envNames .name -}}{{- end -}}
 {{- if and (not (has "GOMAXPROCS" $envNames)) (not $limits.cpu) $limits.memory -}}
 - name: GOMAXPROCS
-  value: {{ include "haptic.dataplane.gomaxprocsValue" . | quote }}
+  value: {{ include "haptic.agent.gomaxprocsValue" . | quote }}
 {{- end -}}
 {{- end -}}

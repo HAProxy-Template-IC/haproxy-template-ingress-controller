@@ -75,6 +75,7 @@ func New(metrics *Metrics, eventBus *busevents.EventBus) *Component {
 		events.EventTypeReconciliationTriggered,
 		events.EventTypeReconciliationStarted,
 		events.EventTypeDeploymentCompleted,
+		events.EventTypeDeploymentSkipped,
 		events.EventTypeInstanceDeploymentFailed,
 		events.EventTypeValidationCompleted,
 		events.EventTypeValidationFailed,
@@ -152,9 +153,13 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.metrics.RecordReconciliation(0, false)
 	case *events.DeploymentCompletedEvent:
 		c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0)
-		c.metrics.RecordDeploymentOperations(e.ReloadsTriggered, e.TotalAPIOperations)
+		c.metrics.RecordDeploymentReloads(e.ReloadsTriggered)
 		// Leader-only event: update the fleet-convergence + config-staleness gauges.
 		c.metrics.SetFleetConvergence(e.Total, e.Succeeded, e.Failed)
+	case *events.DeploymentSkippedEvent:
+		// The data plane serves the config without a deployment having run:
+		// the render was unchanged, or the fleet was observed running it.
+		c.metrics.SetFleetConvergence(e.Total, e.Total, 0)
 	case *events.InstanceDeploymentFailedEvent:
 		c.metrics.RecordDeployment(0, false)
 	case *events.ValidationCompletedEvent:

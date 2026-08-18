@@ -100,7 +100,7 @@ metadata:
   name: haptic-config
   namespace: haptic
 spec:
-  credentialsSecretRef:        # Dataplane API credentials Secret
+  credentialsSecretRef:        # agent credentials Secret
     name: haptic-credentials
   podSelector:                 # which HAProxy pods receive the config
     matchLabels:
@@ -140,7 +140,7 @@ helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/hapti
 The Helm chart deploys:
 
 - **Controller**: Watches Kubernetes resources and generates HAProxy configurations
-- **HAProxy pods**: Load balancers with Dataplane API sidecars (2 replicas by default)
+- **HAProxy pods**: Load balancers, each with the HAPTIC agent alongside (2 replicas by default)
 - **RBAC**: Permissions for watching Ingress, Service, and EndpointSlice resources
 - **HAProxyTemplateConfig + HAProxyTemplateLibrary**: the CRD resource with the default template configuration, plus one `HAProxyTemplateLibrary` per enabled [template library](template-libraries.md) (Ingress and Gateway API out of the box), linked from the config's `spec.libraryRefs`
 
@@ -156,7 +156,7 @@ kubectl get pods -n haptic -l app.kubernetes.io/component=controller
 kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer
 ```
 
-You should see two controller pods (the chart defaults to two replicas with leader election) and two HAProxy pods, all in `Running` state with full readiness (`2/2` and `4/4`). The controller pod runs the controller plus its validator sidecar; each HAProxy pod runs `haproxy`, the Dataplane API, the SPOA hub, and the Vector log/metrics sidecar.
+You should see two controller pods (the chart defaults to two replicas with leader election) and two HAProxy pods, all in `Running` state with full readiness (`2/2` and `4/4`). The controller pod runs the controller plus its validator sidecar; each HAProxy pod runs `haproxy`, the HAPTIC agent, the SPOA hub, and the Vector log/metrics sidecar.
 
 !!! note "HAProxy version"
     The chart defaults to HAProxy 3.4, the latest Long-Term Support (LTS) release. To pin a different series, set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for the full list and support status.
@@ -291,7 +291,7 @@ You should see:
 - Server entries pointing to the echo pod endpoints
 
 !!! note "Output vs input"
-    `HAProxyCfg` (singular `haproxycfg`, short name `hpcfg`) is the controller's *output* — it republishes it from the templates whenever the rendered configuration changes, so editing it directly has no lasting effect and isn't advised: the next config change overwrites your edit. To change the configuration, edit the *input* instead — the templates, watched resources, and dataplane settings in `HAProxyTemplateConfig` (short names `htplcfg`, `haptpl`). Use `kubectl describe` rather than `kubectl get -o yaml`, since the latter renders multiline configs as literal `\n`.
+    `HAProxyCfg` (singular `haproxycfg`, short name `hpcfg`) is the controller's *output* — it republishes it from the templates whenever the rendered configuration changes, so editing it directly has no lasting effect and isn't advised: the next config change overwrites your edit. To change the configuration, edit the *input* instead — the templates, watched resources, and `dataplane` settings in `HAProxyTemplateConfig` (short names `htplcfg`, `haptpl`). Use `kubectl describe` rather than `kubectl get -o yaml`, since the latter renders multiline configs as literal `\n`.
 
 ### Test the routing
 
@@ -315,7 +315,7 @@ The echo server echoes back the request it saw. Repeat the request a few times t
 
 ## What's happening behind the scenes
 
-When you created the Ingress, the controller detected the change via the Kubernetes watch API and rendered the templates from the default HAProxyTemplateConfig with your Ingress data. The rendered config then passed validation (syntax parse and schema check) before anything reached HAProxy. Finally, the controller deployed the change to all HAProxy pods in parallel via the Dataplane API — using HAProxy's runtime API where possible to avoid process reloads — typically completing the whole cycle in under 1 second. For the full pipeline, see the [Architecture Overview](./development/design/architecture-overview.md).
+When you created the Ingress, the controller detected the change via the Kubernetes watch API and rendered the templates from the default HAProxyTemplateConfig with your Ingress data. It then decided, per pod, what the change needs: a map or server update runs on the live worker, and only a change to the configuration's structure reloads. The agent in each HAProxy pod wrote the files and ran what it was told, in parallel across the fleet — typically completing the whole cycle in under 1 second. For the full pipeline, see the [Architecture Overview](./development/design/architecture-overview.md).
 
 ## Next steps
 
@@ -353,7 +353,7 @@ For 3+ replicas, PodDisruptionBudgets, and leader election, see [High Availabili
 If you run into issues during setup, check these common areas:
 
 - **Controller not starting** -- check logs for missing HAProxyTemplateConfig, RBAC errors, or API connectivity issues
-- **HAProxy pods not updating** -- verify the Dataplane API sidecar is running and credentials match
+- **HAProxy pods not updating** -- verify the agent container is running and credentials match
 - **Ingress not routing** -- ensure `ingressClassName: haptic` is set (or whatever you configured `ingressClass.name` to) and the backend Service has endpoints
 
 For detailed diagnosis steps, see the [Troubleshooting Guide](./troubleshooting.md).

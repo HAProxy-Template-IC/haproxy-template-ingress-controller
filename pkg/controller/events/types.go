@@ -104,6 +104,11 @@ const (
 	EventTypeDeploymentCancelRequest  = "deployment.cancel.request"
 	EventTypeDriftPreventionTriggered = "drift.prevention.triggered"
 
+	// DeploymentSkippedEvent reasons: no deployment ran, and the data plane
+	// serves the config anyway.
+	SkipReasonConfigUnchanged = "config_unchanged" // the render equals the last deployed one
+	SkipReasonReloadObserved  = "reload_observed"  // a later deployment's ACKs report the fleet running it
+
 	// HAProxy pod event types.
 	EventTypeHAProxyPodsDiscovered = "haproxy.pods.discovered"
 	EventTypeHAProxyPodTerminated  = "haproxy.pod.terminated"

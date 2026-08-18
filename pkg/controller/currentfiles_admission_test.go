@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -93,6 +94,7 @@ backend http_back
 			require.NoError(t, err)
 			countingEngine := &renderCountingEngine{Engine: engine}
 			wiring := &reconciliationWiring{
+				capabilities:          renderer.NewCapabilitiesFanout(dataplane.Capabilities{}),
 				publishedCurrentFiles: published,
 				engine:                countingEngine,
 				typedResourceTypes:    map[string]reflect.Type{},

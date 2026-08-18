@@ -35,11 +35,12 @@ type Endpoint struct {
 	// PodRuntimeID distinguishes container restarts and image changes within one pod UID.
 	PodRuntimeID string
 
-	// DataPlane API version info cached after discovery admission.
-	// Zero values indicate version not yet detected.
+	// HAProxy version the pod's agent reported, cached after discovery
+	// admission. It decides this pod's runtime capabilities and, at its fleet
+	// minimum, the template ones. Zero values mean not yet detected.
 	DetectedMajorVersion int    // Major version (e.g., 3)
-	DetectedMinorVersion int    // Minor version (e.g., 2)
-	DetectedFullVersion  string // Full version string (e.g., "v3.2.6 87ad0bcf")
+	DetectedMinorVersion int    // Minor version (e.g., 4)
+	DetectedFullVersion  string // Full version string (e.g., "3.4.3")
 }
 
 // HasCachedVersion returns true if version info has been cached on this endpoint.

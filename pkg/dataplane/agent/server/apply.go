@@ -23,6 +23,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"sort"
+	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/files"
@@ -147,6 +148,8 @@ func validateManifest(m *api.Manifest) error {
 		return fmt.Errorf("%d ops exceed the %d-op limit", len(m.Ops), api.MaxOpsPerApply)
 	case len(m.InPlaceOps) > api.MaxOpsPerApply:
 		return fmt.Errorf("%d in-place ops exceed the %d-op limit", len(m.InPlaceOps), api.MaxOpsPerApply)
+	case len(m.InPlaceOps) > 0 && (m.ExpectedWorkerOpsPlanID == "" || m.WorkerOpsPlanID == ""):
+		return errors.New("in-place ops need expected_worker_ops_plan_id and worker_ops_plan_id")
 	}
 	if err := validateEnumeratedMode(m.Mode); err != nil {
 		return err
@@ -176,7 +179,13 @@ func validateEnumeratedMode(mode string) error {
 }
 
 // fence is the write gate. The ops were composed against a baseline; if this
-// pod is not on it, or a newer leader has spoken, nothing is written.
+// pod is not on it, or a newer leader has spoken, nothing is written. The
+// in-place batch has its own baseline, the worker's: when the batch is going
+// to run — a reload is pending, or this apply asks for one the window makes
+// the pod pace — and the worker moved on since the controller looked (its
+// pacer fired), the whole apply is refused so the caller re-diffs against the
+// worker as it is now. Everything up to activate runs under the apply lock,
+// so what the fence sees is what the batch would meet.
 func (s *Server) fence(m *api.Manifest) *api.Conflict {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -193,6 +202,8 @@ func (s *Server) fence(m *api.Manifest) *api.Conflict {
 		}
 	case m.ExpectedPrevToken != s.state.AppliedToken:
 		reason = "prev_mismatch"
+	case s.inPlaceWillRunLocked(m) && m.ExpectedWorkerOpsPlanID != s.state.WorkerOpsPlanID:
+		reason = "worker_ops_mismatch"
 	}
 	if reason == "" {
 		return nil
@@ -205,6 +216,18 @@ func (s *Server) fence(m *api.Manifest) *api.Conflict {
 		LKGPlanID:       s.state.LKGPlanID,
 		Reason:          reason,
 	}
+}
+
+// inPlaceWillRunLocked mirrors activate: the in-place batch runs while a
+// reload is pending, or when this apply asks for a reload the pod has to pace.
+func (s *Server) inPlaceWillRunLocked(m *api.Manifest) bool {
+	if len(m.InPlaceOps) == 0 {
+		return false
+	}
+	if !s.state.ReloadPendingAt.IsZero() {
+		return true
+	}
+	return m.Mode == api.ModeReload && time.Now().Before(s.lastReload.Add(s.cfg.ReloadIntervalMin))
 }
 
 // received is what the parts of one apply carry: the verified file contents,

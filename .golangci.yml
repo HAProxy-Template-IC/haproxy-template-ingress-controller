@@ -195,6 +195,16 @@ linters:
           - goconst
           - gocyclo
 
+      # Test tooling that builds a container image from a locally built binary.
+      # Its paths come from the developer or the CI job (HAPTIC_BINARY, the
+      # module root), never from anything a cluster or a request supplies, so
+      # gosec's file-inclusion and taint findings have no attacker to protect
+      # against. Untagged because two suites share it, which is why it reaches
+      # the linter at all where tests/agent's tagged copy did not.
+      - path: tests/kindutil/
+        linters:
+          - gosec
+
       # Allow dot imports in test files (for gomega/ginkgo if used)
       - path: _test\.go$
         text: "should not use dot imports"

@@ -35,11 +35,14 @@ var (
 )
 
 // severityPrefix is what `set severity-output number` puts in front of every
-// message. HAProxy uses syslog levels: 0..4 are the failure half.
+// message. HAProxy uses syslog levels: 0..3 are refusals, 5..7 are chatter, and
+// 4 (WARNING) is both — `set server addr` and its check/agent siblings answer
+// at that level whether they applied the change or refused it.
 var severityPrefix = regexp.MustCompile(`^\[([0-7])\]:`)
 
 // errorPhrases are HAProxy's own refusals, matched lowercased. They cover the
-// commands whose failures carry no severity prefix.
+// commands whose failures carry no severity prefix, and the WARNING-level
+// answers whose severity does not decide.
 var errorPhrases = []string{
 	"unknown command",
 	"no such",
@@ -56,6 +59,8 @@ var errorPhrases = []string{
 	"unsupported",
 	"failed",
 	"error",
+	"problem converting",
+	"through configuration file",
 }
 
 // CommandResult is one command's verdict, with HAProxy's own words.
@@ -93,9 +98,9 @@ func classify(seg string) error {
 		return ErrNameCollision
 	case strings.Contains(lower, "wait delay expired"):
 		return ErrWaitExpired
-	case tagged && severity[0] <= '4':
+	case tagged && severity[0] <= '3':
 		return ErrRejected
-	case tagged:
+	case tagged && severity[0] >= '5':
 		return nil
 	}
 	for _, p := range errorPhrases {

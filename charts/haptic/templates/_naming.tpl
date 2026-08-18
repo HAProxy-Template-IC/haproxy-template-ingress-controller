@@ -110,7 +110,7 @@ applies to its Pods. Templates that emit Services targeting the shared
 HAProxy front-door use this so Service.spec.selector resolves to the
 right pods. The labelset is the chart-wide selectorLabels plus the
 component=loadbalancer discriminator that distinguishes HAProxy pods
-from controller / spoa-hub / dataplane-api pods.
+from controller / spoa-hub pods.
 
 This helper exists so templates which emit per-Gateway LoadBalancer
 Services via renderResource() (SupportGatewayStaticAddresses) can

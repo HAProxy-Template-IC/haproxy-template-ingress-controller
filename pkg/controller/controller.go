@@ -43,6 +43,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configloader"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/credentialsloader"
+	leaderelectionctrl "gitlab.com/haproxy-haptic/haptic/pkg/controller/leaderelection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -684,6 +685,12 @@ type componentSetup struct {
 	ConfigChangeCh        chan *configchange.ReloadRequest
 	ErrGroup              *errgroup.Group // Tracks all background goroutines for graceful shutdown
 	LeaderState           *leaderCallbackState
+
+	// LeaderEpoch is the fencing epoch the deployer stamps on every apply, plus
+	// the way to hand leadership back. It is built with the deploy stack and
+	// claimed by the leader-election component, so both halves must see the
+	// same object. Nil when leader election is disabled.
+	LeaderEpoch *leaderelectionctrl.Term
 
 	// SelfWrites links the status applier (writer) to the resource watchers
 	// (readers) so a status write's own echo doesn't re-render.

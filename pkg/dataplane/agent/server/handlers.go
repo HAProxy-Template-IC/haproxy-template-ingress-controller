@@ -72,7 +72,7 @@ func (s *Server) stateResponse(verify bool) (api.State, error) {
 		out.AppliedPlan = s.appliedPlan
 	}
 	if !s.state.ReloadPendingAt.IsZero() {
-		out.ReloadPendingAt = s.state.ReloadPendingAt.UTC().Format(time.RFC3339)
+		out.ReloadPendingAt = s.state.ReloadPendingAt.UTC().Format(time.RFC3339Nano)
 	}
 	return out, nil
 }

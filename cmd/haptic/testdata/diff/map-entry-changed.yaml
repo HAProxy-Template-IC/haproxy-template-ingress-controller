@@ -1,0 +1,54 @@
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: diff-base
+spec:
+  podSelector:
+    matchLabels:
+      app: haproxy
+  watchedResources:
+    services:
+      apiVersion: v1
+      resources: services
+      indexBy:
+        - metadata.namespace
+        - metadata.name
+  maps:
+    host.map:
+      template: |
+        one.example.com be_one
+        three.example.com be_two
+  haproxyConfig:
+    template: |
+      global
+        default-path origin {{ pathResolver.GetBaseDir() }}
+
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+
+      frontend http
+        bind :8080
+        use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
+        default_backend be_one
+
+      backend be_one
+        server s1 10.0.0.1:8080
+
+      {%%
+        var spec = map[string]any{
+          "name":    "be_two",
+          "mode":    "http",
+          "shape":   "structural",
+          "body":    []any{"timeout server 30s"},
+          "servers": []any{map[string]any{"name": "s1", "address": "10.0.0.2", "port": 8080}},
+        }
+        var token, err = planRegistry.Backend(spec,
+          "backend be_two\n    mode http\n    timeout server 30s\n    server s1 10.0.0.2:8080\n")
+        if err != nil {
+          fail(err.Error())
+        }
+        show token
+      %%}

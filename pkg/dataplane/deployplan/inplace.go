@@ -15,6 +15,9 @@
 package deployplan
 
 import (
+	"encoding/json"
+	"fmt"
+	"maps"
 	"slices"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
@@ -37,15 +40,20 @@ var inPlaceKinds = map[string]bool{
 }
 
 // inPlaceOps composes the subset that runs while this pod waits for its
-// reload, against the plan the worker actually has. A change it cannot express
-// is dropped rather than reported: the pending reload applies all of it.
-func (b *builder) inPlaceOps() []api.Op {
-	if !b.baseline.ReloadPending {
-		return nil
+// reload — one already pending, or the one this render asks for, which the
+// pod paces if its window is closed — against the plan the worker actually
+// has, and returns the plan the worker holds once the subset ran. A change it
+// cannot express is dropped rather than reported: the reload applies all of
+// it. Without a worker-ops baseline nothing is composed: the agent fences
+// in-place ops on that id, and Running or Applied is not what the worker
+// holds once one in-place batch ran.
+func (b *builder) inPlaceOps() ([]api.Op, *renderplan.Plan) {
+	if !b.baseline.ReloadPending && !b.reload {
+		return nil, nil
 	}
-	worker := firstPlan(b.baseline.WorkerOps, b.baseline.Running, b.baseline.Applied)
+	worker := b.baseline.WorkerOps
 	if worker == nil {
-		return nil
+		return nil, nil
 	}
 	// The ops that create runtime-store objects never run while a reload is
 	// pending, so the worker holds nothing this diff composed.
@@ -62,7 +70,124 @@ func (b *builder) inPlaceOps() []api.Op {
 	if len(kept) > api.MaxOpsPerApply {
 		kept = kept[:api.MaxOpsPerApply]
 	}
-	return kept
+	if len(kept) == 0 {
+		return nil, nil
+	}
+	return kept, workerAfter(worker, b.next, kept)
+}
+
+// workerAfter is the worker's plan with exactly the composed in-place ops
+// applied — the baseline the next in-place batch is composed against, and the
+// id the agent records for it. The in-place subset never brings the worker to
+// the render (a new map key waits for the reload), so naming the render here
+// would compose the next batch against state the worker does not have.
+func workerAfter(worker, next *renderplan.Plan, ops []api.Op) *renderplan.Plan {
+	after := *worker
+	after.Backends = maps.Clone(worker.Backends)
+	after.Maps = maps.Clone(worker.Maps)
+	after.Files = slices.Clone(worker.Files)
+	for i := range ops {
+		applyInPlaceOp(&after, next, &ops[i])
+	}
+	encoded, err := json.Marshal(ops)
+	if err != nil {
+		panic(fmt.Sprintf("deployplan: encoding in-place ops failed: %v", err))
+	}
+	after.ID = renderplan.DigestString(worker.ID + "\x00" + next.ID + "\x00" + string(encoded))
+	return &after
+}
+
+func applyInPlaceOp(after, next *renderplan.Plan, op *api.Op) {
+	switch op.Kind {
+	case api.OpServerAdd:
+		if added, ok := serverIn(next, op.Backend, op.Server); ok {
+			be := after.Backends[op.Backend]
+			be.Servers = append(slices.Clone(be.Servers), added)
+			after.Backends[op.Backend] = be
+		}
+	case api.OpServerEnable, api.OpServerDisable, api.OpServerSetAddr, api.OpServerSetWeight, api.OpServerSetState:
+		mutateServer(after, op)
+	case api.OpMapSet, api.OpMapDel:
+		mutateMap(after, op)
+	case api.OpCertSet:
+		updated, ok := fileIndex(next.Files)[op.Path]
+		if !ok {
+			return
+		}
+		for i := range after.Files {
+			if after.Files[i].Path == op.Path {
+				after.Files[i].Digest, after.Files[i].Size = updated.Digest, updated.Size
+			}
+		}
+	}
+}
+
+func serverIn(plan *renderplan.Plan, backend, name string) (renderplan.Server, bool) {
+	be, ok := plan.Backends[backend]
+	if !ok {
+		return renderplan.Server{}, false
+	}
+	for i := range be.Servers {
+		if be.Servers[i].Name == name {
+			return be.Servers[i], true
+		}
+	}
+	return renderplan.Server{}, false
+}
+
+func mutateServer(after *renderplan.Plan, op *api.Op) {
+	be, ok := after.Backends[op.Backend]
+	if !ok {
+		return
+	}
+	be.Servers = slices.Clone(be.Servers)
+	for i := range be.Servers {
+		srv := &be.Servers[i]
+		if srv.Name != op.Server {
+			continue
+		}
+		switch op.Kind {
+		case api.OpServerEnable:
+			srv.Disabled = false
+		case api.OpServerDisable:
+			srv.Disabled = true
+		case api.OpServerSetState:
+			srv.Disabled = op.State == stateMaint
+		case api.OpServerSetAddr:
+			srv.Address, srv.Port = op.Address, op.Port
+		case api.OpServerSetWeight:
+			if op.Weight != nil {
+				weight := *op.Weight
+				srv.Weight = &weight
+			}
+		}
+	}
+	after.Backends[op.Backend] = be
+}
+
+// mutateMap applies a set or del to the map at op.Path with `set map` and
+// `del map` semantics: every entry with the key.
+func mutateMap(after *renderplan.Plan, op *api.Op) {
+	for name, m := range after.Maps {
+		path := m.Path
+		if path == "" {
+			path = name
+		}
+		if path != op.Path {
+			continue
+		}
+		entries := make([]renderplan.Entry, 0, len(m.Entries))
+		for _, e := range m.Entries {
+			switch {
+			case e.Key != op.Key:
+				entries = append(entries, e)
+			case op.Kind == api.OpMapSet:
+				entries = append(entries, renderplan.Entry{Key: e.Key, Value: op.Value})
+			}
+		}
+		m.Entries = entries
+		after.Maps[name] = m
+	}
 }
 
 func (b *builder) inPlaceServerOps(worker *renderplan.Plan) []api.Op {
@@ -150,13 +275,4 @@ func (b *builder) inPlaceCertOps(worker *renderplan.Plan) []api.Op {
 		}
 	}
 	return ops
-}
-
-func firstPlan(plans ...*renderplan.Plan) *renderplan.Plan {
-	for _, p := range plans {
-		if p != nil {
-			return p
-		}
-	}
-	return nil
 }

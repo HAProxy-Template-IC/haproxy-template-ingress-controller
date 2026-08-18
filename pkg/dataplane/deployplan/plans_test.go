@@ -232,3 +232,12 @@ func reasonsContain(t *testing.T, reasons []string, want string) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func fileDigest(p *renderplan.Plan, path string) string {
+	for i := range p.Files {
+		if p.Files[i].Path == path {
+			return p.Files[i].Digest
+		}
+	}
+	return ""
+}

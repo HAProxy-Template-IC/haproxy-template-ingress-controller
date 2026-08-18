@@ -111,6 +111,35 @@ spec:
             summary: "HAProxy is dropping access-log records"
             description: "HAProxy pod {{ `{{ $labels.pod }}` }} dropped {{ `{{ $value | humanize }}` }} access-log records in 5m. The log reaches the vector sidecar over a UNIX datagram socket, which absorbs only ~167 records; when vector stops draining (topology reload, GC pause, CPU starvation) HAProxy discards records rather than blocking traffic. Requests are unaffected, but the log is incomplete — which matters most during an incident, when it is the evidence you reach for. Raise vector's CPU request or reduce log volume with accessLog.suppress."
         {{- end }}
+        {{- if $defaults.applyRejected }}
+        - alert: HAProxyAgentApplyRejected
+          expr: increase(haptic_apply_rejected_total[5m]) > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "An HAProxy pod refused a config apply"
+            description: "Pod {{ `{{ $labels.pod }}` }} rejected an apply and is serving its last known good file set; HAProxy's own message is in the pod's status condition and Warning event"
+        {{- end }}
+        {{- if $defaults.agentInvariantViolated }}
+        - alert: HAProxyAgentInvariantViolated
+          expr: increase(haptic_agent_invariant_violations_total[5m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "The HAPTIC agent observed one of its invariants failing"
+            description: "Invariant {{ `{{ $labels.name }}` }} failed on pod {{ `{{ $labels.pod }}` }} - this is a defect, not an operator error; collect the agent state (haptic agent state --output json, run in the pod's agent container) and open an issue"
+        {{- end }}
+        {{- if $defaults.agentVersionSkew }}
+        - alert: HAProxyAgentVersionSkew
+          expr: increase(haptic_agent_version_skew_total[15m]) > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "HAProxy pods run an agent that does not match the controller"
+            description: "Applies fall back to a full file set plus a reload because a pod's agent speaks another API major or lacks an op kind - expected during a rolling upgrade, a defect if it persists after one"
+        {{- end }}
         {{- if $defaults.criticalEventsDropped }}
         - alert: HAProxyControllerCriticalEventsDropped
           expr: increase(haptic_events_dropped_critical_total[5m]) > 0

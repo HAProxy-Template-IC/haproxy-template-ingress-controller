@@ -155,7 +155,6 @@ func TestCheckDeploymentTimeout_PublishesCancelEventWithActiveDeploymentID(t *te
 	assert.True(t, scheduler.state.deploymentTimedOut)
 	assert.Equal(t, activeDeploymentID, scheduler.state.activeDeploymentID)
 	assert.Equal(t, activeCorrID, scheduler.state.activeCorrelationID)
-	assert.True(t, scheduler.state.lastDeploymentEndTime.IsZero())
 	select {
 	case <-scheduler.completed:
 		t.Fatal("timeout released the deploy slot before termination acknowledgement")

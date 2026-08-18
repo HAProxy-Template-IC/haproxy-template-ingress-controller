@@ -57,11 +57,13 @@ type Config struct {
 	StateFile         string
 	Listen            string
 	ReloadIntervalMin time.Duration
-	Username          string
-	Password          string
-	AgentVersion      string
-	Logger            *slog.Logger
-	Registry          *prometheus.Registry
+	// ReloadTimeout bounds one reload. Zero means DefaultReloadTimeout.
+	ReloadTimeout time.Duration
+	Username      string
+	Password      string
+	AgentVersion  string
+	Logger        *slog.Logger
+	Registry      *prometheus.Registry
 }
 
 // Server owns the tree, the runtime plumbing and the apply state machine.
@@ -97,6 +99,12 @@ type Server struct {
 	ready atomic.Bool
 	addr  atomic.Pointer[string]
 	http  *http.Server
+
+	// background tracks the read-backs that outlive their apply handler, so
+	// Start returns only after the last one is done and stopped is what
+	// tells them the agent is going away.
+	background sync.WaitGroup
+	stopped    atomic.Bool
 }
 
 // New builds the agent. It probes the mounts under the base directory and
@@ -115,6 +123,12 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 	maxInterval := api.MaxReloadIntervalMs * time.Millisecond
 	if cfg.ReloadIntervalMin < 0 || cfg.ReloadIntervalMin > maxInterval {
 		return nil, fmt.Errorf("--reload-interval-min %s is outside 0..%s", cfg.ReloadIntervalMin, maxInterval)
+	}
+	if cfg.ReloadTimeout == 0 {
+		cfg.ReloadTimeout = DefaultReloadTimeout
+	}
+	if cfg.ReloadTimeout < 0 || cfg.ReloadTimeout > DefaultReloadTimeout {
+		return nil, fmt.Errorf("--reload-timeout must be between 0 and %s, got %s", DefaultReloadTimeout, cfg.ReloadTimeout)
 	}
 	store, err := files.NewStore(cfg.BaseDir, cfg.Logger, cfg.MasterSocket, cfg.WorkerSocket)
 	if err != nil {
@@ -197,7 +211,10 @@ func (s *Server) Start(ctx context.Context) error {
 		defer cancel()
 		return s.http.Shutdown(shutdownCtx)
 	})
-	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+	err = group.Wait()
+	s.stopped.Store(true)
+	s.background.Wait()
+	if err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil

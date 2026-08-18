@@ -24,70 +24,193 @@ tests:
           path: spec.template.spec.containers[0].name
           value: haproxy
 
-  - it: should supervise dataplane without owning pod readiness
+  # The agent is a first-class container with its own probes, not a supervised
+  # child of a shell loop. It still owns no pod readiness: HAProxy's /ready does.
+  - it: should run the agent from the controller image with its own probes
     asserts:
       - equal:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].command
-          value: ["/bin/sh", "-c"]
+          path: spec.template.spec.containers[?(@.name=="agent")].image
+          value: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
       - isNull:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].readinessProbe
+          path: spec.template.spec.containers[?(@.name=="agent")].command
       - isNull:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].livenessProbe
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: 'trap _shutdown TERM INT'
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: 'GET /v2/info HTTP/1\.0'
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: '_watch_child "\$_child_pid" &'
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: '(?s)_watch_startup_grace_seconds=120.*_health_seen=0.*if \[ "\$_health_seen" -eq 1 \] \|\| \[ "\$_watch_runtime_seconds" -ge "\$_watch_startup_grace_seconds" \]'
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: 'kill -TERM "\$_watched_pid"'
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: 'kill -KILL "\$_watched_pid"'
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: '(?m)^  /usr/local/bin/dataplaneapi -f /etc/haproxy/dataplaneapi\.yaml &$'
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: 'config updates are unavailable; restarting in \$\{_backoff\}s'
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: '_child_runtime_seconds=\$\(\( \$\(date \+%s\) - _child_started_epoch_seconds \)\)'
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: 'if \[ "\$_child_runtime_seconds" -ge 60 \]; then\s+_backoff=1'
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: 'if \[ "\$_backoff" -gt 30 \]; then _backoff=30; fi'
+          path: spec.template.spec.containers[?(@.name=="agent")].readinessProbe
+      - equal:
+          path: spec.template.spec.containers[?(@.name=="agent")].startupProbe.httpGet.path
+          value: /readyz
+      - equal:
+          path: spec.template.spec.containers[?(@.name=="agent")].startupProbe.httpGet.port
+          value: dataplane
+      - equal:
+          path: spec.template.spec.containers[?(@.name=="agent")].livenessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[?(@.name=="agent")].livenessProbe.httpGet.port
+          value: dataplane
 
-  - it: should skip dataplane-side validation by default
+  - it: should point the agent at the tree and sockets the HAProxy container creates
     asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: '(?m)^\s+validate_cmd: /bin/true$'
+      - equal:
+          path: spec.template.spec.containers[?(@.name=="agent")].args
+          value:
+            - agent
+            - --base-dir=/etc/haproxy
+            - --config=haproxy.cfg
+            - --master-socket=haproxy-master.sock
+            - --worker-socket=haproxy-worker.sock
+            - --listen=:5555
+            - --metrics-listen=:5557
+            - --reload-interval-min=5s
 
-  - it: should validate through a wrapper that reads the transaction file from the environment when validateConfig is on
+  # One value paces the controller's structural deploys and the agent's reloads;
+  # the reload deadline likewise comes from the CRD field, not a second knob.
+  - it: should feed the agent's pacing and reload deadline from controller.config.dataplane
     set:
-      haproxy.dataplane.validateConfig: true
+      controller.config.dataplane.minDeploymentInterval: 2s
+      controller.config.dataplane.reloadVerificationTimeout: 20s
     asserts:
-      # The dataplane passes the transaction file in DATAPLANEAPI_TRANSACTION_FILE
-      # and substitutes nothing, so a bare `haproxy -c -f %s` fails every push.
+      - contains:
+          path: spec.template.spec.containers[?(@.name=="agent")].args
+          content: --reload-interval-min=2s
+      - contains:
+          path: spec.template.spec.containers[?(@.name=="agent")].args
+          content: --reload-timeout=20s
+
+  - it: should read the agent credentials from the shared Secret and log at the configured level
+    set:
+      haproxy.agent.logLevel: debug
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[?(@.name=="agent")].env
+          content:
+            name: DATAPLANE_USERNAME
+            valueFrom:
+              secretKeyRef:
+                name: RELEASE-NAME-haptic-credentials
+                key: dataplane_username
+      - contains:
+          path: spec.template.spec.containers[?(@.name=="agent")].env
+          content:
+            name: LOG_LEVEL
+            value: "debug"
+
+  - it: should expose the agent metrics port under the name the PodMonitor scrapes
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[?(@.name=="agent")].ports
+          content:
+            name: agent-metrics
+            containerPort: 5557
+            protocol: TCP
+      - contains:
+          path: spec.template.spec.containers[?(@.name=="agent")].ports
+          content:
+            name: dataplane
+            containerPort: 5555
+            protocol: TCP
+
+  # Copying the bootstrap over a working config would drop the pod back to the
+  # 503 /ready page on every container restart.
+  - it: should copy the bootstrap config only when the config on disk is absent or unparseable
+    asserts:
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: '(?m)^\s+validate_cmd: /etc/haproxy/validate\.sh$'
+          path: spec.template.spec.containers[0].args[0]
+          pattern: '(?m)^if \[ ! -s /etc/haproxy/haproxy\.cfg \] \|\| ! /usr/local/sbin/haproxy -dr -c -f /etc/haproxy/haproxy\.cfg >/dev/null 2>&1; then$'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="haproxy")].args[0]
-          pattern: '(?m)^exec /usr/local/sbin/haproxy -dr -c -f "\$DATAPLANEAPI_TRANSACTION_FILE"$'
+          path: spec.template.spec.containers[0].args[0]
+          pattern: '(?m)^  cp /config/haproxy\.cfg /etc/haproxy/haproxy\.cfg$'
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: '(?m)^mkdir -p /etc/haproxy/maps .*\n#'
+
+  - it: should check the bootstrap guard with the Enterprise binary in Enterprise mode
+    set:
+      haproxyVersion: "3.2"
+      haproxy.enterprise.enabled: true
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: '! /opt/hapee-3\.2/sbin/hapee-lb -dr -c -f /etc/haproxy/haproxy\.cfg'
+
+  - it: should keep the Dataplane API config file, its wrappers and its volumes out of the pod
+    asserts:
       - notMatchRegex:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].args[0]
-          pattern: 'validate_cmd: .*%s'
+          path: spec.template.spec.containers[0].args[0]
+          pattern: 'reload\.sh|validate\.sh'
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: dataplane-data
+            emptyDir: {}
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: dataplane-tmp
+            emptyDir: {}
+      - lengthEqual:
+          path: spec.template.spec.containers[?(@.name=="agent")].volumeMounts
+          count: 2
+
+  - it: should drop all capabilities for the agent container
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[?(@.name=="agent")].securityContext.capabilities.drop
+          content: ALL
+      - equal:
+          path: spec.template.spec.containers[?(@.name=="agent")].securityContext.readOnlyRootFilesystem
+          value: true
+
+  # The agent binds nothing privileged, so it never needs the capability the
+  # Enterprise HAProxy binary's file capabilities require.
+  - it: should not add NET_BIND_SERVICE to the agent even in Enterprise mode
+    set:
+      haproxy.enterprise.enabled: true
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[?(@.name=="agent")].securityContext.capabilities.add
+      - equal:
+          path: spec.template.spec.containers[?(@.name=="agent")].securityContext.runAsUser
+          value: 1000
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: NET_BIND_SERVICE
+
+  - it: should set resources for the agent container
+    set:
+      haproxy.agent.resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          memory: 128Mi
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[?(@.name=="agent")].resources.requests.cpu
+          value: 100m
+
+  # The pod pulls the HAPTIC image now, so a private-registry install must not
+  # need the same secret listed twice.
+  - it: should fall back to the controller image pull secrets
+    set:
+      controller.podSpec.imagePullSecrets:
+        - name: registry-creds
+    asserts:
+      - equal:
+          path: spec.template.spec.imagePullSecrets
+          value:
+            - name: registry-creds
+
+  - it: should prefer the HAProxy pod's own image pull secrets when set
+    set:
+      controller.podSpec.imagePullSecrets:
+        - name: registry-creds
+      haproxy.podSpec.imagePullSecrets:
+        - name: haproxy-creds
+    asserts:
+      - equal:
+          path: spec.template.spec.imagePullSecrets
+          value:
+            - name: haproxy-creds
 
   - it: should derive the Enterprise repository and binary path from one series
     set:
@@ -231,12 +354,6 @@ tests:
     asserts:
       - contains:
           path: spec.template.spec.containers[0].securityContext.capabilities.drop
-          content: ALL
-
-  - it: should drop all capabilities for dataplane container
-    asserts:
-      - contains:
-          path: spec.template.spec.containers[?(@.name=="dataplane")].securityContext.capabilities.drop
           content: ALL
 
   - it: should include loadbalancer component label

@@ -59,6 +59,16 @@ func (a *Agent) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.mu.Lock()
+	if a.failOnce {
+		a.failOnce = false
+		a.applies = append(a.applies, RecordedApply{
+			Manifest: req.manifest, Parts: req.parts, Plan: req.plan,
+			Status: http.StatusInternalServerError,
+		})
+		a.mu.Unlock()
+		http.Error(w, "the agent hit an internal error", http.StatusInternalServerError)
+		return
+	}
 	out := a.apply(req)
 	a.applies = append(a.applies, RecordedApply{
 		Manifest: req.manifest,
@@ -135,16 +145,40 @@ func (a *Agent) apply(req *applyRequest) outcome {
 		return a.nack(m, "verify", fmt.Sprintf("part %q does not match its manifest digest", path))
 	}
 	a.promoteLKG(m)
-	if m.Mode == api.ModeRevertLKG {
-		return a.revertLKG(m)
+	out := a.runMode(req)
+	a.commitPlanBlob(req)
+	return out
+}
+
+// runMode is the apply itself: a revert lands the last known good set, anything
+// else the manifest's own.
+func (a *Agent) runMode(req *applyRequest) outcome {
+	if req.manifest.Mode == api.ModeRevertLKG {
+		return a.revertLKG(&req.manifest)
 	}
 	return a.transact(req)
 }
 
+// commitPlanBlob keeps the plan of the apply that just landed, and only while
+// it is the plan the pod applied: an apply that moves the applied plan on
+// without carrying one leaves the pod with no baseline to hand back, which is
+// what the real agent's PlanBlobPlanID does.
+func (a *Agent) commitPlanBlob(req *applyRequest) {
+	if len(req.plan) == 0 || a.state.AppliedPlanID != req.manifest.PlanID {
+		return
+	}
+	a.appliedPlan = req.plan
+	a.planBlobPlanID = req.manifest.PlanID
+}
+
 // fence is the write gate, and the only three reasons an apply is answered with
-// a 409. The worker-ops baseline is not one of them: it guards the in-place
-// batch, which is answered after the files have landed.
+// a 409, the worker-ops baseline included when the in-place batch is going to
+// run: nothing is written, the caller re-diffs against the worker as it is.
 func (a *Agent) fence(m *api.Manifest) *api.Conflict {
+	if reason := a.conflictOnce; reason != "" {
+		a.conflictOnce = ""
+		return a.conflict(reason)
+	}
 	switch {
 	case m.Token.LeaderEpoch < a.state.AppliedToken.LeaderEpoch:
 		return a.conflict("stale_epoch")
@@ -157,6 +191,8 @@ func (a *Agent) fence(m *api.Manifest) *api.Conflict {
 		return a.conflict("prev_mismatch")
 	case m.ExpectedPrevToken != a.state.AppliedToken:
 		return a.conflict("prev_mismatch")
+	case a.inPlaceWillRun(m) && m.ExpectedWorkerOpsPlanID != a.state.WorkerOpsPlanID:
+		return a.conflict("worker_ops_mismatch")
 	}
 	return nil
 }
@@ -176,6 +212,10 @@ func (a *Agent) conflict(reason string) *api.Conflict {
 // per-path question, not a content-addressed one: a new path whose bytes match
 // an existing file is still missing, because the agent stores files by path.
 func (a *Agent) missingParts(req *applyRequest) []string {
+	if forced := a.missingOnce; len(forced) > 0 {
+		a.missingOnce = nil
+		return forced
+	}
 	var missing []string
 	for _, f := range req.manifest.Files {
 		if _, sent := req.parts[f.Path]; sent {
@@ -239,6 +279,8 @@ func (a *Agent) transact(req *applyRequest) outcome {
 		mode = api.ResultFileOnly
 	}
 	a.advance(m)
+	// Every op ran on the worker, so it holds the applied plan.
+	a.state.WorkerOpsPlanID = m.PlanID
 	return a.ack(m, mode, m.Ops, nil)
 }
 
@@ -259,8 +301,14 @@ func (a *Agent) scheduled(m *api.Manifest) outcome {
 		return a.invalidate(m, reload, kind+": command rejected by HAProxy")
 	}
 	a.advance(m)
-	a.state.WorkerOpsPlanID = m.PlanID
+	a.state.WorkerOpsPlanID = m.WorkerOpsPlanID
 	return a.ack(m, api.ResultScheduled, m.InPlaceOps, reload)
+}
+
+// inPlaceWillRun mirrors the real agent's activate: the in-place batch runs
+// while a reload is pending. The fake never paces, so that is the only case.
+func (a *Agent) inPlaceWillRun(m *api.Manifest) bool {
+	return len(m.InPlaceOps) > 0 && a.reloadPending
 }
 
 // invalidate answers an in-place batch the worker did not take: an ACK that
@@ -343,9 +391,6 @@ func (a *Agent) storeFiles(req *applyRequest) bool {
 		// Kinds accumulate rather than replace, so a revert to the LKG set
 		// still classifies paths this manifest happens not to carry.
 		a.kinds[f.Path] = f.Kind
-	}
-	if len(req.plan) > 0 {
-		a.state.AppliedPlan = req.plan
 	}
 	changed := !maps.Equal(a.state.Files, next)
 	a.state.Files = next

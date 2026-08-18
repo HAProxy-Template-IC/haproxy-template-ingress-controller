@@ -80,7 +80,11 @@ func (s *Server) runApply(m *api.Manifest, got *received, digest string) api.App
 	}
 	s.finish(run)
 	s.commitPlanBlob(run)
-	go s.readBack(run)
+	s.background.Add(1)
+	go func() {
+		defer s.background.Done()
+		s.readBack(run)
+	}()
 	return run.result
 }
 
@@ -144,7 +148,7 @@ func (r *applyRun) activate() error {
 		return r.inPlace()
 	}
 	if r.manifest.Mode == api.ModeReload {
-		return r.reload("mode")
+		return r.reload(reloadReasonMode)
 	}
 	if r.server.baselineUnknown() {
 		return r.reload("unknown_baseline")
@@ -241,12 +245,20 @@ func (r *applyRun) settle() error {
 	return nil
 }
 
-// inPlace runs the ops the controller composed against the running worker
-// while a reload is already scheduled. A rejected one invalidates the pod's
-// baseline instead of triggering a second reload.
+// inPlace coalesces the apply into the reload already scheduled and runs the
+// in-place ops against the worker that keeps serving until it fires.
 func (r *applyRun) inPlace() error {
 	r.result.Mode = api.ResultScheduled
 	r.server.coalesceIntoPendingReload(r.manifest.PlanID)
+	_, due := r.server.pendingReload()
+	r.result.Reload = &api.ReloadInfo{ScheduledAt: due.UTC().Format(time.RFC3339Nano)}
+	return r.runInPlace()
+}
+
+// runInPlace runs the ops the controller composed against the running worker
+// while its reload waits. A rejected one invalidates the pod's baseline
+// instead of triggering a second reload.
+func (r *applyRun) runInPlace() error {
 	if len(r.manifest.InPlaceOps) == 0 {
 		return nil
 	}
@@ -272,7 +284,7 @@ func (r *applyRun) inPlace() error {
 	}
 	r.server.foldCreated(r)
 	r.server.deferrals.Wake()
-	r.server.recordWorkerOps(r.manifest.PlanID)
+	r.server.recordWorkerOps(r.manifest.WorkerOpsPlanID)
 	return nil
 }
 
@@ -376,6 +388,12 @@ func (s *Server) commitLocked(run *applyRun) {
 		return
 	}
 	s.state.AppliedPlanID, s.state.AppliedToken = applied, run.manifest.Token
+	// With no reload pending, every op of the apply ran on the worker the
+	// controller composed against, so the worker holds the applied plan. While
+	// one is pending only the in-place batch advances the worker.
+	if s.state.ReloadPendingAt.IsZero() {
+		s.state.WorkerOpsPlanID = applied
+	}
 }
 
 // applyResultLocked fills the fields every response reports from the state.

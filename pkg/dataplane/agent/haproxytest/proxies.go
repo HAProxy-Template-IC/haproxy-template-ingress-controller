@@ -15,6 +15,8 @@
 package haproxytest
 
 import (
+	"fmt"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -173,7 +175,7 @@ func (h *HAProxy) setServer(rest string) reply {
 	}
 	switch fields[0] {
 	case "addr":
-		srv.Address = fields[1]
+		return h.setServerAddr(srv, fields[1:])
 	case "weight":
 		srv.Weight, _ = strconv.Atoi(fields[1])
 	case "state":
@@ -182,6 +184,40 @@ func (h *HAProxy) setServer(rest string) reply {
 		return failure("'%s' is not a supported server property.", fields[0])
 	}
 	return silent()
+}
+
+// setServerAddr answers as HAProxy does: at WARNING severity, with what
+// changed, "nothing changed", or the refusal. The caller holds the lock.
+func (h *HAProxy) setServerAddr(srv *Server, fields []string) reply {
+	if net.ParseIP(fields[0]) == nil {
+		return warning("Invalid addr '%s'", fields[0])
+	}
+	host, port, err := net.SplitHostPort(srv.Address)
+	if err != nil {
+		host, port = srv.Address, ""
+	}
+	var changes []string
+	if host != fields[0] {
+		changes = append(changes, fmt.Sprintf("IP changed from '%s' to '%s'", host, fields[0]))
+		host = fields[0]
+	}
+	if len(fields) >= 3 && fields[1] == "port" {
+		if _, err := strconv.Atoi(fields[2]); err != nil {
+			return warning("problem converting port '%s' to an int", fields[2])
+		}
+		if port != fields[2] {
+			changes = append(changes, fmt.Sprintf("port changed from '%s' to '%s'", port, fields[2]))
+			port = fields[2]
+		}
+	}
+	srv.Address = host
+	if port != "" {
+		srv.Address = net.JoinHostPort(host, port)
+	}
+	if len(changes) == 0 {
+		return warning("nothing changed")
+	}
+	return warning("%s by 'stats socket command'", strings.Join(changes, ", "))
 }
 
 func (h *HAProxy) wait(rest, _ string) reply {

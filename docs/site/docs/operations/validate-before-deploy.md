@@ -146,3 +146,15 @@ predict what a future routing resource renders to.
 For that, keep the admission webhook enabled — it validates each watched
 resource as it's applied, and rejects one that would break the rendered
 configuration.
+
+It also doesn't say what deploying the configuration does to a running pod.
+`haptic diff` does: it compares your candidate with what a pod runs and prints
+`runtime`, `file_only` or `reload`, with a reason for every change that can't
+run at runtime.
+
+```bash
+haptic diff -f candidate.yaml
+```
+
+See [Debugging — Common recipes](./debugging.md#common-recipes) for the
+pod-to-file and file-to-file forms.

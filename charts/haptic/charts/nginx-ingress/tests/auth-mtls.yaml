@@ -49,7 +49,7 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "ssl_c_s_dn"}
 
   test-nginx-ingress-auth-tls-secret:
-    description: "nginx.ingress.kubernetes.io/auth-tls-secret references a Secret whose `ca.crt` is written to the general file dir (not ssl/ — Dataplane validates ssl/ uploads as cert+key) and used in the crt-list line for the matching SNI as `ca-file <path> verify required`. HAProxy then verifies incoming client certs against that CA bundle."
+    description: "nginx.ingress.kubernetes.io/auth-tls-secret references a Secret whose `ca.crt` is written to the general file dir (not ssl/, whose entries are cert+key bundles) and used in the crt-list line for the matching SNI as `ca-file <path> verify required`. HAProxy then verifies incoming client certs against that CA bundle."
     fixtures:
       secrets:
         - apiVersion: v1

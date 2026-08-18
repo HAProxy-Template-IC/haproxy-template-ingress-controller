@@ -146,6 +146,44 @@ func TestDiffChunking(t *testing.T) {
 	}
 }
 
+// The first apply carries the in-place batch as well and the agent's client
+// bounds the two lists together, so a chunk composed as if it were alone is
+// refused before it is sent — the pod does not even receive the files.
+func TestDecisionChunkBudgetsTheInPlaceBatch(t *testing.T) {
+	tests := []struct {
+		name    string
+		ops     int
+		inPlace int
+		want    []int
+	}{
+		{name: "no batch to make room for", ops: 1500, want: []int{1000, 500}},
+		{name: "the batch takes its share of the first apply", ops: 1500, inPlace: 400, want: []int{600, 900}},
+		{name: "a full batch leaves the first apply to itself", ops: 5, inPlace: api.MaxOpsPerApply, want: []int{0, 5}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision := deployplan.Decision{
+				Ops:     make([]api.Op, tt.ops),
+				InPlace: make([]api.Op, tt.inPlace),
+			}
+
+			chunks := decision.Chunk()
+
+			sizes := make([]int, 0, len(chunks))
+			for i, chunk := range chunks {
+				sizes = append(sizes, len(chunk))
+				carried := len(chunk)
+				if i == 0 {
+					carried += tt.inPlace
+				}
+				assert.LessOrEqual(t, carried, api.MaxOpsPerApply)
+			}
+			assert.Equal(t, tt.want, sizes)
+		})
+	}
+}
+
 // TestComposedOpsCoversEveryKindTheRulesEmit is the drift gate behind
 // client.ComposableOps: an agent is measured against this list, so a kind the
 // rules emit but the list omits would be sent to a pod that never claimed it.

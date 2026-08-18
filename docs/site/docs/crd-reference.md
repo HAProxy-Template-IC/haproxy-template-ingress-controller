@@ -59,7 +59,7 @@ The three fields the apiserver requires come first (`podSelector`, `watchedResou
 
 ### `credentialsSecretRef`
 
-Names the Secret holding the Dataplane API credentials. **Optional** — the schema doesn't require it, and the controller never reads it: it resolves the credentials Secret by the name given in `--secret-name` / the `SECRET_NAME` environment variable, both set by the Helm chart. The field records the wiring for readers and tooling; the `namespace` sub-field has no effect.
+Names the Secret holding the agent credentials. **Optional** — the schema doesn't require it, and the controller never reads it: it resolves the credentials Secret by the name given in `--secret-name` / the `SECRET_NAME` environment variable, both set by the Helm chart. The field records the wiring for readers and tooling; the `namespace` sub-field has no effect.
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -71,7 +71,7 @@ credentialsSecretRef:
   name: haproxy-credentials
 ```
 
-The Secret must contain the keys `dataplane_username` and `dataplane_password`. Credentials are used only for the production Dataplane API; config validation runs locally against the `haproxy` binary and needs no credentials. See [Security — Credentials](./operations/security.md#credentials) for rotation and GitOps caveats.
+The Secret must contain the keys `dataplane_username` and `dataplane_password` — the keys keep their names across the agent cutover, so a rotation set up before it still works. Credentials authenticate the controller to each pod's agent; config validation runs locally against the `haproxy` binary and needs no credentials. See [Security — Credentials](./operations/security.md#credentials) for rotation and GitOps caveats.
 
 ### `podSelector`
 
@@ -353,7 +353,7 @@ k8sResources:
           protocol: TCP
 ```
 
-Use this when the resource shape derives from observed cluster state (Ingresses, Gateways, Endpoints, …); use the chart's own static `templates/*.yaml` for fixed install-time wiring (RBAC, the dataplane Service, etc.). The chart's `charts/haptic/charts/base/library.yaml` ships a canonical example: the `haproxy-service` entry that renders the user-facing HAProxy LoadBalancer Service from listener state.
+Use this when the resource shape derives from observed cluster state (Ingresses, Gateways, Endpoints, …); use the chart's own static `templates/*.yaml` for fixed install-time wiring (RBAC, the internal agent Service, etc.). The chart's `charts/haptic/charts/base/library.yaml` ships a canonical example: the `haproxy-service` entry that renders the user-facing HAProxy LoadBalancer Service from listener state.
 
 ### `postProcessing` (all template entries)
 
@@ -556,7 +556,7 @@ logging:
 
 ### `dataplane`
 
-Dataplane API connection, deployment, and validation settings.
+Connection and pacing settings for the agent in each HAProxy pod. The block keeps its name: it configures the endpoint the controller applies to, which is now the HAPTIC agent.
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -565,7 +565,7 @@ Dataplane API connection, deployment, and validation settings.
 | `driftPreventionInterval` | string | No | `60s` |
 | `deploymentTimeout` | string | No | `30s` |
 | `configPublishInterval` | string | No | `10s` |
-| `reloadVerificationTimeout` | string | No | `10s` |
+| `reloadVerificationTimeout` | string | No | `60s` (the agent's ceiling, which is also its maximum) |
 | `syncTimeout` | string | No | `2m` |
 | `mapsDir` | string | No | `/etc/haproxy/maps` |
 | `sslCertsDir` | string | No | `/etc/haproxy/certs` (the Helm chart sets `/etc/haproxy/ssl`) |
@@ -579,7 +579,9 @@ dataplane:
   driftPreventionInterval: 60s
 ```
 
-The three `*Dir` paths are used by the controller's local `haproxy -c` validation step as well as for deployment — they must match the paths the Dataplane API server is configured to manage (`configFile` is used only by local validation; the Dataplane API manages its own config-file path). The Helm chart keeps them in sync by deriving both sides from a single set of chart values. For tuning guidance on the interval fields, see [Performance — Deployment Pacing](./operations/performance.md#deployment-pacing).
+The three `*Dir` paths are used by the controller's local `haproxy -c` validation step as well as for rendering the paths the configuration references — they must match where the HAProxy pod mounts each directory. The Helm chart keeps them in sync by deriving both sides from a single set of chart values.
+
+`minDeploymentInterval` and `reloadVerificationTimeout` also become agent flags whenever the chart deploys the HAProxy fleet. The agent rejects either above `60s` and exits at startup, so the chart fails the render instead. For tuning guidance on the interval fields, see [Performance — Deployment Pacing](./operations/performance.md#deployment-pacing).
 
 ## Status Subresource
 
@@ -627,7 +629,7 @@ The controller publishes the rendered configuration as an `HAProxyCfg` resource 
 | `appliedPlanID` | string | The render plan the pod last accepted |
 | `runningPlanID` | string | The render plan the pod's running HAProxy serves. It trails `appliedPlanID` while a reload is still pending |
 | `mode` | string | How the plan was applied: `runtime`, `file_only`, `reload`, `scheduled`, `noop`, or `rejected`. Empty when the applier reports no mode |
-| `reasons` | `[]string` | Why the apply took that mode, most significant first, at most 8 entries |
+| `reasons` | `[]string` | Why the apply took that mode, most significant first, at most 8 entries; when more were recorded the last entry says how many were omitted |
 | `lastError` | string | Error message from the most recent failed sync, cleared when a sync succeeds |
 | `consecutiveErrors` | int | Number of consecutive sync failures, reset to 0 on success |
 

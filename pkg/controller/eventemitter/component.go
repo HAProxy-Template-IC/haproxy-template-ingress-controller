@@ -32,10 +32,12 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	clientsetscheme "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/scheme"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/record"
@@ -92,6 +94,7 @@ func New(cfg *Config) *Component {
 		Handler:    c,
 		EventTypes: []string{
 			events.EventTypeReconciliationCompleted,
+			events.EventTypeInstanceDeploymentFailed,
 			events.EventTypeBecameLeader,
 			events.EventTypeLostLeadership,
 		},
@@ -132,6 +135,8 @@ func (c *Component) HandleEvent(event busevents.Event) {
 	switch e := event.(type) {
 	case *events.ReconciliationCompletedEvent:
 		c.handleReconciliationCompleted(e)
+	case *events.InstanceDeploymentFailedEvent:
+		c.handleInstanceDeploymentFailed(e)
 	case *events.BecameLeaderEvent:
 		c.ensureRecorder()
 		c.setLeader(true)
@@ -171,4 +176,28 @@ func (c *Component) handleReconciliationCompleted(e *events.ReconciliationComple
 		// ev.Type is already the corev1 EventType string ("Warning"/"Normal").
 		c.recorder.Event(ref, ev.Type, ev.Reason, ev.Message)
 	}
+}
+
+// applyFailedReason is the Event reason on an HAProxy pod whose apply failed
+// or was refused; the message carries HAProxy's own words when there are any.
+const applyFailedReason = "ApplyFailed"
+
+// handleInstanceDeploymentFailed emits a Warning on the HAProxy pod an apply
+// did not reach or that refused it, so the operator finds the cause with
+// `kubectl describe pod` and not only in the controller's log.
+func (c *Component) handleInstanceDeploymentFailed(e *events.InstanceDeploymentFailedEvent) {
+	if !c.leader() || c.recorder == nil {
+		return
+	}
+	endpoint, ok := e.Endpoint.(*dataplane.Endpoint)
+	if !ok || endpoint == nil || endpoint.PodName == "" {
+		return
+	}
+	c.recorder.Event(&corev1.ObjectReference{
+		APIVersion: "v1",
+		Kind:       "Pod",
+		Namespace:  endpoint.PodNamespace,
+		Name:       endpoint.PodName,
+		UID:        types.UID(endpoint.PodUID),
+	}, corev1.EventTypeWarning, applyFailedReason, e.Error)
 }

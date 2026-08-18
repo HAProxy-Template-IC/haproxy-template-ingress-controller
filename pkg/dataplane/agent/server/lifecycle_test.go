@@ -251,7 +251,7 @@ func TestADivergenceReloadPersistsTheClearedJournal(t *testing.T) {
 	require.Equal(t, api.ResultRuntime, result.Mode)
 
 	require.Eventually(t, func() bool {
-		return h.metric("haptic_runtime_map_divergence_total") == 1
+		return h.metric("haptic_agent_map_divergence_total") == 1
 	}, 10*time.Second, 20*time.Millisecond)
 	require.Eventually(t, func() bool {
 		journal, _ := h.persisted()["journal"].(map[string]any)
@@ -265,4 +265,18 @@ func insertJSON(t *testing.T, raw []byte, fields string) []byte {
 	t.Helper()
 	require.Greater(t, len(raw), 1)
 	return append([]byte("{"+fields), raw[1:]...)
+}
+
+func TestAReloadTimeoutOverTheAPILimitIsRefused(t *testing.T) {
+	_, err := server.New(t.Context(), &server.Config{
+		BaseDir:       t.TempDir(),
+		ConfigFile:    configPath,
+		StateFile:     ".haptic-agent.json",
+		Listen:        "127.0.0.1:0",
+		ReloadTimeout: server.DefaultReloadTimeout + time.Second,
+		Username:      testUser,
+		Password:      testPassword,
+		Logger:        slog.New(slog.DiscardHandler),
+	})
+	require.ErrorContains(t, err, "--reload-timeout must be between 0 and 1m0s")
 }

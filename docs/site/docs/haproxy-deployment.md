@@ -4,12 +4,20 @@
 
 The chart can deploy HAProxy pods alongside the controller, or you can manage HAProxy separately.
 
-The chart supervises the Dataplane API, SPOA hub, and Vector processes inside
-their sidecar containers. A child exit or repeated failed health check leaves
-HAProxy running while the supervisor restarts only that child, with a backoff
-capped at 30 seconds. HAProxy's `/ready` endpoint is the only readiness probe the
-chart configures on these pods. Kubernetes still marks the pod NotReady while a
-container isn't running, and probes on user-supplied sidecars still apply.
+Each pod runs HAProxy in master-worker mode plus the HAPTIC agent, which owns
+the pod's file tree and its runtime sockets. The chart supervises the SPOA hub
+and Vector processes inside their sidecar containers: a child exit or repeated
+failed health check leaves HAProxy running while the supervisor restarts only
+that child, with a backoff capped at 30 seconds.
+
+Two probes decide whether a pod takes traffic. HAProxy's `/ready` endpoint on the
+stats port is the pod's readiness probe: it answers 503 under the bootstrap
+config and 200 once a rendered config is running. The agent's `/readyz` is a
+startup probe only — it means "the agent can accept applies," and it stays true
+after an apply the agent rejected, because a pod that can't be applied to is
+exactly the pod the next apply has to reach. Kubernetes still marks the pod
+NotReady while a container isn't running, and probes on user-supplied sidecars
+still apply.
 
 The watchdog uses `/usr/bin/bash` and `timeout`, which the default images provide.
 With a custom sidecar image missing either command, the supervisor logs a warning
@@ -17,7 +25,7 @@ and still restarts child processes that exit.
 
 ## Resource limits
 
-Controller-pod sizing — the chart's request/limit defaults, the sizing table, and the GOMAXPROCS/GOMEMLIMIT container awareness — is covered in [Performance — Controller Resource Sizing](operations/performance.md#controller-resource-sizing). HAProxy and the Dataplane API sidecar have their own resource blocks in the chart values: `haproxy.resources` and `haproxy.dataplane.resources`.
+Controller-pod sizing — the chart's request/limit defaults, the sizing table, and the GOMAXPROCS/GOMEMLIMIT container awareness — is covered in [Performance — Controller Resource Sizing](operations/performance.md#controller-resource-sizing). HAProxy and the agent have their own resource blocks in the chart values: `haproxy.resources` and `haproxy.agent.resources`.
 
 ## Service Architecture
 
@@ -52,7 +60,7 @@ A Service (`<fullname>-haproxy`, for example `<release>-haptic-haproxy`, `NodePo
 | `https` | 443 | 443 | 30443 |
 | `stats` | 8404 | 8404 | 30404 |
 
-The Dataplane API sidecar gets its own internal-only `ClusterIP` Service (`<fullname>-haproxy-dataplane`, for example `<release>-haptic-haproxy-dataplane`) on port 5555. Its type comes from `haproxy.dataplane.service.type`.
+The agent gets its own internal-only `ClusterIP` Service (`<fullname>-haproxy-dataplane`, for example `<release>-haptic-haproxy-dataplane`) on port 5555. The Service keeps its name across the cutover, because a Deployment selector can't be changed in place. Its type comes from `haproxy.agent.service.type`.
 
 **Development (kind cluster)** — NodePort default works out of the box; switch to LoadBalancer if you want `localhost` mapping via kind's port-forward:
 
@@ -138,7 +146,7 @@ haproxy:
     http: 80         # HAProxy container HTTP bind
     https: 443       # HAProxy container HTTPS bind
     stats: 8404      # Stats/health page
-    dataplane: 5555  # Dataplane API
+    dataplane: 5555  # HAPTIC agent
   service:
     type: NodePort   # ClusterIP, NodePort, or LoadBalancer
     annotations: {}
@@ -184,9 +192,21 @@ KEDA must be installed in the cluster, and `haproxy.keda.triggers` must list at 
 
 ## Initial bootstrap config
 
-When the chart manages HAProxy, the pod boots with a minimal `haproxy.cfg` rendered from `haproxy.initialConfig` into the `<release>-haptic-haproxy-config` ConfigMap. The controller replaces this config via the Dataplane API on its first reconcile, so the bootstrap only matters during the seconds between pod start and controller handoff (and on pod restart before the controller reconciles again).
+When the chart manages HAProxy, the pod boots with a minimal `haproxy.cfg` rendered from `haproxy.initialConfig` into the `<release>-haptic-haproxy-config` ConfigMap. The controller replaces it on its first apply, so the bootstrap only matters during the seconds between pod start and controller handoff.
 
-The default keeps `/healthz` returning 200 on the stats port and `/ready` returning 503 ("waiting for controller config"), so the pod stays NotReady until the controller pushes its first real config. To customise (for example, to add cluster-internal ACLs, an extra logging directive, or pre-bind a port the controller doesn't manage), copy the default from `values.yaml` into your own values file and edit it:
+The default keeps `/healthz` returning 200 on the stats port and `/ready` returning 503 ("waiting for controller config"), so the pod stays NotReady until the controller applies its first real config.
+
+Here is what a fresh pod does, step by step:
+
+1. The HAProxy container copies the bootstrap config and starts the master process. `/ready` answers 503, so the pod takes no traffic.
+2. The agent waits for the sockets, hashes the tree, loads its state file and builds its inventory, then serves `/readyz`.
+3. The controller's discovery admits the pod once `GET /v1/state` answers, and sends the complete file set with a reload — the pod has no baseline it could diff against.
+4. The agent writes every auxiliary file, the configuration last, and reloads. The master reports success only once the new worker has parsed the config and bound its listeners.
+5. The new worker serves `/ready` with 200, the kubelet's next probe sees it, and the pod joins the Service.
+
+If that first apply fails, the agent restores the bootstrap files and the bootstrap worker keeps answering 503: the pod never becomes Ready, and the rejection carries HAProxy's own message into the pod's status. A broken configuration can't make a pod Ready.
+
+If the HAProxy container restarts later, its start script runs `haproxy -c` against the configuration already on disk and copies the bootstrap only when that check fails or the file is gone — so a restart normally resumes on the last applied configuration with no unready window and without waiting for the controller. To customise (for example, to add cluster-internal ACLs, an extra logging directive, or pre-bind a port the controller doesn't manage), copy the default from `values.yaml` into your own values file and edit it:
 
 ```yaml
 haproxy:
@@ -551,8 +571,8 @@ and Prometheus scrapes HAProxy and the hub directly.
 #### How the config reaches it
 
 The same path the SPOA hub's config takes. HAPTIC renders the Vector config and
-pushes it through the Dataplane API into the shared general-storage volume, where
-Vector's file watch picks it up and reloads without a restart. A bootstrap
+the agent writes it into the shared general-storage volume, where Vector's file
+watch picks it up and reloads without a restart. A bootstrap
 ConfigMap seeds the file before regular containers start, so Vector doesn't wait
 for the first push before it can bind the log socket. Kubernetes doesn't order
 regular-container startup, and HAProxy deliberately doesn't wait for telemetry;
@@ -628,9 +648,6 @@ frontends) or `util-log-format-tcp` (TCP-mode frontends). Note that a
 `defaults`-section `log-format` can't reference HTTP-scoped fetches at all,
 which is why the format is emitted per frontend.
 
-!!! note "This isn't the Dataplane API log"
-    `haproxy.dataplane.aclFormat` configures the **Dataplane API sidecar's own** access log, not HAProxy's traffic logs. HAProxy request logging is controlled by the `log` and `log-format` directives above.
-
 ## HAProxy Pod requirements
 
 When `haproxy.enabled: false`, you're responsible for deploying HAProxy pods yourself. The controller discovers them via the pod selector at `controller.config.podSelector`, which defaults to:
@@ -650,9 +667,9 @@ If your existing HAProxy pods don't have those exact labels, either relabel them
 Each discovered pod must:
 
 1. **Carry labels matching `podSelector.matchLabels`**
-2. **Run HAProxy in master-worker mode** with an admin socket the Dataplane API sidecar can connect to
-3. **Run the Dataplane API sidecar** in the same pod, sharing the config volume with HAProxy
-4. **Expose Dataplane API** on `haproxy.ports.dataplane` (default 5555)
+2. **Run HAProxy in master-worker mode** with a master socket the agent can reload through, and a worker `stats socket` it can run runtime commands on
+3. **Run the agent** in the same pod, from the HAPTIC image, sharing the config volume with HAProxy
+4. **Expose the agent** on `haproxy.ports.dataplane` (default 5555)
 5. **Run the same HAProxy major.minor series as `haproxyVersion`** so the controller validates configuration with the matching binary
 
 <a id="example-haproxy-pod-deployment-byo-haproxy"></a>
@@ -688,6 +705,9 @@ spec:
             cat > /etc/haproxy/haproxy.cfg <<EOF
             global
                 log stdout len 4096 local0 info
+                # The agent runs every runtime command on this socket.
+                stats socket /etc/haproxy/haproxy-worker.sock mode 600 level admin
+                default-path origin /etc/haproxy
             defaults
                 timeout connect 5s
             frontend status
@@ -712,56 +732,50 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 5
 
-      - name: dataplane
-        image: haproxytech/haproxy-debian:3.4
-        command: ["/bin/sh", "-c"]
+      - name: agent
+        # The HAPTIC image, not the HAProxy one: the agent is the controller's
+        # binary in its second role, so its tag must match the controller's.
+        image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
         args:
-          - |
-            # Wait for HAProxy to create the socket
-            while [ ! -S /etc/haproxy/haproxy-master.sock ]; do
-              echo "Waiting for HAProxy master socket..."
-              sleep 1
-            done
-
-            # Create Dataplane API config
-            cat > /etc/haproxy/dataplaneapi.yaml <<'EOF'
-            config_version: 2
-            name: haproxy-dataplaneapi
-            dataplaneapi:
-              host: 0.0.0.0
-              port: 5555
-              user:
-                - name: admin
-                  password: adminpass
-                  insecure: true
-              transaction:
-                transaction_dir: /var/lib/dataplaneapi/transactions
-                backups_number: 10
-                backups_dir: /var/lib/dataplaneapi/backups
-              resources:
-                maps_dir: /etc/haproxy/maps
-                ssl_certs_dir: /etc/haproxy/ssl
-                general_storage_dir: /etc/haproxy/general
-            haproxy:
-              config_file: /etc/haproxy/haproxy.cfg
-              haproxy_bin: /usr/local/sbin/haproxy
-              master_worker_mode: true
-              master_runtime: /etc/haproxy/haproxy-master.sock
-              reload:
-                reload_delay: 1
-                reload_cmd: /bin/sh -c "echo 'reload' | socat stdio unix-connect:/etc/haproxy/haproxy-master.sock"
-                restart_cmd: /bin/sh -c "echo 'reload' | socat stdio unix-connect:/etc/haproxy/haproxy-master.sock"
-                reload_strategy: custom
-            log_targets:
-              - log_to: stdout
-                log_level: info
-            EOF
-
-            # Start Dataplane API
-            exec dataplaneapi -f /etc/haproxy/dataplaneapi.yaml
+          - agent
+          - --base-dir=/etc/haproxy
+          - --config=haproxy.cfg
+          - --listen=:5555
+        env:
+          # The Secret the controller already reads, so both ends agree
+          # without a second credential to rotate.
+          - name: DATAPLANE_USERNAME
+            valueFrom:
+              secretKeyRef:
+                name: haptic-credentials
+                key: dataplane_username
+          - name: DATAPLANE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: haptic-credentials
+                key: dataplane_password
+        ports:
+        - name: dataplane
+          containerPort: 5555
         volumeMounts:
         - name: haproxy-config
           mountPath: /etc/haproxy
+        startupProbe:
+          httpGet:
+            path: /readyz
+            port: 5555
+          periodSeconds: 2
+          failureThreshold: 60
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 5555
+          periodSeconds: 10
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
 
       volumes:
       - name: haproxy-config

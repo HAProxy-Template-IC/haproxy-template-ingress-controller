@@ -639,9 +639,13 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         "must be a boolean" \
         --set-string controller.config.templatingSettings.extraContext.accessLog.suppress.successful=maybe
     run_helm_failure_guard \
-        "HAProxy Helm guard: reject an invalid dataplane log level" \
+        "HAProxy Helm guard: reject an invalid agent log level" \
+        "haproxy.agent.logLevel" \
+        --set haproxy.agent.logLevel=verbose
+    run_helm_failure_guard \
+        "HAProxy Helm guard: reject the removed dataplane log level" \
         "haproxy.dataplane.logLevel" \
-        --set haproxy.dataplane.logLevel=verbose
+        --set haproxy.dataplane.logLevel=debug
     run_helm_failure_guard \
         "Access-log Helm guard: reject a level that silently drops every record" \
         "silently drops every one of them" \

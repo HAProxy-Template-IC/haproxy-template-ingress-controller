@@ -55,7 +55,7 @@ func NewMetrics(registry prometheus.Registerer, logger *slog.Logger) *Metrics {
 			"Deferred runtime deletes, by object kind and outcome.", "kind", "outcome"),
 		opErrors: counterVec(registry, "haptic_agent_op_errors_total",
 			"Runtime ops HAProxy rejected, by op kind.", "kind"),
-		divergence: counter(registry, "haptic_runtime_map_divergence_total",
+		divergence: counter(registry, "haptic_agent_map_divergence_total",
 			"Read-backs that found the running state different from the desired one."),
 		generation: gauge(registry, "haptic_agent_generation",
 			"The agent's apply generation, which increases by one per successful apply."),

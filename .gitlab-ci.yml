@@ -1520,8 +1520,7 @@ coverage-combined:
     # it merges their coverage artifacts, so it must run exactly when they do.
     # That lockstep is why the bare default-branch rule had to go from here at
     # the same time as from those two: keeping it would have left this job
-    # running on a prose-only main push with `test` skipped, and its `needs:
-    # test` is hard.
+    # running on a prose-only main push with nothing to merge.
     - !reference [.rules-go, rules]
   tags:
     - saas-linux-medium-amd64
@@ -1531,6 +1530,7 @@ coverage-combined:
     - job: build-ci
     - job: test
       artifacts: true
+      optional: true
     - job: "test-integration: [3.0]"
       artifacts: true
       optional: true
@@ -1548,21 +1548,33 @@ coverage-combined:
       artifacts: true
       optional: true
   script:
+    # Every producer is optional, so this job reports on what it was given and
+    # says what was missing. A producer absent from this pipeline (the interior
+    # versions on an MR) must not turn it red — the coverage number degrades,
+    # the pipeline does not break.
     - mkdir -p coverage
-    - cp coverage.out coverage/unit.out
     - |
-      echo "Unit test coverage:"
-      go tool cover -func=coverage/unit.out | tail -5
+      if [ -f coverage.out ]; then
+        cp coverage.out coverage/unit.out
+        echo "Unit test coverage:"
+        go tool cover -func=coverage/unit.out | tail -5
+      else
+        echo "No unit coverage artifact: the test job did not run."
+      fi
     - |
       for f in coverage/integration-*.out; do
         [ -f "$f" ] && echo "Integration coverage ($f):" && go tool cover -func="$f" | tail -5
       done
     - |
-      PROFILES="coverage/unit.out"
-      for f in coverage/integration-*.out; do
+      PROFILES=""
+      for f in coverage/unit.out coverage/integration-*.out; do
         [ -f "$f" ] && PROFILES="$PROFILES $f"
       done
-      echo "Merging coverage profiles: $PROFILES"
+      if [ -z "$PROFILES" ]; then
+        echo "No coverage profiles to merge; nothing to report."
+        exit 0
+      fi
+      echo "Merging coverage profiles:$PROFILES"
       go run github.com/wadey/gocovmerge@b5bfa59ec0adc420475f97f89b58045c721d761c $PROFILES > coverage/combined.out
     - |
       echo "Combined coverage:"
@@ -1809,7 +1821,7 @@ test-acceptance:
         done
         gzip -f debug-logs/_suite/controller-full.log 2>/dev/null || true
 
-        # Per-pod haproxy / dataplane / spoa-hub / vector logs (current +
+        # Per-pod haproxy / agent / spoa-hub / vector logs (current +
         # previous for spoa-hub and vector, which crashloop on config errors
         # and on exceeding their memory limit respectively — and a crashlooping
         # sidecar de-readies the whole pod, so its log is the one that explains
@@ -1817,8 +1829,8 @@ test-acceptance:
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== HAProxy: $pod ===" >> debug-logs/_suite/haproxy.log
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> debug-logs/_suite/haproxy.log 2>&1 || true
-          echo "=== Dataplane: $pod ===" >> debug-logs/_suite/dataplane.log
-          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> debug-logs/_suite/dataplane.log 2>&1 || true
+          echo "=== Agent: $pod ===" >> debug-logs/_suite/agent.log
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c agent >> debug-logs/_suite/agent.log 2>&1 || true
           echo "=== spoa-hub: $pod (current) ===" >> debug-logs/_suite/spoa-hub.log
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> debug-logs/_suite/spoa-hub.log 2>&1 || true
           echo "=== spoa-hub: $pod (previous) ===" >> debug-logs/_suite/spoa-hub.log
@@ -2278,7 +2290,7 @@ test-gateway-conformance:
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> "$LOG_DIR/controller.log" 2>&1 || true
         done
 
-        # HAProxy + dataplane + spoa-hub sidecar logs. spoa-hub stdout
+        # HAProxy + agent + spoa-hub sidecar logs. spoa-hub stdout
         # is the only place that records SPOE NOTIFY arrivals and
         # per-plugin dispatch errors — without it, conformance flakes
         # like issue #45 are undebuggable from the artifacts alone.
@@ -2288,8 +2300,8 @@ test-gateway-conformance:
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== HAProxy: $pod ===" >> "$LOG_DIR/haproxy.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> "$LOG_DIR/haproxy.log" 2>&1 || true
-          echo "=== Dataplane: $pod ===" >> "$LOG_DIR/dataplane.log"
-          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> "$LOG_DIR/dataplane.log" 2>&1 || true
+          echo "=== Agent: $pod ===" >> "$LOG_DIR/agent.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c agent >> "$LOG_DIR/agent.log" 2>&1 || true
           echo "=== SPOA-hub: $pod ===" >> "$LOG_DIR/spoa-hub.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> "$LOG_DIR/spoa-hub.log" 2>&1 || true
 
@@ -2436,8 +2448,8 @@ test-gateway-conformance:
           mkdir -p "$OUT"
           kubectl -n haptic get cm "$cm" -o jsonpath='{.metadata.annotations}' > "$OUT/_annotations.json" 2>&1 || true
 
-          # /etc/haproxy tarball — what the dataplane API actually
-          # wrote to disk on the pod. binaryData values are
+          # /etc/haproxy tarball — what the agent actually wrote to
+          # disk on the pod. binaryData values are
           # base64-encoded in the API response; decode + untar.
           # kubectl jsonpath returns the raw base64 string, no
           # extra envelope.
@@ -2446,10 +2458,10 @@ test-gateway-conformance:
             echo "etc-haproxy tarball extract failed for $cm" > "$OUT/_etc-haproxy-extract-error.txt"
 
           # HAProxyCfg CRD dump — the controller's RENDERED config
-          # before the dataplane sync. If a wrong rule was already
-          # in spec.content, the chart is to blame; if spec.content
-          # is correct but the etc-haproxy tarball above is wrong,
-          # the dataplane sync is to blame.
+          # before the apply. If a wrong rule was already in
+          # spec.content, the chart is to blame; if spec.content is
+          # correct but the etc-haproxy tarball above is wrong, the
+          # apply is to blame.
           kubectl -n haptic get cm "$cm" -o jsonpath='{.binaryData.haproxycfg-crds\.yaml}' 2>/dev/null | base64 -d > "$OUT/haproxycfg-crds.yaml" 2>/dev/null || \
             echo "haproxycfg dump extract failed for $cm" > "$OUT/_haproxycfg-extract-error.txt"
         done
@@ -2633,7 +2645,7 @@ nightly-scale:
     # install raise the controller memory limit (RSS budget must be
     # measured, not masked by a 512Mi OOM kill) and pin INFO logging.
     HAPTIC_E2E_SCALE: "1"
-    HAPTIC_E2E_DPAPI_DEBUG: "1"
+    HAPTIC_E2E_AGENT_DEBUG: "1"
     TEST_RUN_PATTERN: TestScale
   script:
     - make test-e2e
@@ -3158,7 +3170,7 @@ test-ingress-conformance:
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> "$LOG_DIR/controller.log" 2>&1 || true
         done
 
-        # HAProxy + dataplane + spoa-hub sidecar logs. spoa-hub stdout
+        # HAProxy + agent + spoa-hub sidecar logs. spoa-hub stdout
         # is the only place that records SPOE NOTIFY arrivals and
         # per-plugin dispatch errors — without it, conformance flakes
         # like issue #45 are undebuggable from the artifacts alone.
@@ -3168,8 +3180,8 @@ test-ingress-conformance:
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== HAProxy: $pod ===" >> "$LOG_DIR/haproxy.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> "$LOG_DIR/haproxy.log" 2>&1 || true
-          echo "=== Dataplane: $pod ===" >> "$LOG_DIR/dataplane.log"
-          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> "$LOG_DIR/dataplane.log" 2>&1 || true
+          echo "=== Agent: $pod ===" >> "$LOG_DIR/agent.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c agent >> "$LOG_DIR/agent.log" 2>&1 || true
           echo "=== SPOA-hub: $pod ===" >> "$LOG_DIR/spoa-hub.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> "$LOG_DIR/spoa-hub.log" 2>&1 || true
 

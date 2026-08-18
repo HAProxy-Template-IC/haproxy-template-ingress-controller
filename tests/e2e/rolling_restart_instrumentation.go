@@ -67,10 +67,10 @@ func newProberSnapshotter(t *testing.T, namespace string) *proberSnapshotter {
 	return &proberSnapshotter{t: t, namespace: namespace, rootDir: dir}
 }
 
-// snapshot dumps state synchronously. Called from runProbeLoop on every
-// failing probe so each failure has its own folder. Synchronous deliberately:
-// the failure is already recorded, we want the data ASAP before reload
-// churn moves the runtime state further.
+// snapshot dumps state for one failing probe into its own folder. It runs
+// off the probe loop and starts at the failure's instant, before reload churn
+// moves the runtime state further; concurrent captures are safe, they only
+// share the counter.
 func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	if s == nil {
 		return
@@ -104,7 +104,7 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	// Cluster-wide CPU/memory utilization at failure time (requires
 	// metrics-server, installed by TestMain). This is the load-bearing data
 	// for answering which component was actually CPU-pegged when the 503
-	// fired — the controller (render→deploy), the dataplane (SRV apply),
+	// fired — the controller (render→deploy), the agent (server apply),
 	// HAProxy, or the kube control plane — instead of inferring it from
 	// resource requests. Sorted by CPU so the hottest pod is first.
 	s.dumpCommand(dir, "top-pods-all-namespaces.txt",
@@ -785,7 +785,7 @@ crictl inspect $CONT | grep -m1 '"pid"' | sed 's/.*: //; s/,//; s/ //g'`,
 		// Filter:
 		//   - tcp port 80 / 8080 / 8443: backend traffic (echo-server,
 		//     haproxy-demo-backend, ssl backends)
-		//   - tcp port 5555: dataplane API on this same pod (so haptic's
+		//   - tcp port 5555: the agent on this same pod (so haptic's
 		//     own pushes are visible if they're contributing to the
 		//     contention)
 		//   - icmp: ARP misses / unreachables

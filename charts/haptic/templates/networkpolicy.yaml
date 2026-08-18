@@ -52,7 +52,7 @@ spec:
     {{- end }}
 
     {{- if $np.egress.haproxyPods.enabled }}
-    # Allow access to HAProxy Dataplane API pods (release namespace unless namespaceSelector is set)
+    # Allow access to the HAPTIC agent on HAProxy pods (release namespace unless namespaceSelector is set)
     - to:
         - podSelector:
             {{- toYaml $np.egress.haproxyPods.podSelector | nindent 12 }}

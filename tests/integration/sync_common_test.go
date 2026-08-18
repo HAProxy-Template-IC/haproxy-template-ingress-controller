@@ -1,21 +1,32 @@
 //go:build integration
 
+// Copyright 2025 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package integration
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/rekby/fixenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
 // TestMain sets up package-scoped fixtures and runs tests
@@ -23,441 +34,185 @@ func TestMain(m *testing.M) {
 	fixenv.RunTests(m)
 }
 
-// syncTestCase defines a single sync test scenario
+// syncTestCase is one transition a real HAProxy has to make: apply an initial
+// file set, then apply a second one and assert what the pod ends up with.
+//
+// It states what the controller declares (the two file sets) and what an
+// operator can observe (the pod's tree, HAProxy's runtime state), never how
+// the change was computed.
 type syncTestCase struct {
 	name              string
-	initialConfigFile string // Config to push initially
+	initialConfigFile string // Config the pod starts from
 	desiredConfigFile string // Target config to reach
 
-	// Expected operation counts
-	expectedCreates int
-	expectedUpdates int
-	expectedDeletes int
+	// expectedVerdict, when set, asserts what deployplan.Diff decided for this
+	// transition. Set it only where the case declares enough structure to
+	// pin the verdict — a change confined to auxiliary files is reload-free,
+	// while any configuration change reloads.
+	expectedVerdict deployplan.Verdict
 
-	// Expected operations (validated by operation descriptions)
-	// Example: []string{"Create backend 'web'", "Create server 'srv1' in backend 'web'"}
-	expectedOperations []string
-
-	// Reload expectations
-	// expectedReload indicates whether a HAProxy reload should be triggered.
-	// true = expects status 202 with Reload-ID header
-	// false = expects status 200 without reload
-	expectedReload bool
-
-	// expectedSyncMode, when non-empty, asserts the SyncResult.SyncMode (e.g.
-	// dataplane.SyncModeRuntime for a change applied via the runtime API with
-	// no reload). Leave empty to skip the assertion.
-	expectedSyncMode dataplane.SyncMode
-
-	// runtimeRequiresSSLCertCap marks a case whose no-reload expectation depends
-	// on runtime SSL certificate support (DataPlane API v3.2+). On older HAProxy
-	// the same cert-content change correctly falls back to a reload, so the
-	// runner flips expectedReload→true and expectedSyncMode→SyncModeReload when
-	// the connected HAProxy lacks SupportsRuntimeSSLCerts. This keeps the test
-	// asserting the *correct* path on every version in the CI matrix rather than
-	// skipping older versions.
-	runtimeRequiresSSLCertCap bool
-
-	// Auxiliary files for INITIAL configuration
-	// These files are uploaded before pushing the initial config to ensure it validates
-	// Map: HAProxy file path → testdata file to load
-	// Example: map[string]string{"/etc/haproxy/errors/400.http": "error-files/400.http"}
+	// Auxiliary files for the INITIAL file set, keyed by manifest path
+	// (relative to the pod's base directory, which is also the name HAProxy
+	// knows the file by at runtime).
+	// Example: map[string]string{"general/400.http": "error-files/400.http"}
 	initialGeneralFiles    map[string]string
 	initialSSLCertificates map[string]string
 	initialMapFiles        map[string]string
 
-	// Auxiliary files for DESIRED configuration (used in sync operation)
-	// These files are synced as part of the high-level Sync() call
-	// Map: HAProxy file path → testdata file to load
-	// Example: map[string]string{"/etc/haproxy/errors/400.http": "error-files/400.http"}
-	generalFiles map[string]string
-
-	// SSL certificates to sync before config operations
-	// Map: SSL certificate name → testdata file to load
-	// Example: map[string]string{"example.com.pem": "ssl-certs/example.com.pem"}
+	// Auxiliary files for the DESIRED file set. The manifest is the complete
+	// desired state, so a file the initial set had and this one omits is
+	// deleted from the pod.
+	generalFiles    map[string]string
 	sslCertificates map[string]string
+	mapFiles        map[string]string
 
-	// Map files to sync before config operations
-	// Map: map file path → testdata file to load
-	// Example: map[string]string{"domains.map": "map-files/domains.map"}
-	mapFiles map[string]string
-
-	// Optional: Verify auxiliary file content after sync
-	// These fields enable verification that auxiliary files were actually updated
-	// Map: filename → testdata file to compare against
-	// Example: map[string]string{"domains.map": "map-files/domains-updated.map"}
+	// Optional: verify auxiliary file content on the pod after the apply.
+	// Map: manifest path → testdata file to compare against.
 	verifyMapFiles        map[string]string
 	verifyGeneralFiles    map[string]string
 	verifySSLCertificates map[string]string
 
-	// verifyRuntimeMap, when true, additionally asserts that the live
-	// (in-memory) runtime map matches the verifyMapFiles expected content —
-	// proving a runtime-applied map change reached the worker's memory, not
-	// just the on-disk file.
+	// verifyRuntimeMap additionally asserts that the live (in-memory) runtime
+	// map matches verifyMapFiles — proving a runtime-applied map change
+	// reached the worker's memory, not just the on-disk file.
 	verifyRuntimeMap bool
 
 	// Skip reason for unsupported features (test-first approach)
 	// If set, test will be skipped with this message
 	skipReason string
 
-	// skipFunc is a callback for dynamic capability-based skipping.
-	// Called after env is created but before test execution.
-	// Use this for version-gated features that require capability checks.
-	skipFunc func(t *testing.T, env fixenv.Env)
+	// minHAProxy skips the case below an HAProxy release, for a directive the
+	// older bracket cannot parse.
+	minHAProxy string
 }
 
-// runSyncTest executes a single sync test case with full validation
+// runSyncTest applies the case's two file sets to a real HAProxy pod through
+// its agent and verifies the pod converged.
 func runSyncTest(t *testing.T, tc syncTestCase) {
-	// Skip if this tests an unsupported feature (test-first approach)
 	if tc.skipReason != "" {
 		t.Skip(tc.skipReason)
 	}
+	if tc.minHAProxy != "" {
+		skipBelowHAProxy(t, tc.minHAProxy)
+	}
 
 	env := fixenv.New(t)
-
-	// Dynamic capability-based skip (must be after env creation)
-	if tc.skipFunc != nil {
-		tc.skipFunc(t, env)
-	}
-
 	ctx := context.Background()
+	session := NewSession(t, env)
 
-	// Request fixtures
-	client := TestDataplaneClient(env)            // Low-level client for setup/verification
-	dpClient := TestDataplaneHighLevelClient(env) // High-level client for Sync API
-	parser := TestParser(env)
-	comp := TestComparator(env)
+	// Step 1: the pod's starting point. The agent has no baseline of ours yet,
+	// so this is full state plus a reload — a fresh pod's first apply.
+	session.SetConfig(LoadTestConfig(t, tc.initialConfigFile))
+	declareFiles(t, session, tc.initialGeneralFiles, tc.initialSSLCertificates, tc.initialMapFiles)
+	initial := session.MustApply(ctx)
+	require.Equal(t, deployplan.VerdictReload, initial.Verdict,
+		"a pod with no baseline gets full state and a reload")
 
-	// Step 0.5: Prepare auxiliary files (will be synced by Sync API)
-	auxFiles := &dataplane.AuxiliaryFiles{
-		GeneralFiles:    make([]auxiliaryfiles.GeneralFile, 0),
-		SSLCertificates: make([]auxiliaryfiles.SSLCertificate, 0),
-		MapFiles:        make([]auxiliaryfiles.MapFile, 0),
+	// Step 2: the transition under test.
+	session.SetConfig(LoadTestConfig(t, tc.desiredConfigFile))
+	session.RemoveDir(GeneralDir)
+	session.RemoveDir(SSLDir)
+	session.RemoveDir(MapsDir)
+	declareFiles(t, session, tc.generalFiles, tc.sslCertificates, tc.mapFiles)
+
+	before := workerPID(t, ctx, session)
+	decision := session.MustApply(ctx)
+	t.Logf("transition verdict=%s ops=%d reasons=%v", decision.Verdict, len(decision.Ops), decision.Reasons)
+
+	if tc.expectedVerdict != "" {
+		assert.Equal(t, tc.expectedVerdict, decision.Verdict, "unexpected verdict for this transition")
+	}
+	if decision.Verdict == deployplan.VerdictRuntime {
+		assert.Equal(t, before, workerPID(t, ctx, session),
+			"a runtime apply must reach the running worker, not replace it")
 	}
 
-	// Load general files from testdata
-	if len(tc.generalFiles) > 0 {
-		t.Logf("Preparing %d general files", len(tc.generalFiles))
-		for haproxyPath, testdataFile := range tc.generalFiles {
-			fullPath := filepath.Join("testdata", testdataFile)
-			content, err := os.ReadFile(fullPath)
-			require.NoError(t, err, "failed to read test file %s", testdataFile)
+	// Step 3: the pod's tree is the desired set, byte for byte, and nothing else.
+	assertTree(t, ctx, session)
 
-			auxFiles.GeneralFiles = append(auxFiles.GeneralFiles, auxiliaryfiles.GeneralFile{
-				Filename: filepath.Base(haproxyPath),
-				Content:  string(content),
-			})
-			t.Logf("  - %s ← %s", haproxyPath, testdataFile)
-		}
+	// Step 4: the content assertions the case asked for.
+	verifyFiles(t, ctx, session, tc.verifyGeneralFiles, tc.verifySSLCertificates, tc.verifyMapFiles)
+	if tc.verifyRuntimeMap {
+		verifyRuntimeMaps(t, ctx, session, tc.verifyMapFiles)
 	}
 
-	// Load SSL certificates from testdata
-	if len(tc.sslCertificates) > 0 {
-		t.Logf("Preparing %d SSL certificates", len(tc.sslCertificates))
-		for certName, testdataFile := range tc.sslCertificates {
-			fullPath := filepath.Join("testdata", testdataFile)
-			content, err := os.ReadFile(fullPath)
-			require.NoError(t, err, "failed to read test cert %s", testdataFile)
+	// Step 5: applying the same desired state again changes nothing. This is
+	// the idempotency the reconcile loop depends on: a re-render that produced
+	// the same bytes must not reload HAProxy.
+	settled := workerPID(t, ctx, session)
+	repeat, result := session.ApplyDesired(ctx)
+	require.True(t, result.OK, "the repeated apply was rejected: %s", applyError(result))
+	assert.Equal(t, deployplan.VerdictFileOnly, repeat.Verdict, "an unchanged render must not reload")
+	assert.Equal(t, api.ResultNoop, result.Mode, "an unchanged render must write nothing")
+	assert.Equal(t, settled, workerPID(t, ctx, session), "an unchanged render must not replace the worker")
+}
 
-			auxFiles.SSLCertificates = append(auxFiles.SSLCertificates, auxiliaryfiles.SSLCertificate{
-				Path:    certName,
-				Content: string(content),
-			})
-			t.Logf("  - %s ← %s", certName, testdataFile)
-		}
-	}
-
-	// Load map files from testdata
-	if len(tc.mapFiles) > 0 {
-		t.Logf("Preparing %d map files", len(tc.mapFiles))
-		for mapName, testdataFile := range tc.mapFiles {
-			fullPath := filepath.Join("testdata", testdataFile)
-			content, err := os.ReadFile(fullPath)
-			require.NoError(t, err, "failed to read test map file %s", testdataFile)
-
-			auxFiles.MapFiles = append(auxFiles.MapFiles, auxiliaryfiles.MapFile{
-				Path:    mapName,
-				Content: string(content),
-			})
-			t.Logf("  - %s ← %s", mapName, testdataFile)
-		}
-	}
-
-	// Step 1: Upload INITIAL auxiliary files (if any) before pushing initial config
-	// This ensures files exist when HAProxy validates the initial configuration
-	if len(tc.initialGeneralFiles) > 0 {
-		t.Logf("Uploading %d initial general files", len(tc.initialGeneralFiles))
-		for haproxyPath, testdataFile := range tc.initialGeneralFiles {
-			fullPath := filepath.Join("testdata", testdataFile)
-			content, err := os.ReadFile(fullPath)
-			require.NoError(t, err, "failed to read initial test file %s", testdataFile)
-
-			filename := filepath.Base(haproxyPath)
-			_, err = client.CreateGeneralFile(ctx, filename, string(content))
-			if err != nil && !strings.Contains(err.Error(), "already exists") {
-				require.NoError(t, err, "failed to upload initial general file %s", filename)
-			}
-			t.Logf("  - Uploaded initial file: %s", filename)
-		}
-	}
-
-	if len(tc.initialSSLCertificates) > 0 {
-		t.Logf("Uploading %d initial SSL certificates", len(tc.initialSSLCertificates))
-		for certName, testdataFile := range tc.initialSSLCertificates {
-			fullPath := filepath.Join("testdata", testdataFile)
-			content, err := os.ReadFile(fullPath)
-			require.NoError(t, err, "failed to read initial SSL cert %s", testdataFile)
-
-			_, err = client.CreateSSLCertificate(ctx, certName, string(content))
-			if err != nil && !strings.Contains(err.Error(), "already exists") {
-				require.NoError(t, err, "failed to upload initial SSL certificate %s", certName)
-			}
-			t.Logf("  - Uploaded initial SSL cert: %s", certName)
-		}
-	}
-
-	if len(tc.initialMapFiles) > 0 {
-		t.Logf("Uploading %d initial map files", len(tc.initialMapFiles))
-		for mapName, testdataFile := range tc.initialMapFiles {
-			fullPath := filepath.Join("testdata", testdataFile)
-			content, err := os.ReadFile(fullPath)
-			require.NoError(t, err, "failed to read initial map file %s", testdataFile)
-
-			_, err = client.CreateMapFile(ctx, mapName, string(content))
-			if err != nil && !strings.Contains(err.Error(), "already exists") {
-				require.NoError(t, err, "failed to upload initial map file %s", mapName)
-			}
-			t.Logf("  - Uploaded initial map file: %s", mapName)
-		}
-	}
-
-	// Step 2: Push initial configuration using Sync API
-	// Use Sync so the version increments after the initial push — keeps
-	// PushRawConfiguration's idempotency semantics out of the test's
-	// version-resolution path.
-	initialConfigContent := LoadTestConfig(t, tc.initialConfigFile)
-	initialResult, err := dpClient.Sync(ctx, initialConfigContent, nil, nil)
-	require.NoError(t, err, "pushing initial config should succeed")
-	t.Logf("Pushed initial config: %s (mode=%s)", tc.initialConfigFile, initialResult.SyncMode)
-
-	// Step 3: Sync to desired configuration using high-level API
-	// This replaces the manual parse/compare/apply steps
-	desiredConfigContent := LoadTestConfig(t, tc.desiredConfigFile)
-	result, err := dpClient.Sync(ctx, desiredConfigContent, auxFiles, nil)
-	require.NoError(t, err, "sync should succeed")
-	t.Logf("Sync completed: %d operations, reload=%v, reloadID=%s",
-		len(result.AppliedOperations), result.ReloadTriggered, result.ReloadID)
-
-	// Step 3.5: Wait for sync result to be reflected in raw configuration
-	// After HAProxy reload completes, there may be a brief delay before the raw config
-	// API endpoint returns the updated configuration, especially in resource-constrained
-	// CI environments (DinD). Without this wait, idempotency checks may fail because
-	// the API returns stale data.
-	if result.ReloadTriggered {
-		err = testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(ctx context.Context) (bool, error) {
-			currentConfig, err := client.GetRawConfiguration(ctx)
-			if err != nil {
-				return false, nil // Retry on error
-			}
-			currentParsed, err := parser.ParseFromString(currentConfig)
-			if err != nil {
-				return false, nil // Retry on parse error
-			}
-			desiredParsed, err := parser.ParseFromString(desiredConfigContent)
-			if err != nil {
-				return false, err // This shouldn't fail - desired is constant
-			}
-			verifyDiff, err := comp.Compare(currentParsed, desiredParsed)
-			if err != nil {
-				return false, nil // Retry on comparison error
-			}
-			return verifyDiff.Summary.TotalCreates == 0 &&
-				verifyDiff.Summary.TotalUpdates == 0 &&
-				verifyDiff.Summary.TotalDeletes == 0, nil
-		})
-		require.NoError(t, err, "sync result should be reflected in raw config within timeout")
-		t.Logf("Sync result verified in raw config")
-	}
-
-	// Step 3: Assert operation counts from sync result
-	assert.Equal(t, tc.expectedCreates, result.Details.Creates, "create count mismatch")
-	assert.Equal(t, tc.expectedUpdates, result.Details.Updates, "update count mismatch")
-	assert.Equal(t, tc.expectedDeletes, result.Details.Deletes, "delete count mismatch")
-
-	// Step 4: Validate operations by their descriptions
-	if len(tc.expectedOperations) > 0 {
-		actualOps := make([]string, len(result.AppliedOperations))
-		for i, op := range result.AppliedOperations {
-			actualOps[i] = op.Description
-		}
-		assert.ElementsMatch(t, tc.expectedOperations, actualOps,
-			"operation descriptions mismatch")
-	}
-
-	// Step 5: Validate reload expectations
-	// With forceReload=true, synchronous reloads return no reload ID (empty string)
-	// but ReloadTriggered and ReloadVerified are both set to true.
-	//
-	// Runtime SSL certificate replacement is v3.2+ only; on older HAProxy the
-	// cert-content change falls back to a reload, so adjust the expectation to
-	// match the connected version rather than skipping coverage there.
-	expectedReload := tc.expectedReload
-	expectedSyncMode := tc.expectedSyncMode
-	if tc.runtimeRequiresSSLCertCap && !client.Capabilities().SupportsRuntimeSSLCerts {
-		t.Logf("HAProxy %s lacks runtime SSL cert support; expecting reload fallback", client.DetectedVersion())
-		expectedReload = true
-		expectedSyncMode = dataplane.SyncModeReload
-	}
-
-	if expectedReload {
-		assert.True(t, result.ReloadTriggered, "expected reload to be triggered")
-		assert.True(t, result.ReloadVerified, "expected reload to be verified")
-	} else {
-		assert.False(t, result.ReloadTriggered, "expected no reload")
-		assert.Empty(t, result.ReloadID, "expected no reload ID")
-	}
-
-	if expectedSyncMode != "" {
-		assert.Equal(t, expectedSyncMode, result.SyncMode, "unexpected sync mode")
-	}
-
-	// Step 6: Parse desired config for idempotency verification
-	desiredConfig, err := parser.ParseFromString(desiredConfigContent)
-	require.NoError(t, err, "parsing desired config should succeed")
-	t.Logf("Parsed desired config for verification")
-
-	// Step 7: Read final config via API
-	finalConfigStr, err := client.GetRawConfiguration(ctx)
-	require.NoError(t, err, "reading final config should succeed")
-
-	// Step 8: Parse final config
-	finalConfig, err := parser.ParseFromString(finalConfigStr)
-	require.NoError(t, err, "parsing final config should succeed")
-	t.Logf("Parsed final config from API")
-
-	// Step 9: Calculate verification diff (final → desired)
-	verifyDiff, err := comp.Compare(finalConfig, desiredConfig)
-	require.NoError(t, err, "verification comparison should succeed")
-	t.Logf("Verification diff: %d creates, %d updates, %d deletes",
-		verifyDiff.Summary.TotalCreates, verifyDiff.Summary.TotalUpdates, verifyDiff.Summary.TotalDeletes)
-
-	// Step 10: Assert verification diff is EMPTY (idempotency check)
-	// If there are differences, log them for debugging
-	if verifyDiff.Summary.TotalCreates > 0 || verifyDiff.Summary.TotalUpdates > 0 || verifyDiff.Summary.TotalDeletes > 0 {
-		t.Logf("⚠️  Idempotency check detected differences:")
-		for _, op := range verifyDiff.Operations {
-			opType := "unknown"
-			switch op.Type() {
-			case 0:
-				opType = "CREATE"
-			case 1:
-				opType = "UPDATE"
-			case 2:
-				opType = "DELETE"
-			}
-			t.Logf("  - %s: %s", opType, op.Describe())
-		}
-	}
-
-	assert.Equal(t, 0, verifyDiff.Summary.TotalCreates,
-		"final config should match desired (no creates needed)")
-	assert.Equal(t, 0, verifyDiff.Summary.TotalUpdates,
-		"final config should match desired (no updates needed)")
-	assert.Equal(t, 0, verifyDiff.Summary.TotalDeletes,
-		"final config should match desired (no deletes needed)")
-
-	if verifyDiff.Summary.TotalCreates == 0 &&
-		verifyDiff.Summary.TotalUpdates == 0 &&
-		verifyDiff.Summary.TotalDeletes == 0 {
-		t.Logf("✓ Idempotency check passed: final config matches desired config")
-	}
-
-	// Step 11: Verify auxiliary file content if requested
-	if len(tc.verifyMapFiles) > 0 {
-		t.Logf("Verifying %d map files", len(tc.verifyMapFiles))
-		for filename, testdataFile := range tc.verifyMapFiles {
-			// Load expected content from testdata
-			fullPath := filepath.Join("testdata", testdataFile)
-			expectedContent, err := os.ReadFile(fullPath)
-			require.NoError(t, err, "failed to read expected map file %s", testdataFile)
-
-			// Fetch actual content from HAProxy
-			actualContent, err := client.GetMapFileContent(ctx, filename)
-			require.NoError(t, err, "failed to get map file %s from HAProxy", filename)
-
-			// Compare
-			assert.Equal(t, string(expectedContent), actualContent,
-				"map file %s content mismatch", filename)
-			t.Logf("  ✓ Map file %s matches expected content", filename)
-
-			// When the change was applied via the runtime API (no reload), the
-			// on-disk file alone does not prove the live worker memory was
-			// updated. Assert the in-memory runtime map matches too.
-			if tc.verifyRuntimeMap {
-				runtimeEntries, err := client.GetRuntimeMapEntries(ctx, filename)
-				require.NoError(t, err, "failed to read runtime map %s", filename)
-				assert.Equal(t, parseMapToKV(string(expectedContent)), runtimeEntries,
-					"runtime (in-memory) map %s mismatch", filename)
-				t.Logf("  ✓ Runtime map %s matches expected content (%d entries)", filename, len(runtimeEntries))
-			}
-		}
-	}
-
-	if len(tc.verifyGeneralFiles) > 0 {
-		t.Logf("Verifying %d general files", len(tc.verifyGeneralFiles))
-		for filename, testdataFile := range tc.verifyGeneralFiles {
-			// Load expected content from testdata
-			fullPath := filepath.Join("testdata", testdataFile)
-			expectedContent, err := os.ReadFile(fullPath)
-			require.NoError(t, err, "failed to read expected general file %s", testdataFile)
-
-			// Fetch actual content from HAProxy
-			actualContent, err := client.GetGeneralFileContent(ctx, filename)
-			require.NoError(t, err, "failed to get general file %s from HAProxy", filename)
-
-			// Compare
-			assert.Equal(t, string(expectedContent), actualContent,
-				"general file %s content mismatch", filename)
-			t.Logf("  ✓ General file %s matches expected content", filename)
-		}
-	}
-
-	if len(tc.verifySSLCertificates) > 0 {
-		t.Logf("Verifying %d SSL certificates", len(tc.verifySSLCertificates))
-		for certName, testdataFile := range tc.verifySSLCertificates {
-			// Load expected content from testdata
-			fullPath := filepath.Join("testdata", testdataFile)
-			expectedContent, err := os.ReadFile(fullPath)
-			require.NoError(t, err, "failed to read expected SSL cert %s", testdataFile)
-
-			// Fetch actual content from HAProxy
-			actualContent, err := client.GetSSLCertificateContent(ctx, certName)
-			require.NoError(t, err, "failed to get SSL cert %s from HAProxy", certName)
-
-			// Compare
-			assert.Equal(t, string(expectedContent), actualContent,
-				"SSL certificate %s content mismatch", certName)
-			t.Logf("  ✓ SSL certificate %s matches expected content", certName)
+// declareFiles adds one case's auxiliary files to the desired set. The keys are
+// manifest paths, the values testdata files.
+func declareFiles(t *testing.T, session *Session, general, certificates, maps map[string]string) {
+	t.Helper()
+	for _, group := range []map[string]string{general, certificates, maps} {
+		for path, testdataFile := range group {
+			session.Set(path, LoadTestFileContent(t, testdataFile))
 		}
 	}
 }
 
-// parseMapToKV parses an HAProxy map file body into a key→value map (last value
-// wins on duplicate keys), matching how a runtime map is keyed. Used to compare
-// expected map content against the live runtime map (GetRuntimeMapEntries).
-func parseMapToKV(content string) map[string]string {
-	out := map[string]string{}
-	for _, line := range strings.Split(content, "\n") {
-		t := strings.TrimSpace(line)
-		if t == "" || strings.HasPrefix(t, "#") {
-			continue
-		}
-		key, value := t, ""
-		if i := strings.IndexAny(t, " \t"); i >= 0 {
-			key = t[:i]
-			value = strings.TrimSpace(t[i+1:])
-		}
-		out[key] = value
+// assertTree compares the pod's tree with the desired set: every declared file
+// is present with its exact content, and every file this session owns and no
+// longer declares is gone. Files the agent never put there — its own dot
+// directories, and anything HAProxy writes itself — are not its to delete.
+func assertTree(t *testing.T, ctx context.Context, session *Session) {
+	t.Helper()
+	for _, path := range session.Paths() {
+		actual, err := session.haproxy.ReadFile(ctx, path)
+		require.NoError(t, err, "reading %s from the pod", path)
+		assert.Equal(t, session.Content(path), actual, "%s on the pod differs from the desired content", path)
 	}
-	return out
+	for _, path := range session.Dropped() {
+		assert.False(t, session.haproxy.FileExists(ctx, path),
+			"%s is still on the pod though the manifest dropped it — absence means delete", path)
+	}
+}
+
+// verifyFiles checks the content the case pinned, read from the pod's tree.
+func verifyFiles(t *testing.T, ctx context.Context, session *Session, groups ...map[string]string) {
+	t.Helper()
+	for _, group := range groups {
+		for path, testdataFile := range group {
+			actual, err := session.haproxy.ReadFile(ctx, path)
+			require.NoError(t, err, "reading %s from the pod", path)
+			assert.Equal(t, LoadTestFileContent(t, testdataFile), actual, "%s content mismatch", path)
+		}
+	}
+}
+
+// verifyRuntimeMaps asserts the worker's in-memory map matches the file. The
+// on-disk file alone does not prove a runtime-applied change reached the
+// running process.
+func verifyRuntimeMaps(t *testing.T, ctx context.Context, session *Session, expected map[string]string) {
+	t.Helper()
+	for path, testdataFile := range expected {
+		entries, err := session.haproxy.RuntimeMapEntries(ctx, path)
+		require.NoError(t, err, "reading the runtime map %s", path)
+		assert.Equal(t, mapEntriesOf(LoadTestFileContent(t, testdataFile)), entries,
+			"the runtime (in-memory) map %s differs from the file", path)
+	}
+}
+
+// mapEntriesOf projects map-file content onto the key → value shape a runtime
+// map has, where a repeated key keeps its last value.
+func mapEntriesOf(content string) map[string]string {
+	entries := map[string]string{}
+	for _, entry := range renderplan.ParseMapEntries(content) {
+		entries[entry.Key] = entry.Value
+	}
+	return entries
+}
+
+func workerPID(t *testing.T, ctx context.Context, session *Session) int {
+	t.Helper()
+	pid, err := session.haproxy.WorkerPID(ctx)
+	require.NoError(t, err, "reading the worker PID")
+	return pid
 }

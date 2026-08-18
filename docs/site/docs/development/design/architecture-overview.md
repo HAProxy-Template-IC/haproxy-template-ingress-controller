@@ -8,9 +8,9 @@ The controller operates through event-driven coordination, with one synchronous 
 
 1. **Resource Watchers** (`pkg/k8s/watcher`, all-replica) monitor Kubernetes resources and publish `ResourceIndexUpdatedEvent` / `IndexSynchronizedEvent` to EventBus
 2. **Reconciler** (`pkg/controller/reconciler.Reconciler`, all-replica) subscribes to those events and publishes `ReconciliationTriggeredEvent` immediately on every one — no reconciler-level debounce (also fires immediately on `BecameLeaderEvent` to bootstrap the new leader). Coalescing of bursts is done upstream in the per-watcher debounce window; reload throttling is done downstream in the deployer.
-3. **Coordinator** (`pkg/controller/reconciler.Coordinator`, **leader-only**) subscribes to `ReconciliationTriggeredEvent`, calls `Pipeline.Execute` synchronously — no event hop. It pins `currentFiles` to the leader term and advances it synchronously when a render passes validation, before publishing result events. It holds two pipelines. The **first** render of each iteration takes the strict one (full `haproxy -c`); an iteration restarts on every config change, so a config or template change is always checked semantically. Every render after that takes the fast one (client-native parser syntax + OpenAPI schema, `SkipSemanticValidation: true`) — watched-resource changes already passed `haproxy -c` at admission, and the Dataplane API re-validates server-side on push. The Coordinator then publishes `TemplateRenderedEvent` + `ValidationCompletedEvent` for downstream observers, and finally `ReconciliationCompletedEvent` (or `ReconciliationFailedEvent`) for metrics/commentator.
+3. **Coordinator** (`pkg/controller/reconciler.Coordinator`, **leader-only**) subscribes to `ReconciliationTriggeredEvent`, calls `Pipeline.Execute` synchronously — no event hop. It pins `currentFiles` to the leader term and advances it synchronously when a render passes validation, before publishing result events. It holds two pipelines. The **first** render of each iteration takes the strict one (full `haproxy -c`); an iteration restarts on every config change, so a config or template change is always checked semantically. Every render after that takes the fast one (client-native parser syntax + OpenAPI schema, `SkipSemanticValidation: true`) — watched-resource changes already passed `haproxy -c` at admission, and the pod's own binary rejects a configuration it can't parse. The Coordinator then publishes `TemplateRenderedEvent` + `ValidationCompletedEvent` for downstream observers, and finally `ReconciliationCompletedEvent` (or `ReconciliationFailedEvent`) for metrics/commentator.
 4. **DeploymentScheduler** (`pkg/controller/deployer.DeploymentScheduler`, **leader-only**) subscribes to those events plus `HAProxyPodsDiscoveredEvent`, enforces rate limiting (`minDeploymentInterval`), implements latest-wins coalescing, and publishes `DeploymentScheduledEvent`
-5. **Deployer** (`pkg/controller/deployer.Component`, **leader-only**) subscribes to `DeploymentScheduledEvent`, executes parallel `dataplane.Sync` calls against every HAProxy endpoint, logs successful endpoints directly, and publishes `DeploymentCompletedEvent` plus per-endpoint `InstanceDeploymentFailedEvent`
+5. **Deployer** (`pkg/controller/deployer.Component`, **leader-only**) subscribes to `DeploymentScheduledEvent`, diffs the render against each pod's baseline, applies the result to every HAProxy endpoint in parallel, logs successful endpoints directly, and publishes `DeploymentCompletedEvent` plus per-endpoint `InstanceDeploymentFailedEvent`
 6. **All-replica observers** (Discovery, StatusApplier, ProposalValidator, HTTPStore, Metrics, Commentator) react locally to the events they consume; where a write is leader-only, the leader-only sister component picks up the work
 
 There is no event-adapter for rendering or HAProxy-config validation in production: the leader's synchronous `pkg/controller/pipeline.Pipeline` runs `RenderService` + a `ValidationService` in one shot, with no event hop between them.
@@ -38,12 +38,12 @@ graph TB
 
         subgraph "HAProxy Pod 1"
             HAP1[HAProxy<br/>Load Balancer]
-            DP1[Dataplane API<br/>:5555]
+            AG1[HAPTIC agent<br/>:5555]
         end
 
         subgraph "HAProxy Pod 2"
             HAP2[HAProxy<br/>Load Balancer]
-            DP2[Dataplane API<br/>:5555]
+            AG2[HAPTIC agent<br/>:5555]
         end
 
         CONFIG[HAProxyTemplateConfig CRD<br/>Controller Configuration]
@@ -54,12 +54,12 @@ graph TB
     CONFIG -->|Watch + Read| CTRL
     RES -->|Watch Events| CTRL
     CTRL -->|Render & Validate| VAL
-    VAL -->|Deploy Config| DP1
-    VAL -->|Deploy Config| DP2
-    DP1 -->|Configure| HAP1
-    DP2 -->|Configure| HAP2
-    HAP1 -->|Stats/Health| DP1
-    HAP2 -->|Stats/Health| DP2
+    VAL -->|Apply| AG1
+    VAL -->|Apply| AG2
+    AG1 -->|Write + run| HAP1
+    AG2 -->|Write + run| HAP2
+    HAP1 -->|Sockets| AG1
+    HAP2 -->|Sockets| AG2
 
 ```
 
@@ -67,7 +67,7 @@ graph TB
 
 - **Controller**: Main controller process that watches Kubernetes resources, renders templates, and orchestrates configuration deployment
 - **Validation Module**: Integrated validation using haproxytech/client-native library for parsing and haproxy binary for configuration checks
-- **Dataplane API**: HAProxy's management interface for receiving configuration updates and performing runtime operations
+- **HAPTIC agent**: the container in every HAProxy pod that owns the pod's file tree and its runtime sockets. It writes what the controller sends and runs the commands it's given; it makes no HAProxy decisions of its own
 - **HAProxy**: The load balancer instances the controller configures — the deployment targets for every rendered config
 
 ### Controller Internal Architecture
@@ -76,7 +76,7 @@ graph TB
 graph TB
     subgraph ext["External Systems"]
         K8S["Kubernetes API<br/>(Resource Events)"]
-        HAP["HAProxy Instances<br/>(Dataplane API)"]
+        HAP["HAProxy Instances<br/>(HAPTIC agent)"]
     end
 
     subgraph controller["Controller Process - Event-Driven Architecture"]
@@ -145,7 +145,7 @@ The dashed arrows between Coordinator and the synchronous pipeline are direct fu
 2. **Reconciler** subscribes to change events, filters initial sync events, and publishes `ReconciliationTriggeredEvent` immediately on every change — there is no second reconciler-level debounce or refractory window. Also fires on `BecameLeaderEvent` so a freshly elected leader produces a current render instead of waiting for the next change.
 3. **Coordinator** (leader-only) subscribes to `ReconciliationTriggeredEvent` and calls `pkg/controller/pipeline.Pipeline.Execute(ctx, storeProvider)` synchronously. The pipeline runs `RenderService.Render` + the fast `ValidationService.Validate` (syntax + schema) in one atomic step. On success, the Coordinator publishes `TemplateRenderedEvent` + `ValidationCompletedEvent`; on failure, `ReconciliationFailedEvent` carrying a `*PipelineError` (use `errors.AsType[*PipelineError]` to extract the failed phase, as the Coordinator does in `handlePipelineFailure`). Either path ends with `ReconciliationCompletedEvent` for metrics.
 4. **DeploymentScheduler** (leader-only) subscribes to `TemplateRenderedEvent`, `ValidationCompletedEvent`, `HAProxyPodsDiscoveredEvent`, and `ConfigValidatedEvent`; enforces rate limiting (default `2s` minimum interval), implements "latest wins" queueing, publishes `DeploymentScheduledEvent`
-5. **Deployer** (leader-only) subscribes to `DeploymentScheduledEvent`, executes parallel `dataplane.Sync` calls to all HAProxy endpoints, logs successful endpoints directly, and publishes `InstanceDeploymentFailedEvent` per failed endpoint and `DeploymentCompletedEvent` overall
+5. **Deployer** (leader-only) subscribes to `DeploymentScheduledEvent`, applies the render to all HAProxy endpoints in parallel, logs successful endpoints directly, and publishes `InstanceDeploymentFailedEvent` per failed endpoint and `DeploymentCompletedEvent` overall
 6. **Discovery** (all-replica) probes HAProxy pods, caches `HAProxyPodsDiscoveredEvent` via `leadership.StateReplayer` so the next leader gets current state on `BecameLeaderEvent`
 7. **ConfigPublisher** (leader-only) subscribes to `TemplateRenderedEvent` + `ValidationCompletedEvent`, writes the rendered config + auxiliary files as observable CRDs (`HAProxyCfg`, `HAProxyMapFile`, …)
 8. **Support Components** (Metrics, Commentator, StatusApplier) subscribe to relevant events for metrics / logs / status patches
@@ -185,7 +185,7 @@ graph TD
 Three phases run in-process, eliminating the need for a separate validation sidecar container:
 
 1. **Phase 1 — Syntax parsing.** client-native parses the configuration and validates it against the HAProxy config grammar.
-2. **Phase 1.5 — OpenAPI schema check.** The parsed structure is cross-checked against the version-specific DataPlane API OpenAPI spec — catches out-of-range values, pattern violations, and missing required fields before they reach HAProxy.
+2. **Phase 1.5 — OpenAPI schema check.** The parsed structure is cross-checked against a version-specific OpenAPI schema — catches out-of-range values, pattern violations, and missing required fields before they reach HAProxy.
 3. **Phase 2 — Semantic validation.** `haproxy -c -f config` performs full semantic validation including resource availability. Each call creates a per-process temp directory mirroring the production layout (`maps/`, `ssl/`, `general/`), writes the auxiliary files there, and rewrites the rendered config's `default-path origin <baseDir>` line to point at the temp dir — so file references resolve exactly like at runtime. File I/O is isolated per call. A context-aware gate serialises binary invocations because concurrent checks have been observed to interfere; cancellation removes a queued check or terminates its process.
 
 Results are cached by an SHA-256 over (config + auxiliary files) per instance — repeat validations during drift-prevention cycles short-circuit before touching disk. Because Phase 2 runs the real `haproxy` binary against a mirror of the production file layout, a passing check means a live HAProxy instance would accept the config.
@@ -199,15 +199,15 @@ One validation pipeline is wired in `pkg/controller/reconciliation.go` and share
 Two mechanisms trigger reconciliation:
 
 - **Watched resource changes** — the primary trigger; debounced to coalesce bursts.
-- **Drift prevention** — a periodic check (default `60s`, set via `spec.dataplane.driftPreventionInterval`) that re-deploys if any rendered file differs from what was last pushed. This catches out-of-band changes to HAProxy and keeps desired and actual configuration eventually consistent.
+- **Drift prevention** — a periodic check (default `60s`, set via `spec.dataplane.driftPreventionInterval`) that asks every pod to re-hash its tree and re-applies if a digest disagrees with the render. This catches out-of-band changes to HAProxy and keeps desired and actual configuration eventually consistent.
 
 ### Constraints
 
-- The Dataplane API doesn't cover every directive in the [HAProxy configuration language](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/). HAPTIC can only deploy configurations that the underlying [`haproxytech/client-native`](https://github.com/haproxytech/client-native) parser accepts. See [Supported Configuration](../../supported-configuration.md) for the current coverage.
-- The controller assumes HAProxy runs alongside a Dataplane API instance reachable on the pod network (default port `5555`). Validation and deployment go through that API; there is no SSH or kubectl-exec path into HAProxy.
+- Any directive HAProxy accepts can be deployed: the rendered bytes reach the pod unchanged, and the pod's own binary is what judges them. What the render declares about its own structure decides whether a change can avoid a reload — see [Supported Configuration](../../supported-configuration.md).
+- The controller assumes HAProxy runs alongside a HAPTIC agent reachable on the pod network (default port `5555`). Every apply goes through that agent; there is no SSH or kubectl-exec path into HAProxy.
 
 ### System environment
 
 - The controller runs as a Kubernetes container.
-- Each managed HAProxy instance must be a Kubernetes Pod with a Dataplane API sidecar sharing the HAProxy config volume.
+- Each managed HAProxy instance must be a Kubernetes Pod with an agent container sharing the HAProxy config volume.
 - The controller's ServiceAccount needs `get`/`list`/`watch` on every resource type listed in `spec.watchedResources`, plus the standard set granted by the chart (Pods, Services, EndpointSlices, the CRDs, and `coordination.k8s.io/leases` for leader election). See [Security — RBAC](../../operations/security.md#rbac).

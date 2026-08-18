@@ -246,7 +246,7 @@ func createDryRunValidator(
 		Engine:             wiring.engine,
 		Config:             cfg,
 		Logger:             logger,
-		Capabilities:       wiring.capabilities,
+		Capabilities:       wiring.capabilities.Capabilities(),
 		HTTPStoreComponent: wiring.httpStore,
 		// TypedResourceTypes mirrors the reconciliation RenderService
 		// so dry-run renders bind the same typed `resources` global as
@@ -257,6 +257,9 @@ func createDryRunValidator(
 		// compile-fail under the typed engine declaration.
 		TypedResourceTypes: wiring.typedResourceTypes,
 	})
+	// Admission renders what the fleet will run: a gate branching on this
+	// image's own HAProxy admits objects whose production render nothing checked.
+	wiring.capabilities.Add(renderService)
 
 	// Create ValidationService (pure service for validation)
 	// Use strict DNS validation for webhook (catch DNS issues before admission)

@@ -32,7 +32,7 @@ A namespace-scoped `Role` (bound only in the controller's own namespace) additio
 
 | Resource | Verbs | Why |
 |----------|-------|-----|
-| `secrets` | get, list, watch, create, update, patch, delete | Read Dataplane API credentials; read/write SSL certificate Secrets |
+| `secrets` | get, list, watch, create, update, patch, delete | Read the agent credentials; read/write SSL certificate Secrets |
 | `haproxycfgs`, `haproxymapfiles` | get, list, watch, create, update, patch, delete | Publish rendered config + map files as observable CRDs in the controller's own namespace |
 | `haproxycfgs/status`, `haproxymapfiles/status` | get, update, patch | Status on the published artifacts |
 | `services` | get, list, watch, create, update, patch, delete | Namespace-scoped counterpart to the gateway Service grant above — Gateway StaticAddresses LoadBalancer Services emitted into the controller's own namespace |
@@ -60,10 +60,10 @@ stringData:
 
 The controller watches the Secret and picks up rotations live — no pod restart needed. Use whatever secret-management tool you already run (ESO, Vault agent, `SOPS`, …); the controller just reads the Secret.
 
-!!! warning "Set the Dataplane password explicitly under GitOps"
+!!! warning "Set the agent password explicitly under GitOps"
     If you install via the Helm chart and leave `credentials.dataplane.password` empty, the chart generates a **random** 32-char password and preserves it across upgrades by reading the existing Secret via `lookup`. GitOps tools that render without cluster access (ArgoCD/Flux) can't `lookup`, so an empty value regenerates on every sync and churns the credential — set `credentials.dataplane.password` explicitly (SealedSecret / external secret) for those deployments.
 
-Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds: true`), never passwords — `pkg/controller/debug/setup.go` enforces that. See [Debugging](./debugging.md#accessing-the-server) for access control if you run with the debug port enabled.
+Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds: true` — the key keeps its name), never passwords — `pkg/controller/debug/setup.go` enforces that. See [Debugging](./debugging.md#accessing-the-server) for access control if you run with the debug port enabled.
 
 ## Pod hardening
 
@@ -109,13 +109,15 @@ The controller pod exposes three HTTP ports (all chart defaults):
 | `9090` | `/metrics` | `controller.ports.metrics` configures the process, pod, Service, and monitors together; set it to `0` to disable metrics |
 | `9443` | Validating webhook | Required when the webhook is enabled |
 
-Outbound, the controller talks to the Kubernetes API server and to each HAProxy pod's Dataplane API (default port `5555`). Dataplane API traffic is plain HTTP over the pod network — the controller has no TLS client configuration for the Dataplane API. Rely on pod-network protection (NetworkPolicy, service mesh, Container Network Interface (CNI) encryption) rather than transport-level authentication for that hop.
+Outbound, the controller talks to the Kubernetes API server and to the agent on each HAProxy pod (default port `5555`). That traffic is plain HTTP over the pod network — the agent has no TLS server configuration. Rely on pod-network protection (NetworkPolicy, service mesh, Container Network Interface (CNI) encryption) rather than transport-level authentication for that hop.
 
-The Dataplane API is authenticated with a basic-auth password stored in the `<release>-haptic-credentials` Secret (the release `fullname`, which collapses to `<release>-credentials` only when the release name already contains `haptic`). Password generation and the GitOps caveat are covered in the warning box above.
+An apply carries the rendered configuration and every auxiliary file, which includes SSL private keys. That's the same content the pod already holds on disk, but it's one more reason the hop deserves network-level protection.
+
+The agent is authenticated with a basic-auth password stored in the `<release>-haptic-credentials` Secret (the release `fullname`, which collapses to `<release>-credentials` only when the release name already contains `haptic`). Password generation and the GitOps caveat are covered in the warning box above.
 
 **The chart already ships default-on `NetworkPolicy` resources** for the controller (`controller.networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods. Enabling the managed Varnish or Valkey tiers adds release-scoped default-on policies controlled by `cache.varnish.networkPolicy.enabled` and `rateLimit.shared.managedStore.networkPolicy.enabled`. Know what the defaults actually allow before relying on them:
 
-- The controller policy restricts ingress to the exposed ports (metrics ingress only opens when `controller.networkPolicy.ingress.monitoring.enabled: true` — it's off by default, so enable it for Prometheus). Egress covers DNS, the Kubernetes API server, and the HAProxy Dataplane/stats ports, **plus a default `controller.networkPolicy.egress.additionalRules` entry allowing every in-cluster pod** (so template helpers like `http.Fetch()` work) — set it to `[]` to lock egress down (see [Networking](./networking.md#production-hardening)).
+- The controller policy restricts ingress to the exposed ports (metrics ingress only opens when `controller.networkPolicy.ingress.monitoring.enabled: true` — it's off by default, so enable it for Prometheus). Egress covers DNS, the Kubernetes API server, and the HAProxy agent/stats ports, **plus a default `controller.networkPolicy.egress.additionalRules` entry allowing every in-cluster pod** (so template helpers like `http.Fetch()` work) — set it to `[]` to lock egress down (see [Networking](./networking.md#production-hardening)).
 - The HAProxy policy defaults to `allowExternal: true`, which renders a permissive all-port ingress rule — deliberate, because Gateway listeners bind dynamic ports.
 - The Varnish policy admits only same-release HAProxy cache requests and permits egress only to DNS and the same HAProxy HTTP origin. The managed Valkey/Sentinel policy admits only same-release HAProxy/SPOA and store-internal traffic.
 
@@ -216,7 +218,7 @@ Before exposing a HAPTIC deployment to production traffic:
 - [ ] NetworkPolicy that pins `/debug/*` ingress to trusted namespaces (the port also serves `/healthz`, so keep `controller.ports.healthz` enabled).
 - [ ] Watched-resource selectors scoped to the namespaces you intend to serve.
 - [ ] Release namespace labelled with `pod-security.kubernetes.io/enforce=restricted`.
-- [ ] NetworkPolicy allowing only kube-apiserver + Dataplane-API egress.
+- [ ] NetworkPolicy allowing only kube-apiserver + agent egress.
 - [ ] Audit policy in place for `HAProxyTemplateConfig` changes.
 - [ ] Image signature verification (`cosign verify …`) wired into your admission policy — see [Releasing](../development/releasing.md#supply-chain-security).
 

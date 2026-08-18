@@ -1,0 +1,146 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: agent value guards
+# Renders ONLY haproxytemplateconfig.yaml, which is where
+# haptic.haproxy.validateValues is invoked. One test per key the Dataplane API
+# sidecar owned: a key that renders silently is a setting the operator believes
+# still applies.
+templates:
+  - haproxytemplateconfig.yaml
+tests:
+  - it: should reject haproxy.dataplane.logLevel
+    set:
+      haproxy.dataplane.logLevel: debug
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.dataplane.logLevel moved to haproxy.agent.logLevel: the Dataplane API sidecar is now the HAPTIC agent container."
+
+  - it: should reject haproxy.dataplane.extraEnv
+    set:
+      haproxy.dataplane.extraEnv:
+        - name: GOMAXPROCS
+          value: "4"
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.dataplane.extraEnv moved to haproxy.agent.extraEnv: the Dataplane API sidecar is now the HAPTIC agent container."
+
+  - it: should reject haproxy.dataplane.service
+    set:
+      haproxy.dataplane.service.type: NodePort
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.dataplane.service moved to haproxy.agent.service: the Dataplane API sidecar is now the HAPTIC agent container."
+
+  - it: should reject haproxy.dataplane.resources
+    set:
+      haproxy.dataplane.resources.requests.cpu: 50m
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.dataplane.resources moved to haproxy.agent.resources: the Dataplane API sidecar is now the HAPTIC agent container."
+
+  - it: should reject haproxy.dataplane.validateConfig
+    set:
+      haproxy.dataplane.validateConfig: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.dataplane.validateConfig was removed with the Dataplane API sidecar: the controller validates every config before it sends it, and the agent re-validates through HAProxy itself. Delete the key."
+
+  - it: should reject haproxy.dataplane.debugSocketPath
+    set:
+      haproxy.dataplane.debugSocketPath: /tmp/debug.sock
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.dataplane.debugSocketPath was removed with the Dataplane API sidecar: the agent reports its state at GET /v1/state and exports Prometheus metrics on haproxy.ports.agentMetrics. Delete the key."
+
+  - it: should reject haproxy.dataplane.aclFormat
+    set:
+      haproxy.dataplane.aclFormat: "%h %l"
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.dataplane.aclFormat was removed with the Dataplane API sidecar: the agent logs JSON on stdout; set haproxy.agent.logLevel instead. Delete the key."
+
+  # The named keys above are the ones the chart shipped. Anything else under
+  # haproxy.dataplane is a setting from a values file we have never seen, and
+  # rendering it away silently is the failure this guard exists to prevent.
+  - it: should reject any other key left under haproxy.dataplane
+    set:
+      haproxy.dataplane.somethingElse: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.dataplane.somethingElse is unknown: the Dataplane API sidecar is now the HAPTIC agent container, configured under haproxy.agent."
+
+  - it: should reject haproxy.dataplaneBin
+    set:
+      haproxy.dataplaneBin: /usr/local/bin/dataplaneapi
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.dataplaneBin was removed: the agent runs from the HAPTIC controller image (controller.image), not from a binary in the HAProxy image. Delete the key."
+
+  - it: should reject an invalid agent log level
+    set:
+      haproxy.agent.logLevel: verbose
+    asserts:
+      - failedTemplate:
+          errorMessage: 'haproxy.agent.logLevel "verbose" is invalid. Valid: trace, debug, info, warning, error.'
+
+  # haproxy.agent is the landing zone the migration guard above sends every
+  # operator to, so a typo lands here on exactly the values file that was just
+  # hand-edited.
+  - it: should reject an unknown haproxy.agent field
+    set:
+      haproxy.agent.loglevel: debug
+    asserts:
+      - failedTemplate:
+          errorMessage: 'haproxy.agent contains unknown field "loglevel". Valid fields: logLevel, service, resources, extraEnv.'
+
+  # Both durations become agent flags; above 60s the agent exits at startup and
+  # every HAProxy pod crash-loops.
+  - it: should reject a minDeploymentInterval above the agent ceiling
+    set:
+      controller.config.dataplane.minDeploymentInterval: 2m
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.dataplane.minDeploymentInterval is "2m"; the chart passes it to the agent, which accepts a Go duration of at most 60s and exits at startup on anything else. Set a value between 0 and 60s, for example 5s.'
+
+  - it: should reject a unitless minDeploymentInterval
+    set:
+      controller.config.dataplane.minDeploymentInterval: "120"
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.dataplane.minDeploymentInterval is "120"; the chart passes it to the agent, which accepts a Go duration of at most 60s and exits at startup on anything else. Set a value between 0 and 60s, for example 5s.'
+
+  - it: should reject a reloadVerificationTimeout above the agent ceiling
+    set:
+      controller.config.dataplane.reloadVerificationTimeout: 90s
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.dataplane.reloadVerificationTimeout is "90s"; the chart passes it to the agent, which accepts a Go duration of at most 60s and exits at startup on anything else. Set a value between 0 and 60s, for example 5s.'
+
+  - it: should accept both durations at the agent ceiling
+    set:
+      controller.config.dataplane.minDeploymentInterval: 60s
+      controller.config.dataplane.reloadVerificationTimeout: 1m
+    asserts:
+      - notFailedTemplate: {}
+
+  # Without the bundled fleet neither key becomes an agent flag; it paces the
+  # controller's own scheduler, where no ceiling applies.
+  - it: should accept a longer minDeploymentInterval when haproxy.enabled is false
+    set:
+      haproxy.enabled: false
+      controller.config.dataplane.minDeploymentInterval: 2m
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: should reject an agent metrics port that duplicates another pod listener
+    set:
+      haproxy.ports.agentMetrics: 8404
+    asserts:
+      - failedTemplate:
+          errorMessage: "haproxy.ports.agentMetrics duplicates haproxy.ports.stats (8404); HAProxy pod listeners must use distinct ports."
+
+  - it: should reject an unknown haproxy.ports field
+    set:
+      haproxy.ports.agentMetric: 5557
+    asserts:
+      - failedTemplate:
+          errorMessage: 'haproxy.ports contains unknown field "agentMetric". Valid fields: http, https, stats, dataplane, agentMetrics.'
