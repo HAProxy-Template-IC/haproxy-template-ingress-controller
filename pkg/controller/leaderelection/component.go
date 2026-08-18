@@ -25,6 +25,7 @@ type Component struct {
 	identity       string
 	leaseName      string
 	leaseNamespace string
+	epoch          *LeaseEpoch
 }
 
 // New creates a new leader election component.
@@ -32,11 +33,14 @@ type Component struct {
 // This function wraps the pure leader election elector and adds event publishing
 // for observability. The callbacks provided by the caller are wrapped to also
 // publish events before/after the callback executes.
+// epoch may be nil, in which case no fencing epoch is claimed; the deployer
+// then dispatches at epoch zero, which is correct only for a single writer.
 func New(
 	config *k8sleaderelection.Config,
 	clientset kubernetes.Interface,
 	eventBus *busevents.EventBus,
 	callbacks k8sleaderelection.Callbacks,
+	epoch *LeaseEpoch,
 	logger *slog.Logger,
 ) (*Component, error) {
 	if config == nil {
@@ -57,6 +61,7 @@ func New(
 		identity:       config.Identity,
 		leaseName:      config.LeaseName,
 		leaseNamespace: config.LeaseNamespace,
+		epoch:          epoch,
 	}
 
 	wrappedCallbacks := c.wrapCallbacks(config.Identity, callbacks)
@@ -78,6 +83,14 @@ func (c *Component) wrapCallbacks(identity string, callbacks k8sleaderelection.C
 			// This prevents race conditions where leader-only components miss
 			// events published before they finish subscribing.
 			c.eventBus.Pause()
+
+			// Claim the fencing epoch BEFORE anything leader-only can dispatch:
+			// an apply carrying the previous term's epoch is refused by every
+			// pod the new leader already wrote to.
+			if err := c.epoch.Bump(ctx); err != nil {
+				c.logger.Error("Claiming the leader epoch failed; applies stay fenced out until it succeeds",
+					"error", err, "lease", c.leaseName)
+			}
 
 			// Publish event (buffered while paused)
 			c.eventBus.Publish(events.NewBecameLeaderEvent(identity))
