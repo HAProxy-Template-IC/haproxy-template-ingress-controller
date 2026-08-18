@@ -69,7 +69,9 @@ type Agent struct {
 	lkgFiles      map[string]api.FileAt
 	reloadPending bool
 	rejectedOps   map[string]struct{}
+	conflictOnce  string
 	applies       []RecordedApply
+	stateReads    int
 }
 
 // Option customises the fake before it starts serving.
@@ -152,6 +154,14 @@ func (a *Agent) Applies() []RecordedApply {
 	return append([]RecordedApply(nil), a.applies...)
 }
 
+// StateReads is how many times /v1/state was answered, which is what a caller
+// that caches per pod is measured by.
+func (a *Agent) StateReads() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.stateReads
+}
+
 // SetReloadPending makes the fake behave as if a paced reload were already
 // scheduled: files are written and coalesced, ops are ignored, and only the
 // in-place ops run.
@@ -171,6 +181,34 @@ func (a *Agent) RejectOp(kind string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.rejectedOps[kind] = struct{}{}
+}
+
+// AcceptOp undoes RejectOp for this kind.
+func (a *Agent) AcceptOp(kind string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.rejectedOps, kind)
+}
+
+// ConflictOnce makes the next apply answer this 409 reason and write nothing,
+// which is what the agent does when its baseline moved between the caller's
+// state read and its apply. The reason is one of prev_mismatch, stale_epoch or
+// unknown_baseline.
+func (a *Agent) ConflictOnce(reason string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.conflictOnce = reason
+}
+
+// ForgetContent drops the content the fake holds for this path while keeping
+// the path in its reported file set, so the next manifest declaring it comes
+// back as a missing part.
+func (a *Agent) ForgetContent(path string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if at, held := a.state.Files[path]; held {
+		delete(a.blobs, at.Digest)
+	}
 }
 
 func (a *Agent) routes() http.Handler {
@@ -205,6 +243,7 @@ func (a *Agent) handleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mu.Lock()
+	a.stateReads++
 	state := a.snapshot()
 	a.mu.Unlock()
 	writeJSON(w, http.StatusOK, state)

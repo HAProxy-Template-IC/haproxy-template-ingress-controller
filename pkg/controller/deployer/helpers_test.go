@@ -15,9 +15,28 @@
 package deployer
 
 import (
+	"testing"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
+
+// deployerBus is a started event bus with one subscription, which is what a
+// deployment's assertions read.
+type deployerBus struct {
+	*busevents.EventBus
+	Events <-chan busevents.Event
+}
+
+func newTestBus(t *testing.T) *deployerBus {
+	t.Helper()
+	bus := testutil.NewTestBus()
+	events := bus.Subscribe("deployer-test", 200)
+	bus.Start()
+	return &deployerBus{EventBus: bus, Events: events}
+}
 
 // oneEndpoint is the single-pod fleet the scheduler tests dispatch against.
 func oneEndpoint() []dataplane.Endpoint {

@@ -146,6 +146,10 @@ func (a *Agent) apply(req *applyRequest) outcome {
 }
 
 func (a *Agent) fence(m *api.Manifest) *api.Conflict {
+	if reason := a.conflictOnce; reason != "" {
+		a.conflictOnce = ""
+		return a.conflict(reason)
+	}
 	switch {
 	case m.Token.LeaderEpoch < a.state.AppliedToken.LeaderEpoch:
 		return a.conflict("stale_epoch")
