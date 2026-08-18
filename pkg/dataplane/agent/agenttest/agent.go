@@ -70,13 +70,13 @@ type Agent struct {
 	planBlobPlanID string
 	kinds          map[string]string
 	lkgFiles       map[string]api.FileAt
-	reloadPending bool
-	rejectedOps   map[string]struct{}
-	conflictOnce  string
-	failOnce      bool
-	missingOnce   []string
-	applies       []RecordedApply
-	stateReads    int
+	reloadPending  bool
+	rejectedOps    map[string]struct{}
+	conflictOnce   string
+	failOnce       bool
+	missingOnce    []string
+	applies        []RecordedApply
+	stateReads     int
 }
 
 // Option customises the fake before it starts serving.

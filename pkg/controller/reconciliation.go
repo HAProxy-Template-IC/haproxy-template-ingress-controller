@@ -67,12 +67,23 @@ import (
 //   - httpStore/capabilities/engine/typedResourceTypes/gvrMapper/publishedCurrentFiles:
 //     read by createDryRunValidator when the webhook validators are wired up.
 type reconciliationWiring struct {
-	httpStore             *httpstore.Component   // HTTP resource fetcher for dynamic content
-	capabilities          dataplane.Capabilities // HAProxy/DataPlane API capabilities
+	httpStore *httpstore.Component // HTTP resource fetcher for dynamic content
+	// capabilities is the fleet's HAProxy capability set and every render
+	// service that has to see it: the webhook's render is a gate, so it must
+	// judge the config the fleet will run, not the one this image would.
+	capabilities          *renderer.CapabilitiesFanout
 	publishedCurrentFiles *publishedAuxFiles
 	engine                templating.Engine
 	typedResourceTypes    map[string]reflect.Type
 	gvrMapper             meta.RESTMapper
+}
+
+// renderInputs routes the deploy side's two feedback channels: the plan the
+// fleet ACKed belongs to the reconciliation render alone, while the fleet's
+// capabilities go to every render that feeds a gate.
+type renderInputs struct {
+	deployer.AckedPlanSink
+	deployer.FleetCapabilitiesSink
 }
 
 // leadershipFence builds the epoch every apply is fenced by and hands it to
@@ -128,13 +139,14 @@ func createReconciliationComponents(
 	if err != nil {
 		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
 	}
-	capabilities := dataplane.CapabilitiesFromVersion(localVersion)
+	capabilities := renderer.NewCapabilitiesFanout(dataplane.CapabilitiesFromVersion(localVersion))
 
+	local := capabilities.Capabilities()
 	logger.Info("Detected local HAProxy version",
 		"version", localVersion.Full,
-		"supports_crt_list", capabilities.SupportsCrtList,
-		"supports_map_storage", capabilities.SupportsMapStorage,
-		"supports_general_storage", capabilities.SupportsGeneralStorage)
+		"supports_crt_list", local.SupportsCrtList,
+		"supports_map_storage", local.SupportsMapStorage,
+		"supports_general_storage", local.SupportsGeneralStorage)
 
 	// Get haproxy-pods store for pod-maxconn calculations in templates
 	haproxyPodStore := resourceWatcher.GetStore(names.HAProxyPodsResourceType)
@@ -166,7 +178,7 @@ func createReconciliationComponents(
 		Engine:             engine,
 		Config:             cfg,
 		Logger:             logger,
-		Capabilities:       capabilities,
+		Capabilities:       capabilities.Capabilities(),
 		HAProxyPodStore:    haproxyPodStore,
 		HTTPStoreComponent: httpStoreComponent,
 		CurrentConfigStore: currentConfigStore,
@@ -195,8 +207,11 @@ func createReconciliationComponents(
 
 	// One constructor, wired inside the deployer package: the connections
 	// between these three used to be optional setters a caller could forget.
+	capabilities.Add(renderService)
 	deployStack := deployer.NewDeployStack(setup.Bus, cfg, logger,
-		setup.MetricsComponent.Metrics(), renderService, leadershipFence(setup, cfg, k8sClient, logger))
+		setup.MetricsComponent.Metrics(),
+		renderInputs{AckedPlanSink: renderService, FleetCapabilitiesSink: capabilities},
+		leadershipFence(setup, cfg, k8sClient, logger))
 	deployerComponent := deployStack.Deployer
 	deploymentSchedulerComponent := deployStack.Scheduler
 	driftMonitorComponent := deployStack.DriftMonitor
