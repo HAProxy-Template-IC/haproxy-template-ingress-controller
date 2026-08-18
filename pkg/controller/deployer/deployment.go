@@ -236,12 +236,28 @@ type deploymentState struct {
 	convergedCount   int32 // pods now running the render
 	failureCount     int32
 	reloadsTriggered int32
+	pendingReloads   int32 // pods holding the render behind a paced reload
 
 	mu                 sync.Mutex
 	totalOperations    int
 	operationBreakdown map[string]int
 	referencedPlans    []string
 	stoodDown          bool
+	pendingReloadUntil time.Time
+}
+
+// notePendingReload records a pod that scheduled its reload for later.
+func (s *deploymentState) notePendingReload(scheduledAt string) {
+	atomic.AddInt32(&s.pendingReloads, 1)
+	due, err := time.Parse(time.RFC3339, scheduledAt)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if due.After(s.pendingReloadUntil) {
+		s.pendingReloadUntil = due
+	}
 }
 
 func (s *deploymentState) planRefs() []string {

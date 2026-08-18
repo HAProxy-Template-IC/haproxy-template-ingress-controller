@@ -113,18 +113,25 @@ func readHAProxyAccessLog(ctx context.Context, t *testing.T, since time.Time, po
 //
 // Matching on the request's own unique marker path is what makes this safe under
 // -parallel: every other test's traffic is on a different path.
+// findAccessLogRecord returns the record of the request that succeeded. The
+// callers poll until a route answers 200, and every poll before that writes a
+// 404 record with the same marker path — those describe the default backend,
+// not the route under test.
 func findAccessLogRecord(ctx context.Context, t *testing.T, since time.Time, marker string) map[string]any {
 	t.Helper()
-	return findAccessLogRecordWhere(ctx, t, since, "path "+marker, func(rec map[string]any) bool {
-		return rec["path"] == marker
-	})
+	return findAccessLogRecordWhere(ctx, t, since, "path "+marker+" with status 200", servedMarker(marker))
 }
 
 func findAccessLogRecordInPod(ctx context.Context, t *testing.T, pod string, since time.Time, marker string) map[string]any {
 	t.Helper()
-	return findAccessLogRecordWhere(ctx, t, since, "path "+marker+" in pod "+pod, func(rec map[string]any) bool {
-		return rec["path"] == marker
-	}, pod)
+	return findAccessLogRecordWhere(ctx, t, since, "path "+marker+" with status 200 in pod "+pod, servedMarker(marker), pod)
+}
+
+func servedMarker(marker string) func(map[string]any) bool {
+	return func(rec map[string]any) bool {
+		status, _ := rec["status"].(float64)
+		return rec["path"] == marker && status == 200
+	}
 }
 
 // findAccessLogRecordWhere waits for an access-log record matching want and

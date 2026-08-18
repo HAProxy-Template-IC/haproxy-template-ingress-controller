@@ -109,6 +109,13 @@ func (c *Component) handleEndpointSuccess(
 	if outcome.converged {
 		atomic.AddInt32(&state.convergedCount, 1)
 	}
+	if result.Mode == api.ResultScheduled {
+		scheduledAt := ""
+		if result.Reload != nil {
+			scheduledAt = result.Reload.ScheduledAt
+		}
+		state.notePendingReload(scheduledAt)
+	}
 	if result.Reload != nil && result.Reload.Performed {
 		atomic.AddInt32(&state.reloadsTriggered, 1)
 	}
@@ -180,6 +187,7 @@ func (c *Component) publishCompleted(
 		breakdown[kind] = count
 	}
 	operations := state.totalOperations
+	pendingUntil := state.pendingReloadUntil
 	state.mu.Unlock()
 
 	c.EventBus().Publish(events.NewDeploymentCompletedEvent(
@@ -188,6 +196,8 @@ func (c *Component) publishCompleted(
 			Total:              len(event.Endpoints),
 			Succeeded:          int(atomic.LoadInt32(&state.convergedCount)),
 			Failed:             int(atomic.LoadInt32(&state.failureCount)),
+			PendingReloads:     int(atomic.LoadInt32(&state.pendingReloads)),
+			PendingReloadUntil: pendingUntil,
 			DurationMs:         durationMs,
 			ReloadsTriggered:   int(atomic.LoadInt32(&state.reloadsTriggered)),
 			TotalAPIOperations: operations,

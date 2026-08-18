@@ -472,6 +472,8 @@ func TestApply_ScheduledReloadIsNotCounted(t *testing.T) {
 
 	assert.Equal(t, 0, completed.Succeeded, "a pod waiting for its reload is not converged")
 	assert.Equal(t, 0, completed.Failed, "and it is not a failure either — the files are on disk")
+	assert.Equal(t, 1, completed.PendingReloads, "the scheduler follows up when the reload fires")
+	assert.False(t, completed.PendingReloadUntil.IsZero(), "at the time the agent scheduled it for")
 }
 
 // A pod that cannot be reached fails without touching the rest of the fleet.

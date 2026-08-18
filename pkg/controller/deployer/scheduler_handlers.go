@@ -438,8 +438,12 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	// would make the gate refuse to re-push to the still-stale pods until the
 	// config changes or the drift timer fires, delaying self-heal. A failure leaves
 	// the cache at the last good hash so the next reconcile re-attempts immediately.
+	// A pod holding the render behind a paced reload has not deployed it
+	// yet either: caching the hash now would make the skip-unchanged gate
+	// refuse the follow-up that observes the reload firing.
+	fullyDeployed := event.Failed == 0 && event.PendingReloads == 0
 	s.mu.Lock()
-	if event.ContentChecksum != "" && event.PodSetHash != "" && event.Failed == 0 {
+	if event.ContentChecksum != "" && event.PodSetHash != "" && fullyDeployed {
 		s.lastDeployedConfigHash = event.ContentChecksum
 		s.lastDeployedPodSetHash = event.PodSetHash
 		s.lastDeployedTime = time.Now()
@@ -456,11 +460,61 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	switch {
 	case event.Total > 0 && event.Failed > 0:
 		s.scheduleFailureRetry(event)
+	case event.Total > 0 && event.PendingReloads > 0:
+		s.schedulePendingReloadFollowUp(event)
 	case event.Total > 0 && event.Failed == 0:
 		s.cancelFailureRetry()
 	}
 
 	s.signalCompleted()
+}
+
+// pendingReloadFollowUpMargin is added to the agent's scheduled_at so the
+// follow-up finds the reload done, not about to run.
+const pendingReloadFollowUpMargin = 250 * time.Millisecond
+
+// schedulePendingReloadFollowUp re-drives the last validated render once the
+// pods' paced reloads have fired. The agent never cancels a scheduled reload
+// and never calls back; the controller polls at the scheduled time (plan
+// §0.c). The re-diff is a noop for every pod that has reloaded and
+// `scheduled` again for one that has not, so the chain ends by itself. It
+// rides the single retry timer outside the failure budget: waiting for a
+// reload window is not a failure.
+func (s *DeploymentScheduler) schedulePendingReloadFollowUp(event *events.DeploymentCompletedEvent) {
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+	if s.retryStopped {
+		return
+	}
+	wait := pendingReloadFollowUpMargin
+	if !event.PendingReloadUntil.IsZero() {
+		wait = time.Until(event.PendingReloadUntil) + pendingReloadFollowUpMargin
+	}
+	if wait < pendingReloadFollowUpMargin {
+		wait = pendingReloadFollowUpMargin
+	}
+	if wait > maxFailureRetryBackoff {
+		wait = maxFailureRetryBackoff
+	}
+	s.stopRetryTimerLocked()
+	s.retryGeneration++
+	generation := s.retryGeneration
+	workRevision := s.workRevision
+	s.retryCallbacks.Add(1)
+	var doneOnce sync.Once
+	done := func() {
+		doneOnce.Do(s.retryCallbacks.Done)
+	}
+	s.retryTimerDone = done
+	s.retryTimer = time.AfterFunc(wait, func() {
+		defer done()
+		s.runRetry(generation, workRevision, "pending_reload_follow_up")
+	})
+
+	s.logger.Info("Reloads pending on the fleet; following up when they fire",
+		"pending_pods", event.PendingReloads,
+		"wait_ms", wait.Milliseconds(),
+		"checksum", event.ContentChecksum)
 }
 
 // scheduleFailureRetry arms (or re-arms) the single fast-retry timer after a
@@ -521,6 +575,12 @@ func (s *DeploymentScheduler) scheduleFailureRetry(event *events.DeploymentCompl
 }
 
 func (s *DeploymentScheduler) runFailureRetry(generation, workRevision uint64) {
+	s.runRetry(generation, workRevision, "deploy_failure_retry")
+}
+
+// runRetry re-dispatches the last validated render under a reason, if the
+// timer that fired is still the armed one and the term did not move on.
+func (s *DeploymentScheduler) runRetry(generation, workRevision uint64, reason string) {
 	s.schedulerMutex.Lock()
 	if generation != s.retryGeneration {
 		s.schedulerMutex.Unlock()
@@ -534,7 +594,7 @@ func (s *DeploymentScheduler) runFailureRetry(generation, workRevision uint64) {
 	}
 	s.schedulerMutex.Unlock()
 
-	s.rescheduleLastValidated(generation, workRevision)
+	s.rescheduleLastValidated(generation, workRevision, reason)
 }
 
 func (s *DeploymentScheduler) stopRetryTimerLocked() {
@@ -583,7 +643,7 @@ func (s *DeploymentScheduler) failureRetryBackoff(attempt int) time.Duration {
 // rescheduleLastValidated snapshots the last validated render, then installs it
 // only if the work and retry revisions captured when its timer was armed remain
 // current. It never starts a second deploy path.
-func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision uint64) {
+func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision uint64, reason string) {
 	// If leadership was lost (or we're shutting down) between the timer arming and
 	// firing, s.ctx is cancelled and the deploy loop has exited — don't repopulate
 	// state.pending for a term that's already over. handleLostLeadership stops the
@@ -618,7 +678,7 @@ func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision u
 		plan:            plan,
 		planID:          planID,
 		endpoints:       endpoints,
-		reason:          "deploy_failure_retry",
+		reason:          reason,
 		correlationID:   correlationID,
 		statusPatches:   statusPatches,
 		contentChecksum: contentChecksum,
