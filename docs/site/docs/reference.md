@@ -345,12 +345,13 @@ For HAProxy behind a layer-4 load balancer. See [PROXY protocol](haproxy-deploym
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.config.dataplane.minDeploymentInterval` | duration | `5s` | Minimum time between deployments |
+| `controller.config.dataplane.minDeploymentInterval` | duration | `5s` | Minimum time between deployments. With the bundled fleet it's also the agent's `--reload-interval-min`, so a reload inside the window is scheduled rather than dropped |
 | `controller.config.dataplane.driftPreventionInterval` | duration | `60s` | Periodic drift prevention interval |
 | `controller.config.dataplane.mapsDir` | string | `/etc/haproxy/maps` | HAProxy maps directory. With the bundled fleet (`haproxy.enabled=true`) it must sit directly under `/etc/haproxy`, which is where the pod mounts its config volume and resolves every auxiliary path |
 | `controller.config.dataplane.sslCertsDir` | string | `/etc/haproxy/ssl` | SSL certificates directory. Same `/etc/haproxy` constraint as `mapsDir` when the bundled fleet is enabled; the directory name itself is free |
 | `controller.config.dataplane.generalStorageDir` | string | `/etc/haproxy/general` | General storage directory. With the bundled fleet this exact path is required: it's a separate volume the spoa-hub and vector sidecars mount to read rendered files without reaching SSL private keys. The chart fails the render rather than deploy a pod where those sidecars see an empty directory |
-| `controller.config.dataplane.configFile` | string | `/etc/haproxy/haproxy.cfg` | HAProxy config file path |
+| `controller.config.dataplane.configFile` | string | `/etc/haproxy/haproxy.cfg` | HAProxy config file path. Same `/etc/haproxy` constraint as `mapsDir` when the bundled fleet is enabled |
+| `controller.config.dataplane.reloadVerificationTimeout` | duration | `1m` | How long the agent waits for the new HAProxy worker after a reload before the apply reports what it knows. Unset leaves the agent's own ceiling, which is also its maximum |
 
 ## Watched Resources
 
@@ -632,7 +633,6 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `haproxy.image.tag` | string | `""` | HAProxy image tag; empty = derive from `haproxyVersion` plus the matching entry in `haproxyPatchVersions` (for example `3.2` → whichever 3.2.x patch the chart currently pins). Override to pin a specific patch yourself. |
 | `haproxy.enterprise.enabled` | bool | `false` | Use HAProxy Enterprise. `haproxyVersion` selects the compatibility series, image revision map, and binary path together |
 | `haproxy.haproxyBin` | string | Auto-detected | HAProxy binary path |
-| `haproxy.dataplaneBin` | string | Auto-detected | Dataplane API binary path |
 | `haproxy.initialConfig` | string | See values.yaml | HAProxy bootstrap config served until the controller pushes the first rendered config; processed via Helm `tpl`. Keep the `/ready` 503 gate or clients hit an empty backend set — see the [HAProxy deployment guide](./haproxy-deployment.md) |
 
 ## HAProxy Pod Configuration
@@ -641,6 +641,7 @@ Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*`
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `haproxy.podSpec.imagePullSecrets` | list | `[]` | Image pull secrets for the HAProxy pod, which pulls both the HAProxy image and the HAPTIC image its agent container runs from. Empty follows `controller.podSpec.imagePullSecrets` |
 | `haproxy.podSpec.podAnnotations` | map | `{}` | Extra pod annotations for HAProxy pods (supports template expressions) |
 | `haproxy.podSpec.shareProcessNamespace` | bool | `false` | Share process namespace between containers (required for signal-based sidecar reload) |
 | `haproxy.podSpec.priorityClassName` | string | `""` | Pod priority class |
@@ -667,7 +668,8 @@ Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*`
 | `haproxy.ports.http` | int | `80` | HTTP frontend container port |
 | `haproxy.ports.https` | int | `443` | HTTPS frontend container port |
 | `haproxy.ports.stats` | int | `8404` | Stats/health page port |
-| `haproxy.ports.dataplane` | int | `5555` | Single source of truth for the Dataplane API listener, Service, NetworkPolicy, supervisor watchdog, and the controller's connection port |
+| `haproxy.ports.dataplane` | int | `5555` | Single source of truth for the agent's apply/state API: its listener, the Service, the NetworkPolicy, the container probes, and the controller's connection port |
+| `haproxy.ports.agentMetrics` | int | `5557` | The agent's Prometheus endpoint. Scraped by `haproxy.monitoring.podMonitor` through the named container port `agent-metrics`, and allowed from the NetworkPolicy's metrics sources |
 
 ## HAProxy Service
 
@@ -692,21 +694,27 @@ The controller renders the user-facing HAProxy Service from these values (the ba
 | `haproxy.service.stats.nodePort` | int | `30404` | Stats NodePort |
 | `haproxy.service.extraPorts` | list | `[]` | Additional Service ports (`corev1.ServicePort` shape) appended to the http/https/stats entries — for example a raw TCP frontend declared via a custom `haproxyConfig` snippet. Drop a default entry by setting `haproxy.service.{http,https,stats}.port: 0` |
 
-## HAProxy Dataplane sidecar
+## HAPTIC agent sidecar
+
+The agent runs from the controller image in every HAProxy pod. It owns the pod's
+file tree and HAProxy runtime socket: the controller sends it the rendered file
+set plus the runtime commands, and it writes, reloads, and reports.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `haproxy.dataplane.service.type` | string | `ClusterIP` | Dataplane service type |
-| `haproxy.dataplane.logLevel` | string | `info` | Log level for the Dataplane API sidecar: `trace`, `debug`, `info`, `warning`, `error`. It logs one line per file operation, so `trace` produced ~671 lines for a single startup plus config cycle. Raise it when diagnosing a config push the controller reports as failing but HAProxy accepts. The stream carries no end-user data — the only client is the controller |
-| `haproxy.dataplane.resources.requests.cpu` | string | `50m` | Dataplane sidecar CPU request |
-| `haproxy.dataplane.resources.requests.memory` | string | `256Mi` | Dataplane sidecar memory request (Guaranteed QoS — limits.memory matches) |
-| `haproxy.dataplane.resources.limits.memory` | string | `256Mi` | Dataplane sidecar memory limit |
-| `haproxy.dataplane.extraEnv` | list | `[]` | Extra env vars for the dataplane sidecar; `GOMAXPROCS` here overrides the auto-calculation from CPU/memory limits |
-| `haproxy.dataplane.validateConfig` | bool | `false` | Run a server-side `haproxy -c` against each transaction (through `/etc/haproxy/validate.sh`, which reads the transaction file the Dataplane API passes in `DATAPLANEAPI_TRANSACTION_FILE`). The controller already validates locally, so server-side validation is redundant; enable for double-validation when extra safety is required |
-| `haproxy.dataplane.debugSocketPath` | string | `""` | Unix socket path for runtime profiling of the dataplane sidecar (sets `debug_socket_path` in `dataplaneapi.yaml`) |
-| `haproxy.dataplane.aclFormat` | string | `""` | Apache Common Log Format override for the dataplane API access log. Empty leaves the dataplane API's built-in default in place; set this to a format with timing fields (for example `%{us}T` microseconds, `%D` milliseconds) to surface per-request publish-step latency in the access log |
+| `haproxy.agent.service.type` | string | `ClusterIP` | Type of the chart-internal Service the controller reaches the agent through |
+| `haproxy.agent.logLevel` | string | `info` | Log level for the agent, which logs JSON on stdout: `trace`, `debug`, `info`, `warning`, `error`. Raise it when diagnosing an apply the controller reports as failing but HAProxy accepts. The stream carries no end-user data — the only client is the controller |
+| `haproxy.agent.resources.requests.cpu` | string | `50m` | Agent CPU request |
+| `haproxy.agent.resources.requests.memory` | string | `256Mi` | Agent memory request (Guaranteed QoS — limits.memory matches) |
+| `haproxy.agent.resources.limits.memory` | string | `256Mi` | Agent memory limit |
+| `haproxy.agent.extraEnv` | list | `[]` | Extra env vars for the agent container; `GOMAXPROCS` here overrides the auto-calculation from CPU/memory limits |
 
-Dataplane API credentials moved to the top-level `credentials.dataplane.*` section — see [Credentials](#credentials) above.
+The agent's reload pacing and reload deadline aren't separate values: the chart
+templates them from [`controller.config.dataplane.minDeploymentInterval` and
+`controller.config.dataplane.reloadVerificationTimeout`](#dataplane-configuration),
+so the controller and the agent can't disagree.
+
+Agent credentials live in the top-level `credentials.dataplane.*` section — see [Credentials](#credentials) above.
 
 ## HAProxy tuning
 

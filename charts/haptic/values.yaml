@@ -651,7 +651,7 @@ controller:
       configFile: /etc/haproxy/haproxy.cfg
       # Optional sync knobs (uncomment to override):
       # configPublishInterval: 10s     # observability CRD republish throttle
-      # reloadVerificationTimeout: 10s # agent --reload-timeout; max 1m
+      # reloadVerificationTimeout: 10s # agent --reload-timeout; unset = 1m, its max
       # syncTimeout: 2m                # per-endpoint sync budget
     # Runtime log level override (optional)
     # Uncomment to override controller.logLevel at runtime without pod restart
