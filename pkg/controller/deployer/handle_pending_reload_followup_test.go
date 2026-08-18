@@ -86,8 +86,9 @@ func TestPendingReload_FollowsUpWhenTheReloadFires(t *testing.T) {
 }
 
 // While the fleet's paced reloads are pending, new renders are held and the
-// newest one is dispatched once they have fired: one converged deployment per
-// pacing window instead of a fleet that stays one reload behind.
+// newest one is released just before they fire, so it coalesces into that
+// reload: one converged deployment per pacing window instead of a fleet that
+// stays one reload behind.
 func TestPendingReload_HoldsNewRendersUntilTheWindowPasses(t *testing.T) {
 	bus := testutil.NewTestBus()
 	scheduledCh := bus.SubscribeTypes("hold-watcher", 50, events.EventTypeDeploymentScheduled)
@@ -109,11 +110,12 @@ func TestPendingReload_HoldsNewRendersUntilTheWindowPasses(t *testing.T) {
 	sd1 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	require.Equal(t, "checksum-1", sd1.ContentChecksum)
 
-	// The fleet holds render 1 behind a reload due in 300 ms.
+	// The fleet holds render 1 behind a reload due in 1.5 s; the hold releases
+	// one coalesce lead (1 s) before it.
 	holdStart := time.Now()
 	s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
 		Total: 2, Succeeded: 0, Failed: 0,
-		PendingReloads: 2, PendingReloadUntil: holdStart.Add(300 * time.Millisecond),
+		PendingReloads: 2, PendingReloadUntil: holdStart.Add(1500 * time.Millisecond),
 		ContentChecksum: "checksum-1", PodSetHash: "pods-1",
 	}))
 
@@ -128,7 +130,9 @@ func TestPendingReload_HoldsNewRendersUntilTheWindowPasses(t *testing.T) {
 	}
 
 	sd2 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
-	assert.GreaterOrEqual(t, time.Since(holdStart), 300*time.Millisecond, "nothing dispatches before the reloads fired")
+	elapsed := time.Since(holdStart)
+	assert.GreaterOrEqual(t, elapsed, 400*time.Millisecond, "the renders are held while the reload is far off")
+	assert.Less(t, elapsed, 1500*time.Millisecond, "and released before it fires, to coalesce into it")
 	assert.Equal(t, "checksum-3", sd2.ContentChecksum, "the newest render is what dispatches")
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 400*time.Millisecond)
 }

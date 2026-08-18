@@ -471,17 +471,26 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 }
 
 // pendingReloadFollowUpMargin is added to the agent's scheduled_at so the
-// follow-up finds the reload done, not about to run.
-const pendingReloadFollowUpMargin = 250 * time.Millisecond
+// follow-up finds the reload done, not about to run; pendingReloadCoalesceLead
+// is how long before it a held render is released so its apply lands on the
+// pods before their pacer fires.
+const (
+	pendingReloadFollowUpMargin = 250 * time.Millisecond
+	pendingReloadCoalesceLead   = 1 * time.Second
+)
 
 // holdForPendingReloads keeps the deploy loop from dispatching another render
 // until the pods' paced reloads have fired. Runtime-only changes lose at most
 // one pacing window; structural churn converges once per window instead of
 // never.
 func (s *DeploymentScheduler) holdForPendingReloads(event *events.DeploymentCompletedEvent) {
-	until := time.Now().Add(pendingReloadFollowUpMargin)
+	// Release the hold shortly BEFORE the pending reload fires: a render that
+	// lands then coalesces into that reload and runs everywhere with it, one
+	// window after it was rendered. Releasing after the reload would cost it a
+	// second window on its own.
+	until := time.Now()
 	if !event.PendingReloadUntil.IsZero() {
-		until = event.PendingReloadUntil.Add(pendingReloadFollowUpMargin)
+		until = event.PendingReloadUntil.Add(-pendingReloadCoalesceLead)
 	}
 	if until.After(time.Now().Add(maxFailureRetryBackoff)) {
 		until = time.Now().Add(maxFailureRetryBackoff)
