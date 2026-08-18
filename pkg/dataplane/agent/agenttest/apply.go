@@ -224,7 +224,8 @@ func (a *Agent) transact(req *applyRequest) outcome {
 	switch {
 	case a.reloadPending:
 		return a.scheduled(m)
-	case m.Mode == api.ModeReload:
+	case m.Mode == api.ModeReload, a.state.AppliedPlanID == "":
+		// An unknown baseline reloads regardless of the ops, as the real agent does.
 		return a.reload(m)
 	}
 	if kind := a.firstRejected(m.Ops); kind != "" {

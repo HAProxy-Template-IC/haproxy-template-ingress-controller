@@ -138,7 +138,9 @@ func TestFakeAndRealAgentAnswerAlike(t *testing.T) {
 
 func lifecycleScenario(t *testing.T, p *parityAgent) {
 	t.Helper()
-	first, parts := build("plan-1", api.ModeReload, api.Token{LeaderEpoch: 1, RenderSeq: 1}, seedFiles)
+	// An unknown baseline reloads even when the manifest asks for ops.
+	first, parts := build("plan-1", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 1}, seedFiles)
+	first.Ops = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "example.com", Value: "be-1"}}
 	p.apply(t, "first apply", first, parts)
 
 	routed := map[string]string{"haproxy.cfg": "global\n", "maps/host.map": "example.com be-1\nnew.example.com be-2\n"}
