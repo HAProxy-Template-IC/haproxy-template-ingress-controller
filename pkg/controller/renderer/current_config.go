@@ -15,7 +15,10 @@
 package renderer
 
 import (
+	"fmt"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
@@ -28,6 +31,17 @@ func (s *RenderService) SetAckedPlan(plan *renderplan.Plan) {
 	s.planMu.Lock()
 	defer s.planMu.Unlock()
 	s.ackedPlan = plan
+}
+
+// buildPlan turns the render into its plan and keeps it as the fallback
+// current-config source until a pod ACKs one.
+func (s *RenderService) buildPlan(registry *rendercontext.PlanRegistry, mode rendercontext.RenderMode, config string, aux *dataplane.AuxiliaryFiles) (*renderplan.Plan, error) {
+	plan, err := registry.Plan(config, aux)
+	if err != nil {
+		return nil, fmt.Errorf("building the render plan: %w", err)
+	}
+	s.rememberPlan(mode, plan)
+	return plan, nil
 }
 
 // rememberPlan keeps the newest reconcile plan as the fresh-install fallback:
