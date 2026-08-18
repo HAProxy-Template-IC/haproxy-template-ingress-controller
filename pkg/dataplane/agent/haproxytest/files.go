@@ -316,7 +316,13 @@ func (h *HAProxy) showSSL(rest string) reply {
 	case objCert:
 		return dump("# filename\n" + strings.Join(sortedKeys(h.m.Certs), "\n"))
 	case objCAFile:
-		return dump("# filename\n" + strings.Join(sortedKeys(h.m.CAFiles), "\n"))
+		// HAProxy lists its built-in trust store first and suffixes every row
+		// with the certificate count.
+		lines := []string{"# filename", "@system-ca - 150 certificate(s)"}
+		for _, name := range sortedKeys(h.m.CAFiles) {
+			lines = append(lines, name+" - 1 certificate(s)")
+		}
+		return dump(strings.Join(lines, "\n"))
 	case objCRLFile:
 		return dump("# filename\n" + strings.Join(sortedKeys(h.m.CRLFiles), "\n"))
 	case objCRTList:

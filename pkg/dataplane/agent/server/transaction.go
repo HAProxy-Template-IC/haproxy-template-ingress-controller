@@ -56,6 +56,9 @@ type applyRun struct {
 	touchedMaps      []string
 	touchedBackends  []string
 	retiringBackends []string
+	// storeChanged marks ops that add or remove a runtime store entry, which
+	// is the only thing besides a reload that makes the inventory stale.
+	storeChanged bool
 }
 
 func (s *Server) runApply(m *api.Manifest, staged map[string]*files.Staged, digest string) api.ApplyResult {
@@ -178,6 +181,8 @@ func (r *applyRun) note(op *api.Op) {
 	case api.OpServerAdd, api.OpServerDel, api.OpServerEnable, api.OpServerDisable,
 		api.OpServerSetAddr, api.OpServerSetWeight, api.OpServerSetState:
 		r.touchedBackends = append(r.touchedBackends, op.Backend)
+	case api.OpCertNew, api.OpCANew, api.OpCRTListAdd, api.OpCRTListDel:
+		r.storeChanged = true
 	}
 }
 
@@ -208,6 +213,13 @@ func (r *applyRun) runOps(programs []cli.Program) error {
 	}
 	if err := r.server.checkWorker(); err != nil {
 		return r.reload("worker_changed")
+	}
+	if r.storeChanged {
+		// The ops added or removed a runtime store entry, so the cached
+		// inventory is stale. Left stale, the next diff composes a create for
+		// something that now exists, HAProxy refuses it, and the pod reloads
+		// for a change that was reload-free.
+		r.server.refreshInventory()
 	}
 	r.result.Mode = api.ResultRuntime
 	r.server.setPhase(phaseApplied, r.manifest.PlanID)

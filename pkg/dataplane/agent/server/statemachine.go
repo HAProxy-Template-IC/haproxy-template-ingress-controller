@@ -162,20 +162,41 @@ func (s *Server) workerOpsBaselineMatches(expected string) bool {
 }
 
 // adoptWorker records the worker the agent is now talking to and refreshes the
-// inventory, which only a reload or a foreign worker can change.
+// inventory, which a reload, a foreign worker or a store op can change.
 func (s *Server) adoptWorker(info api.HAProxyInfo) {
-	inventory, err := s.runtime.Inventory(0)
-	if err != nil {
-		s.logger.Warn("could not refresh the runtime inventory", "error", err)
-	}
+	inventory, err := s.readInventory()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.worker = info
 	s.state.ExpectedWorker = info
 	if err == nil {
-		inventory.Generation = s.inventory.Generation + 1
-		s.inventory = inventory
+		s.adoptInventoryLocked(inventory)
 	}
+}
+
+// refreshInventory re-reads what the running worker holds after the agent's own
+// ops changed it, so the delta rides in this apply's ACK.
+func (s *Server) refreshInventory() {
+	inventory, err := s.readInventory()
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.adoptInventoryLocked(inventory)
+}
+
+func (s *Server) readInventory() (api.Inventory, error) {
+	inventory, err := s.runtime.Inventory(0)
+	if err != nil {
+		s.logger.Warn("could not refresh the runtime inventory", "error", err)
+	}
+	return inventory, err
+}
+
+func (s *Server) adoptInventoryLocked(inventory api.Inventory) {
+	inventory.Generation = s.inventory.Generation + 1
+	s.inventory = inventory
 }
 
 // checkWorker compares the worker the agent is about to talk to with the one

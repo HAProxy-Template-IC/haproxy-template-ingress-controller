@@ -28,8 +28,8 @@ import (
 func (c *Client) Inventory(generation uint64) (api.Inventory, error) {
 	maps, mapsErr := c.list("show map", parenthesised)
 	certs, certsErr := c.list("show ssl cert", plainPath)
-	cas, casErr := c.list("show ssl ca-file", plainPath)
-	crls, crlsErr := c.list("show ssl crl-file", plainPath)
+	cas, casErr := c.list("show ssl ca-file", storeName)
+	crls, crlsErr := c.list("show ssl crl-file", storeName)
 	lists, listsErr := c.list("show ssl crt-list", plainPath)
 	if err := errors.Join(mapsErr, certsErr, casErr, crlsErr, listsErr); err != nil {
 		return api.Inventory{}, err
@@ -139,11 +139,20 @@ func parenthesised(line string) string {
 	return path
 }
 
-// plainPath is the whole row, which is how the certificate, CA and crt-list
+// plainPath is the whole row, which is how the certificate and crt-list
 // listings report their storage names.
 func plainPath(line string) string {
 	if strings.ContainsAny(line, " \t") {
 		return ""
 	}
 	return line
+}
+
+// storeName is the first field of a row, which is how the CA and CRL listings
+// report a storage name: they append " - <n> certificate(s)" to it (verified
+// on 3.0 and 3.4). Reading the whole row instead leaves the CA store looking
+// empty, and every trust-bundle rotation falls back to a reload.
+func storeName(line string) string {
+	name, _, _ := strings.Cut(line, " ")
+	return name
 }
