@@ -686,7 +686,7 @@ func bundledChartRunner(t *testing.T) (runner *testrunner.Runner, testNames []st
 	restoreFlags := setValidateFlags(t, configFile, repoPath(t, "tests", "schemas"))
 	schemas, err := newDirSchemaSource(validateSchemaDir, logger)
 	require.NoError(t, err)
-	setup, err := setupValidation(context.Background(), schemas, logger)
+	setup, err := setupValidation(context.Background(), validateConfigFiles, schemas, nil, logger)
 	require.NoError(t, err)
 
 	cfg, err := conversion.ConvertSpec(setup.ConfigSpec)

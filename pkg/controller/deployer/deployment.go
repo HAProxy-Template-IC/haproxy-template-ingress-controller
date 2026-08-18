@@ -24,6 +24,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/planblob"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
@@ -170,7 +171,7 @@ func (c *Component) reportUndeployable(event *events.DeploymentScheduledEvent, d
 
 func (c *Component) newDeployRequest(event *events.DeploymentScheduledEvent) *deployRequest {
 	c.plans.Put(event.Plan)
-	blob, err := encodePlan(event.Plan)
+	blob, err := planblob.Encode(event.Plan)
 	if err != nil {
 		// Without the blob a pod that outlives this controller reports a
 		// baseline nobody can decode, which costs it one reload — never
