@@ -170,7 +170,7 @@ func (s *Server) adoptWorker(info api.HAProxyInfo) {
 	s.worker = info
 	s.state.ExpectedWorker = info
 	if err == nil {
-		s.adoptInventoryLocked(inventory)
+		s.adoptInventoryLocked(&inventory)
 	}
 }
 
@@ -183,7 +183,7 @@ func (s *Server) refreshInventory() {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.adoptInventoryLocked(inventory)
+	s.adoptInventoryLocked(&inventory)
 }
 
 func (s *Server) readInventory() (api.Inventory, error) {
@@ -194,9 +194,9 @@ func (s *Server) readInventory() (api.Inventory, error) {
 	return inventory, err
 }
 
-func (s *Server) adoptInventoryLocked(inventory api.Inventory) {
+func (s *Server) adoptInventoryLocked(inventory *api.Inventory) {
 	inventory.Generation = s.inventory.Generation + 1
-	s.inventory = inventory
+	s.inventory = *inventory
 }
 
 // checkWorker compares the worker the agent is about to talk to with the one

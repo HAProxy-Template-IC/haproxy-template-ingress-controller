@@ -2142,7 +2142,7 @@ _migrationCoverage:
         doc: annotation-support
       haproxy.org/auth-realm:
         status: different
-        note: Default "Protected-Content" (matching the upstream controller); spaces in the realm are replaced with dashes, as upstream does, since the DataPlane API forbids spaces.
+        note: Default "Protected-Content" (matching the upstream controller); spaces in the realm are replaced with dashes, as upstream does.
         doc: annotation-support
       haproxy.org/send-proxy-protocol:
         status: different
