@@ -2,12 +2,13 @@
 PodMonitor for the HAProxy pod: every metrics endpoint it exposes, one target
 each. HAProxy's exporter is scraped directly — its query defaults (no-maint,
 metrics=-...) are applied by HAProxy itself, so no `params` here (see
-extraContext.prometheusExporter). The hub is scraped directly only without
-vector; with vector on, vector re-exports it over loopback.
+extraContext.prometheusExporter). The agent always runs, so its endpoint is
+unconditional. The hub is scraped directly only without vector; with vector on,
+vector re-exports it over loopback.
 */}}
 {{- $pm := .Values.haproxy.monitoring.podMonitor }}
 {{- if $pm.enabled }}
-{{- $ports := list "stats" }}
+{{- $ports := list "stats" "agent-metrics" }}
 {{- $hubDirect := and (include "haptic.spoaHub.enabled" .) (not .Values.vector.enabled) }}
 {{- if $hubDirect }}
 {{- $addr := include "haptic.spoaHub.metricsAddrEffective" . }}

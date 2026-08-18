@@ -1,10 +1,9 @@
 {{/*
-Image references, binary paths, and the principal UID/GID for HAProxy and
-the dataplane API container.
+Image references, binary paths, and the principal UID/GID for the HAProxy pod.
 
 `haptic.haproxy.uid` returns the single UID/GID used for runAsUser, runAsGroup,
-fsGroup on the HAProxy pod and runAsUser on the dataplane container, which
-must share the volume group with HAProxy.
+fsGroup on the HAProxy pod and runAsUser on the agent container, which must
+share the volume group with HAProxy.
 */}}
 
 {{/*
@@ -40,21 +39,12 @@ Community: /usr/local/sbin/haproxy
 {{- end -}}
 
 {{/*
-Dataplane API binary path
-Enterprise: /opt/hapee-extras/sbin/hapee-dataplaneapi
-Community: /usr/local/bin/dataplaneapi
-*/}}
-{{- define "haptic.haproxy.dataplanebin" -}}
-{{- .Values.haproxy.dataplaneBin | default (ternary "/opt/hapee-extras/sbin/hapee-dataplaneapi" "/usr/local/bin/dataplaneapi" .Values.haproxy.enterprise.enabled) -}}
-{{- end -}}
-
-{{/*
-HAProxy / dataplane principal UID & GID.
+HAProxy pod principal UID & GID.
 Enterprise: 1000 (hapee-lb user / hapee group)
 Community:  99   (haproxy user / haproxy group)
 
 Used identically as runAsUser, runAsGroup, fsGroup on the HAProxy pod and as
-runAsUser on the dataplane container (which shares the volume group).
+runAsUser on the agent container (which shares the volume group).
 */}}
 {{- define "haptic.haproxy.uid" -}}
 {{- ternary 1000 99 .Values.haproxy.enterprise.enabled -}}
