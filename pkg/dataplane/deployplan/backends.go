@@ -57,8 +57,8 @@ func (b *builder) backendAdded(be *renderplan.Backend) {
 		b.failf("backend %s added: %s", be.Name, shapeReason(be))
 	case !b.caps.DynamicBackends:
 		b.failf("backend %s added: this HAProxy has no add backend", be.Name)
-	case !safeToken(be.Name):
-		b.failf("backend %s added: the name is not a safe runtime token", be.Name)
+	case !api.SafeToken(be.Name) || !api.SafeToken(be.Profile) || (be.GUID != "" && !api.SafeToken(be.GUID)):
+		b.failf("backend %s added: the name, profile or guid is not a safe runtime token", be.Name)
 	case !b.profileInRunningConfig(be.Profile):
 		b.failf("backend %s added: profile %q is not in the running config", be.Name, be.Profile)
 	default:
@@ -104,8 +104,8 @@ func (b *builder) backendRemoved(be *renderplan.Backend) {
 		b.failf("backend %s removed: %s", be.Name, shapeReason(be))
 	case !b.caps.DynamicBackends:
 		b.failf("backend %s removed: this HAProxy has no del backend", be.Name)
-	case b.baseline.PendingBackendDeletes >= api.MaxPendingBackendDeletes:
-		b.failf("backend %s removed: %d backend deletes already pending", be.Name, b.baseline.PendingBackendDeletes)
+	case b.pendingBackendDeletes >= api.MaxPendingBackendDeletes:
+		b.failf("backend %s removed: %d backend deletes already pending", be.Name, b.pendingBackendDeletes)
 	default:
 		b.deleteBackend(be)
 	}
@@ -114,7 +114,7 @@ func (b *builder) backendRemoved(be *renderplan.Backend) {
 func (b *builder) deleteBackend(be *renderplan.Backend) {
 	drains := make([]api.Op, 0, 3*len(be.Servers))
 	for i := range be.Servers {
-		ops, reason := b.removeServer(be.Name, &be.Servers[i], b.baseline.PendingServerDeletes)
+		ops, reason := b.removeServer(be.Name, &be.Servers[i])
 		if reason != "" {
 			b.failf("backend %s removed: %s", be.Name, reason)
 			return
@@ -128,6 +128,7 @@ func (b *builder) deleteBackend(be *renderplan.Backend) {
 		api.Op{Kind: api.OpBackendDel, Backend: be.Name},
 	)
 	b.deletedByOps[be.Name] = true
+	b.pendingBackendDeletes++
 }
 
 // backendChanged applies the section guard for one backend and then rule 4.
@@ -186,7 +187,7 @@ func (b *builder) diffServers(prev, next *renderplan.Backend) {
 		srv := &next.Servers[i]
 		ops, reason := []api.Op(nil), ""
 		if old, existed := previous[srv.Name]; existed {
-			ops, reason = updateServer(next.Name, old, srv)
+			ops, reason = b.updateServer(next, old, srv)
 		} else {
 			ops, reason = b.addServer(next, srv)
 		}
@@ -196,7 +197,7 @@ func (b *builder) diffServers(prev, next *renderplan.Backend) {
 	for i := range prev.Servers {
 		srv := &prev.Servers[i]
 		if _, kept := current[srv.Name]; !kept {
-			ops, reason := b.removeServer(prev.Name, srv, b.baseline.PendingServerDeletes)
+			ops, reason := b.removeServer(prev.Name, srv)
 			b.push(groupServerDel, b.serverOps(ops, reason, prev.Name, srv.Name)...)
 		}
 	}

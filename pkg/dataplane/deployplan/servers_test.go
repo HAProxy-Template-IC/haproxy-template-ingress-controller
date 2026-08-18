@@ -72,7 +72,7 @@ func TestDiffServerValueChanges(t *testing.T) {
 			name:    "server enabled again",
 			before:  disabled,
 			after:   srv("SRV_1", "10.0.0.1", 8080),
-			want:    []string{api.OpServerSetState},
+			want:    []string{api.OpServerEnable},
 			verdict: deployplan.VerdictRuntime,
 		},
 		{
@@ -120,7 +120,7 @@ func TestDiffServerValueChanges(t *testing.T) {
 	}
 }
 
-func TestDiffServerStateNames(t *testing.T) {
+func TestDiffServerDisabledGoesToMaint(t *testing.T) {
 	disabled := srv("SRV_1", "10.0.0.1", 8080)
 	disabled.Disabled = true
 	prev := basePlan(withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080))))
@@ -128,11 +128,52 @@ func TestDiffServerStateNames(t *testing.T) {
 	got := deployplan.Diff(basePlan(withBackend(dynBackend("be-a", disabled))), on34(prev))
 
 	require.Len(t, got.Ops, 1)
+	assert.Equal(t, api.OpServerSetState, got.Ops[0].Kind)
 	assert.Equal(t, "maint", got.Ops[0].State)
+}
 
-	back := deployplan.Diff(prev, on34(basePlan(withBackend(dynBackend("be-a", disabled)))))
-	require.Len(t, back.Ops, 1)
-	assert.Equal(t, "ready", back.Ops[0].State)
+// TestDiffServerLeavingMaintEnablesItsHealthCheck pins that a server the render
+// enables again is taken out of MAINT with `enable server`, which starts the
+// health check `set server state ready` would leave off for good.
+func TestDiffServerLeavingMaintEnablesItsHealthCheck(t *testing.T) {
+	tests := []struct {
+		name       string
+		defaults   []renderplan.KeywordArg
+		extra      []renderplan.KeywordArg
+		wantHealth bool
+	}{
+		{name: "a server without a check enables alone"},
+		{
+			name:       "the server's own check keyword enables the health check",
+			extra:      []renderplan.KeywordArg{{Name: "check"}},
+			wantHealth: true,
+		},
+		{
+			name:       "a check inherited from default-server counts too",
+			defaults:   []renderplan.KeywordArg{{Name: "check"}},
+			wantHealth: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			disabled := srv("SRV_1", "10.0.0.1", 8080)
+			disabled.Disabled, disabled.Extra = true, tt.extra
+			enabled := srv("SRV_1", "10.0.0.1", 8080)
+			enabled.Extra = tt.extra
+			before := dynBackend("be-a", disabled)
+			before.DefaultServer = tt.defaults
+			after := dynBackend("be-a", enabled)
+			after.DefaultServer = tt.defaults
+
+			got := deployplan.Diff(basePlan(withBackend(after)), on34(basePlan(withBackend(before))))
+
+			require.Equal(t, deployplan.VerdictRuntime, got.Verdict, got.Reasons)
+			require.Len(t, got.Ops, 1)
+			assert.Equal(t, api.OpServerEnable, got.Ops[0].Kind)
+			assert.Equal(t, tt.wantHealth, got.Ops[0].Health)
+		})
+	}
 }
 
 // TestDiffServerAdded covers what an add server needs to be composable.
@@ -282,6 +323,34 @@ func TestDiffServerRemovedAtPendingCap(t *testing.T) {
 
 	require.Equal(t, deployplan.VerdictReload, got.Verdict)
 	reasonsContain(t, got.Reasons, "1000 server deletes already pending")
+}
+
+// TestDiffServerDeletesCrossTheCapMidDiff pins that the cap counts the deletes
+// this diff composes, not only the ones the pod already queued.
+func TestDiffServerDeletesCrossTheCapMidDiff(t *testing.T) {
+	before := dynBackend("be-a",
+		srv("SRV_1", "10.0.0.1", 8080), srv("SRV_2", "10.0.0.2", 8080), srv("SRV_3", "10.0.0.3", 8080))
+	base := on34(basePlan(withBackend(before)))
+	base.PendingServerDeletes = api.MaxPendingServerDeletes - 1
+
+	got := deployplan.Diff(basePlan(withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080)))), base)
+
+	require.Equal(t, deployplan.VerdictReload, got.Verdict)
+	reasonsContain(t, got.Reasons, "1000 server deletes already pending")
+}
+
+func TestDiffBackendDeletesCrossTheCapMidDiff(t *testing.T) {
+	prev := basePlan(
+		withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080))),
+		withBackend(dynBackend("be-b", srv("SRV_2", "10.0.0.2", 8080))),
+	)
+	base := on34(prev)
+	base.PendingBackendDeletes = api.MaxPendingBackendDeletes - 1
+
+	got := deployplan.Diff(basePlan(), base)
+
+	require.Equal(t, deployplan.VerdictReload, got.Verdict)
+	reasonsContain(t, got.Reasons, "100 backend deletes already pending")
 }
 
 func TestDiffServerNameMustBeASafeToken(t *testing.T) {

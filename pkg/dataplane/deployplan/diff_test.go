@@ -16,6 +16,7 @@ package deployplan_test
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -142,6 +143,69 @@ func TestDiffChunking(t *testing.T) {
 			}
 			assert.Equal(t, len(got.Ops), total)
 		})
+	}
+}
+
+// TestComposedOpsCoversEveryKindTheRulesEmit is the drift gate behind
+// client.ComposableOps: an agent is measured against this list, so a kind the
+// rules emit but the list omits would be sent to a pod that never claimed it.
+func TestComposedOpsCoversEveryKindTheRulesEmit(t *testing.T) {
+	composed := deployplan.ComposedOps()
+	require.Equal(t, slices.Compact(slices.Sorted(slices.Values(composed))), slices.Sorted(slices.Values(composed)),
+		"the list must name every kind once")
+
+	for _, decision := range everyRuleDecision(t) {
+		for _, op := range append(slices.Clone(decision.Ops), decision.InPlace...) {
+			assert.Contains(t, composed, op.Kind)
+		}
+	}
+}
+
+// everyRuleDecision runs one diff per rule that composes ops, so the drift gate
+// sees every kind the engine can emit.
+func everyRuleDecision(t *testing.T) []deployplan.Decision {
+	t.Helper()
+	disabled := srv("SRV_1", "10.0.0.1", 8080)
+	disabled.Disabled = true
+	reweighted := srv("SRV_1", "10.0.0.1", 8080)
+	reweighted.Weight = ptr(7)
+	crtList := renderplan.CRTList{Path: listPath, Entries: []renderplan.CRTListEntry{{Cert: certPath}}}
+
+	lifecycle := on34(basePlan(
+		withBackend(dynBackend("be-old", srv("SRV_1", "10.0.0.1", 8080))),
+		withBackend(dynBackend("be-keep", disabled)),
+		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{entry("a", "1"), entry("b", "2")}}),
+		withFile(renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "before"}),
+		withFile(renderplan.File{Path: caPath, Kind: renderplan.FileKindCA, Digest: "before"}),
+		withCRTList(crtList),
+	))
+	lifecycle.Inventory = api.Inventory{Maps: []string{routeMap}, CRTLists: []string{listPath}}
+	next := basePlan(
+		withBackend(dynBackend("be-new", srv("SRV_2", "10.0.0.2", 8080))),
+		withBackend(dynBackend("be-keep", reweighted)),
+		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{entry("a", "9"), entry("c", "3")}}),
+		withFile(renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "after"}),
+		withFile(renderplan.File{Path: caPath, Kind: renderplan.FileKindCA, Digest: "after"}),
+		withCRTList(renderplan.CRTList{Path: listPath, Entries: []renderplan.CRTListEntry{
+			{Cert: certPath}, {Cert: "certs/other.pem"},
+		}}),
+	)
+
+	replaced := on34(basePlan(withMap(renderplan.Map{
+		Path: routeMap, Ordered: true, Entries: []renderplan.Entry{entry("a", "1"), entry("b", "2")},
+	})))
+	replaced.Inventory.Maps = []string{routeMap}
+	reordered := basePlan(withMap(renderplan.Map{
+		Path: routeMap, Ordered: true, Entries: []renderplan.Entry{entry("b", "2"), entry("a", "1")},
+	}))
+
+	pending := on34(basePlan(withBackend(dynBackend("be-keep", disabled))))
+	pending.Running, pending.WorkerOps, pending.ReloadPending = pending.Applied, pending.Applied, true
+
+	return []deployplan.Decision{
+		deployplan.Diff(next, lifecycle),
+		deployplan.Diff(reordered, replaced),
+		deployplan.Diff(basePlan(withBackend(dynBackend("be-keep", reweighted))), pending),
 	}
 }
 

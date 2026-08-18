@@ -53,6 +53,44 @@ func TestDiffGeneralFiles(t *testing.T) {
 	}
 }
 
+// TestDiffRemovedFiles pins the other half of rule 7: the agent's ownership set
+// makes absence a delete, so a dropped file is judged like a changed one.
+func TestDiffRemovedFiles(t *testing.T) {
+	tests := []struct {
+		name           string
+		reloadOnChange bool
+		verdict        deployplan.Verdict
+		reason         string
+	}{
+		{
+			name:    "removed without a reload",
+			verdict: deployplan.VerdictFileOnly,
+			reason:  "was removed, which no runtime op undoes",
+		},
+		{
+			name:           "removed while declared reload-on-change",
+			reloadOnChange: true,
+			verdict:        deployplan.VerdictReload,
+			reason:         "was removed and is declared reload-on-change",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prev := basePlan(withFile(renderplan.File{
+				Path: "general/rules/extra.conf", Kind: renderplan.FileKindGeneral,
+				Digest: "before", ReloadOnChange: tt.reloadOnChange,
+			}))
+
+			got := deployplan.Diff(basePlan(), on34(prev))
+
+			assert.Equal(t, tt.verdict, got.Verdict)
+			assert.Empty(t, got.Ops)
+			reasonsContain(t, got.Reasons, tt.reason)
+		})
+	}
+}
+
 func TestFilesProjectsTheWholeSet(t *testing.T) {
 	plan := basePlan(
 		withFile(renderplan.File{

@@ -53,6 +53,10 @@ func (b *builder) diffMap(prev, next *renderplan.Map, name string) {
 		b.notef("map %s is not loaded at runtime, its file is written only", path)
 		return
 	}
+	if !api.SafeToken(path) {
+		b.failf("map %s: the path is not a safe runtime token", path)
+		return
+	}
 	if next.Ordered {
 		b.pushMapOps(orderedMapOps(path, prev.Entries, next.Entries), path)
 		return
@@ -78,12 +82,12 @@ func unorderedMapOps(path string, prev, next []renderplan.Entry) mapOps {
 		want := after[key]
 		have, existed := before[key]
 		switch {
+		case existed && sameValues(have, want):
+		case !api.SafeToken(key) || !payloadSafe(want):
+			return mapOps{whole: true}
 		case !existed:
 			ops.upserts = append(ops.upserts, addEntries(path, key, want)...)
-		case sameValues(have, want):
-		case !lineSafe(key):
-			return mapOps{whole: true}
-		case len(have) == 1 && len(want) == 1 && lineSafe(want[0]):
+		case len(have) == 1 && len(want) == 1 && api.SafeToken(want[0]):
 			ops.upserts = append(ops.upserts, api.Op{Kind: api.OpMapSet, Path: path, Key: key, Value: want[0]})
 		default:
 			// A replacement's del must stay ahead of its re-adds; only a key
@@ -96,7 +100,7 @@ func unorderedMapOps(path string, prev, next []renderplan.Entry) mapOps {
 }
 
 // orderedMapOps is the delta for a map HAProxy matches in order. Only appends
-// that sort after every existing key, in-place value changes and deletes keep
+// that land past every retained key, in-place value changes and deletes keep
 // the order intact; anything else is swapped as a whole.
 func orderedMapOps(path string, prev, next []renderplan.Entry) mapOps {
 	before, after := valuesByKey(prev), valuesByKey(next)
@@ -104,21 +108,43 @@ func orderedMapOps(path string, prev, next []renderplan.Entry) mapOps {
 		return mapOps{whole: true}
 	}
 	ops := mapOps{}
-	last := lastKey(prev)
+	appended := appendedKeys(prev, next)
 	for _, key := range keyOrder(next) {
 		want := after[key]
 		have, existed := before[key]
 		switch {
-		case !existed && key > last:
+		case existed && sameValues(have, want):
+		case !api.SafeToken(key) || !payloadSafe(want):
+			return mapOps{whole: true}
+		case !existed && appended[key]:
 			ops.upserts = append(ops.upserts, addEntries(path, key, want)...)
-		case sameValues(have, want) && existed:
-		case len(have) == 1 && len(want) == 1 && lineSafe(key) && lineSafe(want[0]):
+		case existed && len(have) == 1 && len(want) == 1 && api.SafeToken(want[0]):
 			ops.upserts = append(ops.upserts, api.Op{Kind: api.OpMapSet, Path: path, Key: key, Value: want[0]})
 		default:
 			return mapOps{whole: true}
 		}
 	}
 	return withRemovals(ops, path, prev, after)
+}
+
+// appendedKeys are the keys the new render gained that sit after every key it
+// keeps from the old one. `add map` appends to the end of the runtime list, so
+// only a suffix of the file reaches its own position that way — a lexicographic
+// comparison would put a middle insertion last and route it to the wrong entry.
+func appendedKeys(prev, next []renderplan.Entry) map[string]bool {
+	before := valuesByKey(prev)
+	keys := keyOrder(next)
+	lastKept := -1
+	for i, key := range keys {
+		if _, kept := before[key]; kept {
+			lastKept = i
+		}
+	}
+	appended := make(map[string]bool, len(keys)-lastKept-1)
+	for _, key := range keys[lastKept+1:] {
+		appended[key] = true
+	}
+	return appended
 }
 
 // withRemovals appends a del for every key the render dropped, in the order
@@ -129,7 +155,7 @@ func withRemovals(ops mapOps, path string, prev []renderplan.Entry, after map[st
 		if _, kept := after[key]; kept {
 			continue
 		}
-		if !lineSafe(key) {
+		if !api.SafeToken(key) {
 			return mapOps{whole: true}
 		}
 		ops.deletes = append(ops.deletes, api.Op{Kind: api.OpMapDel, Path: path, Key: key})
@@ -189,14 +215,15 @@ func keyOrder(entries []renderplan.Entry) []string {
 	return keys
 }
 
-func lastKey(entries []renderplan.Entry) string {
-	last := ""
-	for i := range entries {
-		if entries[i].Key > last {
-			last = entries[i].Key
+// payloadSafe reports whether every value can travel in the payload form the
+// adds use, which only the line framing constrains.
+func payloadSafe(values []string) bool {
+	for _, value := range values {
+		if !api.SafePayloadValue(value) {
+			return false
 		}
 	}
-	return last
+	return true
 }
 
 func sameValues(prev, next []string) bool {

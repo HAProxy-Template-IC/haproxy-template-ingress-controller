@@ -47,6 +47,9 @@ func (b *builder) inPlaceOps() []api.Op {
 	if worker == nil {
 		return nil
 	}
+	// The ops that create runtime-store objects never run while a reload is
+	// pending, so the worker holds nothing this diff composed.
+	b.created = nil
 	ops := b.inPlaceServerOps(worker)
 	ops = append(ops, b.inPlaceMapOps(worker)...)
 	ops = append(ops, b.inPlaceCertOps(worker)...)
@@ -84,7 +87,7 @@ func (b *builder) serverOpsAgainstWorker(running, next *renderplan.Backend) []ap
 	for i := range next.Servers {
 		srv := &next.Servers[i]
 		if old, existed := current[srv.Name]; existed {
-			composed, _ := updateServer(next.Name, old, srv)
+			composed, _ := b.updateServer(next, old, srv)
 			ops = append(ops, composed...)
 			continue
 		}
@@ -112,7 +115,7 @@ func (b *builder) inPlaceMapOps(worker *renderplan.Plan) []api.Op {
 		if path == "" {
 			path = name
 		}
-		if !slices.Contains(b.inventory.Maps, path) {
+		if !slices.Contains(b.inventory.Maps, path) || !api.SafeToken(path) {
 			continue
 		}
 		prev := worker.Maps[name]

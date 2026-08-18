@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
 )
 
 // validateApply asserts the contract's limits before a byte is sent. The
@@ -101,39 +102,11 @@ func validatePath(p string) error {
 	return nil
 }
 
-// composableOps are the op kinds the controller composes. An agent that does
-// not list one of them cannot execute the plans this controller produces.
-var composableOps = []string{
-	api.OpBackendAdd,
-	api.OpBackendPublish,
-	api.OpBackendUnpublish,
-	api.OpBackendDel,
-	api.OpBackendWaitRemovable,
-	api.OpServerAdd,
-	api.OpServerEnable,
-	api.OpServerDisable,
-	api.OpServerSetAddr,
-	api.OpServerSetWeight,
-	api.OpServerSetState,
-	api.OpServerWaitRemovable,
-	api.OpShutdownSessions,
-	api.OpServerDel,
-	api.OpMapAdd,
-	api.OpMapSet,
-	api.OpMapDel,
-	api.OpMapReplace,
-	api.OpCertSet,
-	api.OpCertNew,
-	api.OpCASet,
-	api.OpCANew,
-	api.OpCRTListAdd,
-	api.OpCRTListDel,
-}
-
 // ComposableOps returns the op kinds this controller composes — the set
-// CheckSkew measures an agent against.
+// CheckSkew measures an agent against. It is deployplan's own list, so the
+// skew check cannot drift from what the decision layer emits.
 func ComposableOps() []string {
-	return append([]string(nil), composableOps...)
+	return deployplan.ComposedOps()
 }
 
 // CheckSkew compares an agent's reported contract with this controller's.
@@ -147,8 +120,9 @@ func CheckSkew(state *api.State) (majorMismatch bool, missingOps []string) {
 	for _, op := range state.AgentOps {
 		executes[op] = struct{}{}
 	}
-	missing := make([]string, 0, len(composableOps))
-	for _, op := range composableOps {
+	composable := deployplan.ComposedOps()
+	missing := make([]string, 0, len(composable))
+	for _, op := range composable {
 		if _, ok := executes[op]; !ok {
 			missing = append(missing, op)
 		}

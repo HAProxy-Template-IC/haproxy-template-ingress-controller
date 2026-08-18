@@ -22,11 +22,9 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
-// Server states set server accepts for the two states a render declares.
-const (
-	stateReady = "ready"
-	stateMaint = "maint"
-)
+// stateMaint is the set server state a render's disabled server asks for;
+// leaving it again is `enable server`, not the opposite set.
+const stateMaint = "maint"
 
 // composer turns render records into ops for one pod. Every method returns a
 // reason instead of ops when HAProxy would refuse the command; the caller
@@ -34,6 +32,13 @@ const (
 type composer struct {
 	caps      Caps
 	inventory *api.Inventory
+	// created are the runtime-store objects this diff creates before anything
+	// can name them; the agent folds them into its inventory the same way.
+	created map[string]bool
+	// pendingServerDeletes and pendingBackendDeletes are the pod's baseline plus
+	// what this diff has composed, because the cap is on the queue, not the ACK.
+	pendingServerDeletes  int
+	pendingBackendDeletes int
 }
 
 // addServer composes add server plus the enable that takes it out of MAINT.
@@ -43,7 +48,7 @@ func (c *composer) addServer(be *renderplan.Backend, srv *renderplan.Server) (op
 		return nil, "this HAProxy has no add server"
 	case !dynamicBalance(be.Balance, be.HashType):
 		return nil, fmt.Sprintf("balance %q takes no dynamic server", balanceOf(be))
-	case !safeToken(srv.Name):
+	case !api.SafeToken(srv.Name):
 		return nil, "the name is not a safe runtime token"
 	}
 	if reason := endpointReason(srv.Address, srv.Port); reason != "" {
@@ -74,11 +79,14 @@ func (c *composer) addServer(be *renderplan.Backend, srv *renderplan.Server) (op
 	}}, ""
 }
 
-// updateServer composes the value changes HAProxy applies in place.
-func updateServer(backend string, prev, next *renderplan.Server) (ops []api.Op, reason string) {
+// updateServer composes the value changes HAProxy applies in place. It takes
+// the backend because leaving MAINT needs the merged keyword set: `enable
+// health` is only accepted on a server that carries `check`.
+func (c *composer) updateServer(be *renderplan.Backend, prev, next *renderplan.Server) (ops []api.Op, reason string) {
 	if prev.GUID != next.GUID || !slices.EqualFunc(prev.Extra, next.Extra, sameKeyword) {
 		return nil, "keywords changed, which set server cannot express"
 	}
+	backend := be.Name
 	ops = make([]api.Op, 0, 3)
 	if prev.Address != next.Address || prev.Port != next.Port {
 		if reason := endpointReason(next.Address, next.Port); reason != "" {
@@ -96,9 +104,20 @@ func updateServer(backend string, prev, next *renderplan.Server) (ops []api.Op, 
 		weight := *next.Weight
 		ops = append(ops, api.Op{Kind: api.OpServerSetWeight, Backend: backend, Server: next.Name, Weight: &weight})
 	}
-	if prev.Disabled != next.Disabled {
+	switch {
+	case prev.Disabled == next.Disabled:
+	case next.Disabled:
 		ops = append(ops, api.Op{
-			Kind: api.OpServerSetState, Backend: backend, Server: next.Name, State: serverState(next.Disabled),
+			Kind: api.OpServerSetState, Backend: backend, Server: next.Name, State: stateMaint,
+		})
+	default:
+		// `set server state ready` leaves a health check that never started
+		// disabled, so a dynamic server added in MAINT would take traffic with
+		// no check at all; `enable server` clears the same state and takes the
+		// health check with it.
+		ops = append(ops, api.Op{
+			Kind: api.OpServerEnable, Backend: backend, Server: next.Name,
+			Health: hasKeyword(mergeKeywords(be.DefaultServer, next.Extra), keywordCheck),
 		})
 	}
 	if len(ops) == 0 {
@@ -109,15 +128,16 @@ func updateServer(backend string, prev, next *renderplan.Server) (ops []api.Op, 
 
 // removeServer composes the deferred delete: stop traffic, wait for the last
 // session, then delete. The agent owns the shutdown-sessions retry.
-func (c *composer) removeServer(backend string, srv *renderplan.Server, pending int) (ops []api.Op, reason string) {
+func (c *composer) removeServer(backend string, srv *renderplan.Server) (ops []api.Op, reason string) {
 	switch {
 	case !c.caps.DynamicServers:
 		return nil, "this HAProxy has no del server"
-	case pending >= api.MaxPendingServerDeletes:
-		return nil, fmt.Sprintf("%d server deletes already pending", pending)
-	case !safeToken(srv.Name):
+	case c.pendingServerDeletes >= api.MaxPendingServerDeletes:
+		return nil, fmt.Sprintf("%d server deletes already pending", c.pendingServerDeletes)
+	case !api.SafeToken(srv.Name):
 		return nil, "the name is not a safe runtime token"
 	}
+	c.pendingServerDeletes++
 	return []api.Op{
 		{Kind: api.OpServerDisable, Backend: backend, Server: srv.Name},
 		{Kind: api.OpServerWaitRemovable, Backend: backend, Server: srv.Name, TimeoutMs: removableTimeoutMs},
@@ -135,13 +155,6 @@ func (c *composer) withRuntimeKeywords(keywords []api.KeywordArg, guid string) [
 		keywords = append(keywords, api.KeywordArg{Name: keywordInitState, Args: []string{"up"}})
 	}
 	return keywords
-}
-
-func serverState(disabled bool) string {
-	if disabled {
-		return stateMaint
-	}
-	return stateReady
 }
 
 func sameWeight(prev, next *int) bool {

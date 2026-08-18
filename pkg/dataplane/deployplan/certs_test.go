@@ -157,6 +157,88 @@ func TestDiffCRTListEntries(t *testing.T) {
 	}
 }
 
+// TestDiffCRTListOrderIsNotReachablePerEntry pins that only a change the
+// running list can reproduce stays runtime: `add ssl crt-list` appends, and the
+// first entry is the certificate HAProxy serves without a matching SNI.
+func TestDiffCRTListOrderIsNotReachablePerEntry(t *testing.T) {
+	first := renderplan.CRTListEntry{Cert: certPath}
+	other := renderplan.CRTListEntry{Cert: "certs/other.pem"}
+	third := renderplan.CRTListEntry{Cert: "certs/third.pem"}
+	retuned := renderplan.CRTListEntry{
+		Cert:    certPath,
+		Options: []renderplan.KeywordArg{{Name: "alpn", Args: []string{"h2"}}},
+	}
+
+	tests := []struct {
+		name   string
+		before []renderplan.CRTListEntry
+		after  []renderplan.CRTListEntry
+		reason string
+	}{
+		{
+			name:   "a new default certificate is not an append",
+			before: []renderplan.CRTListEntry{first},
+			after:  []renderplan.CRTListEntry{other, first},
+			reason: "the entry order changed",
+		},
+		{
+			name:   "retained entries that swap places",
+			before: []renderplan.CRTListEntry{first, other},
+			after:  []renderplan.CRTListEntry{other, first},
+			reason: "the entry order changed",
+		},
+		{
+			name:   "an options change on an entry other than the last",
+			before: []renderplan.CRTListEntry{first, other},
+			after:  []renderplan.CRTListEntry{retuned, other},
+			reason: "the entry order changed",
+		},
+		{
+			name:   "a certificate the line form cannot name",
+			before: []renderplan.CRTListEntry{first},
+			after:  []renderplan.CRTListEntry{first, {Cert: "certs/a;b.pem"}},
+			reason: "is not a safe runtime token",
+		},
+		{
+			name:   "an SNI filter the line form cannot name",
+			before: []renderplan.CRTListEntry{first},
+			after:  []renderplan.CRTListEntry{first, {Cert: "certs/other.pem", SNIFilters: []string{"a b.example.com"}}},
+			reason: "is not a safe runtime token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prev := basePlan(withCRTList(renderplan.CRTList{Path: listPath, Entries: tt.before}))
+			next := basePlan(withCRTList(renderplan.CRTList{Path: listPath, Entries: tt.after}))
+			base := on34(prev)
+			base.Inventory = api.Inventory{CRTLists: []string{listPath}}
+
+			got := deployplan.Diff(next, base)
+
+			require.Equal(t, deployplan.VerdictReload, got.Verdict)
+			assert.Empty(t, got.Ops)
+			reasonsContain(t, got.Reasons, tt.reason)
+		})
+	}
+
+	t.Run("an append past every retained entry stays runtime", func(t *testing.T) {
+		prev := basePlan(withCRTList(renderplan.CRTList{
+			Path: listPath, Entries: []renderplan.CRTListEntry{first, other},
+		}))
+		next := basePlan(withCRTList(renderplan.CRTList{
+			Path: listPath, Entries: []renderplan.CRTListEntry{first, other, third},
+		}))
+		base := on34(prev)
+		base.Inventory = api.Inventory{CRTLists: []string{listPath}}
+
+		got := deployplan.Diff(next, base)
+
+		require.Equal(t, deployplan.VerdictRuntime, got.Verdict, got.Reasons)
+		assert.Equal(t, []api.Op{{Kind: api.OpCRTListAdd, Path: listPath, Cert: "certs/third.pem"}}, got.Ops)
+	})
+}
+
 func TestDiffCRTListFileAppearingOrDisappearingReloads(t *testing.T) {
 	withList := basePlan(withCRTList(renderplan.CRTList{Path: listPath}))
 	without := basePlan()
@@ -179,7 +261,29 @@ func TestDiffCRTListWithoutEntriesReloads(t *testing.T) {
 	got := deployplan.Diff(next, base)
 
 	require.Equal(t, deployplan.VerdictReload, got.Verdict)
-	reasonsContain(t, got.Reasons, "the render declared no entries for it")
+	reasonsContain(t, got.Reasons, "crt-list entries are not declared by the render yet")
+}
+
+// TestDiffCertificateCreatedInThisDiffCountsAsLoaded pins that a server keyword
+// may name a certificate the same diff creates: the agent folds an object it
+// created into its inventory, so both ends see the same runtime store.
+func TestDiffCertificateCreatedInThisDiffCountsAsLoaded(t *testing.T) {
+	added := srv("SRV_2", "10.0.0.2", 8080)
+	added.Extra = []renderplan.KeywordArg{{Name: "crt", Args: []string{certPath}}}
+	cert := renderplan.File{Path: certPath, Kind: renderplan.FileKindCert}
+	prev := basePlan(
+		withFile(withDigest(cert, "before")),
+		withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080))),
+	)
+	next := basePlan(
+		withFile(withDigest(cert, "after")),
+		withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080), added)),
+	)
+
+	got := deployplan.Diff(next, on34(prev))
+
+	require.Equal(t, deployplan.VerdictRuntime, got.Verdict, got.Reasons)
+	assert.Equal(t, []string{api.OpServerAdd, api.OpServerEnable, api.OpCertNew}, kinds(got.Ops))
 }
 
 func TestDiffCRTListNotLoadedIsWrittenOnly(t *testing.T) {

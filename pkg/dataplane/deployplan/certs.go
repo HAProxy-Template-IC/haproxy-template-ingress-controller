@@ -15,7 +15,6 @@
 package deployplan
 
 import (
-	"maps"
 	"slices"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
@@ -49,15 +48,19 @@ func (b *builder) diffCerts() {
 	}
 }
 
+// storeFile creates or replaces one runtime-store object and records the
+// creation, because the agent folds a created object into its inventory too —
+// without that agreement the next diff would create it a second time.
 func (b *builder) storeFile(path, set, create string, loaded []string) {
-	if !safeToken(path) {
+	if !api.SafeToken(path) {
 		b.failf("file %s is not a safe runtime token", path)
 		return
 	}
 	kind := create
-	if slices.Contains(loaded, path) {
+	if slices.Contains(loaded, path) || b.created[path] {
 		kind = set
 	}
+	b.created[path] = true
 	b.push(groupCert, api.Op{Kind: kind, Path: path})
 }
 
@@ -73,7 +76,7 @@ func (b *builder) diffCRTList(path string, existed bool) {
 	next, hasEntries := b.next.CRTLists[path]
 	switch {
 	case !hadEntries || !hasEntries:
-		b.failf("crt-list %s changed but the render declared no entries for it", path)
+		b.failf("crt-list %s changed, but crt-list entries are not declared by the render yet", path)
 	case !slices.Contains(b.inventory.CRTLists, path):
 		b.notef("crt-list %s is not loaded at runtime, its file is written only", path)
 	default:
@@ -81,29 +84,79 @@ func (b *builder) diffCRTList(path string, existed bool) {
 	}
 }
 
+// crtListOps composes per-entry ops only when replaying them leaves the worker
+// in the file's order: `add ssl crt-list` appends, and HAProxy serves the first
+// entry to a handshake without a matching SNI, so an entry that would have to
+// move is a reload rather than a silently different default certificate.
 func (b *builder) crtListOps(path string, prev, next []renderplan.CRTListEntry) {
 	before, after := crtListIndex(prev), crtListIndex(next)
-	for _, cert := range slices.Sorted(maps.Keys(after)) {
-		entry := after[cert]
-		if !safeToken(cert) {
+	for i := range next {
+		if reason := crtListEntryReason(&next[i]); reason != "" {
+			b.failf("crt-list %s: %s", path, reason)
+			return
+		}
+	}
+	var ops []api.Op
+	running := make([]string, 0, len(prev)+len(next))
+	for i := range prev {
+		cert := prev[i].Cert
+		if _, kept := after[cert]; kept {
+			running = append(running, cert)
+			continue
+		}
+		if !api.SafeToken(cert) {
 			b.failf("crt-list %s: certificate %s is not a safe runtime token", path, cert)
 			return
 		}
+		ops = append(ops, crtListDel(path, cert))
+	}
+	for i := range next {
+		cert := next[i].Cert
 		old, existed := before[cert]
-		switch {
-		case !existed:
-			b.push(groupCRTList, crtListAdd(path, entry))
-		case sameCRTListEntry(old, entry):
-		default:
-			// Options and SNI filters are only replaceable as a whole entry.
-			b.push(groupCRTList, crtListDel(path, cert), crtListAdd(path, entry))
+		if existed && sameCRTListEntry(old, &next[i]) {
+			continue
+		}
+		if existed {
+			// Options and SNI filters are only replaceable as a whole entry,
+			// which re-adds it at the end of the running list.
+			ops = append(ops, crtListDel(path, cert))
+			running = slices.DeleteFunc(running, func(c string) bool { return c == cert })
+		}
+		ops = append(ops, crtListAdd(path, &next[i]))
+		running = append(running, cert)
+	}
+	if !slices.Equal(running, crtListOrder(next)) {
+		b.failf("crt-list %s: the entry order changed, which only a reload applies", path)
+		return
+	}
+	b.push(groupCRTList, ops...)
+}
+
+// crtListEntryReason names the first token of an entry the runtime API cannot
+// carry, or "" when every one of them travels.
+func crtListEntryReason(entry *renderplan.CRTListEntry) string {
+	if !api.SafeToken(entry.Cert) {
+		return "certificate " + entry.Cert + " is not a safe runtime token"
+	}
+	for i := range entry.Options {
+		if !api.SafeToken(entry.Options[i].Name) || !allSafeTokens(entry.Options[i].Args) {
+			return "option " + entry.Options[i].Name + " is not a safe runtime token"
 		}
 	}
-	for _, cert := range slices.Sorted(maps.Keys(before)) {
-		if _, kept := after[cert]; !kept {
-			b.push(groupCRTList, crtListDel(path, cert))
+	for _, sni := range entry.SNIFilters {
+		if !api.SafeToken(sni) {
+			return "SNI filter " + sni + " is not a safe runtime token"
 		}
 	}
+	return ""
+}
+
+func crtListOrder(entries []renderplan.CRTListEntry) []string {
+	order := make([]string, 0, len(entries))
+	for i := range entries {
+		order = append(order, entries[i].Cert)
+	}
+	return order
 }
 
 func crtListAdd(path string, entry *renderplan.CRTListEntry) api.Op {

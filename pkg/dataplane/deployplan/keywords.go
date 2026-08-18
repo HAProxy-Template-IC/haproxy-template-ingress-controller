@@ -121,7 +121,7 @@ func (c *composer) ineligibleKeyword(keywords []api.KeywordArg) string {
 			return kw.Name
 		case kw.Name == keywordInitState && !c.caps.ServerInitState:
 			return kw.Name
-		case !safeToken(kw.Name) || !allSafeTokens(kw.Args):
+		case !api.SafeToken(kw.Name) || !allSafeTokens(kw.Args):
 			return kw.Name
 		case !c.filesLoaded(kw):
 			return kw.Name
@@ -144,12 +144,12 @@ func (c *composer) filesLoaded(kw *api.KeywordArg) bool {
 	default:
 		return true
 	}
-	return len(kw.Args) == 1 && slices.Contains(loaded, kw.Args[0])
+	return len(kw.Args) == 1 && (slices.Contains(loaded, kw.Args[0]) || c.created[kw.Args[0]])
 }
 
 func allSafeTokens(args []string) bool {
 	for _, arg := range args {
-		if !safeToken(arg) {
+		if !api.SafeToken(arg) {
 			return false
 		}
 	}
@@ -166,16 +166,4 @@ func endpointReason(address string, port int) string {
 		return "the port is outside 1-65535"
 	}
 	return ""
-}
-
-// safeToken reports whether s can travel as one CLI token: the agent's grammar
-// forbids the separators HAProxy's CLI would act on.
-func safeToken(s string) bool {
-	return s != "" && !strings.ContainsAny(s, " \t\n\r;\\") && !strings.Contains(s, "<<")
-}
-
-// lineSafe reports whether s survives a line-form CLI command, which stops at
-// the first space and splits on ';'. The payload form has no such limit.
-func lineSafe(s string) bool {
-	return !strings.ContainsAny(s, " \t\n\r;\\")
 }

@@ -20,6 +20,8 @@
 package deployplan
 
 import (
+	"slices"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
@@ -68,6 +70,41 @@ type Decision struct {
 	Reasons []string
 	Files   []api.File
 	Mode    string // api.ModeAuto or api.ModeReload
+}
+
+// composedOps are every op kind Diff can put in a Decision. shutdown_sessions
+// is absent on purpose: the agent issues it from its own deferred-delete retry,
+// never from a composed batch.
+var composedOps = []string{
+	api.OpBackendAdd,
+	api.OpBackendPublish,
+	api.OpBackendUnpublish,
+	api.OpBackendDel,
+	api.OpBackendWaitRemovable,
+	api.OpServerAdd,
+	api.OpServerEnable,
+	api.OpServerDisable,
+	api.OpServerSetAddr,
+	api.OpServerSetWeight,
+	api.OpServerSetState,
+	api.OpServerWaitRemovable,
+	api.OpServerDel,
+	api.OpMapAdd,
+	api.OpMapSet,
+	api.OpMapDel,
+	api.OpMapReplace,
+	api.OpCertSet,
+	api.OpCertNew,
+	api.OpCASet,
+	api.OpCANew,
+	api.OpCRTListAdd,
+	api.OpCRTListDel,
+}
+
+// ComposedOps returns the op kinds this controller composes — the set an agent
+// is measured against before it is sent anything.
+func ComposedOps() []string {
+	return slices.Clone(composedOps)
 }
 
 // Chunk splits Ops into the applies the deployer sends, each an ordered prefix

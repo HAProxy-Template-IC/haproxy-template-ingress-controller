@@ -85,6 +85,42 @@ func TestDiffUnorderedMap(t *testing.T) {
 			after:  []renderplan.Entry{entry("/api;v1", "be-z")},
 			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
 		},
+		{
+			name:   "an angle bracket in a key replaces the map",
+			before: []renderplan.Entry{entry("/a>b", "be-a")},
+			after:  []renderplan.Entry{entry("/a>b", "be-z")},
+			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
+		},
+		{
+			name:   "a new key the agent would refuse replaces the map",
+			before: []renderplan.Entry{entry("a.example.com", "be-a")},
+			after:  []renderplan.Entry{entry("a.example.com", "be-a"), entry("z;v1", "be-z")},
+			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
+		},
+		{
+			name:   "an emptied value takes the payload form",
+			before: []renderplan.Entry{entry("a.example.com", "be-a")},
+			after:  []renderplan.Entry{entry("a.example.com", "")},
+			want: []api.Op{
+				{Kind: api.OpMapDel, Path: routeMap, Key: "a.example.com"},
+				{Kind: api.OpMapAdd, Path: routeMap, Key: "a.example.com", Value: ""},
+			},
+		},
+		{
+			name:   "an angle bracket in a value takes the payload form",
+			before: []renderplan.Entry{entry("a.example.com", "be-a")},
+			after:  []renderplan.Entry{entry("a.example.com", "x>y")},
+			want: []api.Op{
+				{Kind: api.OpMapDel, Path: routeMap, Key: "a.example.com"},
+				{Kind: api.OpMapAdd, Path: routeMap, Key: "a.example.com", Value: "x>y"},
+			},
+		},
+		{
+			name:   "a value that spans lines replaces the map",
+			before: []renderplan.Entry{entry("a.example.com", "be-a")},
+			after:  []renderplan.Entry{entry("a.example.com", "be-a\nb.example.com be-b")},
+			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -124,6 +160,27 @@ func TestDiffOrderedMap(t *testing.T) {
 			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
 		},
 		{
+			name:   "a new first entry replaces the map, however it sorts",
+			before: []renderplan.Entry{entry("example.com", "be-generic")},
+			after:  []renderplan.Entry{entry("z.example.com", "be-specific"), entry("example.com", "be-generic")},
+			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
+		},
+		{
+			name:   "appended keys are judged by file position, not by sort order",
+			before: []renderplan.Entry{entry("m", "1")},
+			after:  []renderplan.Entry{entry("m", "1"), entry("z", "2"), entry("b", "3")},
+			want: []api.Op{
+				{Kind: api.OpMapAdd, Path: routeMap, Key: "z", Value: "2"},
+				{Kind: api.OpMapAdd, Path: routeMap, Key: "b", Value: "3"},
+			},
+		},
+		{
+			name:   "an append after a middle insertion replaces the map",
+			before: []renderplan.Entry{entry("m", "1")},
+			after:  []renderplan.Entry{entry("z", "2"), entry("m", "1"), entry("n", "3")},
+			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
+		},
+		{
 			name:   "an in-place value change keeps its position",
 			before: []renderplan.Entry{entry("a", "1"), entry("b", "2")},
 			after:  []renderplan.Entry{entry("a", "1"), entry("b", "9")},
@@ -145,6 +202,12 @@ func TestDiffOrderedMap(t *testing.T) {
 			name:   "a value the line form would mangle replaces the map",
 			before: []renderplan.Entry{entry("a", "1")},
 			after:  []renderplan.Entry{entry("a", "1 2")},
+			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
+		},
+		{
+			name:   "an appended key the agent would refuse replaces the map",
+			before: []renderplan.Entry{entry("a", "1")},
+			after:  []renderplan.Entry{entry("a", "1"), entry("b;c", "2")},
 			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
 		},
 	}
@@ -170,6 +233,17 @@ func TestDiffMapNotLoadedIsWrittenOnly(t *testing.T) {
 	assert.Equal(t, deployplan.VerdictFileOnly, got.Verdict)
 	assert.Empty(t, got.Ops)
 	reasonsContain(t, got.Reasons, "is not loaded at runtime, its file is written only")
+}
+
+func TestDiffMapPathMustBeASafeToken(t *testing.T) {
+	const unsafe = "maps/route backend.map"
+	prev := basePlan(withMap(renderplan.Map{Path: unsafe, Entries: []renderplan.Entry{entry("a", "1")}}))
+	next := basePlan(withMap(renderplan.Map{Path: unsafe, Entries: []renderplan.Entry{entry("a", "2")}}))
+
+	got := deployplan.Diff(next, withMapsLoaded(on34(prev), unsafe))
+
+	require.Equal(t, deployplan.VerdictReload, got.Verdict)
+	reasonsContain(t, got.Reasons, "the path is not a safe runtime token")
 }
 
 func TestDiffMapShortCircuitsOnTheFileDigest(t *testing.T) {

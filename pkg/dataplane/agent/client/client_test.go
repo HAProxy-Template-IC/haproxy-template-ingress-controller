@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
 )
 
 func testManifest() *api.Manifest {
@@ -432,7 +433,8 @@ func TestApplyHonoursContextCancellation(t *testing.T) {
 
 func TestCheckSkew(t *testing.T) {
 	t.Parallel()
-	full := append([]string(nil), composableOps...)
+	full := ComposableOps()
+	require.Equal(t, deployplan.ComposedOps(), full, "the skew check measures against what deployplan composes")
 
 	t.Run("matching agent", func(t *testing.T) {
 		mismatch, missing := CheckSkew(&api.State{APIVersion: api.Version, AgentOps: full})

@@ -61,7 +61,13 @@ func Diff(next *renderplan.Plan, base *Baseline) Decision {
 		base = &Baseline{}
 	}
 	b := &builder{
-		composer:     composer{caps: base.Caps, inventory: &base.Inventory},
+		composer: composer{
+			caps:                  base.Caps,
+			inventory:             &base.Inventory,
+			created:               map[string]bool{},
+			pendingServerDeletes:  base.PendingServerDeletes,
+			pendingBackendDeletes: base.PendingBackendDeletes,
+		},
 		next:         next,
 		prev:         base.Applied,
 		baseline:     base,
@@ -69,12 +75,13 @@ func Diff(next *renderplan.Plan, base *Baseline) Decision {
 	}
 	if b.baselineUsable() {
 		b.nextFiles, b.prevFiles = fileIndex(next.Files), fileIndex(b.prev.Files)
-		// Ordered: a removed profile is judged by the backend deletes this diff
-		// composes, and the config guard by whether any section changed.
+		// Ordered: a server keyword may name a certificate this diff creates, a
+		// removed profile is judged by the backend deletes this diff composes,
+		// and the config guard by whether any section changed.
+		b.diffCerts()
 		b.diffBackends()
 		b.diffSections()
 		b.diffMaps()
-		b.diffCerts()
 		b.diffFiles()
 	}
 	return b.decide()
@@ -261,5 +268,24 @@ func (b *builder) diffFiles() {
 		if f.ReloadOnChange {
 			b.failf("file %s changed and is declared reload-on-change", f.Path)
 		}
+	}
+	b.diffRemovedFiles()
+}
+
+// diffRemovedFiles carries rule 7 for a path the render dropped: the agent's
+// ownership set makes absence a delete, and a deletion is the strongest change
+// a reload-on-change file can see. crt-lists are left to diffCerts, which names
+// them with the config change they really are.
+func (b *builder) diffRemovedFiles() {
+	for i := range b.prev.Files {
+		f := &b.prev.Files[i]
+		if _, kept := b.nextFiles[f.Path]; kept || f.Kind == renderplan.FileKindCRTList {
+			continue
+		}
+		if f.ReloadOnChange {
+			b.failf("file %s was removed and is declared reload-on-change", f.Path)
+			continue
+		}
+		b.notef("file %s was removed, which no runtime op undoes", f.Path)
 	}
 }
