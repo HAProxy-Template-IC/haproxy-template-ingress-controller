@@ -116,6 +116,36 @@ func renderWithServers(id string, addressOffset int) (*renderplan.Plan, string, 
 	return plan, config, &dataplane.AuxiliaryFiles{}
 }
 
+// renderWithBackends builds a render carrying one dynamic backend per name, so
+// the diff between two of them composes a backend removal.
+func renderWithBackends(id string, names ...string) (*renderplan.Plan, string, *dataplane.AuxiliaryFiles) {
+	config := ""
+	plan := &renderplan.Plan{
+		SchemaVersion: renderplan.SchemaVersion,
+		ID:            id,
+		Backends:      map[string]renderplan.Backend{},
+		Profiles:      map[string]renderplan.Profile{"http": {Name: "http", BodyDigest: "profile"}},
+	}
+	for _, name := range names {
+		config += "backend " + name + "\n  server srv1 10.0.0.1:8080\n"
+		plan.Backends[name] = renderplan.Backend{
+			Name: name, Profile: "http", Mode: "http", Shape: renderplan.ShapeDynamic,
+			Servers:      []renderplan.Server{{Name: "srv1", Address: "10.0.0.1", Port: 8080}},
+			BodyDigest:   "body-" + name,
+			RecordDigest: "record-" + name,
+			TextDigest:   "text-" + name,
+		}
+		plan.Sections = append(plan.Sections, renderplan.Section{
+			Kind: renderplan.SectionKindBackend, Name: name, TextDigest: "text-" + name,
+		})
+	}
+	plan.Files = []renderplan.File{{
+		Path: "haproxy.cfg", Kind: renderplan.FileKindConfig, ReloadOnChange: true,
+		Digest: renderplan.DigestString(config), Size: int64(len(config)),
+	}}
+	return plan, config, &dataplane.AuxiliaryFiles{}
+}
+
 // deployTo runs one whole deployment against the fake agents and returns the
 // completion the deployer published.
 func deployTo(t *testing.T, component *Component, bus *deployerBus, plan *renderplan.Plan,
@@ -718,6 +748,43 @@ func TestApply_InPlaceBatchSharesTheFirstChunksBudget(t *testing.T) {
 		inPlace += len(apply.Manifest.InPlaceOps)
 	}
 	assert.Positive(t, inPlace, "the pending reload is exactly when the in-place batch matters")
+}
+
+// One diff is shared across the pods that report the same baseline, so every
+// fact it branches on has to be part of what makes them the same. A pod at the
+// deferral cap plans a reload where another composes the delete batch; handing
+// it that batch makes its agent refuse the ops and fall back to a reload it
+// never planned, raising the invariant counter that pages an operator.
+func TestApply_DiffIsNotSharedAcrossPodsAtTheDeferralCap(t *testing.T) {
+	draining := agenttest.New(t)
+	idle := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	drainingEndpoint := agentEndpoint(draining, "haproxy-0")
+	idleEndpoint := agentEndpoint(idle, "haproxy-1")
+
+	plan1, config1, aux1 := renderWithBackends("plan-1", "be_app", "be_extra")
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", drainingEndpoint, idleEndpoint)
+
+	// One pod's sessions never closed, so its deferred deletes sit at the cap.
+	pending := make([]string, api.MaxPendingBackendDeletes)
+	for i := range pending {
+		pending[i] = fmt.Sprintf("be_retiring_%d", i)
+	}
+	draining.SetPendingDeletes(nil, pending)
+
+	plan2, config2, aux2 := renderWithBackends("plan-2", "be_app")
+	deployTo(t, component, bus, plan2, config2, aux2, "config_validation", drainingEndpoint, idleEndpoint)
+
+	idleApply := idle.Applies()[1]
+	assert.Equal(t, api.ModeAuto, idleApply.Manifest.Mode)
+	assert.NotEmpty(t, idleApply.Manifest.Ops, "a pod with no pending deletes removes the backend at runtime")
+
+	drainingApply := draining.Applies()[1]
+	assert.Equal(t, api.ModeReload, drainingApply.Manifest.Mode,
+		"a pod at the cap can only take this render through a reload")
+	assert.Empty(t, drainingApply.Manifest.Ops,
+		"ops its agent would refuse must never be sent: the refusal costs it an unplanned reload")
 }
 
 // The plan cache retains what the fleet still refers to and nothing else, so a

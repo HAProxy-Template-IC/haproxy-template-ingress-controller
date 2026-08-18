@@ -306,15 +306,34 @@ func (r *deployRequest) decisionFor(state *api.State, plans *planCache) deploypl
 		ReloadPending:         state.ReloadPendingAt != "",
 	}
 	return r.diffs.get(&diffKey{
-		applied:       baselineID(baseline.Applied),
-		running:       state.RunningPlanID,
-		workerOps:     state.WorkerOpsPlanID,
-		caps:          state.HAProxy.Version + "\x00" + strings.Join(state.AgentOps, ","),
-		inventory:     state.Inventory.Generation,
-		reloadPending: baseline.ReloadPending,
+		applied:         baselineID(baseline.Applied),
+		running:         state.RunningPlanID,
+		workerOps:       state.WorkerOpsPlanID,
+		caps:            state.HAProxy.Version + "\x00" + strings.Join(state.AgentOps, ","),
+		inventory:       inventoryDigest(&state.Inventory),
+		pendingServers:  baseline.PendingServerDeletes,
+		pendingBackends: baseline.PendingBackendDeletes,
+		reloadPending:   baseline.ReloadPending,
 	}, func() deployplan.Decision {
 		return deployplan.Diff(r.plan, &baseline)
 	})
+}
+
+// inventoryDigest identifies what the worker has loaded by its content: the
+// generation next to it counts one pod's reloads, so two pods on the same plan
+// can report the same generation over different sets.
+func inventoryDigest(inventory *api.Inventory) string {
+	var sets strings.Builder
+	for _, paths := range [][]string{
+		inventory.Maps, inventory.Certs, inventory.CAFiles, inventory.CRLFiles, inventory.CRTLists,
+	} {
+		for _, path := range paths {
+			sets.WriteString(path)
+			sets.WriteByte(0)
+		}
+		sets.WriteByte('\n')
+	}
+	return renderplan.DigestString(sets.String())
 }
 
 func baselineID(plan *renderplan.Plan) string {

@@ -203,6 +203,15 @@ func (a *Agent) AcceptOp(kind string) {
 	delete(a.rejectedOps, kind)
 }
 
+// SetPendingDeletes seeds the deferred deletes this pod is still waiting to
+// complete. A pod at the cap refuses another batch, so what the controller
+// composes for it has to be judged against its own count.
+func (a *Agent) SetPendingDeletes(servers, backends []string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.state.PendingDeletes = api.PendingDeletes{Servers: servers, Backends: backends}
+}
+
 // FailOnce makes the next apply answer 500 and write nothing, the way an agent
 // that hit an internal error does. The caller sees a failure, not a judgement:
 // nothing about the pod's state is known to have changed.
