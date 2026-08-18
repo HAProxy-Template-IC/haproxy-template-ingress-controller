@@ -135,6 +135,37 @@ Ingress or Gateway set.
 prints the decision for a pipeline gate. The exit code is 0 whenever the
 comparison succeeded: the verdict is the answer, not a failure.
 
+**What does one HAProxy pod hold and run?**
+
+`haptic agent state` prints the agent's own view of its pod: the plans it
+applied, runs and can fall back to, what its worker has loaded, what it still
+has to delete, and how the last apply went. Run it in the `agent` container,
+where the credentials it authenticates with are already in the environment:
+
+```bash
+POD=$(kubectl get pod -n haptic -l app.kubernetes.io/component=loadbalancer -o name | head -1)
+kubectl exec -n haptic "$POD" -c agent -- haptic agent state
+```
+
+Re-hash the tree first, so the reported digests are observations rather than the
+agent's last-known set:
+
+```bash
+kubectl exec -n haptic "$POD" -c agent -- haptic agent state --verify
+```
+
+List every file the agent holds with its digest and size:
+
+```bash
+kubectl exec -n haptic "$POD" -c agent -- haptic agent state --files
+```
+
+A `running` plan behind the `applied` one means a reload is pending. `last
+apply` carries the stage that failed and HAProxy's own message when an apply was
+refused, which is what an alert on `haptic_apply_rejected_total` or
+`haptic_agent_invariant_violations_total` sends you here for. `--output json`
+prints the raw `/v1/state` response.
+
 **Did your config actually load?**
 
 ```bash

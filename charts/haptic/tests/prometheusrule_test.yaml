@@ -171,7 +171,7 @@ tests:
               severity: critical
             annotations:
               summary: "The HAPTIC agent observed one of its invariants failing"
-              description: "Invariant {{ $labels.name }} failed on pod {{ $labels.pod }} - this is a defect, not an operator error; collect the agent state (curl -u $DATAPLANE_USERNAME:$DATAPLANE_PASSWORD http://localhost:5555/v1/state, run in the pod's agent container) and open an issue"
+              description: "Invariant {{ $labels.name }} failed on pod {{ $labels.pod }} - this is a defect, not an operator error; collect the agent state (haptic agent state --output json, run in the pod's agent container) and open an issue"
 
   - it: should include the agent version skew alert
     asserts:

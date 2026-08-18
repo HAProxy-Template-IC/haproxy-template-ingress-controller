@@ -84,7 +84,8 @@ func init() {
 		"Master CLI socket, used only for reload and show proc (relative to --base-dir unless absolute)")
 	agentCmd.Flags().StringVar(&agentWorkerSocket, "worker-socket", "haproxy-worker.sock",
 		"Worker stats socket that carries every runtime command (relative to --base-dir unless absolute)")
-	agentCmd.Flags().StringVar(&agentListen, "listen", ":5555",
+	// Persistent, because `agent state` reads the same endpoint this serves.
+	agentCmd.PersistentFlags().StringVar(&agentListen, "listen", ":5555",
 		"Address the apply and state API listens on")
 	agentCmd.Flags().StringVar(&agentMetricsListen, "metrics-listen", ":9101",
 		"Address the Prometheus endpoint listens on; empty disables it")
