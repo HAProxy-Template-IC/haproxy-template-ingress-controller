@@ -154,7 +154,7 @@ rate(haptic_reconciliation_duration_seconds_count[5m])
 | `haptic_deployment_duration_seconds` | Histogram | Time spent deploying to HAProxy |
 | `haptic_deployment_errors_total` | Counter | Failed deployments |
 | `haptic_haproxy_reloads_total` | Counter | HAProxy reloads triggered by deployments. A reload forks the HAProxy process; reload rate (vs runtime-API updates) is the canonical capacity and Service Level Objective (SLO) signal |
-| `haptic_agent_apply_total` | Counter | Applies the controller sent, by `pod` and by the `mode` the agent answered with: `runtime`, `file_only`, `reload`, `scheduled`, `noop` or `rejected` |
+| `haptic_agent_apply_total` | Counter | Applies an agent accepted, by `pod` and by the `mode` it reported: `runtime`, `file_only`, `reload`, `scheduled` or `noop`. The reload-free share of a rollout is the `runtime`+`file_only`+`noop` fraction |
 | `haptic_apply_rejected_total` | Counter | Applies an agent refused or rolled back, by `pod`. Every increment carries HAProxy's own message in a Warning event and the pod's status condition |
 | `haptic_agent_version_skew_total` | Counter | Applies degraded to full state plus a reload because the pod's agent speaks a different API major or doesn't execute an op kind. Nonzero during a rolling upgrade, zero after it |
 
@@ -223,9 +223,9 @@ that are in the pod's status.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `haptic_runtime_backend_ops_total` | Counter | `op` | Backend operations composed for the fleet: `add`, `publish`, `unpublish`, `del` |
-| `haptic_runtime_server_ops_total` | Counter | `op` | Server operations composed for the fleet: `add`, `set_addr`, `set_weight`, `set_state`, `enable`, `disable`, `del` |
-| `haptic_runtime_backend_delete_deferred_total` | Counter | — | Backend deletes an agent postponed because the running worker still had sessions on them |
+| `haptic_runtime_backend_ops_total` | Counter | `op` | Backend lifecycle operations the fleet applied at runtime, by op kind |
+| `haptic_runtime_server_ops_total` | Counter | `op` | Server lifecycle operations the fleet applied at runtime, by op kind |
+| `haptic_runtime_map_divergence_total` | Counter | `map` | Runtime maps whose post-apply read-back disagreed with the desired content, forcing a reload fallback. The `map` label names the file, so one map dominating the rate points at the template that builds it |
 
 **Key queries:**
 
@@ -253,7 +253,7 @@ what the agent did with an apply after it accepted it.
 | `haptic_agent_invariant_violations_total` | Counter | `name` | Invariants the agent observed failing. Any increment is a defect — alert on it |
 | `haptic_agent_deferred_deletes_total` | Counter | `kind`, `outcome` | Deferred runtime deletes, by object kind and whether they completed |
 | `haptic_agent_generation` | Gauge | — | The agent's apply generation, which increases by one per successful apply |
-| `haptic_runtime_map_divergence_total` | Counter | — | Read-backs that found the running state different from the desired one. The agent reloads itself and reports it; sustained growth means something outside HAPTIC is writing to the same HAProxy |
+| `haptic_runtime_map_divergence_total` | Counter | — | Read-backs that found the running state different from the desired one. Unlabelled here; the controller's counter of the same name carries a `map` label |
 
 **Key queries:**
 
@@ -268,9 +268,9 @@ sum by (stage) (rate(haptic_agent_apply_rejected_total[5m]))
 sum by (name) (increase(haptic_agent_invariant_violations_total[1h])) > 0
 ```
 
-`haptic_agent_apply_total` exists on both sides: the controller's carries a
-`pod` label and counts what it sent, the agent's counts what it did. Select the
-job to tell them apart.
+Two names exist on both sides: `haptic_agent_apply_total` (the controller's
+carries a `pod` label) and `haptic_runtime_map_divergence_total` (the
+controller's carries a `map` label). Select the job to tell them apart.
 
 ### Where the old metrics went
 
@@ -281,11 +281,7 @@ job to tell them apart.
 | `haptic_runtime_fast_path_applies_total` | `haptic_runtime_server_ops_total` |
 | `haptic_runtime_fast_path_failures_total` | `haptic_agent_op_errors_total{kind}` on the pod, `haptic_apply_rejected_total{pod}` on the controller |
 | `haptic_runtime_fast_path_server_updates_total` | `haptic_runtime_server_ops_total{op}` |
-| `haptic_deploy_runtime_divergence_total` | `haptic_runtime_map_divergence_total` — the agent reads back what its own ops wrote |
-
-`haptic_runtime_map_divergence_total` lost its `map` label: the read-back now
-runs inside the agent, which reports a divergence for the pod rather than for
-one file. Use the pod's `/v1/state` to name the file.
+| `haptic_deploy_runtime_divergence_total` | `haptic_runtime_map_divergence_total{map}`, which now also covers what the agent reads back after its own ops |
 
 ### Validation metrics
 
