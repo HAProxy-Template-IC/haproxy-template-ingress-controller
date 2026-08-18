@@ -215,16 +215,16 @@ sequenceDiagram
    file changed behind the controller's back shows up as a digest difference.
 2. The baseline is that applied plan. The controller keeps the plans the fleet
    still refers to; on a miss it decodes the opaque blob the pod stored, which
-   is what makes a leader change cost no reload. A blob it cannot vouch for —
+   is what makes a leader change cost no reload. A blob it can't vouch for —
    foreign schema version, wrong plan id — is no baseline at all.
 3. `deployplan.Diff` compares the render with the baseline and answers
    `runtime`, `file_only` or `reload`, with the reasons for each change it could
    not take at runtime. Pods reporting the same baseline share one answer.
 4. The manifest carries the complete desired file set at digest granularity and
-   a part only for a file the agent does not already hold; `haproxy.cfg` always
+   a part only for a file the agent doesn't already hold; `haproxy.cfg` always
    travels whole. Ops beyond `api.MaxOpsPerApply` are split into chunks, each
    fenced on what the previous chunk applied.
-5. The ACK reports what the pod applied and what it runs. Both land in
+5. The agent's answer reports what the pod applied and what it runs. Both land in
    `HAProxyCfg.status.deployedToPods[]`, together with the mode and the reasons.
 
 At most 16 pods are applied to concurrently, each bounded by `syncTimeout`.
@@ -232,7 +232,7 @@ At most 16 pods are applied to concurrently, each bounded by `syncTimeout`.
 **Fencing.** Every apply carries a token: the leader epoch — a counter on the
 leader Lease that each leadership term claims before it dispatches — and a
 per-term apply sequence. The agent accepts an apply only when the baseline it
-names is the one the pod has and the epoch is not older than the one it last
+names is the one the pod has and the epoch isn't older than the one it last
 accepted. The three refusals:
 
 | 409 reason | What it means | What the controller does |
@@ -243,7 +243,7 @@ accepted. The three refusals:
 
 A `409` listing missing file parts is answered by resending exactly those files.
 
-**Refusals.** An apply the agent judged and refused (a NACK) counts
+**Refusals.** An apply the agent judged and refused counts
 `haptic_apply_rejected_total{pod}`, reports HAProxy's own words through the
 pod's status, and drops that pod's baseline so its next apply is the complete
 state plus a reload. An agent speaking a different API major, or missing an op
@@ -254,7 +254,7 @@ refusal would fence the repair path.
 **Convergence.** A deployment's `Succeeded` count is the pods *running* the
 render: `applied_plan_id == desired`, the apply was accepted, and no reload is
 pending. A pod whose paced reload is still scheduled has the files on disk but
-does not serve them, so it is neither converged nor a failure.
+doesn't serve them, so it's neither converged nor a failure.
 
 **Pacing.** Reload pacing belongs to the agent (`--reload-interval-min`), which
 coalesces reloads without holding back applies that need none. The scheduler

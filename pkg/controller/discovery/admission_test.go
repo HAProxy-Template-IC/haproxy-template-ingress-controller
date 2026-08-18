@@ -33,14 +33,19 @@ import (
 
 // admissionFixture wires a component against a pod store holding one pod whose
 // agent endpoint is the fake's address.
-func admissionFixture(t *testing.T, agent *agenttest.Agent) (*Component, <-chan busevents.Event, types.Store, int) {
+func admissionFixture(t *testing.T, agent *agenttest.Agent) (
+	component *Component,
+	rejections <-chan busevents.Event,
+	podStore types.Store,
+	port int,
+) {
 	t.Helper()
 	address, err := net.ResolveTCPAddr("tcp", agent.URL()[len("http://"):])
 	require.NoError(t, err)
 
 	bus, _ := testutil.NewTestBusAndLogger()
-	component := createTestComponent(t, bus)
-	podStore := store.NewMemoryStore(2)
+	component = createTestComponent(t, bus)
+	podStore = store.NewMemoryStore(2)
 	component.SetPodStore(podStore)
 	component.mu.Lock()
 	component.dataplanePort = address.Port
@@ -54,7 +59,7 @@ func admissionFixture(t *testing.T, agent *agenttest.Agent) (*Component, <-chan 
 	component.discovery = &Discovery{dataplanePort: address.Port}
 	component.mu.Unlock()
 
-	rejections := bus.SubscribeTypes("admission-test", 20, events.EventTypeHAProxyPodRejected)
+	rejections = bus.SubscribeTypes("admission-test", 20, events.EventTypeHAProxyPodRejected)
 	bus.Start()
 	return component, rejections, podStore, address.Port
 }

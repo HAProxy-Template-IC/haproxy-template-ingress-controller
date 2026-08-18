@@ -67,7 +67,7 @@ func TestHandleEndpointFailure_PublishesFailureEventWithCorrelation(t *testing.T
 	state := &deploymentState{}
 
 	c.handleEndpointFailure(ep, errors.New(errMsg), 100,
-		scheduledEvent(runtimeNm, runtimeNs, "checksum-abc", corrID), state)
+		scheduledEvent(runtimeNm, runtimeNs, corrID), state)
 
 	failed := testutil.WaitForEvent[*events.InstanceDeploymentFailedEvent](
 		t, eventChan, testutil.LongTimeout)
@@ -114,7 +114,7 @@ func TestHandleEndpointFailure_PublishesAppliedEventWhenRuntimeConfigSet(t *test
 	state := &deploymentState{}
 
 	c.handleEndpointFailure(ep, errors.New("boom"), 100,
-		scheduledEvent("rt-cfg-1", "haptic", "checksum-abc", "corr-1"), state)
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
 	// Drain BOTH events. Order is implementation-defined within a
 	// single handler so use a typed wait for each.
@@ -155,7 +155,7 @@ func TestHandleEndpointFailure_NoAppliedEventWhenRuntimeConfigEmpty(t *testing.T
 
 	// Runtime config empty: the bootstrap window has no HAProxyCfg yet.
 	c.handleEndpointFailure(ep, errors.New("boom"), 100,
-		scheduledEvent("", "", "checksum-abc", "corr-1"), state)
+		scheduledEvent("", "", "corr-1"), state)
 
 	// InstanceDeploymentFailedEvent MUST still fire.
 	require.NotNil(t,

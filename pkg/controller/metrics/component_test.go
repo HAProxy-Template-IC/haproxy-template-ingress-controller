@@ -573,5 +573,4 @@ func TestMetrics_RuntimeMapDivergence(t *testing.T) {
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeMapDivergence.WithLabelValues("pod-names.map")))
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeMapDivergence.WithLabelValues("host.map")))
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.RuntimeMapDivergence.WithLabelValues("never-seen.map")))
-
 }

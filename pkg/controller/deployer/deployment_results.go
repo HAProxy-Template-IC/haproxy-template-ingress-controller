@@ -112,10 +112,9 @@ func (c *Component) handleEndpointSuccess(
 	if result.Reload != nil && result.Reload.Performed {
 		atomic.AddInt32(&state.reloadsTriggered, 1)
 	}
-	atomic.AddInt32(&state.totalOperations, int32(len(outcome.sent)))
-
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	state.totalOperations += len(outcome.sent)
 	for i := range outcome.sent {
 		state.operationBreakdown[outcome.sent[i].Kind]++
 	}
@@ -180,6 +179,7 @@ func (c *Component) publishCompleted(
 	for kind, count := range state.operationBreakdown {
 		breakdown[kind] = count
 	}
+	operations := state.totalOperations
 	state.mu.Unlock()
 
 	c.EventBus().Publish(events.NewDeploymentCompletedEvent(
@@ -190,7 +190,7 @@ func (c *Component) publishCompleted(
 			Failed:             int(atomic.LoadInt32(&state.failureCount)),
 			DurationMs:         durationMs,
 			ReloadsTriggered:   int(atomic.LoadInt32(&state.reloadsTriggered)),
-			TotalAPIOperations: int(atomic.LoadInt32(&state.totalOperations)),
+			TotalAPIOperations: operations,
 			StatusPatches:      event.StatusPatches,
 			ContentChecksum:    event.ContentChecksum,
 			PodSetHash:         podSetHash,

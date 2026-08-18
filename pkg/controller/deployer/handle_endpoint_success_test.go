@@ -60,7 +60,7 @@ func TestHandleEndpointSuccess_PublishesPodStatusWithPlanIdentity(t *testing.T) 
 	outcome := ackOutcome(api.ResultRuntime, true, api.Op{Kind: api.OpServerSetAddr})
 
 	c.handleEndpointSuccess(endpoint, outcome, 250,
-		scheduledEvent("rt-cfg-1", "haptic", "checksum-abc", "corr-1"), state)
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
 	applied := testutil.WaitForEvent[*events.ConfigAppliedToPodEvent](t, eventChan, testutil.LongTimeout)
 	require.NotNil(t, applied)
@@ -76,7 +76,7 @@ func TestHandleEndpointSuccess_PublishesPodStatusWithPlanIdentity(t *testing.T) 
 	assert.Equal(t, int32(1), atomic.LoadInt32(&state.ackCount))
 	assert.Equal(t, int32(1), atomic.LoadInt32(&state.convergedCount))
 	assert.Equal(t, int32(0), atomic.LoadInt32(&state.reloadsTriggered))
-	assert.Equal(t, int32(1), atomic.LoadInt32(&state.totalOperations))
+	assert.Equal(t, 1, state.totalOperations)
 }
 
 // A no-op apply still advances the pod's recorded checksum: the render's bytes
@@ -91,7 +91,7 @@ func TestHandleEndpointSuccess_PublishesPodStatusForANoop(t *testing.T) {
 	state := &deploymentState{operationBreakdown: map[string]int{}}
 
 	c.handleEndpointSuccess(endpoint, ackOutcome(api.ResultNoop, true), 50,
-		scheduledEvent("rt-cfg-1", "haptic", "checksum-abc", "corr-1"), state)
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
 	applied := testutil.WaitForEvent[*events.ConfigAppliedToPodEvent](t, eventChan, testutil.LongTimeout)
 	require.NotNil(t, applied)
@@ -109,7 +109,7 @@ func TestHandleEndpointSuccess_ScheduledReloadIsNotConverged(t *testing.T) {
 	state := &deploymentState{operationBreakdown: map[string]int{}}
 
 	c.handleEndpointSuccess(endpoint, ackOutcome(api.ResultScheduled, false), 50,
-		scheduledEvent("rt-cfg-1", "haptic", "checksum-abc", "corr-1"), state)
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
 	assert.Equal(t, int32(1), atomic.LoadInt32(&state.ackCount))
 	assert.Equal(t, int32(0), atomic.LoadInt32(&state.convergedCount),
@@ -129,7 +129,7 @@ func TestHandleEndpointSuccess_RecordsReferencedPlans(t *testing.T) {
 	outcome.result.WorkerOpsPlanID = "plan-1"
 
 	c.handleEndpointSuccess(endpoint, outcome, 50,
-		scheduledEvent("rt-cfg-1", "haptic", "checksum-abc", "corr-1"), state)
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
 	assert.Equal(t, []string{"plan-1", "plan-1", "plan-1"}, state.planRefs())
 	assert.Equal(t, int32(1), atomic.LoadInt32(&state.reloadsTriggered))
@@ -147,7 +147,7 @@ func TestHandleEndpointSuccess_NoPodStatusWithoutRuntimeConfig(t *testing.T) {
 	state := &deploymentState{operationBreakdown: map[string]int{}}
 
 	c.handleEndpointSuccess(endpoint, ackOutcome(api.ResultReload, true), 50,
-		scheduledEvent("", "", "checksum-abc", "corr-1"), state)
+		scheduledEvent("", "", "corr-1"), state)
 
 	testutil.AssertNoEvent[*events.ConfigAppliedToPodEvent](t, eventChan, testutil.NoEventTimeout)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&state.ackCount))
@@ -166,7 +166,7 @@ func TestHandleEndpointSuccess_RecordsApplyAndOpCounters(t *testing.T) {
 		api.Op{Kind: api.OpBackendAdd}, api.Op{Kind: api.OpServerAdd}, api.Op{Kind: api.OpServerAdd})
 
 	c.handleEndpointSuccess(endpoint, outcome, 50,
-		scheduledEvent("rt-cfg-1", "haptic", "checksum-abc", "corr-1"), state)
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
 	assert.Equal(t, 1.0, promtestutil.ToFloat64(
 		c.metrics.AgentApplyTotal.WithLabelValues("haproxy-0", api.ResultRuntime)))

@@ -140,10 +140,9 @@ func (c *Component) deployToEndpoints(
 
 	c.Logger().Debug("Deployment completed",
 		"total_endpoints", len(event.Endpoints),
-		"converged", state.convergedCount,
-		"failed", state.failureCount,
-		"reloads_triggered", state.reloadsTriggered,
-		"total_operations", state.totalOperations,
+		"converged", atomic.LoadInt32(&state.convergedCount),
+		"failed", atomic.LoadInt32(&state.failureCount),
+		"reloads_triggered", atomic.LoadInt32(&state.reloadsTriggered),
 		"duration_ms", time.Since(startTime).Milliseconds(),
 		"correlation_id", correlationID)
 
@@ -237,9 +236,9 @@ type deploymentState struct {
 	convergedCount   int32 // pods now running the render
 	failureCount     int32
 	reloadsTriggered int32
-	totalOperations  int32
 
 	mu                 sync.Mutex
+	totalOperations    int
 	operationBreakdown map[string]int
 	referencedPlans    []string
 	stoodDown          bool

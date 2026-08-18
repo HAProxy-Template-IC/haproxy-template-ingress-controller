@@ -44,13 +44,13 @@ func newDiffMemo() *diffMemo {
 
 // get returns the decision for this key, computing it on first sight. The
 // answer is read-only: every pod that shares the key shares the slices in it.
-func (m *diffMemo) get(key diffKey, compute func() deployplan.Decision) deployplan.Decision {
+func (m *diffMemo) get(key *diffKey, compute func() deployplan.Decision) deployplan.Decision {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if decision, known := m.answers[key]; known {
+	if decision, known := m.answers[*key]; known {
 		return decision
 	}
 	decision := compute()
-	m.answers[key] = decision
+	m.answers[*key] = decision
 	return decision
 }

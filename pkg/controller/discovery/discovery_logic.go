@@ -195,7 +195,7 @@ func (c *Component) admitOne(ctx context.Context, endpoint *dataplane.Endpoint) 
 		return RejectionAgentUnreachable
 	}
 	identity := endpointIdentityOf(endpoint)
-	if version, known := c.admittedVersion(identity); known {
+	if version, known := c.admittedVersion(&identity); known {
 		applyHAProxyVersion(endpoint, version)
 		return ""
 	}
@@ -207,7 +207,7 @@ func (c *Component) admitOne(ctx context.Context, endpoint *dataplane.Endpoint) 
 		return RejectionAgentUnreachable
 	}
 
-	c.recordAdmission(identity, state.HAProxy.Version)
+	c.recordAdmission(&identity, state.HAProxy.Version)
 	applyHAProxyVersion(endpoint, state.HAProxy.Version)
 	c.Logger().Info("Pod admitted",
 		"pod", endpoint.PodName,
@@ -234,17 +234,17 @@ func (c *Component) probeAgent(ctx context.Context, endpoint *dataplane.Endpoint
 	return client.State(ctx, false)
 }
 
-func (c *Component) admittedVersion(identity endpointIdentity) (string, bool) {
+func (c *Component) admittedVersion(identity *endpointIdentity) (string, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	version, known := c.admitted[identity]
+	version, known := c.admitted[*identity]
 	return version, known
 }
 
-func (c *Component) recordAdmission(identity endpointIdentity, version string) {
+func (c *Component) recordAdmission(identity *endpointIdentity, version string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.admitted[identity] = version
+	c.admitted[*identity] = version
 }
 
 // cleanupRemovedPods drops admissions for identities that are no longer

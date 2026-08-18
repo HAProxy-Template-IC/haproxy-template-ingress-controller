@@ -33,9 +33,9 @@ type deployerBus struct {
 func newTestBus(t *testing.T) *deployerBus {
 	t.Helper()
 	bus := testutil.NewTestBus()
-	events := bus.Subscribe("deployer-test", 200)
+	published := bus.Subscribe("deployer-test", 200)
 	bus.Start()
-	return &deployerBus{EventBus: bus, Events: events}
+	return &deployerBus{EventBus: bus, Events: published}
 }
 
 // oneEndpoint is the single-pod fleet the scheduler tests dispatch against.
@@ -50,10 +50,10 @@ func depFor(endpoints []dataplane.Endpoint) *scheduledDeployment {
 
 // scheduledEvent builds the deploy event the per-pod handlers read their
 // target identity, checksum and correlation from.
-func scheduledEvent(runtimeConfigName, runtimeConfigNamespace, checksum, correlationID string) *events.DeploymentScheduledEvent {
+func scheduledEvent(runtimeConfigName, runtimeConfigNamespace, correlationID string) *events.DeploymentScheduledEvent {
 	return events.NewDeploymentScheduledEvent(
 		"config", nil, nil, oneEndpoint(),
-		runtimeConfigName, runtimeConfigNamespace, "config_validation", checksum,
+		runtimeConfigName, runtimeConfigNamespace, "config_validation", "checksum-abc",
 		nil, "", nil, true,
 		events.WithCorrelation(correlationID, correlationID))
 }

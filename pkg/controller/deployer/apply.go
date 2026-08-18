@@ -266,7 +266,7 @@ func (r *deployRequest) decisionFor(state *api.State, plans *planCache) deploypl
 		PendingBackendDeletes: len(state.PendingDeletes.Backends),
 		ReloadPending:         state.ReloadPendingAt != "",
 	}
-	return r.diffs.get(diffKey{
+	return r.diffs.get(&diffKey{
 		applied:       baselineID(baseline.Applied),
 		running:       state.RunningPlanID,
 		workerOps:     state.WorkerOpsPlanID,
