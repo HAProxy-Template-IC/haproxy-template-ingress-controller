@@ -151,28 +151,29 @@ func TestFencing(t *testing.T) {
 	baseline := api.Token{LeaderEpoch: 1, RenderSeq: 1}
 
 	tests := []struct {
-		name       string
-		mutate     func(*api.Manifest)
-		wantReason string
+		name        string
+		mutate      func(*api.Manifest)
+		wantReason  string
+		wantApplied string
 	}{
-		{"matching baseline", func(*api.Manifest) {}, ""},
-		{"newer leader epoch", func(m *api.Manifest) {
+		{name: "matching baseline", mutate: func(*api.Manifest) {}, wantApplied: "plan-2"},
+		{name: "newer leader epoch", mutate: func(m *api.Manifest) {
 			m.Token = api.Token{LeaderEpoch: 2, RenderSeq: 1}
-		}, ""},
-		{"stale plan id", func(m *api.Manifest) {
+		}, wantApplied: "plan-2"},
+		{name: "stale plan id", mutate: func(m *api.Manifest) {
 			m.ExpectedPrevPlanID = "plan-0"
-		}, "prev_mismatch"},
-		{"stale render seq", func(m *api.Manifest) {
+		}, wantReason: "prev_mismatch"},
+		{name: "stale render seq", mutate: func(m *api.Manifest) {
 			m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 99}
-		}, "prev_mismatch"},
-		{"older leader epoch", func(m *api.Manifest) {
+		}, wantReason: "prev_mismatch"},
+		{name: "older leader epoch", mutate: func(m *api.Manifest) {
 			m.Token = api.Token{LeaderEpoch: 0, RenderSeq: 5}
 			m.ExpectedPrevToken = api.Token{LeaderEpoch: 0, RenderSeq: 4}
-		}, "stale_epoch"},
-		{"in-place ops against a stale worker baseline", func(m *api.Manifest) {
-			m.ExpectedWorkerOpsPlanID = "plan-0"
-			m.InPlaceOps = []api.Op{{Kind: api.OpMapSet, Path: "maps/host.map", Key: "a", Value: "b"}}
-		}, "prev_mismatch"},
+		}, wantReason: "stale_epoch"},
+		{name: "a revert is fenced by the epoch alone", mutate: func(m *api.Manifest) {
+			m.Mode = api.ModeRevertLKG
+			m.ExpectedPrevPlanID = "plan-from-another-life"
+		}, wantApplied: "plan-1"},
 	}
 
 	for _, tt := range tests {
@@ -194,7 +195,7 @@ func TestFencing(t *testing.T) {
 			_, err := c.Apply(context.Background(), m, parts, nil)
 			if tt.wantReason == "" {
 				require.NoError(t, err)
-				assert.Equal(t, "plan-2", agent.State().AppliedPlanID)
+				assert.Equal(t, tt.wantApplied, agent.State().AppliedPlanID)
 				return
 			}
 			var conflict *client.ConflictError
@@ -301,6 +302,89 @@ func TestPendingReloadCoalescesAndRunsOnlyInPlaceOps(t *testing.T) {
 	applies := agent.Applies()
 	require.Len(t, applies, 2)
 	assert.Len(t, applies[1].Manifest.InPlaceOps, 1)
+}
+
+// TestInPlaceOpsOnAStaleWorkerBaselineAreNotAConflict pins the shape the real
+// agent answers with: the files land, the apply is scheduled, and the error
+// invalidates the pod instead of coming back as a 409 the caller would retry.
+func TestInPlaceOpsOnAStaleWorkerBaselineAreNotAConflict(t *testing.T) {
+	t.Parallel()
+	agent := agenttest.New(t)
+	c := newClient(t, agent)
+	seed(t, c)
+	agent.SetReloadPending(true)
+
+	m, parts := build("plan-2", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 2}, map[string]string{
+		"haproxy.cfg":   "global\n  nbthread 4\n",
+		"maps/host.map": "example.com be-1\n",
+	})
+	m.ExpectedPrevPlanID = "plan-1"
+	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
+	m.ExpectedWorkerOpsPlanID = "plan-from-another-life"
+	m.InPlaceOps = []api.Op{{Kind: api.OpMapSet, Path: "maps/host.map", Key: "a", Value: "b"}}
+
+	result, err := c.Apply(context.Background(), m, parts, nil)
+	require.NoError(t, err)
+	assert.True(t, result.OK)
+	assert.Equal(t, api.ResultScheduled, result.Mode)
+	require.NotNil(t, result.Error)
+	assert.Equal(t, "in_place", result.Error.Stage)
+	assert.Empty(t, result.OpResults, "the batch never reached the worker")
+
+	state := agent.State()
+	assert.Empty(t, state.AppliedPlanID, "the next apply must be full state plus a reload")
+	assert.Empty(t, state.WorkerOpsPlanID)
+	assert.Equal(t, "global\n  nbthread 4\n", string(agent.Applies()[1].Parts["haproxy.cfg"]))
+	assert.Equal(t, renderplan.DigestString("global\n  nbthread 4\n"), state.Files["haproxy.cfg"].Digest)
+}
+
+// TestScheduledApplyWithoutInPlaceOpsKeepsTheWorkerBaseline pins that nothing
+// but an executed batch moves the worker-ops plan id, which is what the next
+// in-place apply is fenced against.
+func TestScheduledApplyWithoutInPlaceOpsKeepsTheWorkerBaseline(t *testing.T) {
+	t.Parallel()
+	agent := agenttest.New(t)
+	c := newClient(t, agent)
+	seed(t, c)
+	agent.SetReloadPending(true)
+
+	m, parts := build("plan-2", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 2}, map[string]string{
+		"haproxy.cfg":   "global\n  nbthread 4\n",
+		"maps/host.map": "example.com be-1\n",
+	})
+	m.ExpectedPrevPlanID = "plan-1"
+	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
+
+	result, err := c.Apply(context.Background(), m, parts, nil)
+	require.NoError(t, err)
+	assert.Equal(t, api.ResultScheduled, result.Mode)
+	assert.Equal(t, "plan-2", result.AppliedPlanID)
+	assert.Equal(t, "plan-1", result.WorkerOpsPlanID, "no in-place op ran, so the worker is where it was")
+	require.NotNil(t, result.Reload)
+	assert.Equal(t, agent.State().ReloadPendingAt, result.Reload.ScheduledAt)
+}
+
+// TestMissingPartsAreResolvedByPath pins that holding a digest under one path
+// does not satisfy another: the agent stores files by path, so the deployer's
+// resend loop has to run for a new path with familiar bytes.
+func TestMissingPartsAreResolvedByPath(t *testing.T) {
+	t.Parallel()
+	agent := agenttest.New(t)
+	c := newClient(t, agent)
+	seed(t, c)
+
+	m, _ := build("plan-2", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 2}, map[string]string{
+		"haproxy.cfg":    "global\n",
+		"maps/host.map":  "example.com be-1\n",
+		"maps/other.map": "example.com be-1\n",
+	})
+	m.ExpectedPrevPlanID = "plan-1"
+	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
+
+	_, err := c.Apply(context.Background(), m, nil, nil)
+	var missing *client.MissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Equal(t, []string{"maps/other.map"}, missing.Missing)
 }
 
 func TestRejectedOpNACKsAndInvalidatesTheBaseline(t *testing.T) {

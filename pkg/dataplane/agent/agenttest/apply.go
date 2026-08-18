@@ -135,26 +135,27 @@ func (a *Agent) apply(req *applyRequest) outcome {
 		return a.nack(m, "verify", fmt.Sprintf("part %q does not match its manifest digest", path))
 	}
 	a.promoteLKG(m)
-	switch m.Mode {
-	case api.ModeRevertLKG:
+	if m.Mode == api.ModeRevertLKG {
 		return a.revertLKG(m)
-	case api.ModeReload:
-		return a.reload(req)
-	default:
-		return a.auto(req)
 	}
+	return a.transact(req)
 }
 
+// fence is the write gate, and the only three reasons an apply is answered with
+// a 409. The worker-ops baseline is not one of them: it guards the in-place
+// batch, which is answered after the files have landed.
 func (a *Agent) fence(m *api.Manifest) *api.Conflict {
 	switch {
 	case m.Token.LeaderEpoch < a.state.AppliedToken.LeaderEpoch:
 		return a.conflict("stale_epoch")
-	case m.ExpectedPrevPlanID != a.state.AppliedPlanID || m.ExpectedPrevToken != a.state.AppliedToken:
+	case m.Mode == api.ModeRevertLKG:
+		// A revert carries no usable baseline: it targets the LKG by definition.
+	case m.ExpectedPrevPlanID != a.state.AppliedPlanID:
 		if a.state.AppliedPlanID == "" {
 			return a.conflict("unknown_baseline")
 		}
 		return a.conflict("prev_mismatch")
-	case len(m.InPlaceOps) > 0 && m.ExpectedWorkerOpsPlanID != a.state.WorkerOpsPlanID:
+	case m.ExpectedPrevToken != a.state.AppliedToken:
 		return a.conflict("prev_mismatch")
 	}
 	return nil
@@ -171,17 +172,21 @@ func (a *Agent) conflict(reason string) *api.Conflict {
 	}
 }
 
+// missingParts names the files whose content the agent does not hold. It is a
+// per-path question, not a content-addressed one: a new path whose bytes match
+// an existing file is still missing, because the agent stores files by path.
 func (a *Agent) missingParts(req *applyRequest) []string {
 	var missing []string
 	for _, f := range req.manifest.Files {
 		if _, sent := req.parts[f.Path]; sent {
 			continue
 		}
-		if _, held := a.blobs[f.Digest]; held {
+		if at, held := a.state.Files[f.Path]; held && at.Digest == f.Digest {
 			continue
 		}
 		missing = append(missing, f.Path)
 	}
+	slices.Sort(missing)
 	return missing
 }
 
@@ -210,16 +215,17 @@ func (a *Agent) promoteLKG(m *api.Manifest) {
 	a.lkgFiles = maps.Clone(a.state.Files)
 }
 
-func (a *Agent) auto(req *applyRequest) outcome {
+// transact writes the files and then decides, in the order the real agent does:
+// a reload already waiting takes precedence over the mode the manifest asks
+// for, because the worker it would target is on its way out.
+func (a *Agent) transact(req *applyRequest) outcome {
 	m := &req.manifest
 	changed := a.storeFiles(req)
-	if a.reloadPending {
-		if kind := a.firstRejected(m.InPlaceOps); kind != "" {
-			return a.rejectOps(m, kind)
-		}
-		a.advance(m)
-		return a.ack(m, api.ResultScheduled, m.InPlaceOps,
-			&api.ReloadInfo{ScheduledAt: fixedTimestamp})
+	switch {
+	case a.reloadPending:
+		return a.scheduled(m)
+	case m.Mode == api.ModeReload:
+		return a.reload(m)
 	}
 	if kind := a.firstRejected(m.Ops); kind != "" {
 		return a.rejectOps(m, kind)
@@ -235,12 +241,44 @@ func (a *Agent) auto(req *applyRequest) outcome {
 	return a.ack(m, mode, m.Ops, nil)
 }
 
-func (a *Agent) reload(req *applyRequest) outcome {
-	m := &req.manifest
-	a.storeFiles(req)
+// scheduled coalesces the apply into the reload already waiting: the files land
+// and only the in-place ops run. They advance the worker-ops baseline only when
+// they actually executed, and anything that leaves the worker unexplained
+// invalidates the pod instead of forcing a second reload.
+func (a *Agent) scheduled(m *api.Manifest) outcome {
+	reload := &api.ReloadInfo{ScheduledAt: a.state.ReloadPendingAt}
+	if len(m.InPlaceOps) == 0 {
+		a.advance(m)
+		return a.ack(m, api.ResultScheduled, nil, reload)
+	}
+	if m.ExpectedWorkerOpsPlanID != a.state.WorkerOpsPlanID {
+		return a.invalidate(m, reload, "in-place ops were composed against a different worker baseline")
+	}
+	if kind := a.firstRejected(m.InPlaceOps); kind != "" {
+		return a.invalidate(m, reload, kind+": command rejected by HAProxy")
+	}
+	a.advance(m)
+	a.state.WorkerOpsPlanID = m.PlanID
+	return a.ack(m, api.ResultScheduled, m.InPlaceOps, reload)
+}
+
+// invalidate answers an in-place batch the worker did not take: an ACK that
+// names the stage and clears the baseline, so the next apply is full state plus
+// a reload. The applied token stays where it was, because this plan is not it.
+func (a *Agent) invalidate(m *api.Manifest, reload *api.ReloadInfo, message string) outcome {
+	a.state.Generation++
+	a.state.AppliedPlanID = ""
+	a.state.WorkerOpsPlanID = ""
+	out := a.ack(m, api.ResultScheduled, nil, reload)
+	out.result.Error = &api.ApplyError{Stage: "in_place", Message: message}
+	return out
+}
+
+func (a *Agent) reload(m *api.Manifest) outcome {
 	a.performReload()
 	a.advance(m)
 	a.state.RunningPlanID = m.PlanID
+	a.state.WorkerOpsPlanID = m.PlanID
 	a.state.LKGPlanID = m.PlanID
 	a.lkgFiles = maps.Clone(a.state.Files)
 	return a.ack(m, api.ResultReload, nil, &api.ReloadInfo{
@@ -286,12 +324,12 @@ func (a *Agent) firstRejected(ops []api.Op) string {
 }
 
 // advance commits the applied baseline. Generation is strictly +1 per
-// successful apply, which a test can assert.
+// successful apply, which a test can assert. The worker-ops baseline is not
+// part of it: only a reload or an executed in-place batch moves that.
 func (a *Agent) advance(m *api.Manifest) {
 	a.state.Generation++
 	a.state.AppliedPlanID = m.PlanID
 	a.state.AppliedToken = m.Token
-	a.state.WorkerOpsPlanID = m.PlanID
 }
 
 // storeFiles replaces the held set with the manifest's — the manifest is the
@@ -304,9 +342,6 @@ func (a *Agent) storeFiles(req *applyRequest) bool {
 		// Kinds accumulate rather than replace, so a revert to the LKG set
 		// still classifies paths this manifest happens not to carry.
 		a.kinds[f.Path] = f.Kind
-		if content, sent := req.parts[f.Path]; sent {
-			a.blobs[f.Digest] = content
-		}
 	}
 	if len(req.plan) > 0 {
 		a.state.AppliedPlan = req.plan

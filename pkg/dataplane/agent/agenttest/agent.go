@@ -64,7 +64,6 @@ type Agent struct {
 
 	mu            sync.Mutex
 	state         api.State
-	blobs         map[string][]byte
 	kinds         map[string]string
 	lkgFiles      map[string]api.FileAt
 	reloadPending bool
@@ -109,7 +108,6 @@ func New(tb testing.TB, opts ...Option) *Agent {
 	a := &Agent{
 		username:    DefaultUsername,
 		password:    DefaultPassword,
-		blobs:       map[string][]byte{},
 		kinds:       map[string]string{},
 		rejectedOps: map[string]struct{}{},
 		state: api.State{
