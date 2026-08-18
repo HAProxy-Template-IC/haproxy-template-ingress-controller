@@ -251,10 +251,11 @@ func TestPlanRegistryPlan(t *testing.T) {
 	config, _, err := registry.Assemble(context.Background(), rendered, nil)
 	require.NoError(t, err)
 
-	plan := registry.Plan(config, &dataplane.AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{
+	plan, err := registry.Plan(config, &dataplane.AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{
 		{Path: "host.map", Content: "example.com be_app\nexample.com be_app2\n"},
 		{Path: "other.map", Content: "# empty\n"},
 	}})
+	require.NoError(t, err)
 
 	assert.Equal(t, renderplan.SchemaVersion, plan.SchemaVersion)
 	assert.Len(t, plan.ID, 16)
@@ -286,12 +287,13 @@ func TestPlanRegistryPlanPathsAreConfigReferences(t *testing.T) {
 	})
 	require.NoError(t, registry.MapMeta("host.map", false))
 
-	plan := registry.Plan("global\n", &dataplane.AuxiliaryFiles{
+	plan, err := registry.Plan("global\n", &dataplane.AuxiliaryFiles{
 		MapFiles:        []auxiliaryfiles.MapFile{{Path: "host.map", Content: "a b\n"}},
 		SSLCertificates: []auxiliaryfiles.SSLCertificate{{Path: "api.example.com.pem"}, {Path: "ssl/other_pem.pem"}},
 		CRTListFiles:    []auxiliaryfiles.CRTListFile{{Path: "general/list.txt"}},
 		GeneralFiles:    []auxiliaryfiles.GeneralFile{{Path: "general/503.http"}},
 	})
+	require.NoError(t, err)
 
 	paths := make([]string, 0, len(plan.Files))
 	for _, file := range plan.Files {
@@ -303,7 +305,43 @@ func TestPlanRegistryPlanPathsAreConfigReferences(t *testing.T) {
 	require.Contains(t, plan.Maps, "maps/host.map")
 	assert.Equal(t, "maps/host.map", plan.Maps["maps/host.map"].Path)
 	assert.False(t, plan.Maps["maps/host.map"].Ordered, "meta declared by the bare name applies to the resolved path")
-	assert.Equal(t, "maps/host.map", registry.MapPath("host.map"))
+	resolved, err := registry.MapPath("host.map")
+	require.NoError(t, err)
+	assert.Equal(t, "maps/host.map", resolved)
+}
+
+// A resolved path resolves to itself, for every kind: the registry resolves a
+// map's path once in MapMeta and again in Plan, and a certificate name may
+// arrive already sanitised from the file registry.
+func TestPlanRegistryFilePathIsIdempotent(t *testing.T) {
+	registry := NewPlanRegistry(&templating.PathResolver{
+		BaseDir: "/etc/haproxy", MapsDir: "maps", SSLDir: "ssl", CRTListDir: "general", GeneralDir: "general",
+	})
+	for _, tc := range []struct{ kind, name string }{
+		{"map", "host.map"}, {"map", "maps/host.map"},
+		{"cert", "api.example.com.pem"}, {"cert", "ssl/api_example_com.pem"},
+		{"crt-list", "list.txt"}, {"crt-list", "general/list.txt"},
+	} {
+		once, err := registry.filePath(tc.name, tc.kind)
+		require.NoError(t, err, tc.name)
+		twice, err := registry.filePath(once, tc.kind)
+		require.NoError(t, err, once)
+		assert.Equal(t, once, twice, "%s %q", tc.kind, tc.name)
+	}
+}
+
+// A name the resolver refuses is an error, never a plan with an unresolved
+// path that no runtime name would match.
+func TestPlanRegistryPlanRefusesAnUnresolvableName(t *testing.T) {
+	registry := NewPlanRegistry(&templating.PathResolver{
+		BaseDir: "/etc/haproxy", MapsDir: "maps", SSLDir: "ssl", CRTListDir: "general", GeneralDir: "general",
+	})
+	_, err := registry.Plan("global\n", &dataplane.AuxiliaryFiles{
+		MapFiles: []auxiliaryfiles.MapFile{{Path: "../escape.map", Content: "a b\n"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escape.map")
+	require.Error(t, registry.MapMeta("../escape.map", false))
 }
 
 func TestPlanRegistryPlanCurrentConfigRoundTrip(t *testing.T) {
@@ -316,7 +354,9 @@ func TestPlanRegistryPlanCurrentConfigRoundTrip(t *testing.T) {
 	_, _, err = registry.Assemble(context.Background(), token, nil)
 	require.NoError(t, err)
 
-	current := registry.Plan("", nil).CurrentConfig()
+	plan, err := registry.Plan("", nil)
+	require.NoError(t, err)
+	current := plan.CurrentConfig()
 
 	require.Contains(t, current.ServerIndex, "be_app")
 	server := current.ServerIndex["be_app"]["SRV_1"]

@@ -62,7 +62,8 @@ func TestRenderMainAssemblesDeclaredBackends(t *testing.T) {
 	assert.Equal(t, []string{"core#0", "be_a", "be_b"}, namesOf(main.Sections))
 	assertConfigPartitioned(t, main.Config, main.Sections)
 
-	plan := registry.Plan("", nil)
+	plan, err := registry.Plan("", nil)
+	require.NoError(t, err)
 	require.Len(t, plan.Backends, 2)
 	assert.Equal(t, renderplan.ShapeStructural, plan.Backends["be_a"].Shape)
 	assert.Equal(t, renderplan.DigestString("backend be_b\n    server SRV_1 10.0.0.2:8080\n"),
@@ -112,7 +113,9 @@ func TestRenderMainWithoutDeclarationsIsUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, source, main.Config, "a chart that declares nothing renders byte-identically")
 	assert.Equal(t, []string{"core#0"}, namesOf(main.Sections))
-	assert.Len(t, registry.Plan("", nil).Sections, 1)
+	plan, err := registry.Plan("", nil)
+	require.NoError(t, err)
+	assert.Len(t, plan.Sections, 1)
 }
 
 func assertConfigPartitioned(t *testing.T, config string, sections []renderplan.Section) {

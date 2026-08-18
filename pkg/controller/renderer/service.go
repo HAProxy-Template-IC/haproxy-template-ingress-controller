@@ -339,7 +339,10 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, collectorErr)
 	}
 
-	plan := bctx.PlanRegistry.Plan(haproxyConfig, auxiliaryFiles)
+	plan, err := bctx.PlanRegistry.Plan(haproxyConfig, auxiliaryFiles)
+	if err != nil {
+		return nil, fmt.Errorf("building the render plan: %w", err)
+	}
 	s.rememberPlan(mode, plan)
 
 	result := &RenderResult{

@@ -383,7 +383,9 @@ func renderSynthetic(t *testing.T, source string, mapContents map[string]string)
 	for _, name := range sortedKeys(mapContents) {
 		aux.MapFiles = append(aux.MapFiles, auxiliaryfiles.MapFile{Path: name, Content: mapContents[name]})
 	}
-	return main.Config, registry.Plan(main.Config, aux)
+	plan, err := registry.Plan(main.Config, aux)
+	require.NoError(t, err)
+	return main.Config, plan
 }
 
 // backendTemplate is a main template that declares one backend as data and
