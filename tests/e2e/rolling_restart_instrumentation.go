@@ -104,7 +104,7 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	// Cluster-wide CPU/memory utilization at failure time (requires
 	// metrics-server, installed by TestMain). This is the load-bearing data
 	// for answering which component was actually CPU-pegged when the 503
-	// fired — the controller (render→deploy), the dataplane (SRV apply),
+	// fired — the controller (render→deploy), the agent (server apply),
 	// HAProxy, or the kube control plane — instead of inferring it from
 	// resource requests. Sorted by CPU so the hottest pod is first.
 	s.dumpCommand(dir, "top-pods-all-namespaces.txt",
@@ -785,7 +785,7 @@ crictl inspect $CONT | grep -m1 '"pid"' | sed 's/.*: //; s/,//; s/ //g'`,
 		// Filter:
 		//   - tcp port 80 / 8080 / 8443: backend traffic (echo-server,
 		//     haproxy-demo-backend, ssl backends)
-		//   - tcp port 5555: dataplane API on this same pod (so haptic's
+		//   - tcp port 5555: the agent on this same pod (so haptic's
 		//     own pushes are visible if they're contributing to the
 		//     contention)
 		//   - icmp: ARP misses / unreachables
