@@ -607,7 +607,8 @@ controller:
       # haproxy.ports.dataplane so the client and managed sidecar cannot drift.
       # Minimum time between reload-inducing (structural) deployments. With the
       # bundled fleet this same value paces the agent's reloads
-      # (--reload-interval-min), so the two cannot drift.
+      # (--reload-interval-min), so the two cannot drift. The agent accepts at
+      # most 60s and exits at startup above it, so the chart fails the render.
       # A new or changed Ingress / Gateway route reloads HAProxy at most
       # once per this interval; bursts coalesce (latest-wins) into the
       # next window. This deliberately does NOT gate endpoint changes:

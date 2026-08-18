@@ -9,7 +9,7 @@ User-facing queries, alerting rules, and dashboard templates live in [`docs/site
 
 ## Complete Metric Catalogue
 
-All names are listed exactly as exported. `metrics.go` contains the authoritative list; the `TestMetrics_AllMetricsRegistered` assertion in `metrics_test.go` covers a representative subset (~12 of 32) — extend that slice when you add or rename a metric.
+All names are listed exactly as exported. `metrics.go` contains the authoritative list; the `TestMetrics_AllMetricsRegistered` assertion in `metrics_test.go` covers a representative subset (17 of 36) — extend that slice when you add or rename a metric.
 
 ### Reconciliation pipeline
 
@@ -28,7 +28,9 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 | `haptic_deployment_errors_total` | counter | — | Deployments that failed |
 | `haptic_deployment_duration_seconds` | histogram | — | Deployment duration, aggregated across all parallel endpoint calls |
 | `haptic_haproxy_reloads_total` | counter | — | HAProxy reloads triggered by deployments. A reload forks the HAProxy process; reload rate (vs runtime-API updates) is the key capacity/SLO signal |
-| `haptic_dataplane_api_operations_total` | counter | — | DataPlane API operations issued across deployments (structural changes applied to HAProxy) |
+| `haptic_deploy_apply_total` | counter | `pod`, `mode` | Applies an agent accepted, by the mode it reported: `runtime`, `file_only`, `reload`, `scheduled` or `noop`. The reload-free share of a rollout is the `runtime`+`file_only`+`noop` fraction |
+| `haptic_apply_rejected_total` | counter | `pod` | Applies an agent refused. The pod keeps its previous config and its next apply carries the complete file set plus a reload |
+| `haptic_agent_version_skew_total` | counter | — | Applies degraded to full state plus a reload because the pod's agent speaks another API major or lacks an op kind. Nonzero during a rolling upgrade, zero after it |
 
 ### Fleet convergence & config staleness
 
@@ -41,18 +43,17 @@ Leader-only gauges (only the leader deploys). Followers reset them on leadership
 | `haptic_last_full_sync_timestamp_seconds` | gauge | — | Unix seconds of the last full-fleet sync (`Succeeded == Total > 0`); seeded to controller start time. Staleness = `time() - <this>` |
 | `haptic_deployment_consecutive_failures` | gauge | — | Consecutive deploys that did not fully converge; +1 on any `Failed > 0`, reset to 0 on a full sync |
 
-### Runtime-eligible fast path
+### Runtime operations
+
+What the controller asked the fleet to run without a reload. A change the render couldn't express as a runtime op is a reload.
 
 | Metric | Type | Labels | What it tracks |
 |--------|------|--------|----------------|
-| `haptic_runtime_fast_path_fires_total` | counter | — | Fast-path attempts (one per HAProxy pod per reconcile) |
-| `haptic_runtime_fast_path_applies_total` | counter | — | Attempts that applied ≥1 runtime-eligible server update |
-| `haptic_runtime_fast_path_failures_total` | counter | — | Attempts that errored (best-effort; the scheduled deploy converges) |
-| `haptic_runtime_fast_path_server_updates_total` | counter | — | Runtime-eligible server updates applied via the fast path |
+| `haptic_runtime_backend_ops_total` | counter | `op` | Backend lifecycle operations the fleet applied at runtime, by op kind |
+| `haptic_runtime_server_ops_total` | counter | `op` | Server lifecycle operations the fleet applied at runtime, by op kind |
 | `haptic_runtime_map_divergence_total` | counter | `map` | Runtime maps whose post-apply read-back disagreed with the desired content, forcing a reload fallback |
-| `haptic_deploy_runtime_divergence_total` | counter | — | Endpoints whose post-reload read-back found the on-disk config structurally diverged from the pushed body (a concurrent writer clobbered a just-activated config; the deploy retry self-heals it) |
 
-`applies_total` flat at 0 while `fires_total` climbs means the fast path runs but finds no runtime-eligible change to apply (the deploy is keeping pods current) — the signal that separates a healthy-but-idle fast path from a broken one.
+Each agent also exports its own view on the pod's `agent-metrics` port; [monitoring.md](../../../docs/site/docs/operations/monitoring.md) lists those and maps every metric this cutover removed to its replacement.
 
 ### Config validation
 

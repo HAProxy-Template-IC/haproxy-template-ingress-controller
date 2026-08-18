@@ -565,7 +565,7 @@ Connection and pacing settings for the agent in each HAProxy pod. The block keep
 | `driftPreventionInterval` | string | No | `60s` |
 | `deploymentTimeout` | string | No | `30s` |
 | `configPublishInterval` | string | No | `10s` |
-| `reloadVerificationTimeout` | string | No | `10s` |
+| `reloadVerificationTimeout` | string | No | `60s` (the agent's ceiling, which is also its maximum) |
 | `syncTimeout` | string | No | `2m` |
 | `mapsDir` | string | No | `/etc/haproxy/maps` |
 | `sslCertsDir` | string | No | `/etc/haproxy/certs` (the Helm chart sets `/etc/haproxy/ssl`) |
@@ -579,7 +579,9 @@ dataplane:
   driftPreventionInterval: 60s
 ```
 
-The three `*Dir` paths are used by the controller's local `haproxy -c` validation step as well as for rendering the paths the configuration references — they must match where the HAProxy pod mounts each directory. The Helm chart keeps them in sync by deriving both sides from a single set of chart values. For tuning guidance on the interval fields, see [Performance — Deployment Pacing](./operations/performance.md#deployment-pacing).
+The three `*Dir` paths are used by the controller's local `haproxy -c` validation step as well as for rendering the paths the configuration references — they must match where the HAProxy pod mounts each directory. The Helm chart keeps them in sync by deriving both sides from a single set of chart values.
+
+`minDeploymentInterval` and `reloadVerificationTimeout` also become agent flags whenever the chart deploys the HAProxy fleet. The agent rejects either above `60s` and exits at startup, so the chart fails the render instead. For tuning guidance on the interval fields, see [Performance — Deployment Pacing](./operations/performance.md#deployment-pacing).
 
 ## Status Subresource
 

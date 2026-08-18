@@ -295,7 +295,7 @@ endif
 test-agent-docker: ## Run the agent docker suite (real HAProxy + agent containers, no cluster)
 	@echo "Running agent docker tests against HAProxy $(HAPROXY_VERSION)..."
 	@# The suite builds the haptic binary itself and lays it into the HAProxy
-	@# image; HAPTIC_BINARY points it at a prebuilt one instead (CI artifact).
+	@# image; HAPTIC_BINARY points it at a prebuilt one instead.
 	HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) tool gotestsum --junitfile report-agent-docker.xml --format testname -- \
 		-tags=agentdocker -v -timeout 20m -count=1 ./tests/agent/...
 

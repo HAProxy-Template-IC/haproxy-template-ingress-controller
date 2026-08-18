@@ -328,9 +328,38 @@ the process listens somewhere else.
   {{- fail "haproxy.dataplaneBin was removed: the agent runs from the HAPTIC controller image (controller.image), not from a binary in the HAProxy image. Delete the key." -}}
 {{- end -}}
 {{- $hapAgent := .Values.haproxy.agent | default dict -}}
+{{- $agentFields := list "logLevel" "service" "resources" "extraEnv" -}}
+{{- range $field := keys $hapAgent -}}
+  {{- if not (has $field $agentFields) -}}
+    {{- fail (printf "haproxy.agent contains unknown field %q. Valid fields: %s." $field (join ", " $agentFields)) -}}
+  {{- end -}}
+{{- end -}}
 {{- $agentLogLevels := list "trace" "debug" "info" "warning" "error" -}}
 {{- if and (hasKey $hapAgent "logLevel") (not (has ($hapAgent.logLevel | toString) $agentLogLevels)) -}}
   {{- fail (printf "haproxy.agent.logLevel %q is invalid. Valid: %s." (toString $hapAgent.logLevel) (join ", " $agentLogLevels)) -}}
+{{- end -}}
+{{- if .Values.haproxy.enabled -}}
+  {{- /* Only the bundled fleet turns these into agent flags, and the agent
+         exits at startup above its 60s ceiling. */ -}}
+  {{- $dataplaneConfig := dig "config" "dataplane" dict .Values.controller -}}
+  {{- range $field := list "minDeploymentInterval" "reloadVerificationTimeout" -}}
+    {{- $raw := index $dataplaneConfig $field | default "" | toString -}}
+    {{- if ne $raw "" -}}
+      {{- $seconds := -1.0 -}}
+      {{- if eq $raw "0" -}}
+        {{- $seconds = 0.0 -}}
+      {{- else if regexMatch "^[0-9]+(\\.[0-9]+)?ms$" $raw -}}
+        {{- $seconds = divf (trimSuffix "ms" $raw | float64) 1000.0 -}}
+      {{- else if regexMatch "^[0-9]+(\\.[0-9]+)?s$" $raw -}}
+        {{- $seconds = trimSuffix "s" $raw | float64 -}}
+      {{- else if regexMatch "^[0-9]+(\\.[0-9]+)?m$" $raw -}}
+        {{- $seconds = mulf (trimSuffix "m" $raw | float64) 60.0 -}}
+      {{- end -}}
+      {{- if or (lt $seconds 0.0) (gt $seconds 60.0) -}}
+        {{- fail (printf "controller.config.dataplane.%s is %q; the chart passes it to the agent, which accepts a Go duration of at most 60s and exits at startup on anything else. Set a value between 0 and 60s, for example 5s." $field $raw) -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
 {{- end -}}
 {{- $haproxy := .Values.haproxy -}}
 {{- if not (kindIs "map" $haproxy) -}}{{- fail "haproxy must be a map." -}}{{- end -}}

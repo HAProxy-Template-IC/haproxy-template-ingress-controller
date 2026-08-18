@@ -1504,7 +1504,7 @@ post_deploy_tips() {
 	echo "  - HAProxy service: kubectl -n ${CTRL_NAMESPACE} get svc/haproxy-production"
 	echo "  - Agent service: kubectl -n ${CTRL_NAMESPACE} get svc/haproxy-production-dataplane"
 	echo "  - Agent access: kubectl -n ${CTRL_NAMESPACE} port-forward svc/haproxy-production-dataplane 5555:5555"
-	echo "    Access at: http://localhost:5555/v3/info (admin/adminpass)"
+	echo "    Test with: curl -u admin:adminpass http://localhost:5555/v1/state"
 	echo
 
 	ok "📊 Monitoring:"
