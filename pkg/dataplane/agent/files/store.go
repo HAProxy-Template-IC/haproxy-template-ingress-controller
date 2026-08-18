@@ -55,6 +55,9 @@ type Store struct {
 	baseDir string
 	mounts  []Mount
 	logger  *slog.Logger
+	// reserved are absolute paths inside the tree that no manifest may name:
+	// the HAProxy runtime sockets, which a write would replace with a file.
+	reserved map[string]struct{}
 
 	// rename is os.Rename in production; tests replace it to exercise the
 	// cross-device fallback that the mount probe is supposed to make dead code.
@@ -63,8 +66,9 @@ type Store struct {
 }
 
 // NewStore probes the mounts under baseDir and prepares each one's temp and
-// LKG directory.
-func NewStore(baseDir string, logger *slog.Logger) (*Store, error) {
+// LKG directory. reserved names the paths inside the tree that belong to
+// something other than the manifest, which is the HAProxy sockets.
+func NewStore(baseDir string, logger *slog.Logger, reserved ...string) (*Store, error) {
 	// The haproxytech images ship /etc/haproxy as a symlink; walk the target.
 	abs, err := filepath.EvalSymlinks(baseDir)
 	if err != nil {
@@ -77,7 +81,13 @@ func NewStore(baseDir string, logger *slog.Logger) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{baseDir: abs, mounts: mounts, logger: logger, rename: os.Rename}
+	s := &Store{
+		baseDir:  abs,
+		mounts:   mounts,
+		logger:   logger,
+		reserved: resolveAll(reserved),
+		rename:   os.Rename,
+	}
 	for _, m := range mounts {
 		for _, name := range []string{TempDirName, LKGDirName} {
 			if err := os.MkdirAll(filepath.Join(m.Root, name), dirPerm); err != nil {
@@ -104,7 +114,30 @@ func (s *Store) Abs(rel string) (string, error) {
 	if err := ValidatePath(rel); err != nil {
 		return "", err
 	}
-	return filepath.Join(s.baseDir, filepath.FromSlash(rel)), nil
+	abs := filepath.Join(s.baseDir, filepath.FromSlash(rel))
+	if _, taken := s.reserved[abs]; taken {
+		return "", fmt.Errorf("%w: %q is a reserved path", ErrInvalidPath, rel)
+	}
+	return abs, nil
+}
+
+// resolveAll canonicalises the reserved paths the same way the base directory
+// is, so a symlinked mount cannot spell its way past them. The paths need not
+// exist: HAProxy binds its sockets after the agent starts.
+func resolveAll(paths []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			continue
+		}
+		dir, err := filepath.EvalSymlinks(filepath.Dir(abs))
+		if err == nil {
+			abs = filepath.Join(dir, filepath.Base(abs))
+		}
+		out[abs] = struct{}{}
+	}
+	return out
 }
 
 // mountFor returns the mount that holds abs, which is the deepest probed root
