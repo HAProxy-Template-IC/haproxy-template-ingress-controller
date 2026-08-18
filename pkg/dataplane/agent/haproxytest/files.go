@@ -300,9 +300,10 @@ func (h *HAProxy) showMap(path string) reply {
 		}
 		return dump(strings.Join(lines, "\n"))
 	}
-	lines := []string{"# id (key) value"}
+	// Real shape: `<entry address> <key> <value>`, no header (3.0 and 3.4).
+	lines := make([]string, 0, len(h.m.Maps[path]))
 	for i, e := range h.m.Maps[path] {
-		lines = append(lines, fmt.Sprintf("0x%x (%s) %s", i, e.Key, e.Value))
+		lines = append(lines, fmt.Sprintf("0x7f%010x %s %s", i, e.Key, e.Value))
 	}
 	return dump(strings.Join(lines, "\n"))
 }

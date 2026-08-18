@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -41,10 +42,6 @@ const (
 	dirPerm  fs.FileMode = 0o755
 	filePerm fs.FileMode = 0o644
 )
-
-// maxProbeDirs bounds the startup mount walk; a manifest can name at most
-// api.MaxFiles paths, so a deeper tree than that is not a tree the agent owns.
-const maxProbeDirs = api.MaxFiles
 
 // Mount is one filesystem under the base directory. Hardlinks and renames are
 // confined to a single mount, so temp and LKG directories exist per mount.
@@ -68,8 +65,12 @@ type Store struct {
 // NewStore probes the mounts under baseDir and prepares each one's temp and
 // LKG directory.
 func NewStore(baseDir string, logger *slog.Logger) (*Store, error) {
-	abs, err := filepath.Abs(baseDir)
+	// The haproxytech images ship /etc/haproxy as a symlink; walk the target.
+	abs, err := filepath.EvalSymlinks(baseDir)
 	if err != nil {
+		return nil, fmt.Errorf("resolve base dir %q: %w", baseDir, err)
+	}
+	if abs, err = filepath.Abs(abs); err != nil {
 		return nil, fmt.Errorf("resolve base dir %q: %w", baseDir, err)
 	}
 	mounts, err := probeMounts(abs)
@@ -159,42 +160,30 @@ func (s *Store) HashTree(paths []string) (map[string]api.FileAt, error) {
 	return out, nil
 }
 
-// probeMounts records one Mount per distinct st_dev under root, keeping the
-// shallowest directory of each device as its root.
+// probeMounts records the base directory and every mount point below it as
+// a Mount. Mount points, not devices, are what confine hardlinks and renames:
+// two bind mounts of one filesystem share st_dev and still refuse link(2).
 func probeMounts(root string) ([]Mount, error) {
-	byDevice := map[uint64]string{}
-	seen := 0
-	walk := func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
-			return nil
-		}
-		if p != root && strings.HasPrefix(d.Name(), ".") {
-			return fs.SkipDir
-		}
-		seen++
-		if seen > maxProbeDirs {
-			return fmt.Errorf("mount probe found more than %d directories under %s", maxProbeDirs, root)
-		}
-		dev, err := deviceOf(p)
-		if err != nil {
-			return err
-		}
-		if _, ok := byDevice[dev]; !ok {
-			byDevice[dev] = p
-		}
-		return nil
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, fmt.Errorf("base dir %s: %w", root, err)
 	}
-	if err := filepath.WalkDir(root, walk); err != nil {
+	if !info.IsDir() {
+		return nil, fmt.Errorf("base dir %s is not a directory", root)
+	}
+	points, err := mountPointsUnder(root)
+	if err != nil {
 		return nil, fmt.Errorf("probe mounts under %s: %w", root, err)
 	}
-	if len(byDevice) == 0 {
-		return nil, fmt.Errorf("base dir %s does not exist", root)
-	}
-	mounts := make([]Mount, 0, len(byDevice))
-	for dev, dir := range byDevice {
+	roots := append([]string{root}, points...)
+	slices.Sort(roots)
+	roots = slices.Compact(roots)
+	mounts := make([]Mount, 0, len(roots))
+	for _, dir := range roots {
+		dev, err := deviceOf(dir)
+		if err != nil {
+			return nil, fmt.Errorf("probe mounts under %s: %w", root, err)
+		}
 		mounts = append(mounts, Mount{Root: dir, Device: dev})
 	}
 	sort.Slice(mounts, func(i, j int) bool { return len(mounts[i].Root) > len(mounts[j].Root) })

@@ -25,9 +25,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/cli"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 )
 
 func newClient(t *testing.T) (*cli.Client, *haproxytest.HAProxy) {

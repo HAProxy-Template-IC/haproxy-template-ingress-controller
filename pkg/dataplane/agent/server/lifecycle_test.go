@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 )
 
 func TestARestartBetweenAppliesKeepsTheBaseline(t *testing.T) {
@@ -93,6 +93,22 @@ func TestAForeignWorkerFallsBackToAReload(t *testing.T) {
 	result := h.apply(&m, files)
 	require.True(t, result.OK, "%+v", result.Error)
 	assert.Equal(t, api.ResultReload, result.Mode)
+}
+
+// Drift prevention polls /v1/state?verify=1; a restarted HAProxy container
+// must show up there as the new worker and an unknown baseline, not only on
+// the next apply.
+func TestStateVerifyObservesAForeignWorker(t *testing.T) {
+	h := newHarness(t)
+	firstApply(t, h)
+	before := h.state(false).HAProxy.WorkerPID
+
+	h.model.With(func(m *haproxytest.Model) { m.Pid += 7 })
+
+	assert.Equal(t, before, h.state(false).HAProxy.WorkerPID, "a plain GET reports the last observation")
+	verified := h.state(true)
+	assert.Equal(t, before+7, verified.HAProxy.WorkerPID)
+	assert.Empty(t, verified.AppliedPlanID, "a foreign worker means the runtime baseline is gone")
 }
 
 func TestAManifestOverTheOpLimitIsRefused(t *testing.T) {

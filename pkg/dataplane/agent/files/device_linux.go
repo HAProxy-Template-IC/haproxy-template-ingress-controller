@@ -16,7 +16,11 @@
 
 package files
 
-import "golang.org/x/sys/unix"
+import (
+	"os"
+
+	"golang.org/x/sys/unix"
+)
 
 // deviceOf reports the st_dev of dir, which is how the agent tells the mounts
 // under its base directory apart.
@@ -26,4 +30,15 @@ func deviceOf(dir string) (uint64, error) {
 		return 0, err
 	}
 	return st.Dev, nil
+}
+
+// mountPointsUnder lists the mount points strictly below root from
+// /proc/self/mountinfo.
+func mountPointsUnder(root string) ([]string, error) {
+	f, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return mountPointsIn(f, root)
 }

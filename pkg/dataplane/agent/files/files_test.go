@@ -38,6 +38,22 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
+// The haproxytech images ship /etc/haproxy as a symlink to
+// /usr/local/etc/haproxy; the store must own the target, not refuse the link.
+func TestNewStoreFollowsASymlinkedBaseDir(t *testing.T) {
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "etc-haproxy")
+	require.NoError(t, os.Symlink(target, link))
+
+	s, err := NewStore(link, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+
+	resolved, err := filepath.EvalSymlinks(target)
+	require.NoError(t, err)
+	assert.Equal(t, resolved, s.BaseDir())
+	assert.NotEmpty(t, s.Mounts())
+}
+
 func stage(t *testing.T, s *Store, rel, content string) *Staged {
 	t.Helper()
 	staged, err := s.Stage(rel, strings.NewReader(content), renderplan.DigestString(content), int64(len(content)))

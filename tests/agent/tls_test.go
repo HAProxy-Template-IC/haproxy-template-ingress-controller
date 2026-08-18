@@ -43,21 +43,23 @@ func TestCertificateOpsRunAtRuntime(t *testing.T) {
 
 	extra := makeCertificate(t, "extra.test", 2001)
 	s.set(extraCertPath, extra.pem)
-	s.set(crtListPath, defaultCertPath+"\n"+extraCertPath+" extra.test\n")
+	s.set(crtListPath, defaultCertFile+"\n"+extraCertFile+" extra.test\n")
 	introduced := s.next(api.ModeAuto)
 	introduced.Ops = []api.Op{
 		{Kind: api.OpCertNew, Path: extraCertPath},
-		{Kind: api.OpCRTListAdd, Path: crtListPath, Cert: extraCertPath, SNIFilters: []string{"extra.test"}},
+		// The crt-list line token: HAProxy prepends crt-base to it, so it is
+		// the bare filename, not the store name cert_new addressed.
+		{Kind: api.OpCRTListAdd, Path: crtListPath, Cert: extraCertFile, SNIFilters: []string{"extra.test"}},
 	}
 	result = s.apply(introduced, s.allParts())
 	require.True(t, result.OK, "cert_new/crtlist_add were rejected: %+v", result.Error)
 	assert.Equal(t, worker, e.workerPID(), "serving a new SNI must not reload")
 	assert.Equal(t, "extra.test", e.peerCertificate("extra.test").Subject.CommonName)
 
-	s.set(crtListPath, defaultCertPath+"\n")
+	s.set(crtListPath, defaultCertFile+"\n")
 	s.remove(extraCertPath)
 	withdrawn := s.next(api.ModeAuto)
-	withdrawn.Ops = []api.Op{{Kind: api.OpCRTListDel, Path: crtListPath, Cert: extraCertPath}}
+	withdrawn.Ops = []api.Op{{Kind: api.OpCRTListDel, Path: crtListPath, Cert: extraCertFile}}
 	result = s.apply(withdrawn, s.allParts())
 	require.True(t, result.OK, "crtlist_del was rejected: %+v", result.Error)
 	assert.Equal(t, "default.test", e.peerCertificate("extra.test").Subject.CommonName,

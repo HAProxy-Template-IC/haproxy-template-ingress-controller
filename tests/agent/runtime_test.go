@@ -17,6 +17,8 @@
 package agent
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"testing"
@@ -63,14 +65,19 @@ func TestMapOpsRunAtRuntimeAndKeepEveryByte(t *testing.T) {
 
 	// Values with a space and a ';': the CLI's line form truncates at the space
 	// and executes everything past the ';' as a second command, so only the
-	// payload form can store these.
+	// payload form (map_add) can store these — map_set is for line-safe values
+	// and a changed unsafe value travels as map_del + map_add, exactly as
+	// deployplan composes it.
 	const changed = "changed; value with spaces"
 	const added = "added; another value"
-	s.set(noteMapPath, "a.example.com first value\nb.example.com "+changed+"\nd.example.com "+added+"\n")
+	const retouched = "first-value-retouched"
+	s.set(noteMapPath, "a.example.com "+retouched+"\nb.example.com "+changed+"\nd.example.com "+added+"\n")
 
 	m := s.next(api.ModeAuto)
 	m.Ops = []api.Op{
-		{Kind: api.OpMapSet, Path: noteMapPath, Key: "b.example.com", Value: changed},
+		{Kind: api.OpMapSet, Path: noteMapPath, Key: "a.example.com", Value: retouched},
+		{Kind: api.OpMapDel, Path: noteMapPath, Key: "b.example.com"},
+		{Kind: api.OpMapAdd, Path: noteMapPath, Key: "b.example.com", Value: changed},
 		{Kind: api.OpMapAdd, Path: noteMapPath, Key: "d.example.com", Value: added},
 		{Kind: api.OpMapDel, Path: noteMapPath, Key: "c.example.com"},
 	}
@@ -82,7 +89,7 @@ func TestMapOpsRunAtRuntimeAndKeepEveryByte(t *testing.T) {
 
 	entries := mapEntries(e.worker("show map " + noteMapPath))
 	assert.Equal(t, map[string]string{
-		"a.example.com": "first value",
+		"a.example.com": retouched,
 		"b.example.com": changed,
 		"d.example.com": added,
 	}, entries)
@@ -203,6 +210,17 @@ func TestDynamicBackendLifecycle(t *testing.T) {
 	result = s.apply(retired, s.allParts())
 	require.True(t, result.OK, "retiring a dynamic backend was rejected: %+v", result.Error)
 	assert.Equal(t, worker, e.workerPID())
-	_, present := e.statRow("be-3", "BACKEND")
-	assert.False(t, present, "be-3 is still in show stat")
+	// The wait + del tail runs off the apply path (deferred deletes), so the
+	// backend disappears shortly after the ACK, never inside it.
+	waitFor(t, "the deferred delete of be-3", convergeBudget, func() error {
+		if _, present := e.statRow("be-3", "BACKEND"); present {
+			return errors.New("be-3 is still in show stat")
+		}
+		return nil
+	})
+	assert.Equal(t, worker, e.workerPID(), "deferred deletes must not reload")
+	state, err := e.client.State(context.Background(), false)
+	require.NoError(t, err)
+	assert.Empty(t, state.PendingDeletes.Servers)
+	assert.Empty(t, state.PendingDeletes.Backends)
 }

@@ -309,10 +309,16 @@ func TestApplyRejectsShortPartContent(t *testing.T) {
 
 // resetListener answers the first `resets` connections with a TCP reset — the
 // master's re-exec window as the client sees it — and serves the rest.
+// resetListener resets the first `remaining` connections instead of serving
+// them: a plain close is a FIN, which the client sees as EOF, not ECONNRESET.
+// It resets after `resetAfter` has crossed the wire (empty: after the first
+// byte), so a test can pin whether the client's single-use parts had been
+// consumed at that point.
 type resetListener struct {
 	net.Listener
-	remaining atomic.Int32
-	accepted  atomic.Int32
+	remaining  atomic.Int32
+	accepted   atomic.Int32
+	resetAfter string
 }
 
 func (l *resetListener) Accept() (net.Conn, error) {
@@ -326,14 +332,25 @@ func (l *resetListener) Accept() (net.Conn, error) {
 			return conn, nil
 		}
 		if tcp, ok := conn.(*net.TCPConn); ok {
-			// Read one byte so the client has flushed its request and is
-			// waiting on the response, then reset instead of closing: a plain
-			// close is a FIN, which the client sees as EOF, not ECONNRESET.
 			_ = tcp.SetLinger(0)
 			_ = tcp.SetReadDeadline(time.Now().Add(2 * time.Second))
-			_, _ = tcp.Read(make([]byte, 1))
+			readUntil(tcp, l.resetAfter)
 		}
 		_ = conn.Close()
+	}
+}
+
+// readUntil drains conn until marker was seen (or one byte, for an empty
+// marker), so the peer has flushed that much of its request before the reset.
+func readUntil(conn net.Conn, marker string) {
+	var seen []byte
+	buf := make([]byte, 512)
+	for {
+		n, err := conn.Read(buf)
+		seen = append(seen, buf[:n]...)
+		if err != nil || marker == "" || strings.Contains(string(seen), marker) {
+			return
+		}
 	}
 }
 
@@ -376,7 +393,9 @@ func TestApplyDoesNotRetryOnceThePartsWereRead(t *testing.T) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		writeJSON(t, w, http.StatusOK, api.ApplyResult{OK: true})
 	}))
-	listener := &resetListener{Listener: srv.Listener}
+	// Reset only once the part's bytes are on the wire, so its reader was
+	// provably consumed when the connect error surfaces.
+	listener := &resetListener{Listener: srv.Listener, resetAfter: "globa"}
 	listener.remaining.Store(1)
 	srv.Listener = listener
 	srv.Start()

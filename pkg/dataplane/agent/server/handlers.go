@@ -34,10 +34,16 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, state)
 }
 
+// stateResponse reports the agent's state; with verify it re-observes the tree
+// and the worker identity, so drift prevention sees a restarted HAProxy
+// container without waiting for the next apply.
 func (s *Server) stateResponse(verify bool) (api.State, error) {
 	if verify {
 		if err := s.refreshTree(); err != nil {
 			return api.State{}, err
+		}
+		if err := s.checkWorker(); err != nil {
+			s.logger.Warn("state verify: worker check", "error", err)
 		}
 	}
 	s.mu.Lock()

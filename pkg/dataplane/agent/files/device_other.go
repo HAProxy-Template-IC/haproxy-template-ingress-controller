@@ -23,3 +23,7 @@ import "errors"
 func deviceOf(_ string) (uint64, error) {
 	return 0, errors.New("mount probe requires linux")
 }
+
+func mountPointsUnder(_ string) ([]string, error) {
+	return nil, errors.New("mount probe requires linux")
+}

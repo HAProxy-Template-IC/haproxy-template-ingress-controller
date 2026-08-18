@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 )
 
 func baseFiles(config string) []file {
@@ -422,6 +422,35 @@ func TestTheScheduledReloadFiresWhenTheWindowPasses(t *testing.T) {
 		return h.state(false).RunningPlanID == "plan-2"
 	}, 10*time.Second, 20*time.Millisecond)
 	assert.Empty(t, h.state(false).ReloadPendingAt)
+}
+
+// The controller polls last_apply for a scheduled reload's verdict and takes
+// its applied plan as the next baseline, so a failed one must report the
+// invalidated baseline, not the one from before the reload.
+func TestAFailedScheduledReloadReportsTheInvalidatedBaseline(t *testing.T) {
+	h := newHarness(t, withReloadInterval(300*time.Millisecond))
+	files := baseFiles("global\n")
+	m := buildManifest("plan-1", files)
+	m.Mode = api.ModeReload
+	first := h.apply(&m, files)
+
+	h.model.With(func(model *haproxytest.Model) { model.ReloadFails = true })
+	next := baseFiles("global\n  broken\n")
+	second := buildManifest("plan-2", next)
+	second.Mode = api.ModeReload
+	second.ExpectedPrevPlanID = first.AppliedPlanID
+	second.ExpectedPrevToken = first.AppliedToken
+	require.Equal(t, api.ResultScheduled, h.apply(&second, next).Mode)
+
+	var last *api.ApplyResult
+	require.Eventually(t, func() bool {
+		last = h.state(false).LastApply
+		return last != nil && last.PlanID == "plan-2" && last.Mode != api.ResultScheduled
+	}, 10*time.Second, 20*time.Millisecond)
+	assert.False(t, last.OK)
+	assert.Empty(t, last.AppliedPlanID, "the NACK must carry the baseline the next apply has to expect")
+	assert.Empty(t, h.state(false).AppliedPlanID)
+	assert.Equal(t, "plan-1", last.LKGPlanID)
 }
 
 func TestStateVerifyObservesTheTree(t *testing.T) {

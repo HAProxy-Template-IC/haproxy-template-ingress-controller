@@ -98,10 +98,16 @@ type MapEntry struct {
 	Value string
 }
 
-// Start serves the model on two unix sockets under tb.TempDir().
+// Start serves the model on two unix sockets in a short-named temp directory:
+// tb.TempDir() embeds the test name and a unix socket path is capped at 108
+// bytes, so a long subtest name would fail bind(2).
 func Start(tb testing.TB) *HAProxy {
 	tb.Helper()
-	dir := tb.TempDir()
+	dir, err := os.MkdirTemp("", "hp")
+	if err != nil {
+		tb.Fatalf("socket dir: %v", err)
+	}
+	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
 	h := &HAProxy{
 		m: Model{
 			Version:        "3.4.3-1deb11u1",

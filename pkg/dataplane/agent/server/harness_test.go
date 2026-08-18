@@ -35,8 +35,8 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/server"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )

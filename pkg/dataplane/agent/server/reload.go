@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
@@ -133,11 +134,11 @@ func (s *Server) firePendingReload() {
 		_ = run.abort("scheduled_reload", err)
 	}
 	s.mu.Lock()
-	s.applyResultLocked(&run.result)
-	s.state.LastApply = &run.result
 	if !run.result.OK {
 		s.state.AppliedPlanID = ""
 	}
+	s.applyResultLocked(&run.result)
+	s.state.LastApply = &run.result
 	if err := s.states.save(s.state); err != nil {
 		s.logger.Error("could not persist the agent state", "error", err)
 	}
@@ -153,6 +154,9 @@ func (s *Server) readBack(run *applyRun) {
 	}
 	diverged := false
 	for _, backend := range dedupe(run.touchedBackends) {
+		if slices.Contains(run.retiringBackends, backend) {
+			continue
+		}
 		if _, err := s.runtime.ServerNames(backend); err != nil {
 			diverged = true
 			s.logger.Warn("read-back could not read a backend", "backend", backend, "error", err)

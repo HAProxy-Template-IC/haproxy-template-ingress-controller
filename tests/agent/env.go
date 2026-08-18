@@ -268,9 +268,23 @@ func (e *env) exists(path string) bool {
 }
 
 // device is the mount a path lives on; general/ must be its own.
-func (e *env) device(path string) string {
+// mountPoints lists the mount points below the base directory the way the
+// agent's own probe reads them, from /proc/self/mountinfo. Two docker volumes
+// usually share one device (so st_dev cannot tell them apart) and `stat %m`
+// misreports a volume nested under a symlinked directory; a hardlink still
+// cannot cross the mount, which is what the per-mount journal is about.
+func (e *env) mountPoints() []string {
 	e.t.Helper()
-	return strings.TrimSpace(mustDocker(e.t, "exec", e.haproxy, "stat", "-c", "%d", baseDir+"/"+path))
+	resolved := strings.TrimSpace(mustDocker(e.t, "exec", e.haproxy, "readlink", "-f", baseDir))
+	out := mustDocker(e.t, "exec", e.haproxy, "cat", "/proc/self/mountinfo")
+	var points []string
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 5 && strings.HasPrefix(fields[4], resolved+"/") {
+			points = append(points, fields[4])
+		}
+	}
+	return points
 }
 
 func (e *env) listAll(dir string) string {

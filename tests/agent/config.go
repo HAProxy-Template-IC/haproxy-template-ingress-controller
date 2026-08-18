@@ -31,7 +31,9 @@ import (
 // Paths inside the pod. Under `default-path origin`, HAProxy names a map, a
 // certificate and a crt-list at runtime by the literal base-relative string the
 // config references — the same string the manifest and every op carry, so no
-// path translation exists anywhere.
+// path translation exists anywhere. The chart adds `crt-base ssl` and writes
+// bare filenames into crt-lists; HAProxy still names those certificates
+// `ssl/<file>`, so the crt-list ops carry the store name, not the line.
 const (
 	baseDir          = "/etc/haproxy"
 	configPath       = "haproxy.cfg"
@@ -40,6 +42,8 @@ const (
 	crtListPath      = "ssl/crt-list.txt"
 	defaultCertPath  = "ssl/default.pem"
 	extraCertPath    = "ssl/extra.pem"
+	defaultCertFile  = "default.pem"
+	extraCertFile    = "extra.pem"
 	generalFilePath  = "general/maintenance.http"
 	masterSocketPath = baseDir + "/haproxy-master.sock"
 	workerSocketPath = baseDir + "/haproxy-worker.sock"
@@ -107,6 +111,7 @@ const renderedConfig = `global
     stats socket ` + workerSocketPath + ` mode 600 level admin
     hard-stop-after 10s
     default-path origin ` + baseDir + `
+    crt-base ssl
 
 defaults ` + defaultsProfile + `
     mode http

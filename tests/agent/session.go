@@ -58,7 +58,7 @@ func newSession(e *env) *session {
 			hostMapPath:     hostMapContent,
 			noteMapPath:     noteMapContent,
 			defaultCertPath: defaultCert.pem,
-			crtListPath:     defaultCertPath + "\n",
+			crtListPath:     defaultCertFile + "\n",
 			generalFilePath: generalFileContent,
 		},
 	}
@@ -111,12 +111,39 @@ func (s *session) allParts() map[string]io.Reader {
 
 // apply sends the manifest and records the new baseline. It fails the test on a
 // transport error; a NACK comes back as a result for the caller to assert on.
+// apply sends one manifest and returns its final outcome: an apply the agent
+// only scheduled (a reload inside the pacing window) is followed until the
+// pacer ran it, the way the deployer polls /v1/state at scheduled_at.
 func (s *session) apply(m *api.Manifest, parts map[string]io.Reader) *api.ApplyResult {
 	s.env.t.Helper()
 	result, elapsed := s.timedApply(m, parts)
 	s.env.t.Logf("apply %s mode=%s took %s", m.PlanID, m.Mode, elapsed.Round(time.Millisecond))
+	if result.OK && result.Mode == api.ResultScheduled {
+		result = s.awaitScheduled(m.PlanID)
+	}
 	s.absorb(result)
 	return result
+}
+
+// awaitScheduled polls the agent until the reload it scheduled for planID has
+// run and reports that run's outcome.
+func (s *session) awaitScheduled(planID string) *api.ApplyResult {
+	s.env.t.Helper()
+	var final *api.ApplyResult
+	waitFor(s.env.t, "the scheduled reload of "+planID, convergeBudget, func() error {
+		state, err := s.env.client.State(context.Background(), false)
+		if err != nil {
+			return err
+		}
+		if state.ReloadPendingAt != "" || state.LastApply == nil || state.LastApply.PlanID != planID ||
+			state.LastApply.Mode == api.ResultScheduled {
+			return fmt.Errorf("reload of %s still pending", planID)
+		}
+		final = state.LastApply
+		return nil
+	})
+	s.env.t.Logf("scheduled reload of %s ran: ok=%t mode=%s", planID, final.OK, final.Mode)
+	return final
 }
 
 func (s *session) timedApply(m *api.Manifest, parts map[string]io.Reader) (*api.ApplyResult, time.Duration) {
@@ -136,8 +163,10 @@ func (s *session) applyExpectingRefusal(t *testing.T, m *api.Manifest, parts map
 	return err
 }
 
+// absorb takes the baseline the agent reports — after a NACK that is an empty
+// applied plan, which the next manifest must expect.
 func (s *session) absorb(result *api.ApplyResult) {
-	if result == nil || !result.OK {
+	if result == nil {
 		return
 	}
 	s.applied = result.AppliedPlanID

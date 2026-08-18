@@ -92,8 +92,8 @@ func TestGeneralFilesLiveOnTheirOwnMountAndRollBackWithIt(t *testing.T) {
 	e.waitForReady(http.StatusOK)
 
 	assert.Equal(t, generalFileContent, e.read(generalFilePath))
-	require.NotEqual(t, e.device(configPath), e.device(generalFilePath),
-		"general/ must sit on a mount of its own for the per-mount journal to matter")
+	require.Len(t, e.mountPoints(), 1, "general/ must sit on a mount of its own for the per-mount journal to matter")
+	require.True(t, strings.HasSuffix(e.mountPoints()[0], "/general"), "the nested mount is general/: %v", e.mountPoints())
 
 	// One apply touches both mounts and fails on the config. The rollback has
 	// to restore the general mount too, which only a journal on that mount can.

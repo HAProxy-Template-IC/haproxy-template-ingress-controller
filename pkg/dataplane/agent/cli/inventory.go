@@ -60,15 +60,13 @@ func (c *Client) MapEntries(path string) (map[string][]string, error) {
 		if i >= api.MaxInventoryEntries {
 			return nil, fmt.Errorf("show map %s returned more than %d entries", path, api.MaxInventoryEntries)
 		}
+		// `show map <name>` prints `<entry address> <key> <value>` per line;
+		// the value is the rest of the line (verified on 3.0 and 3.4).
 		_, rest, found := strings.Cut(line, " ")
 		if !found {
 			continue
 		}
-		key, value, found := strings.Cut(rest, ") ")
-		if !found || !strings.HasPrefix(key, "(") {
-			continue
-		}
-		key = strings.TrimPrefix(key, "(")
+		key, value, _ := strings.Cut(rest, " ")
 		entries[key] = append(entries[key], value)
 	}
 	return entries, nil

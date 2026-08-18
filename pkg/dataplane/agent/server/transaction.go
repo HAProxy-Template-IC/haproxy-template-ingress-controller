@@ -50,9 +50,12 @@ type applyRun struct {
 	// invalidated marks an apply that landed its files but left the running
 	// worker unexplained, so the next apply has to be full state plus a reload.
 	invalidated bool
-	// touchedMaps and touchedBackends drive the asynchronous read-back.
-	touchedMaps     []string
-	touchedBackends []string
+	// touchedMaps and touchedBackends drive the asynchronous read-back;
+	// retiringBackends are excluded from it because their deferred delete
+	// legitimately makes them disappear.
+	touchedMaps      []string
+	touchedBackends  []string
+	retiringBackends []string
 }
 
 func (s *Server) runApply(m *api.Manifest, staged map[string]*files.Staged, digest string) api.ApplyResult {
@@ -155,6 +158,7 @@ func (r *applyRun) compile(ops []api.Op) ([]cli.Program, error) {
 	if err := r.server.deferrals.Enqueue(servers, backends); err != nil {
 		return nil, err
 	}
+	r.retiringBackends = backends
 	programs := make([]cli.Program, 0, len(inline))
 	for i := range inline {
 		program, err := cli.Compile(&inline[i], r.readFile)

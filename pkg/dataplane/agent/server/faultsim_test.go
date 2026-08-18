@@ -30,8 +30,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 )
 
 // simulationSteps is how many applies each seed drives. Every step is one
@@ -119,10 +119,11 @@ func (s *simulation) record(m *api.Manifest, raw []byte) {
 		s.generation++
 		return
 	}
-	// A rejected apply restored the last known good set, which is what the
-	// tree held before this step.
-	s.desired = copyOf(s.onDisk)
-	s.applied = ""
+	// A rejected apply restored the last known good set. That is the tree
+	// before this step only while every earlier success advanced the LKG; a
+	// runtime-only or file-only apply does not, so read the LKG back from disk.
+	s.reconcileDisk()
+	require.Equal(s.t, "", s.applied, "step %d: a NACK must leave the baseline unknown", s.step)
 }
 
 // compose builds the next desired set and the manifest that asks for it.
@@ -258,7 +259,10 @@ var faults = []fault{
 		arm: func(s *simulation, _ *api.Manifest, _ []file) {
 			s.h.model.With(func(m *haproxytest.Model) { m.Pid += 3 })
 		},
-		disarm: func(*simulation) {},
+		// A file-only apply never talks to the worker, so the agent may
+		// notice the foreign worker only on the next verify — and then it
+		// rightly forgets the baseline. Take the agent's word for it.
+		disarm: func(s *simulation) { s.applied = s.h.state(true).AppliedPlanID },
 	},
 	{
 		name: "the agent restarted between applies",
