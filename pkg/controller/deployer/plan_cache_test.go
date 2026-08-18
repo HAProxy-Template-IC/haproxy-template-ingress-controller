@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/planblob"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
@@ -43,7 +44,7 @@ func TestPlanCache_ResolvesAPlanItHolds(t *testing.T) {
 // leader change would reload the whole fleet.
 func TestPlanCache_DecodesTheBlobThePodReports(t *testing.T) {
 	plan := planFor("plan-1")
-	blob, err := encodePlan(plan)
+	blob, err := planblob.Encode(plan)
 	require.NoError(t, err)
 
 	cache := newPlanCache()
@@ -60,9 +61,9 @@ func TestPlanCache_DecodesTheBlobThePodReports(t *testing.T) {
 func TestPlanCache_RefusesABlobItCannotVouchFor(t *testing.T) {
 	foreign := planFor("plan-1")
 	foreign.SchemaVersion = renderplan.SchemaVersion + 1
-	foreignBlob, err := encodePlan(foreign)
+	foreignBlob, err := planblob.Encode(foreign)
 	require.NoError(t, err)
-	mislabelled, err := encodePlan(planFor("plan-other"))
+	mislabelled, err := planblob.Encode(planFor("plan-other"))
 	require.NoError(t, err)
 
 	tests := map[string]api.State{
@@ -96,9 +97,9 @@ func TestPlanCache_RetainsOnlyWhatIsReferenced(t *testing.T) {
 func TestPlanCache_EncodeDecodeRoundTrip(t *testing.T) {
 	plan := planFor("plan-1")
 
-	blob, err := encodePlan(plan)
+	blob, err := planblob.Encode(plan)
 	require.NoError(t, err)
-	decoded, err := decodePlan(blob)
+	decoded, err := planblob.Decode(blob)
 
 	require.NoError(t, err)
 	assert.Equal(t, plan, decoded)

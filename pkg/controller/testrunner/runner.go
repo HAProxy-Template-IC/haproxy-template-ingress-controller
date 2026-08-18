@@ -509,6 +509,17 @@ func (r *Runner) Render(ctx context.Context, testName string) (RenderOutput, err
 		inputs.HTTPStore, inputs.CurrentConfig, test.CurrentFiles, inputs.ExtraContext)
 }
 
+// RenderWithoutFixtures renders the configuration against empty stores: no
+// watched resource exists, no HTTP fixture answers, nothing was deployed
+// before. It is the configuration's own skeleton — what `haptic diff` compares
+// when the operator names no validationTest, so the answer is about the
+// configuration change rather than about one test's fixtures.
+func (r *Runner) RenderWithoutFixtures(ctx context.Context) (RenderOutput, error) {
+	httpStore := NewFixtureHTTPStoreWrapper(CreateHTTPStoreFromFixtures(nil, r.logger), r.logger)
+	return r.renderWithStores(ctx, r.engineTemplate, r.createEmptyStores(), r.validationPaths,
+		httpStore, nil, nil, nil)
+}
+
 // currentServers resolves what a test declares about the previous deployment
 // into the shape templates read as `currentConfig`. The structured
 // `currentServers` fixture is taken as-is; the deprecated `currentConfig` text

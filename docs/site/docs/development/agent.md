@@ -86,6 +86,24 @@ it means `this agent accepts applies`, never `the last apply succeeded`. A
 readiness that tracked apply outcomes would drain the Service and fence the
 repair path exactly when an operator needs it.
 
+## Reading its state
+
+`haptic agent state` reads `/v1/state` and prints it: the plans the pod applied,
+runs and can fall back to, the runtime inventory, the deletes still outstanding,
+and the last apply's outcome. It takes the credentials from the same
+`DATAPLANE_USERNAME` and `DATAPLANE_PASSWORD` the agent itself was given, so it
+needs no arguments inside the pod:
+
+```console
+kubectl exec -n haptic haptic-haproxy-0 -c agent -- haptic agent state
+```
+
+`--verify` makes the agent re-hash its tree first, so the digests are
+observations rather than its last-known set. `--files` lists every file it holds
+with its digest and size, and `--output json` prints the raw response.
+`--url` reaches another endpoint; it defaults to `http://127.0.0.1:<--listen
+port>`.
+
 ## Paths
 
 One string names a file everywhere. HAProxy identifies maps and certificates by

@@ -50,6 +50,7 @@ Commands:
   run           - Run the controller (watches CRDs and manages HAProxy)
   agent         - Run the HAPTIC agent inside an HAProxy pod
   validate      - Validate a HAProxyTemplateConfig with embedded tests
+  diff          - Answer whether a configuration change reloads HAProxy
   benchmark     - Measure template render performance
 
 Use "haptic [command] --help" for more information about a command.`,
@@ -71,6 +72,7 @@ func init() {
 	// Add subcommands
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(validateCmd)
+	rootCmd.AddCommand(diffCmd)
 	rootCmd.AddCommand(benchmarkCmd)
 	rootCmd.AddCommand(applyCRDsCmd)
 	rootCmd.AddCommand(agentCmd)
