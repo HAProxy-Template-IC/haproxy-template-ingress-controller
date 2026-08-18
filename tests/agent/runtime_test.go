@@ -163,6 +163,20 @@ func TestServerOpsRunAtRuntime(t *testing.T) {
 	require.True(t, result.OK, "server_set_weight was rejected: %+v", result.Error)
 	assert.Equal(t, strconv.Itoa(weight), e.mustStatRow("be-1", "srv2")["weight"])
 
+	// HAProxy answers `set server addr` at WARNING severity both when it
+	// changed something and when it refused; the words decide, and "nothing
+	// changed" is not a refusal.
+	moved := s.next(api.ModeAuto)
+	moved.Ops = []api.Op{{Kind: api.OpServerSetAddr, Backend: "be-1", Server: "srv2", Address: "127.0.0.2", Port: upstreamPort}}
+	result = s.apply(moved, nil)
+	require.True(t, result.OK, "server_set_addr was rejected: %+v", result.Error)
+	assert.Equal(t, "127.0.0.2:"+strconv.Itoa(upstreamPort), e.mustStatRow("be-1", "srv2")["addr"])
+	unchanged := s.next(api.ModeAuto)
+	unchanged.Ops = moved.Ops
+	result = s.apply(unchanged, nil)
+	require.True(t, result.OK, "an address the server already has was rejected: %+v", result.Error)
+	assert.Equal(t, api.ResultRuntime, result.Mode)
+
 	drained := s.next(api.ModeAuto)
 	drained.Ops = []api.Op{{Kind: api.OpServerSetState, Backend: "be-1", Server: "srv2", State: "maint"}}
 	result = s.apply(drained, nil)

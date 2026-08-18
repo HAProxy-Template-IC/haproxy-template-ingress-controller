@@ -246,7 +246,10 @@ func compileServerSetAddr(op *api.Op, _ Content) (cmds, abort []Command, err err
 	if op.Port > 0 {
 		text += fmt.Sprintf(" port %d", op.Port)
 	}
-	return []Command{{Text: text}}, nil, nil
+	// HAProxy answers with what it did — "IP changed from", "port changed
+	// from", "nothing changed" — at WARNING severity, the same level as its
+	// refusals, so the answer is pinned on the words.
+	return []Command{{Text: text, Expect: "chang"}}, nil, nil
 }
 
 func compileServerSetWeight(op *api.Op, _ Content) (cmds, abort []Command, err error) {

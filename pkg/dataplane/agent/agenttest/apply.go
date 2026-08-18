@@ -297,7 +297,7 @@ func (a *Agent) scheduled(m *api.Manifest) outcome {
 		return a.invalidate(m, reload, kind+": command rejected by HAProxy")
 	}
 	a.advance(m)
-	a.state.WorkerOpsPlanID = m.PlanID
+	a.state.WorkerOpsPlanID = m.WorkerOpsPlanID
 	return a.ack(m, api.ResultScheduled, m.InPlaceOps, reload)
 }
 

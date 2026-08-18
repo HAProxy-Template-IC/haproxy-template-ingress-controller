@@ -147,6 +147,8 @@ func validateManifest(m *api.Manifest) error {
 		return fmt.Errorf("%d ops exceed the %d-op limit", len(m.Ops), api.MaxOpsPerApply)
 	case len(m.InPlaceOps) > api.MaxOpsPerApply:
 		return fmt.Errorf("%d in-place ops exceed the %d-op limit", len(m.InPlaceOps), api.MaxOpsPerApply)
+	case len(m.InPlaceOps) > 0 && (m.ExpectedWorkerOpsPlanID == "" || m.WorkerOpsPlanID == ""):
+		return errors.New("in-place ops need expected_worker_ops_plan_id and worker_ops_plan_id")
 	}
 	if err := validateEnumeratedMode(m.Mode); err != nil {
 		return err

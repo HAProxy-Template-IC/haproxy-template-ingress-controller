@@ -54,6 +54,18 @@ func (c *planCache) Put(plan *renderplan.Plan) {
 	delete(c.unusable, plan.ID)
 }
 
+// PutDerived records a plan the controller derived from a pod's baseline (a
+// worker plus the in-place ops it accepted). It is retained like any plan a
+// pod refers to, but never counts as the newest render.
+func (c *planCache) PutDerived(plan *renderplan.Plan) {
+	if plan == nil || plan.ID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.plans[plan.ID] = plan
+}
+
 // Plan returns the plan with this id, or nil.
 func (c *planCache) Plan(id string) *renderplan.Plan {
 	if id == "" {

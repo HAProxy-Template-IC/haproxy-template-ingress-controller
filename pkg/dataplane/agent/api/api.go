@@ -64,8 +64,12 @@ type Manifest struct {
 	// composed against; a mismatch is a 409, never a write.
 	ExpectedPrevPlanID string `json:"expected_prev_plan_id"`
 	ExpectedPrevToken  Token  `json:"expected_prev_token"`
-	// ExpectedWorkerOpsPlanID guards InPlaceOps.
+	// ExpectedWorkerOpsPlanID guards InPlaceOps; WorkerOpsPlanID is what the
+	// pod records once they ran: the id of the worker's plan with exactly those
+	// ops applied, which the controller can reproduce. It is not PlanID — the
+	// in-place subset never brings the worker all the way to the render.
 	ExpectedWorkerOpsPlanID string `json:"expected_worker_ops_plan_id,omitempty"`
+	WorkerOpsPlanID         string `json:"worker_ops_plan_id,omitempty"`
 	// ValidatedPlanID is the newest plan the controller's haproxy -c passed;
 	// the agent promotes its rollback baseline when it equals the applied plan.
 	ValidatedPlanID string `json:"validated_plan_id,omitempty"`

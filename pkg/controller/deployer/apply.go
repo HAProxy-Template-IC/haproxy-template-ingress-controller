@@ -264,6 +264,7 @@ func (r *deployRequest) manifest(decision *deployplan.Decision, ops []api.Op, pr
 	}
 	if len(manifest.InPlaceOps) > 0 {
 		manifest.ExpectedWorkerOpsPlanID = prev.workerOps
+		manifest.WorkerOpsPlanID = decision.WorkerPlan.ID
 	}
 	if full {
 		manifest.Ops, manifest.InPlaceOps, manifest.ExpectedWorkerOpsPlanID = nil, nil, ""
@@ -306,7 +307,7 @@ func (r *deployRequest) decisionFor(state *api.State, plans *planCache) deploypl
 		PendingBackendDeletes: len(state.PendingDeletes.Backends),
 		ReloadPending:         state.ReloadPendingAt != "",
 	}
-	return r.diffs.get(&diffKey{
+	decision := r.diffs.get(&diffKey{
 		applied:         baselineID(baseline.Applied),
 		running:         state.RunningPlanID,
 		workerOps:       state.WorkerOpsPlanID,
@@ -318,6 +319,10 @@ func (r *deployRequest) decisionFor(state *api.State, plans *planCache) deploypl
 	}, func() deployplan.Decision {
 		return deployplan.Diff(r.plan, &baseline)
 	})
+	// The pod reports the derived plan's id as its worker-ops baseline once
+	// the in-place batch ran; the next diff has to find that plan here.
+	plans.PutDerived(decision.WorkerPlan)
+	return decision
 }
 
 // inventoryDigest identifies what the worker has loaded by its content: the

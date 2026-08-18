@@ -63,13 +63,16 @@ type Baseline struct {
 // Files is always the complete desired set. Reasons name every change that was
 // not applied at runtime, whether it forced a reload or only a file write.
 type Decision struct {
-	Verdict Verdict    `json:"verdict"`
-	Ops     []api.Op   `json:"ops,omitempty"`
-	InPlace []api.Op   `json:"in_place_ops,omitempty"` // executable while a reload is pending; empty otherwise
-	Chunks  int        `json:"chunks,omitempty"`       // applies Ops is split into, >1 only past api.MaxOpsPerApply
-	Reasons []string   `json:"reasons,omitempty"`
-	Files   []api.File `json:"files"`
-	Mode    string     `json:"mode"` // api.ModeAuto or api.ModeReload
+	Verdict Verdict  `json:"verdict"`
+	Ops     []api.Op `json:"ops,omitempty"`
+	InPlace []api.Op `json:"in_place_ops,omitempty"` // executable while a reload is pending; empty otherwise
+	// WorkerPlan is what the worker holds once InPlace ran; its ID is the
+	// pod's next worker-ops baseline. Set exactly when InPlace is.
+	WorkerPlan *renderplan.Plan `json:"-"`
+	Chunks     int              `json:"chunks,omitempty"` // applies Ops is split into, >1 only past api.MaxOpsPerApply
+	Reasons    []string         `json:"reasons,omitempty"`
+	Files      []api.File       `json:"files"`
+	Mode       string           `json:"mode"` // api.ModeAuto or api.ModeReload
 }
 
 // composedOps are every op kind Diff can put in a Decision. shutdown_sessions

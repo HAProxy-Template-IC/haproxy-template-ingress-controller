@@ -858,3 +858,60 @@ func TestApply_PlanCacheSurvivesARoundEveryPodFails(t *testing.T) {
 
 	assert.NotNil(t, component.plans.Plan("plan-1"), "both pods still hold the first render")
 }
+
+// While a reload is pending, an in-place batch moves the worker to a plan that
+// is neither the running one nor the render — the render's new map key waits
+// for the reload. The manifest names that derived plan, the pod records it, and
+// the next batch is composed against it: nothing already applied is repeated,
+// and nothing the worker never got is deleted.
+func TestApply_InPlaceBatchNamesTheWorkerAfterIt(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	agent.SetReloadPending(true)
+
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	require.Equal(t, 0, completed.Failed)
+	applies := agent.Applies()
+	require.Len(t, applies, 2)
+	second := applies[1].Manifest
+	require.Equal(t, []string{api.OpServerSetAddr}, opKinds(second.InPlaceOps))
+	assert.Equal(t, plan1.ID, second.ExpectedWorkerOpsPlanID)
+	require.NotEmpty(t, second.WorkerOpsPlanID)
+	assert.NotEqual(t, plan2.ID, second.WorkerOpsPlanID, "the worker is not at the render after a partial batch")
+	assert.Equal(t, second.WorkerOpsPlanID, agent.State().WorkerOpsPlanID)
+
+	// The same render again: the worker already has the address, so no
+	// in-place op is composed and the pod's worker baseline stays put.
+	completed = deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	require.Equal(t, 0, completed.Failed)
+	applies = agent.Applies()
+	require.Len(t, applies, 3)
+	assert.Empty(t, applies[2].Manifest.InPlaceOps)
+	assert.Equal(t, second.WorkerOpsPlanID, agent.State().WorkerOpsPlanID)
+
+	// A third render composes against the derived plan and is accepted.
+	plan3, config3, aux3 := renderFor("plan-3", "10.0.0.3", mapEntry)
+	completed = deployTo(t, component, bus, plan3, config3, aux3, "config_validation", endpoint)
+	require.Equal(t, 0, completed.Failed)
+	applies = agent.Applies()
+	require.Len(t, applies, 4)
+	third := applies[3].Manifest
+	require.Equal(t, []string{api.OpServerSetAddr}, opKinds(third.InPlaceOps))
+	assert.Equal(t, second.WorkerOpsPlanID, third.ExpectedWorkerOpsPlanID)
+	assert.NotEqual(t, third.WorkerOpsPlanID, second.WorkerOpsPlanID)
+	assert.True(t, applies[3].Result.OK, "%+v", applies[3].Result.Error)
+}
+
+func opKinds(ops []api.Op) []string {
+	kinds := make([]string, 0, len(ops))
+	for i := range ops {
+		kinds = append(kinds, ops[i].Kind)
+	}
+	return kinds
+}

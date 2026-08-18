@@ -654,12 +654,15 @@ func TestAScheduledReloadCoalescesAndRunsInPlaceOps(t *testing.T) {
 	third.ExpectedPrevPlanID = scheduled.AppliedPlanID
 	third.ExpectedPrevToken = scheduled.AppliedToken
 	third.ExpectedWorkerOpsPlanID = scheduled.WorkerOpsPlanID
+	third.WorkerOpsPlanID = "plan-1-after"
 	third.InPlaceOps = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "example.com", Value: "be-c"}}
 	coalesced := h.apply(&third, next)
 
 	require.True(t, coalesced.OK, "%+v", coalesced.Error)
 	assert.Equal(t, api.ResultScheduled, coalesced.Mode)
-	assert.Equal(t, "plan-3", coalesced.WorkerOpsPlanID)
+	assert.Equal(t, "plan-1-after", coalesced.WorkerOpsPlanID, "the worker is at the derived plan, not the render")
+	require.NotNil(t, coalesced.Reload)
+	assert.Equal(t, scheduled.Reload.ScheduledAt, coalesced.Reload.ScheduledAt, "a coalesced apply says when the reload fires")
 	assert.Equal(t, "global\n  maxconn 600\n", h.read(configPath), "the files land even while a reload waits")
 }
 
@@ -682,6 +685,7 @@ func TestAnInPlaceOpOnAStaleWorkerBaselineInvalidatesThePod(t *testing.T) {
 	third.ExpectedPrevPlanID = scheduled.AppliedPlanID
 	third.ExpectedPrevToken = scheduled.AppliedToken
 	third.ExpectedWorkerOpsPlanID = "plan-from-another-life"
+	third.WorkerOpsPlanID = "plan-from-another-life-after"
 	third.InPlaceOps = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "example.com", Value: "be-c"}}
 	result := h.apply(&third, next)
 

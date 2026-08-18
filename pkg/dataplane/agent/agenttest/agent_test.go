@@ -190,6 +190,7 @@ func TestFencing(t *testing.T) {
 			m.ExpectedPrevPlanID = "plan-1"
 			m.ExpectedPrevToken = baseline
 			m.ExpectedWorkerOpsPlanID = "plan-1"
+			m.WorkerOpsPlanID = "plan-1-after"
 			tt.mutate(m)
 
 			_, err := c.Apply(context.Background(), m, parts, nil)
@@ -287,13 +288,14 @@ func TestPendingReloadCoalescesAndRunsOnlyInPlaceOps(t *testing.T) {
 	m.ExpectedPrevPlanID = "plan-1"
 	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
 	m.ExpectedWorkerOpsPlanID = "plan-1"
+	m.WorkerOpsPlanID = "plan-1-after"
 	m.Ops = []api.Op{{Kind: api.OpBackendAdd, Backend: "be-2", Profile: "haptic-base", Mode: "http"}}
 	m.InPlaceOps = []api.Op{{Kind: api.OpServerSetWeight, Backend: "be-1", Server: "srv1"}}
 
 	result, err := c.Apply(context.Background(), m, parts, nil)
 	require.NoError(t, err)
 	assert.Equal(t, api.ResultScheduled, result.Mode)
-	assert.Equal(t, "plan-2", result.WorkerOpsPlanID)
+	assert.Equal(t, "plan-1-after", result.WorkerOpsPlanID, "the worker is at the derived plan, not the render")
 	assert.Equal(t, "plan-1", result.RunningPlanID)
 	assert.Equal(t, seeded.HAProxy.WorkerPID, result.HAProxy.WorkerPID)
 	require.Len(t, result.OpResults, 1)
@@ -321,6 +323,7 @@ func TestInPlaceOpsOnAStaleWorkerBaselineAreNotAConflict(t *testing.T) {
 	m.ExpectedPrevPlanID = "plan-1"
 	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
 	m.ExpectedWorkerOpsPlanID = "plan-from-another-life"
+	m.WorkerOpsPlanID = "plan-from-another-life-after"
 	m.InPlaceOps = []api.Op{{Kind: api.OpMapSet, Path: "maps/host.map", Key: "a", Value: "b"}}
 
 	result, err := c.Apply(context.Background(), m, parts, nil)

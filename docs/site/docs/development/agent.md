@@ -273,8 +273,14 @@ inside the window is scheduled, never dropped and never cancelled by a later
 apply. While one is pending the files of a newer apply still land, its `ops` are
 skipped, and its `in_place_ops` run against the running worker — guarded by
 `expected_worker_ops_plan_id`, because those ops were composed against the
-worker's state, not the file set's. A rejected in-place op invalidates the pod's
-baseline and is reported; it never triggers a second reload.
+worker's state, not the file set's. Once they ran the pod records the manifest's
+`worker_ops_plan_id`: the worker's plan with exactly those ops applied, which
+the controller derives and keeps. It's never the render's own id, because an
+in-place batch carries only part of the change — a new map key waits for the
+reload — and the next batch has to be composed against what the worker holds.
+The answer says when the reload fires (`reload.scheduled_at`), so the
+controller can follow up. A rejected in-place op invalidates the pod's baseline
+and is reported; it never triggers a second reload.
 
 A reload that answers `Success=0` restores the journal, reloads the restored set
 when an op had already changed the running worker, and reports the failure with

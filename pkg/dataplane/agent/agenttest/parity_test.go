@@ -201,6 +201,7 @@ func pendingReloadScenario(t *testing.T, p *parityAgent) {
 	inPlace.ExpectedPrevPlanID = "plan-2"
 	inPlace.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 2}
 	inPlace.ExpectedWorkerOpsPlanID = "plan-1"
+	inPlace.WorkerOpsPlanID = "plan-1-after"
 	inPlace.InPlaceOps = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "new.example.com", Value: "be-2"}}
 	p.apply(t, "in-place ops while the reload waits", inPlace, parts)
 
@@ -208,6 +209,7 @@ func pendingReloadScenario(t *testing.T, p *parityAgent) {
 	stale.ExpectedPrevPlanID = "plan-3"
 	stale.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 3}
 	stale.ExpectedWorkerOpsPlanID = "plan-from-another-life"
+	stale.WorkerOpsPlanID = "plan-from-another-life-after"
 	stale.InPlaceOps = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "third.example.com", Value: "be-3"}}
 	p.apply(t, "in-place ops on a stale worker baseline", stale, parts)
 }

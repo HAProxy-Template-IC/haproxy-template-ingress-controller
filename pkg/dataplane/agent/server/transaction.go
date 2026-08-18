@@ -251,6 +251,8 @@ func (r *applyRun) settle() error {
 func (r *applyRun) inPlace() error {
 	r.result.Mode = api.ResultScheduled
 	r.server.coalesceIntoPendingReload(r.manifest.PlanID)
+	_, due := r.server.pendingReload()
+	r.result.Reload = &api.ReloadInfo{ScheduledAt: due.UTC().Format(time.RFC3339)}
 	if len(r.manifest.InPlaceOps) == 0 {
 		return nil
 	}
@@ -276,7 +278,7 @@ func (r *applyRun) inPlace() error {
 	}
 	r.server.foldCreated(r)
 	r.server.deferrals.Wake()
-	r.server.recordWorkerOps(r.manifest.PlanID)
+	r.server.recordWorkerOps(r.manifest.WorkerOpsPlanID)
 	return nil
 }
 
