@@ -642,6 +642,39 @@ func TestApply_LargeOpBatchIsChunked(t *testing.T) {
 	assert.Equal(t, 0, completed.ReloadsTriggered)
 }
 
+// A pod holding a paced reload takes the in-place batch on the same apply as
+// the first op chunk, and the agent's client refuses an apply whose two lists
+// exceed the cap together — before a byte is sent, so the pod would not even
+// get the files. The batch has to come out of the first chunk's budget.
+func TestApply_InPlaceBatchSharesTheFirstChunksBudget(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderWithServers("plan-1", 10)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+
+	// A reload is already scheduled, so the diff composes in-place ops for the
+	// running worker alongside the runtime ops for the new plan.
+	agent.SetReloadPending(true)
+	plan2, config2, aux2 := renderWithServers("plan-2", 20)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+
+	assert.Equal(t, 0, completed.Failed, "an apply the client refuses never reaches the pod at all")
+	assert.Equal(t, 1, completed.PendingReloads)
+
+	applies := agent.Applies()
+	require.Greater(t, len(applies), 1)
+	inPlace := 0
+	for _, apply := range applies[1:] {
+		assert.LessOrEqual(t, len(apply.Manifest.Ops)+len(apply.Manifest.InPlaceOps), api.MaxOpsPerApply,
+			"the agent client validates the two lists as one budget")
+		inPlace += len(apply.Manifest.InPlaceOps)
+	}
+	assert.Positive(t, inPlace, "the pending reload is exactly when the in-place batch matters")
+}
+
 // The plan cache retains what the fleet still refers to and nothing else, so a
 // long-lived controller does not accumulate every render it ever made.
 func TestApply_PlanCacheRetainsWhatTheFleetRuns(t *testing.T) {
