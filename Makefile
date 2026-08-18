@@ -1,5 +1,5 @@
 .PHONY: help version lint lint-fix lint-chart lint-chart-ci audit check-all \
-        test test-integration test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance test-ingress-conformance test-helm-defaults build-integration-test \
+        test test-integration test-agent-docker test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance test-ingress-conformance test-helm-defaults build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined bench bench-gateway-api \
         build check-source-hash docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check \
@@ -291,6 +291,13 @@ ifdef TEST_RUN_PATTERN
 else
 	$(GO) tool gotestsum --junitfile report-integration.xml --format testname -- -tags=integration -v -race -timeout 15m ./tests/integration/...
 endif
+
+test-agent-docker: ## Run the agent docker suite (real HAProxy + agent containers, no cluster)
+	@echo "Running agent docker tests against HAProxy $(HAPROXY_VERSION)..."
+	@# The suite builds the haptic binary itself and lays it into the HAProxy
+	@# image; HAPTIC_BINARY points it at a prebuilt one instead (CI artifact).
+	HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) tool gotestsum --junitfile report-agent-docker.xml --format testname -- \
+		-tags=agentdocker -v -timeout 20m -count=1 ./tests/agent/...
 
 test-acceptance: docker-build-test ## Run acceptance tests (builds image, creates kind cluster)
 	@echo "Running acceptance tests..."

@@ -317,6 +317,8 @@ func (c *Coordinator) handlePipelineSuccess(
 		result.RenderDurationMs,
 		triggerEvent.Reason,
 		result.ContentChecksum,
+		result.Plan,
+		result.PlanID,
 		coalescible,
 		events.PropagateCorrelation(triggerEvent),
 	)

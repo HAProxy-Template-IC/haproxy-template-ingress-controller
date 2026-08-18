@@ -57,7 +57,7 @@ func TestDeployFailureDowngradesPendingRuntimeRawLane(t *testing.T) {
 	// 1. Dispatch a structural render (cold start → structural). The loop
 	// publishes it, marks it in flight, and parks in awaitCompletion.
 	s.scheduleOrQueue(context.Background(), "structural-config", nil, structural, oneEndpoint(),
-		"structural-change", "corr-structural", nil, true, "checksum-structural")
+		"structural-change", "corr-structural", nil, true, "checksum-structural", nil, "")
 	sd := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	require.Equal(t, "structural-config", sd.Config)
 
@@ -67,7 +67,7 @@ func TestDeployFailureDowngradesPendingRuntimeRawLane(t *testing.T) {
 	// pending stays parked with the frozen runtime-raw lane.
 	structuralPlusAddr := parseLaneConfig(t, fmt.Sprintf(laneConfigBase, "10.0.0.2:8080")+laneStructuralExtra)
 	s.scheduleOrQueue(context.Background(), "runtime-config", nil, structuralPlusAddr, oneEndpoint(),
-		"endpoint-change", "corr-runtime", nil, true, "checksum-runtime")
+		"endpoint-change", "corr-runtime", nil, true, "checksum-runtime", nil, "")
 
 	select {
 	case <-applied:

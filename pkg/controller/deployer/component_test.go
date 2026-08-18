@@ -63,6 +63,8 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 		"test-namespace",
 		"test",
 		"",   // contentChecksum
+		nil,  // plan
+		"",   // planID
 		nil,  // statusPatches
 		true, // coalescible
 	)
@@ -131,6 +133,8 @@ func TestComponent_EndToEndFlow(t *testing.T) {
 		"test-namespace",
 		"test",
 		"",   // contentChecksum
+		nil,  // plan
+		"",   // planID
 		nil,  // statusPatches
 		true, // coalescible
 	))
@@ -162,7 +166,7 @@ loop:
 
 func TestComponent_ConvertSyncResultToMetadata(t *testing.T) {
 	t.Run("nil input", func(t *testing.T) {
-		result := syncResultToMetadata(nil)
+		result := syncResultToMetadata(nil, "")
 		assert.Nil(t, result)
 	})
 
@@ -192,7 +196,7 @@ func TestComponent_ConvertSyncResultToMetadata(t *testing.T) {
 			},
 		}
 
-		result := syncResultToMetadata(syncResult)
+		result := syncResultToMetadata(syncResult, "")
 
 		require.NotNil(t, result)
 		assert.True(t, result.ReloadTriggered)
@@ -233,6 +237,8 @@ func TestComponent_HandleEvent(t *testing.T) {
 			"test-namespace",
 			"test",
 			"",   // contentChecksum
+			nil,  // plan
+			"",   // planID
 			nil,  // statusPatches
 			true, // coalescible
 		)
@@ -258,6 +264,8 @@ func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 		"test-namespace",
 		"test",
 		"",   // contentChecksum
+		nil,  // plan
+		"",   // planID
 		nil,  // statusPatches
 		true, // coalescible
 	)
@@ -296,6 +304,8 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 		"test-namespace",
 		"duplicate",
 		"",   // contentChecksum
+		nil,  // plan
+		"",   // planID
 		nil,  // statusPatches
 		true, // coalescible
 	)

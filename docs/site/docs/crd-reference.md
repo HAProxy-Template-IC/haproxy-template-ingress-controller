@@ -614,6 +614,23 @@ status:
       lastTransitionTime: "2025-01-27T10:00:00Z"
 ```
 
+## `HAProxyCfg` deployment status
+
+The controller publishes the rendered configuration as an `HAProxyCfg` resource and records what each HAProxy pod runs in `status.deployedToPods[]`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `podName` | string | The HAProxy pod this entry describes |
+| `podUID` | string | The pod incarnation the entry belongs to |
+| `podRuntimeID` | string | The container execution epoch the entry belongs to |
+| `checksum` | string | Checksum of the configuration applied to the pod. It equals `spec.checksum` once the pod has converged |
+| `appliedPlanID` | string | The render plan the pod last accepted |
+| `runningPlanID` | string | The render plan the pod's running HAProxy serves. It trails `appliedPlanID` while a reload is still pending |
+| `mode` | string | How the plan was applied: `runtime`, `file_only`, `reload`, `scheduled`, `noop`, or `rejected`. Empty when the applier reports no mode |
+| `reasons` | `[]string` | Why the apply took that mode, most significant first, at most 8 entries |
+| `lastError` | string | Error message from the most recent failed sync, cleared when a sync succeeds |
+| `consecutiveErrors` | int | Number of consecutive sync failures, reset to 0 on success |
+
 ## `HAProxyTemplateLibrary`
 
 A second kind carrying template-library *content* only, referenced from a config's [`libraryRefs`](#libraryrefs). It exists because `templateSnippets` and `validationTests` are ~94% of a full configuration's bulk, which puts a single object against etcd's per-object limit.

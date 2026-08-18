@@ -331,6 +331,8 @@ func TestTemplateEvents(t *testing.T) {
 			100,
 			"resource_change",
 			"",   // contentChecksum
+			nil,  // plan
+			"",   // planID
 			true, // coalescible
 		)
 		require.NotNil(t, event)
@@ -344,7 +346,7 @@ func TestTemplateEvents(t *testing.T) {
 	})
 
 	t.Run("TemplateRenderedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", true,
+		event := NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", nil, "", true,
 			WithCorrelation("corr-123", "cause-456"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr-123", event.CorrelationID())
@@ -522,6 +524,8 @@ func TestDeploymentEvents(t *testing.T) {
 			"default",
 			"config_validation",
 			"",   // contentChecksum
+			nil,  // plan
+			"",   // planID
 			nil,  // statusPatches
 			true, // coalescible
 		)
@@ -538,7 +542,7 @@ func TestDeploymentEvents(t *testing.T) {
 
 	t.Run("DeploymentScheduledEvent_DefensiveCopy", func(t *testing.T) {
 		endpoints := []dataplane.Endpoint{{URL: "http://ep1:5555"}}
-		event := NewDeploymentScheduledEvent("cfg", nil, nil, endpoints, "n", "ns", "r", "", nil, true)
+		event := NewDeploymentScheduledEvent("cfg", nil, nil, endpoints, "n", "ns", "r", "", nil, "", nil, true)
 
 		// Modify original
 		endpoints[0] = dataplane.Endpoint{URL: "http://modified:5555"}
@@ -548,7 +552,7 @@ func TestDeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentScheduledEvent_WithCorrelation", func(t *testing.T) {
-		event := NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "", nil, true,
+		event := NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "", nil, "", nil, true,
 			WithCorrelation("corr", "cause"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr", event.CorrelationID())
@@ -798,14 +802,14 @@ func TestTimestampNotZero(t *testing.T) {
 		{"CredentialsUpdated", NewCredentialsUpdatedEvent(nil, "v1")},
 		{"HTTPResourceUpdated", NewHTTPResourceUpdatedEvent("url", "checksum", 0)},
 		{"HTTPResourceAccepted", NewHTTPResourceAcceptedEvent("url", "checksum", 0)},
-		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", true)},
+		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", nil, "", true)},
 		{"TemplateRenderFailed", NewTemplateRenderFailedEvent("name", "error", "stack")},
 		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0, "", nil, true)},
 		{"ValidationFailed", NewValidationFailedEvent(nil, 0, "")},
 		{"DeploymentStarted", NewDeploymentStartedEvent(0)},
 		{"InstanceDeploymentFailed", NewInstanceDeploymentFailedEvent(nil, "error", false)},
 		{"DeploymentCompleted", NewDeploymentCompletedEvent(&DeploymentResult{})},
-		{"DeploymentScheduled", NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "", nil, true)},
+		{"DeploymentScheduled", NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "", nil, "", nil, true)},
 		{"DriftPreventionTriggered", NewDriftPreventionTriggeredEvent(0)},
 		// Discovery events
 		{"HAProxyPodsDiscovered", NewHAProxyPodsDiscoveredEvent(nil, 0)},

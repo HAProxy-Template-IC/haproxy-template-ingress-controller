@@ -110,8 +110,8 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 		2,                           // auxFileCount
 		50,                          // durationMs
 		"",                          // triggerReason
-		"",                          // contentChecksum
-		true,                        // coalescible
+		"", nil, "",                 // contentChecksum
+		true, // coalescible
 	)
 
 	scheduler.handleTemplateRendered(event)
@@ -427,7 +427,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{}, "test", "test-correlation-id", nil, true, "")
+		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{}, "test", "test-correlation-id", nil, true, "", nil, "")
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -442,8 +442,8 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []dataplane.Endpoint{}, "first", "correlation-1", nil, true, "")
-		scheduler.scheduleOrQueue(ctx, "config2", nil, nil, []dataplane.Endpoint{}, "second", "correlation-2", nil, true, "")
+		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []dataplane.Endpoint{}, "first", "correlation-1", nil, true, "", nil, "")
+		scheduler.scheduleOrQueue(ctx, "config2", nil, nil, []dataplane.Endpoint{}, "second", "correlation-2", nil, true, "", nil, "")
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -472,8 +472,8 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 			2,                           // auxFileCount
 			50,                          // durationMs
 			"",                          // triggerReason
-			"",                          // contentChecksum
-			true,                        // coalescible
+			"", nil, "",                 // contentChecksum
+			true, // coalescible
 		)
 
 		scheduler.handleEvent(ctx, event)
@@ -488,7 +488,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		// Route a real render first and propagate its correlation onto the
 		// verdict: the scheduler only promotes a cache the verdict describes.
 		rendered := events.NewTemplateRenderedEvent(
-			"global\n", &dataplane.AuxiliaryFiles{}, nil, nil, 0, 50, "", "", true,
+			"global\n", &dataplane.AuxiliaryFiles{}, nil, nil, 0, 50, "", "", nil, "", true,
 		)
 		scheduler.handleEvent(ctx, rendered)
 
@@ -686,7 +686,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 	// is the deterministic signal that the loop is now awaiting completion.
 	scheduler.scheduleOrQueue(ctx, "in-flight-config", nil, nil,
 		[]dataplane.Endpoint{{URL: "http://localhost:5555"}},
-		"in-flight-deployment", "in-flight-corr", nil, true, "")
+		"in-flight-deployment", "in-flight-corr", nil, true, "", nil, "")
 	inFlight := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
 	require.Equal(t, "in-flight-config", inFlight.Config)
 
@@ -694,7 +694,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 	// pending slot; the loop cannot dispatch it until the in-flight deploy completes.
 	scheduler.scheduleOrQueue(ctx, "pending-config", nil, nil,
 		[]dataplane.Endpoint{{URL: "http://localhost:5555"}},
-		"pending-deployment", "correlation-123", nil, true, "")
+		"pending-deployment", "correlation-123", nil, true, "", nil, "")
 
 	// Completing the in-flight deploy releases awaitCompletion; the loop then grabs
 	// the pending deployment and emits its scheduled event. Order of these two
@@ -741,7 +741,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 	// nil parsedConfig → cold-start structural lane (no runtime-raw apply), and
 	// empty endpoints → nothing to apply anyway.
 	scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{},
-		"test-rate-limit", "correlation-456", nil, true, "")
+		"test-rate-limit", "correlation-456", nil, true, "", nil, "")
 
 	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
 	_ = scheduled
@@ -771,7 +771,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 	// Enqueue work so the loop advances from "wait for pending" into the
 	// (5s) interval wait.
 	scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{},
-		"test-cancel", "correlation-789", nil, true, "")
+		"test-cancel", "correlation-789", nil, true, "", nil, "")
 
 	// Give the loop a moment to enter the interval wait, then cancel.
 	time.Sleep(50 * time.Millisecond)
@@ -810,7 +810,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testi
 	// nil parsedConfig → cold-start structural lane (no runtime-raw apply), and
 	// empty endpoints → nothing to apply anyway.
 	scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{},
-		"test-compute-runtime", "correlation-compute", nil, true, "")
+		"test-compute-runtime", "correlation-compute", nil, true, "", nil, "")
 
 	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
 	// Runtime config name should be computed from template config name
@@ -925,7 +925,7 @@ func TestScheduler_NoBurstUnderConcurrentReconciles(t *testing.T) {
 			reason := "reconcile-" + strconv.Itoa(i)
 			corr := "corr-" + strconv.Itoa(i)
 			scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{},
-				reason, corr, nil, true, "")
+				reason, corr, nil, true, "", nil, "")
 		}(i)
 	}
 	wg.Wait()
@@ -978,9 +978,9 @@ func TestScheduler_LatestWinsCoalescing(t *testing.T) {
 	scheduler.schedulerMutex.Unlock()
 	startLoopForTest(t, scheduler, ctx)
 
-	scheduler.scheduleOrQueue(ctx, "A", nil, nil, []dataplane.Endpoint{}, "first", "corr-a", nil, true, "")
-	scheduler.scheduleOrQueue(ctx, "B", nil, nil, []dataplane.Endpoint{}, "second", "corr-b", nil, true, "")
-	scheduler.scheduleOrQueue(ctx, "C", nil, nil, []dataplane.Endpoint{}, "third", "corr-c", nil, true, "")
+	scheduler.scheduleOrQueue(ctx, "A", nil, nil, []dataplane.Endpoint{}, "first", "corr-a", nil, true, "", nil, "")
+	scheduler.scheduleOrQueue(ctx, "B", nil, nil, []dataplane.Endpoint{}, "second", "corr-b", nil, true, "", nil, "")
+	scheduler.scheduleOrQueue(ctx, "C", nil, nil, []dataplane.Endpoint{}, "third", "corr-c", nil, true, "", nil, "")
 
 	got := countScheduledEvents(eventChan, 250*time.Millisecond)
 	require.Len(t, got, 1, "three pre-interval schedules must coalesce into exactly one deploy")
@@ -1031,7 +1031,7 @@ func TestScheduler_IntervalUsesCompletionEndTime(t *testing.T) {
 
 	start := time.Now()
 	scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{},
-		"rate-limited", "corr-interval", nil, true, "")
+		"rate-limited", "corr-interval", nil, true, "", nil, "")
 
 	testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.VeryLongTimeout)
 	elapsed := time.Since(start)

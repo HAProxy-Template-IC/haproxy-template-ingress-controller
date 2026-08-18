@@ -36,6 +36,8 @@ while IFS= read -r f; do
       want="e2e" ;;
     tests/integration/*)
       want="integration" ;;
+    tests/agent/*)
+      want="agentdocker" ;;
     tests/acceptance/*)
       want="acceptance" ;;
     tests/conformance/*)

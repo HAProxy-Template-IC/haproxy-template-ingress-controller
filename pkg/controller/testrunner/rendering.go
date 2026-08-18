@@ -189,6 +189,10 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 			"dynamic_count", dynamicCount)
 	}
 
+	plan, err := bctx.PlanRegistry.Plan(haproxyConfig, auxiliaryFiles)
+	if err != nil {
+		return RenderOutput{}, fmt.Errorf("building the render plan: %w", err)
+	}
 	return RenderOutput{
 		HAProxyConfig:  haproxyConfig,
 		AuxiliaryFiles: auxiliaryFiles,
@@ -196,9 +200,7 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 		StatusPatches:  statusPatches,
 		Events:         renderedEvents,
 		IncludeStats:   includeStats,
-		Plan: bctx.PlanRegistry.Plan(
-			rendercontext.PlanFiles(haproxyConfig, auxiliaryFiles),
-			rendercontext.MapContents(auxiliaryFiles)),
+		Plan:           plan,
 	}, nil
 }
 

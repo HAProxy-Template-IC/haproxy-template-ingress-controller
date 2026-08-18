@@ -22,7 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 func TestPlanRegistrySection(t *testing.T) {
@@ -44,7 +47,7 @@ func TestPlanRegistrySection(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			registry := NewPlanRegistry()
+			registry := NewPlanRegistry(nil)
 
 			token, err := registry.Section(tc.kind, tc.section, "text\n")
 
@@ -61,7 +64,7 @@ func TestPlanRegistrySection(t *testing.T) {
 }
 
 func TestPlanRegistrySectionIdempotent(t *testing.T) {
-	registry := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
 
 	first, err := registry.Section("profile", "shared", "defaults shared\n")
 	require.NoError(t, err)
@@ -75,7 +78,7 @@ func TestPlanRegistrySectionIdempotent(t *testing.T) {
 }
 
 func TestPlanRegistrySectionConcurrent(t *testing.T) {
-	registry := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 16; i++ {
@@ -168,7 +171,7 @@ func TestPlanRegistryBackendStrictKeys(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			registry := NewPlanRegistry()
+			registry := NewPlanRegistry(nil)
 
 			token, err := registry.Backend(tc.record, "backend be_app\n")
 
@@ -187,7 +190,7 @@ func TestPlanRegistryBackendStrictKeys(t *testing.T) {
 }
 
 func TestPlanRegistryBackendDefaultsAndDigests(t *testing.T) {
-	registry := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
 
 	_, err := registry.Backend(map[string]any{
 		"name":     "be_app",
@@ -206,7 +209,7 @@ func TestPlanRegistryBackendDefaultsAndDigests(t *testing.T) {
 }
 
 func TestPlanRegistryBackendConflict(t *testing.T) {
-	registry := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
 	record := map[string]any{"name": "be_app", "mode": "http"}
 	_, err := registry.Backend(record, "backend be_app\n")
 	require.NoError(t, err)
@@ -221,7 +224,7 @@ func TestPlanRegistryBackendConflict(t *testing.T) {
 }
 
 func TestPlanRegistryMapMeta(t *testing.T) {
-	registry := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
 
 	require.NoError(t, registry.MapMeta("host.map", false))
 	require.NoError(t, registry.MapMeta("host.map", false))
@@ -234,7 +237,7 @@ func TestPlanRegistryMapMeta(t *testing.T) {
 }
 
 func TestPlanRegistryPlan(t *testing.T) {
-	registry := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
 	profileToken, err := registry.Section("profile", "haptic-be-1", "defaults haptic-be-1\n")
 	require.NoError(t, err)
 	backendToken, err := registry.Backend(map[string]any{
@@ -248,18 +251,16 @@ func TestPlanRegistryPlan(t *testing.T) {
 	config, _, err := registry.Assemble(context.Background(), rendered, nil)
 	require.NoError(t, err)
 
-	files := []renderplan.File{
-		{Path: "maps/host.map", Kind: renderplan.FileKindMap},
-		{Path: "haproxy.cfg", Kind: renderplan.FileKindConfig},
-	}
-	plan := registry.Plan(files, map[string]string{
-		"host.map":  "example.com be_app\nexample.com be_app2\n",
-		"other.map": "# empty\n",
-	})
+	plan, err := registry.Plan(config, &dataplane.AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{
+		{Path: "host.map", Content: "example.com be_app\nexample.com be_app2\n"},
+		{Path: "other.map", Content: "# empty\n"},
+	}})
+	require.NoError(t, err)
 
 	assert.Equal(t, renderplan.SchemaVersion, plan.SchemaVersion)
 	assert.Len(t, plan.ID, 16)
-	assert.Equal(t, []string{"haproxy.cfg", "maps/host.map"}, []string{plan.Files[0].Path, plan.Files[1].Path})
+	assert.Equal(t, []string{"haproxy.cfg", "host.map", "other.map"},
+		[]string{plan.Files[0].Path, plan.Files[1].Path, plan.Files[2].Path})
 
 	require.Contains(t, plan.Profiles, "haptic-be-1")
 	assert.Equal(t, renderplan.DigestString("defaults haptic-be-1\n"), plan.Profiles["haptic-be-1"].BodyDigest)
@@ -276,8 +277,75 @@ func TestPlanRegistryPlan(t *testing.T) {
 	assert.Equal(t, "global\n    daemon\ndefaults haptic-be-1\nbackend be_app\n    server SRV_1 10.0.0.1:8080\n", config)
 }
 
+// Every plan path is the base-relative string the config references the file
+// by, which is also HAProxy's runtime name for it — a static name, a name a
+// template registered, and a path the file registry already resolved all
+// converge on it.
+func TestPlanRegistryPlanPathsAreConfigReferences(t *testing.T) {
+	registry := NewPlanRegistry(&templating.PathResolver{
+		BaseDir: "/etc/haproxy", MapsDir: "maps", SSLDir: "ssl", CRTListDir: "general", GeneralDir: "general",
+	})
+	require.NoError(t, registry.MapMeta("host.map", false))
+
+	plan, err := registry.Plan("global\n", &dataplane.AuxiliaryFiles{
+		MapFiles:        []auxiliaryfiles.MapFile{{Path: "host.map", Content: "a b\n"}},
+		SSLCertificates: []auxiliaryfiles.SSLCertificate{{Path: "api.example.com.pem"}, {Path: "ssl/other_pem.pem"}},
+		CRTListFiles:    []auxiliaryfiles.CRTListFile{{Path: "general/list.txt"}},
+		GeneralFiles:    []auxiliaryfiles.GeneralFile{{Path: "general/503.http"}},
+	})
+	require.NoError(t, err)
+
+	paths := make([]string, 0, len(plan.Files))
+	for _, file := range plan.Files {
+		paths = append(paths, file.Path)
+	}
+	assert.Equal(t, []string{"general/503.http", "general/list.txt", "haproxy.cfg", "maps/host.map",
+		"ssl/api_example_com.pem", "ssl/other_pem.pem"}, paths)
+
+	require.Contains(t, plan.Maps, "maps/host.map")
+	assert.Equal(t, "maps/host.map", plan.Maps["maps/host.map"].Path)
+	assert.False(t, plan.Maps["maps/host.map"].Ordered, "meta declared by the bare name applies to the resolved path")
+	resolved, err := registry.MapPath("host.map")
+	require.NoError(t, err)
+	assert.Equal(t, "maps/host.map", resolved)
+}
+
+// A resolved path resolves to itself, for every kind: the registry resolves a
+// map's path once in MapMeta and again in Plan, and a certificate name may
+// arrive already sanitised from the file registry.
+func TestPlanRegistryFilePathIsIdempotent(t *testing.T) {
+	registry := NewPlanRegistry(&templating.PathResolver{
+		BaseDir: "/etc/haproxy", MapsDir: "maps", SSLDir: "ssl", CRTListDir: "general", GeneralDir: "general",
+	})
+	for _, tc := range []struct{ kind, name string }{
+		{"map", "host.map"}, {"map", "maps/host.map"},
+		{"cert", "api.example.com.pem"}, {"cert", "ssl/api_example_com.pem"},
+		{"crt-list", "list.txt"}, {"crt-list", "general/list.txt"},
+	} {
+		once, err := registry.filePath(tc.name, tc.kind)
+		require.NoError(t, err, tc.name)
+		twice, err := registry.filePath(once, tc.kind)
+		require.NoError(t, err, once)
+		assert.Equal(t, once, twice, "%s %q", tc.kind, tc.name)
+	}
+}
+
+// A name the resolver refuses is an error, never a plan with an unresolved
+// path that no runtime name would match.
+func TestPlanRegistryPlanRefusesAnUnresolvableName(t *testing.T) {
+	registry := NewPlanRegistry(&templating.PathResolver{
+		BaseDir: "/etc/haproxy", MapsDir: "maps", SSLDir: "ssl", CRTListDir: "general", GeneralDir: "general",
+	})
+	_, err := registry.Plan("global\n", &dataplane.AuxiliaryFiles{
+		MapFiles: []auxiliaryfiles.MapFile{{Path: "../escape.map", Content: "a b\n"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escape.map")
+	require.Error(t, registry.MapMeta("../escape.map", false))
+}
+
 func TestPlanRegistryPlanCurrentConfigRoundTrip(t *testing.T) {
-	registry := NewPlanRegistry()
+	registry := NewPlanRegistry(nil)
 	token, err := registry.Backend(map[string]any{
 		"name":    "be_app",
 		"servers": []any{map[string]any{"name": "SRV_1", "address": "10.0.0.1", "port": 8080}},
@@ -286,7 +354,9 @@ func TestPlanRegistryPlanCurrentConfigRoundTrip(t *testing.T) {
 	_, _, err = registry.Assemble(context.Background(), token, nil)
 	require.NoError(t, err)
 
-	current := registry.Plan(nil, nil).CurrentConfig()
+	plan, err := registry.Plan("", nil)
+	require.NoError(t, err)
+	current := plan.CurrentConfig()
 
 	require.Contains(t, current.ServerIndex, "be_app")
 	server := current.ServerIndex["be_app"]["SRV_1"]

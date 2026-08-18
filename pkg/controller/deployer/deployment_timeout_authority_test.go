@@ -68,7 +68,7 @@ func TestDeploymentTimeoutCancelsBlockedExecutorOutOfBand(t *testing.T) {
 	scheduled := events.NewDeploymentScheduledEvent(
 		"global\n  daemon\n", nil, nil,
 		[]dataplane.Endpoint{{URL: server.URL, Username: "admin", Password: "password"}},
-		"runtime", "default", "test", "checksum-A", nil, false,
+		"runtime", "default", "test", "checksum-A", nil, "", nil, false,
 		events.WithCorrelation("shared-trace", "validation"),
 	)
 	bus.Publish(scheduled)
@@ -158,9 +158,9 @@ func TestTimedOutDeploymentRetiresBeforeQueuedWorkAdvances(t *testing.T) {
 	defer cancel()
 	startLoopForTest(t, scheduler, ctx)
 
-	scheduler.scheduleOrQueue(ctx, "config-A", nil, nil, oneEndpoint(), "A", "shared-trace", nil, false, "checksum-A")
+	scheduler.scheduleOrQueue(ctx, "config-A", nil, nil, oneEndpoint(), "A", "shared-trace", nil, false, "checksum-A", nil, "")
 	deploymentA := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledEvents, testutil.LongTimeout)
-	scheduler.scheduleOrQueue(ctx, "config-B", nil, nil, oneEndpoint(), "B", "shared-trace", nil, false, "checksum-B")
+	scheduler.scheduleOrQueue(ctx, "config-B", nil, nil, oneEndpoint(), "B", "shared-trace", nil, false, "checksum-B", nil, "")
 
 	scheduler.schedulerMutex.Lock()
 	scheduler.state.deploymentStartTime = time.Now().Add(-time.Second)
@@ -180,7 +180,7 @@ func TestTimedOutDeploymentRetiresBeforeQueuedWorkAdvances(t *testing.T) {
 	deploymentB := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledEvents, testutil.LongTimeout)
 	require.Equal(t, "config-B", deploymentB.Config)
 
-	scheduler.scheduleOrQueue(ctx, "config-C", nil, nil, oneEndpoint(), "C", "shared-trace", nil, false, "checksum-C")
+	scheduler.scheduleOrQueue(ctx, "config-C", nil, nil, oneEndpoint(), "C", "shared-trace", nil, false, "checksum-C", nil, "")
 	scheduler.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		DeploymentID: deploymentA.EventID(), Total: 1, Succeeded: 1, ContentChecksum: "checksum-A",
 	}, events.WithCorrelation("shared-trace", deploymentA.EventID())))

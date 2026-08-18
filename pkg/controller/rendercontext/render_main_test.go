@@ -48,7 +48,7 @@ func newTestEngine(t *testing.T, source string, post []templating.PostProcessorC
 
 func TestRenderMainAssemblesDeclaredBackends(t *testing.T) {
 	engine := newTestEngine(t, mainTemplateWithBackends, nil)
-	registry := rendercontext.NewPlanRegistry()
+	registry := rendercontext.NewPlanRegistry(nil)
 
 	main, err := rendercontext.RenderMain(context.Background(), engine,
 		map[string]any{"planRegistry": registry}, registry, false)
@@ -62,7 +62,8 @@ func TestRenderMainAssemblesDeclaredBackends(t *testing.T) {
 	assert.Equal(t, []string{"core#0", "be_a", "be_b"}, namesOf(main.Sections))
 	assertConfigPartitioned(t, main.Config, main.Sections)
 
-	plan := registry.Plan(nil, nil)
+	plan, err := registry.Plan("", nil)
+	require.NoError(t, err)
 	require.Len(t, plan.Backends, 2)
 	assert.Equal(t, renderplan.ShapeStructural, plan.Backends["be_a"].Shape)
 	assert.Equal(t, renderplan.DigestString("backend be_b\n    server SRV_1 10.0.0.2:8080\n"),
@@ -81,7 +82,7 @@ func TestRenderMainAppliesPostProcessorsPerSection(t *testing.T) {
         daemon
 {{ token }}`
 	engine := newTestEngine(t, source, post)
-	registry := rendercontext.NewPlanRegistry()
+	registry := rendercontext.NewPlanRegistry(nil)
 
 	main, err := rendercontext.RenderMain(context.Background(), engine,
 		map[string]any{"planRegistry": registry}, registry, false)
@@ -93,7 +94,7 @@ func TestRenderMainAppliesPostProcessorsPerSection(t *testing.T) {
 
 func TestRenderMainReportsRenderErrors(t *testing.T) {
 	engine := newTestEngine(t, `{{ fail("boom") }}`, nil)
-	registry := rendercontext.NewPlanRegistry()
+	registry := rendercontext.NewPlanRegistry(nil)
 
 	_, err := rendercontext.RenderMain(context.Background(), engine,
 		map[string]any{"planRegistry": registry}, registry, false)
@@ -105,14 +106,16 @@ func TestRenderMainReportsRenderErrors(t *testing.T) {
 func TestRenderMainWithoutDeclarationsIsUnchanged(t *testing.T) {
 	source := "global\n    daemon\n\ndefaults\n    mode http\n"
 	engine := newTestEngine(t, source, nil)
-	registry := rendercontext.NewPlanRegistry()
+	registry := rendercontext.NewPlanRegistry(nil)
 
 	main, err := rendercontext.RenderMain(context.Background(), engine, map[string]any{}, registry, false)
 
 	require.NoError(t, err)
 	assert.Equal(t, source, main.Config, "a chart that declares nothing renders byte-identically")
 	assert.Equal(t, []string{"core#0"}, namesOf(main.Sections))
-	assert.Len(t, registry.Plan(nil, nil).Sections, 1)
+	plan, err := registry.Plan("", nil)
+	require.NoError(t, err)
+	assert.Len(t, plan.Sections, 1)
 }
 
 func assertConfigPartitioned(t *testing.T, config string, sections []renderplan.Section) {

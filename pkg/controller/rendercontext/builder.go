@@ -320,7 +320,7 @@ func (b *Builder) Build() *BuildResult {
 
 	// Create plan registry so templates can declare the structure of the
 	// config they emit; RenderMain assembles the config from its tokens.
-	planRegistry := NewPlanRegistry()
+	planRegistry := NewPlanRegistry(b.pathResolver)
 
 	// Create status patch collector for template-driven status updates
 	statusPatchCollector := templating.NewStatusPatchCollector()

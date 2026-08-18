@@ -15,19 +15,48 @@
 package renderer
 
 import (
+	"fmt"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
-// rememberPlan keeps the newest reconcile plan so the next render can read its
-// servers as `currentConfig`. Admission renders are proposals and must not
-// displace the state the fleet was last rendered from.
+// SetAckedPlan records the plan the fleet confirmed it is running. Pods that
+// disagree resolve to the newest ACK, which is what this call carries.
+func (s *RenderService) SetAckedPlan(plan *renderplan.Plan) {
+	if plan == nil {
+		return
+	}
+	s.planMu.Lock()
+	defer s.planMu.Unlock()
+	s.ackedPlan = plan
+}
+
+// buildPlan turns the render into its plan and keeps it as the fallback
+// current-config source until a pod ACKs one.
+func (s *RenderService) buildPlan(registry *rendercontext.PlanRegistry, mode rendercontext.RenderMode, config string, aux *dataplane.AuxiliaryFiles) (*renderplan.Plan, error) {
+	plan, err := registry.Plan(config, aux)
+	if err != nil {
+		return nil, fmt.Errorf("building the render plan: %w", err)
+	}
+	s.rememberPlan(mode, plan)
+	return plan, nil
+}
+
+// rememberPlan keeps the newest reconcile plan as the fresh-install fallback:
+// until the fleet ACKs a plan, the last render is the only description of what
+// the pods were asked to run. Admission renders are proposals and must not
+// displace it.
 func (s *RenderService) rememberPlan(mode rendercontext.RenderMode, plan *renderplan.Plan) {
 	if mode != rendercontext.RenderModeReconcile || plan == nil {
 		return
 	}
 	s.planMu.Lock()
 	defer s.planMu.Unlock()
+	if s.ackedPlan != nil {
+		return
+	}
 	s.lastPlan = plan
 }
 
@@ -43,7 +72,10 @@ func (s *RenderService) currentConfig() *renderplan.CurrentConfig {
 	}
 
 	s.planMu.Lock()
-	plan := s.lastPlan
+	plan := s.ackedPlan
+	if plan == nil {
+		plan = s.lastPlan
+	}
 	s.planMu.Unlock()
 	if plan == nil {
 		return fromStore

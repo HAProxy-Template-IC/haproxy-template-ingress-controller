@@ -51,7 +51,7 @@ func TestEventCommentator_ProcessEventProjectsPayloadAndPreservesSummary(t *test
 		17,
 		"config_change",
 		"checksum",
-		true,
+		nil, "", true,
 		corr,
 	)
 	validation := ctlevents.NewValidationCompletedEvent(nil, 23, "config_change", nil, true, corr)

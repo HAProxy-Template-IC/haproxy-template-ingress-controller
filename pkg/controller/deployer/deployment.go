@@ -24,6 +24,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -82,7 +83,7 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 		"correlation_id", correlationID)
 
 	// Execute deployment with cancellable context
-	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, event.ParsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, event.ContentChecksum, event.StatusPatches, deploymentID, correlationID)
+	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, event.ParsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, event.ContentChecksum, event.StatusPatches, event.Plan, event.PlanID, deploymentID, correlationID)
 }
 
 // deployToEndpoints deploys configuration to all HAProxy endpoints in parallel.
@@ -104,6 +105,8 @@ func (c *Component) deployToEndpoints(
 	reason string,
 	contentChecksum string,
 	statusPatches []templating.StatusPatch,
+	plan *renderplan.Plan,
+	planID string,
 	deploymentID string,
 	correlationID string,
 ) {
@@ -167,7 +170,7 @@ func (c *Component) deployToEndpoints(
 		go func(ep *dataplane.Endpoint) {
 			defer wg.Done()
 			c.processEndpointDeployment(ctx, ep, config, auxFiles, parsedConfig, checksum, reason,
-				runtimeConfigName, runtimeConfigNamespace, contentChecksum, correlationID, state)
+				runtimeConfigName, runtimeConfigNamespace, contentChecksum, planID, correlationID, state)
 		}(&endpoints[i])
 	}
 
@@ -175,6 +178,8 @@ func (c *Component) deployToEndpoints(
 	wg.Wait()
 
 	totalDurationMs := time.Since(startTime).Milliseconds()
+
+	c.recordFleetAck(plan, atomic.LoadInt32(&state.successCount))
 
 	c.Logger().Debug("Deployment completed",
 		"total_endpoints", len(endpoints),
@@ -224,6 +229,16 @@ func (c *Component) deployToEndpoints(
 	}
 }
 
+// recordFleetAck hands the renderer the plan the fleet now runs — one pod that
+// took it is enough, the rest converge on the same render. Called directly, not
+// over the bus: the next render must read it (ADR-0001).
+func (c *Component) recordFleetAck(plan *renderplan.Plan, successes int32) {
+	if plan == nil || c.ackedPlans == nil || successes == 0 {
+		return
+	}
+	c.ackedPlans.SetAckedPlan(plan)
+}
+
 // deploymentState holds aggregated metrics protected for concurrent access.
 type deploymentState struct {
 	successCount       int32
@@ -248,6 +263,7 @@ func (c *Component) processEndpointDeployment(
 	runtimeConfigName string,
 	runtimeConfigNamespace string,
 	contentChecksum string,
+	planID string,
 	correlationID string,
 	state *deploymentState,
 ) {
@@ -274,7 +290,7 @@ func (c *Component) processEndpointDeployment(
 			runtimeConfigName, runtimeConfigNamespace, correlationID, state)
 	} else {
 		c.handleEndpointSuccess(ep, syncResult, durationMs, checksum, isDriftCheck,
-			runtimeConfigName, runtimeConfigNamespace, correlationID, state)
+			runtimeConfigName, runtimeConfigNamespace, planID, correlationID, state)
 	}
 }
 
@@ -344,6 +360,7 @@ func (c *Component) handleEndpointSuccess(
 	isDriftCheck bool,
 	runtimeConfigName string,
 	runtimeConfigNamespace string,
+	planID string,
 	correlationID string,
 	state *deploymentState,
 ) {
@@ -392,7 +409,7 @@ func (c *Component) handleEndpointSuccess(
 	// next content change happens to also be a non-no-op sync. Always
 	// publish.
 	if runtimeConfigName != "" && runtimeConfigNamespace != "" {
-		syncMetadata := syncResultToMetadata(syncResult)
+		syncMetadata := syncResultToMetadata(syncResult, planID)
 		c.EventBus().Publish(events.NewConfigAppliedToPodEvent(
 			runtimeConfigName,
 			runtimeConfigNamespace,

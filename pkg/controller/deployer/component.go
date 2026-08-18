@@ -87,6 +87,11 @@ type Component struct {
 	// versionCache shares fenced endpoint observations with the runtime bypass.
 	versionCache *configVersionCache
 
+	// ackedPlans receives the plan a deployment landed on at least one pod, so
+	// the renderer reads the fleet's state instead of its own last render. Nil
+	// in tests.
+	ackedPlans AckedPlanSink
+
 	// Deployment cancellation support
 	cancelMu            sync.Mutex
 	activeDeploymentID  string                 // Event ID of the active DeploymentScheduledEvent

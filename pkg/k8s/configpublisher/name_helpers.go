@@ -46,13 +46,24 @@ func removePodAuthorityFromStatus(pods []haproxyv1alpha1.PodDeploymentStatus, po
 	return newPods, removed
 }
 
+// maxPodStatusReasons is the CRD's MaxItems for PodDeploymentStatus.Reasons.
+// The apiserver rejects a longer list, so the writer truncates instead.
+const maxPodStatusReasons = 8
+
 // buildPodStatus constructs a PodDeploymentStatus from a DeploymentStatusUpdate.
 func buildPodStatus(update *DeploymentStatusUpdate) haproxyv1alpha1.PodDeploymentStatus {
 	podStatus := haproxyv1alpha1.PodDeploymentStatus{
-		PodName:      update.PodName,
-		PodUID:       update.PodUID,
-		PodRuntimeID: update.PodRuntimeID,
-		Checksum:     update.Checksum,
+		PodName:       update.PodName,
+		PodUID:        update.PodUID,
+		PodRuntimeID:  update.PodRuntimeID,
+		Checksum:      update.Checksum,
+		AppliedPlanID: update.AppliedPlanID,
+		RunningPlanID: update.RunningPlanID,
+		Mode:          update.Mode,
+		Reasons:       update.Reasons,
+	}
+	if len(podStatus.Reasons) > maxPodStatusReasons {
+		podStatus.Reasons = podStatus.Reasons[:maxPodStatusReasons]
 	}
 
 	// Set error tracking

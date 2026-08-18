@@ -17,6 +17,7 @@ Work in this directory when:
 
 - Unit tests → Place in same package as code (e.g., `pkg/templating/engine_scriggo_test.go`)
 - Integration tests → Use `tests/integration/`
+- HAPTIC agent wire-contract tests → Use `tests/agent/`
 - Acceptance tests → Use `tests/acceptance/`
 - Full-stack e2e tests → Use `tests/e2e/`
 
@@ -46,6 +47,14 @@ tests/
 │   ├── auxiliaryfiles_test.go   # Auxiliary file (maps, SSL, general) sync tests
 │   ├── enterprise_botmgmt_test.go # Enterprise-edition Bot Management sync tests
 │   └── testdata/                # Test configuration files
+├── agent/                        # HAPTIC agent wire-contract tests
+│   │                            # (docker only, //go:build agentdocker)
+│   ├── image.go                 # Builds the haptic binary into the HAProxy image
+│   ├── docker.go                # docker CLI wrapper, dind-aware published ports
+│   ├── env.go                   # The pod fixture: haproxy + agent containers, socket CLI
+│   ├── config.go                # Bootstrap/rendered/broken HAProxy configs, certificates
+│   ├── session.go               # Manifest and fencing bookkeeping over the client
+│   └── *_test.go                # apply, runtime (maps/servers/backends), tls, recovery
 ├── acceptance/                   # Acceptance tests (e2e-framework)
 │   ├── main_test.go             # TestMain — Kind setup/teardown
 │   ├── env.go                   # E2E framework setup
@@ -127,6 +136,23 @@ Dependencies rule violations:
 
 **See**: `tests/integration/CLAUDE.md` for details
 
+### Agent Tests
+
+**Directory**: `tests/agent/`
+
+**Framework**: plain `testing` + the `docker` CLI (no cluster)
+
+**Purpose**: Drive the HAPTIC agent as a black box through `pkg/dataplane/agent/client`
+against a real HAProxy in master-worker mode: apply/reload, runtime map, server,
+backend and certificate ops, rollback on a refused config, fencing, and the
+`general/` mount. Imports no agent package, so it tests the wire contract.
+
+**Run**: `make test-agent-docker HAPROXY_VERSION=3.4`. The suite builds the
+binary itself, or takes one from `HAPTIC_BINARY`, and skips when docker is
+unreachable or the build has no `agent` subcommand.
+
+**See**: `docs/site/docs/development/agent.md`
+
 ### Acceptance Tests
 
 **Directory**: `tests/acceptance/`
@@ -138,6 +164,11 @@ Dependencies rule violations:
 **See**: `tests/acceptance/CLAUDE.md` for details
 
 ## Test Tags
+
+### agentdocker
+
+Agent wire-contract tests are tagged with `//go:build agentdocker`, so only
+`make test-agent-docker` compiles them.
 
 ### integration
 

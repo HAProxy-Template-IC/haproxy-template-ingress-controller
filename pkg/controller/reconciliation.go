@@ -169,7 +169,7 @@ func createReconciliationComponents(
 
 	// One constructor, wired inside the deployer package: the connections
 	// between these three used to be optional setters a caller could forget.
-	deployStack := deployer.NewDeployStack(setup.Bus, cfg, logger, setup.MetricsComponent.Metrics())
+	deployStack := deployer.NewDeployStack(setup.Bus, cfg, logger, setup.MetricsComponent.Metrics(), renderService)
 	deployerComponent := deployStack.Deployer
 	deploymentSchedulerComponent := deployStack.Scheduler
 	driftMonitorComponent := deployStack.DriftMonitor

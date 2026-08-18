@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -46,6 +47,10 @@ type PlanRegistry struct {
 	// another render fails assembly instead of being spliced.
 	nonce string
 
+	// paths turns a map/cert/crt-list name into the base-relative path the
+	// config references it by; nil (tests) keeps names as they are.
+	paths *templating.PathResolver
+
 	sections  map[sectionKey]string
 	backends  map[string]renderplan.Backend
 	mapsMeta  map[string]bool
@@ -59,14 +64,16 @@ type sectionKey struct {
 
 var _ templating.PlanRegistrar = (*PlanRegistry)(nil)
 
-// NewPlanRegistry creates a registry with a fresh random nonce.
-func NewPlanRegistry() *PlanRegistry {
+// NewPlanRegistry creates a registry with a fresh random nonce. paths may be
+// nil, in which case file names are used unresolved.
+func NewPlanRegistry(paths *templating.PathResolver) *PlanRegistry {
 	var raw [8]byte
 	// crypto/rand.Read fills the buffer or crashes the process; it cannot
 	// return a partial read (see crypto/rand docs, Go 1.24+).
 	_, _ = rand.Read(raw[:])
 	return &PlanRegistry{
 		nonce:    hex.EncodeToString(raw[:]),
+		paths:    paths,
 		sections: make(map[sectionKey]string),
 		backends: make(map[string]renderplan.Backend),
 		mapsMeta: make(map[string]bool),
@@ -138,20 +145,55 @@ func (r *PlanRegistry) MapMeta(path string, ordered bool) error {
 		return fmt.Errorf("planRegistry.MapMeta: path must not be empty")
 	}
 
+	resolved, err := r.MapPath(path)
+	if err != nil {
+		return fmt.Errorf("planRegistry.MapMeta: %w", err)
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if existing, ok := r.mapsMeta[path]; ok && existing != ordered {
-		return fmt.Errorf("planRegistry.MapMeta: map %q declared both ordered and unordered", path)
+	if existing, ok := r.mapsMeta[resolved]; ok && existing != ordered {
+		return fmt.Errorf("planRegistry.MapMeta: map %q declared both ordered and unordered", resolved)
 	}
-	r.mapsMeta[path] = ordered
+	r.mapsMeta[resolved] = ordered
 	return nil
+}
+
+// MapPath is the base-relative path a map file is referenced by in the config
+// (`maps/host.map`), which is also its runtime name.
+func (r *PlanRegistry) MapPath(name string) (string, error) {
+	return r.filePath(name, "map")
+}
+
+// filePath resolves a static name or an already-resolved registry path to the
+// same base-relative string GetPath hands templates (cert names sanitised).
+// It is idempotent: resolving a resolved path returns it unchanged.
+func (r *PlanRegistry) filePath(name, kind string) (string, error) {
+	if r.paths == nil {
+		return name, nil
+	}
+	dir, err := r.paths.GetPath("", kind)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s %q: %w", kind, name, err)
+	}
+	resolved, err := r.paths.GetPath(strings.TrimPrefix(name, dir.(string)+"/"), kind)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s %q: %w", kind, name, err)
+	}
+	return resolved.(string), nil
 }
 
 // Plan bundles the assembled sections with the recorded backends, the profiles,
 // the entries of every map file and the file set, and computes the plan ID.
-// Call it after Assemble; without it the plan carries no sections.
-func (r *PlanRegistry) Plan(files []renderplan.File, mapContents map[string]string) *renderplan.Plan {
+// Call it after Assemble; without it the plan carries no sections. Every path
+// in the plan is the base-relative string the config references the file by.
+func (r *PlanRegistry) Plan(config string, aux *dataplane.AuxiliaryFiles) (*renderplan.Plan, error) {
+	files, mapContents, err := r.planFiles(config, aux)
+	if err != nil {
+		return nil, err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -164,7 +206,7 @@ func (r *PlanRegistry) Plan(files []renderplan.File, mapContents map[string]stri
 		Files:         sortedFiles(files),
 	}
 	plan.ComputeID()
-	return plan
+	return plan, nil
 }
 
 // profiles derives the profile records from the assembled profile sections.

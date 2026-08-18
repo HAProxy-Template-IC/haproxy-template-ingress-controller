@@ -64,6 +64,7 @@ type Plan struct {
 	Backends      map[string]Backend `json:"backends"`
 	Profiles      map[string]Profile `json:"profiles"`
 	Maps          map[string]Map     `json:"maps"`
+	CRTLists      map[string]CRTList `json:"crtLists,omitempty"`
 	Files         []File             `json:"files"`
 }
 
@@ -133,6 +134,21 @@ type Map struct {
 type Entry struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+}
+
+// CRTList is the entry list of one crt-list file, declared by the generator
+// that emitted the file.
+type CRTList struct {
+	Path    string         `json:"path"`
+	Entries []CRTListEntry `json:"entries,omitempty"`
+}
+
+// CRTListEntry is one crt-list line: the certificate, its ssl options and the
+// SNI filters that select it.
+type CRTListEntry struct {
+	Cert       string       `json:"cert"`
+	Options    []KeywordArg `json:"options,omitempty"`
+	SNIFilters []string     `json:"sniFilters,omitempty"`
 }
 
 // File is one file the render produced.

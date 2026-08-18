@@ -21,6 +21,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -47,6 +48,8 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 	statusPatches []templating.StatusPatch,
 	coalescible bool,
 	contentChecksum string,
+	plan *renderplan.Plan,
+	planID string,
 ) {
 	s.schedulerMutex.Lock()
 	if contextCancelled(ctx) {
@@ -62,6 +65,8 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 		config:          config,
 		auxFiles:        auxFiles,
 		parsedConfig:    parsedConfig,
+		plan:            plan,
+		planID:          planID,
 		endpoints:       endpoints,
 		reason:          reason,
 		correlationID:   correlationID,
@@ -255,11 +260,18 @@ func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 // across pods. Same wire behavior as before (one skip_version push + actions);
 // only the body content differs.
 func (s *DeploymentScheduler) applyRuntimeSubset(ctx context.Context, dep *scheduledDeployment) {
-	if contextCancelled(ctx) || dep == nil || dep.runtimeUpdates.ServerOpCount() == 0 {
+	if contextCancelled(ctx) || dep == nil {
 		return
 	}
 
+	// dep is the pending deployment: a timeout re-classifies it structural
+	// under the mutex, so its runtime updates are read there too.
 	s.schedulerMutex.Lock()
+	updates := dep.runtimeUpdates
+	if updates.ServerOpCount() == 0 {
+		s.schedulerMutex.Unlock()
+		return
+	}
 	baseline := s.lastActivatedConfig
 	// A structural deploy in flight has already written its render to disk. Patching
 	// the older ACTIVATED config would roll that write back — the deploy's read-back
@@ -281,7 +293,7 @@ func (s *DeploymentScheduler) applyRuntimeSubset(ctx context.Context, dep *sched
 	}
 
 	s.runtimeBypass.applyRuntimeRaw(ctx, dep, bypassPush{
-		body:    dep.runtimeUpdates.BuildRuntimeBypassBody(baseline, dep.config),
+		body:    updates.BuildRuntimeBypassBody(baseline, dep.config),
 		partial: true,
 		// The structural half of this body is on disk but NOT loaded by any worker
 		// until the in-flight deploy's reload lands, so the push proves nothing about
@@ -591,7 +603,7 @@ func (s *DeploymentScheduler) resolveRuntimeConfigName() (name, namespace string
 func (s *DeploymentScheduler) newScheduledEvent(dep *scheduledDeployment) *events.DeploymentScheduledEvent {
 	runtimeConfigName, runtimeConfigNamespace := s.resolveRuntimeConfigName()
 	return events.NewDeploymentScheduledEvent(
-		dep.config, dep.auxFiles, dep.parsedConfig, dep.endpoints, runtimeConfigName, runtimeConfigNamespace, dep.reason, dep.contentChecksum, dep.statusPatches, dep.coalescible,
+		dep.config, dep.auxFiles, dep.parsedConfig, dep.endpoints, runtimeConfigName, runtimeConfigNamespace, dep.reason, dep.contentChecksum, dep.plan, dep.planID, dep.statusPatches, dep.coalescible,
 		events.WithCorrelation(dep.correlationID, dep.correlationID),
 	)
 }
