@@ -1674,7 +1674,7 @@ allowed = (
     "controller.resources.limits",
     "controller.validators.resources.limits",
     "haproxy.resources.limits",
-    "haproxy.dataplane.resources.limits",
+    "haproxy.agent.resources.limits",
     "spoaHub.resources.limits",
     "vector.resources.limits",
     "haproxy.service.type",
@@ -1798,7 +1798,7 @@ configure_haptic() {
         --set 'controller.resources.limits=null'
         --set 'controller.validators.resources.limits=null'
         --set 'haproxy.resources.limits=null'
-        --set 'haproxy.dataplane.resources.limits=null'
+        --set 'haproxy.agent.resources.limits=null'
         --set 'spoaHub.resources.limits=null'
         --set 'vector.resources.limits=null'
         --set 'controller.templateLibraries.gateway.experimentalChannel=true'
