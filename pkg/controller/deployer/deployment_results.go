@@ -119,14 +119,14 @@ func (c *Component) handleEndpointSuccess(
 	if result.Reload != nil && result.Reload.Performed {
 		atomic.AddInt32(&state.reloadsTriggered, 1)
 	}
+	c.notePodPlans(endpoint, result.AppliedPlanID, result.RunningPlanID, result.WorkerOpsPlanID)
+
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	state.totalOperations += len(outcome.sent)
 	for i := range outcome.sent {
 		state.operationBreakdown[outcome.sent[i].Kind]++
 	}
-	state.referencedPlans = append(state.referencedPlans,
-		result.AppliedPlanID, result.RunningPlanID, result.WorkerOpsPlanID)
 }
 
 // recordAppliedOps counts what one pod accepted: the apply itself by mode, and

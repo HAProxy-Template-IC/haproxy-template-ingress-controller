@@ -16,6 +16,7 @@ package deployer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -115,6 +116,36 @@ func renderWithServers(id string, addressOffset int) (*renderplan.Plan, string, 
 	return plan, config, &dataplane.AuxiliaryFiles{}
 }
 
+// renderWithBackends builds a render carrying one dynamic backend per name, so
+// the diff between two of them composes a backend removal.
+func renderWithBackends(id string, names ...string) (*renderplan.Plan, string, *dataplane.AuxiliaryFiles) {
+	config := ""
+	plan := &renderplan.Plan{
+		SchemaVersion: renderplan.SchemaVersion,
+		ID:            id,
+		Backends:      map[string]renderplan.Backend{},
+		Profiles:      map[string]renderplan.Profile{"http": {Name: "http", BodyDigest: "profile"}},
+	}
+	for _, name := range names {
+		config += "backend " + name + "\n  server srv1 10.0.0.1:8080\n"
+		plan.Backends[name] = renderplan.Backend{
+			Name: name, Profile: "http", Mode: "http", Shape: renderplan.ShapeDynamic,
+			Servers:      []renderplan.Server{{Name: "srv1", Address: "10.0.0.1", Port: 8080}},
+			BodyDigest:   "body-" + name,
+			RecordDigest: "record-" + name,
+			TextDigest:   "text-" + name,
+		}
+		plan.Sections = append(plan.Sections, renderplan.Section{
+			Kind: renderplan.SectionKindBackend, Name: name, TextDigest: "text-" + name,
+		})
+	}
+	plan.Files = []renderplan.File{{
+		Path: "haproxy.cfg", Kind: renderplan.FileKindConfig, ReloadOnChange: true,
+		Digest: renderplan.DigestString(config), Size: int64(len(config)),
+	}}
+	return plan, config, &dataplane.AuxiliaryFiles{}
+}
+
 // deployTo runs one whole deployment against the fake agents and returns the
 // completion the deployer published.
 func deployTo(t *testing.T, component *Component, bus *deployerBus, plan *renderplan.Plan,
@@ -187,7 +218,8 @@ func TestApply_SecondApplyRunsAtRuntime(t *testing.T) {
 	assert.Equal(t, api.ResultRuntime, second.Result.Mode)
 	assert.Contains(t, second.Parts, "haproxy.cfg", "haproxy.cfg always travels whole")
 	assert.NotContains(t, second.Parts, "maps/host.map", "an unchanged file the agent holds must not travel")
-	assert.Empty(t, second.Plan, "a pod that holds a readable baseline needs no plan blob")
+	assert.NotEmpty(t, second.Plan,
+		"this apply moves the pod's applied plan, and a pod hands back only the blob of the plan it applied")
 	assert.Equal(t, plan1.ID, second.Manifest.ExpectedPrevPlanID)
 }
 
@@ -308,13 +340,16 @@ func TestApply_UnknownBaselineFallsBackToFullState(t *testing.T) {
 	assert.Equal(t, 1, completed.Succeeded)
 }
 
-// A newer leader epoch owns the fleet: this controller stops dispatching
-// instead of racing its successor.
+// A newer leader epoch owns the fleet: this controller gives leadership up
+// rather than racing its successor. Only releasing the Lease re-arms it — a
+// replica that just stopped dispatching keeps renewing the Lease it holds, and
+// nothing would ever start it leading again.
 func TestApply_StaleEpochStandsDown(t *testing.T) {
 	agent := agenttest.New(t)
 	bus := newTestBus(t)
 	component := createTestDeployer(bus.EventBus)
-	component.fence = fixedFence{epoch: 1}
+	fence := &fixedFence{epoch: 1, reclaimErr: errors.New("the lease is held at a newer epoch")}
+	component.fence = fence
 	endpoint := agentEndpoint(agent, "haproxy-0")
 
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
@@ -322,20 +357,73 @@ func TestApply_StaleEpochStandsDown(t *testing.T) {
 
 	// A newer leader has spoken to this pod at a higher epoch.
 	agent.ConflictOnce("stale_epoch")
-	lostCh := bus.SubscribeTypes("stand-down", 4, events.EventTypeLostLeadership)
 
 	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
 	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
 
 	assert.Equal(t, 1, completed.Failed)
 	assert.Equal(t, 0, completed.Succeeded)
-	lost := testutil.WaitForEvent[*events.LostLeadershipEvent](t, lostCh, testutil.LongTimeout)
-	assert.Equal(t, "stale_leader_epoch", lost.Reason)
+	assert.Equal(t, []string{"stale_leader_epoch"}, fence.standDowns(),
+		"standing down must release the lease, not only announce that leadership was lost")
 
 	applies := agent.Applies()
 	require.Len(t, applies, 2, "a stood-down controller does not try again")
 	assert.Equal(t, "stale_epoch", applies[1].Conflict.Reason)
 	assert.Nil(t, applies[1].Result, "a stood-down controller must write nothing")
+}
+
+// Without leader election there is no Lease to hand back, so the event is all
+// the leader-only components have to stop on.
+func TestApply_StaleEpochWithoutAFenceReportsLostLeadership(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+
+	agent.ConflictOnce("stale_epoch")
+	lostCh := bus.SubscribeTypes("stand-down", 4, events.EventTypeLostLeadership)
+
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+
+	assert.Equal(t, 1, completed.Failed)
+	lost := testutil.WaitForEvent[*events.LostLeadershipEvent](t, lostCh, testutil.LongTimeout)
+	assert.Equal(t, "stale_leader_epoch", lost.Reason)
+	assert.Equal(t, standaloneIdentity, lost.Identity)
+}
+
+// A pod outranks the controller because the epoch counter regressed — a Lease
+// deleted and recreated loses the annotation — and no rival exists. Giving
+// leadership up would freeze the fleet at the low epoch forever, so the epoch is
+// lifted past the fleet's instead and the deployment fails into the retry.
+func TestApply_StaleEpochFromARegressedCounterReclaimsTheEpoch(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	fence := &fixedFence{epoch: 1}
+	component.fence = fence
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+
+	agent.SetAppliedEpoch(12)
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+
+	assert.Equal(t, 1, completed.Failed)
+	assert.Empty(t, fence.standDowns(), "no rival owns the fleet, so leadership must not be given up")
+	assert.Equal(t, []uint64{12}, fence.reclaims(), "the epoch must be lifted past the one the pod holds")
+
+	// The retry the scheduler drives now carries the reclaimed epoch.
+	plan3, config3, aux3 := renderFor("plan-3", "10.0.0.3", mapEntry)
+	completed = deployTo(t, component, bus, plan3, config3, aux3, "config_validation", endpoint)
+	assert.Equal(t, 1, completed.Succeeded)
+	applies := agent.Applies()
+	assert.Equal(t, uint64(13), applies[len(applies)-1].Manifest.Token.LeaderEpoch)
 }
 
 // The agent answers a manifest whose parts it does not hold with the list of
@@ -499,7 +587,7 @@ func TestApply_ManifestCarriesTheFencingToken(t *testing.T) {
 	agent := agenttest.New(t)
 	bus := newTestBus(t)
 	component := createTestDeployer(bus.EventBus)
-	component.fence = fixedFence{epoch: 4}
+	component.fence = &fixedFence{epoch: 4}
 	endpoint := agentEndpoint(agent, "haproxy-0")
 
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
@@ -540,24 +628,68 @@ func TestApply_LeaderChangeReloadsNothing(t *testing.T) {
 	endpoint := agentEndpoint(agent, "haproxy-0")
 
 	previousLeader := createTestDeployer(bus.EventBus)
-	previousLeader.fence = fixedFence{epoch: 1}
+	previousLeader.fence = &fixedFence{epoch: 1}
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
 	deployTo(t, previousLeader, bus, plan1, config1, aux1, "config_validation", endpoint)
 
-	// A different process, a higher epoch, and no memory of plan-1.
-	newLeader := createTestDeployer(bus.EventBus)
-	newLeader.fence = fixedFence{epoch: 2}
+	// Two deployments in the term, which is the normal case: the pod's stored
+	// blob has to follow its applied plan, not the epoch that first wrote it.
 	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
-	completed := deployTo(t, newLeader, bus, plan2, config2, aux2, "config_validation", endpoint)
+	deployTo(t, previousLeader, bus, plan2, config2, aux2, "config_validation", endpoint)
+
+	// A different process, a higher epoch, and no memory of either plan.
+	newLeader := createTestDeployer(bus.EventBus)
+	newLeader.fence = &fixedFence{epoch: 2}
+	plan3, config3, aux3 := renderFor("plan-3", "10.0.0.3", mapEntry)
+	completed := deployTo(t, newLeader, bus, plan3, config3, aux3, "config_validation", endpoint)
 
 	require.Equal(t, 1, completed.Succeeded)
 	applies := agent.Applies()
-	require.Len(t, applies, 2)
-	assert.Equal(t, api.ResultRuntime, applies[1].Result.Mode,
+	require.Len(t, applies, 3)
+	assert.Equal(t, api.ResultRuntime, applies[2].Result.Mode,
 		"a leader change must cost no reload: the pod's own blob is the baseline")
-	assert.Equal(t, uint64(2), applies[1].Manifest.Token.LeaderEpoch)
-	assert.NotEmpty(t, applies[1].Plan, "the new leader restamps the blob with its own epoch")
+	assert.Equal(t, uint64(2), applies[2].Manifest.Token.LeaderEpoch)
+	assert.NotEmpty(t, applies[2].Plan, "the new leader restamps the blob with its own epoch")
 	assert.Equal(t, 0, completed.ReloadsTriggered)
+}
+
+// A pod already on this render holds the blob that describes it, so the apply
+// that changes nothing must not repeat it.
+func TestApply_UnchangedRenderDoesNotRepeatThePlanBlob(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan, config, aux := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan, config, aux, "config_validation", endpoint)
+	deployTo(t, component, bus, plan, config, aux, "config_validation", endpoint)
+
+	applies := agent.Applies()
+	require.Len(t, applies, 2)
+	assert.NotEmpty(t, applies[0].Plan)
+	assert.Empty(t, applies[1].Plan, "the pod already reports the blob for this plan")
+}
+
+// One deployment that needs several fenced applies stores one blob: every chunk
+// carries the same plan id, so repeating it would send the same 100-200 KB
+// again per chunk.
+func TestApply_ChunkedApplyCarriesThePlanBlobOnce(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderWithServers("plan-1", 10)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	plan2, config2, aux2 := renderWithServers("plan-2", 20)
+	deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+
+	applies := agent.Applies()
+	require.Len(t, applies, 3)
+	assert.NotEmpty(t, applies[1].Plan)
+	assert.Empty(t, applies[2].Plan)
+	assert.NotEmpty(t, agent.State().AppliedPlan, "the pod must still answer with a baseline")
 }
 
 // More ops than one apply may carry are split into fenced chunks, each one
@@ -585,6 +717,76 @@ func TestApply_LargeOpBatchIsChunked(t *testing.T) {
 	assert.Equal(t, 0, completed.ReloadsTriggered)
 }
 
+// A pod holding a paced reload takes the in-place batch on the same apply as
+// the first op chunk, and the agent's client refuses an apply whose two lists
+// exceed the cap together — before a byte is sent, so the pod would not even
+// get the files. The batch has to come out of the first chunk's budget.
+func TestApply_InPlaceBatchSharesTheFirstChunksBudget(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderWithServers("plan-1", 10)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+
+	// A reload is already scheduled, so the diff composes in-place ops for the
+	// running worker alongside the runtime ops for the new plan.
+	agent.SetReloadPending(true)
+	plan2, config2, aux2 := renderWithServers("plan-2", 20)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+
+	assert.Equal(t, 0, completed.Failed, "an apply the client refuses never reaches the pod at all")
+	assert.Equal(t, 1, completed.PendingReloads)
+
+	applies := agent.Applies()
+	require.Greater(t, len(applies), 1)
+	inPlace := 0
+	for _, apply := range applies[1:] {
+		assert.LessOrEqual(t, len(apply.Manifest.Ops)+len(apply.Manifest.InPlaceOps), api.MaxOpsPerApply,
+			"the agent client validates the two lists as one budget")
+		inPlace += len(apply.Manifest.InPlaceOps)
+	}
+	assert.Positive(t, inPlace, "the pending reload is exactly when the in-place batch matters")
+}
+
+// One diff is shared across the pods that report the same baseline, so every
+// fact it branches on has to be part of what makes them the same. A pod at the
+// deferral cap plans a reload where another composes the delete batch; handing
+// it that batch makes its agent refuse the ops and fall back to a reload it
+// never planned, raising the invariant counter that pages an operator.
+func TestApply_DiffIsNotSharedAcrossPodsAtTheDeferralCap(t *testing.T) {
+	draining := agenttest.New(t)
+	idle := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	drainingEndpoint := agentEndpoint(draining, "haproxy-0")
+	idleEndpoint := agentEndpoint(idle, "haproxy-1")
+
+	plan1, config1, aux1 := renderWithBackends("plan-1", "be_app", "be_extra")
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", drainingEndpoint, idleEndpoint)
+
+	// One pod's sessions never closed, so its deferred deletes sit at the cap.
+	pending := make([]string, api.MaxPendingBackendDeletes)
+	for i := range pending {
+		pending[i] = fmt.Sprintf("be_retiring_%d", i)
+	}
+	draining.SetPendingDeletes(nil, pending)
+
+	plan2, config2, aux2 := renderWithBackends("plan-2", "be_app")
+	deployTo(t, component, bus, plan2, config2, aux2, "config_validation", drainingEndpoint, idleEndpoint)
+
+	idleApply := idle.Applies()[1]
+	assert.Equal(t, api.ModeAuto, idleApply.Manifest.Mode)
+	assert.NotEmpty(t, idleApply.Manifest.Ops, "a pod with no pending deletes removes the backend at runtime")
+
+	drainingApply := draining.Applies()[1]
+	assert.Equal(t, api.ModeReload, drainingApply.Manifest.Mode,
+		"a pod at the cap can only take this render through a reload")
+	assert.Empty(t, drainingApply.Manifest.Ops,
+		"ops its agent would refuse must never be sent: the refusal costs it an unplanned reload")
+}
+
 // The plan cache retains what the fleet still refers to and nothing else, so a
 // long-lived controller does not accumulate every render it ever made.
 func TestApply_PlanCacheRetainsWhatTheFleetRuns(t *testing.T) {
@@ -603,4 +805,56 @@ func TestApply_PlanCacheRetainsWhatTheFleetRuns(t *testing.T) {
 	assert.NotNil(t, component.plans.Plan("plan-1"),
 		"the runtime applies never reloaded, so the worker still runs the first render")
 	assert.NotNil(t, component.plans.Plan("plan-3"))
+}
+
+// A pod that failed still holds the plans it reported, so they are not the
+// fleet's garbage: the cache keeps what every pod answered with, not only what
+// the pods that ACKed did.
+func TestApply_PlanCacheKeepsTheBaselineOfAFailedPod(t *testing.T) {
+	healthy := agenttest.New(t)
+	sick := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	healthyEndpoint := agentEndpoint(healthy, "haproxy-0")
+	sickEndpoint := agentEndpoint(sick, "haproxy-1")
+
+	for i := 1; i <= 2; i++ {
+		plan, config, aux := renderFor(fmt.Sprintf("plan-%d", i), fmt.Sprintf("10.0.0.%d", i), mapEntry)
+		deployTo(t, component, bus, plan, config, aux, "config_validation", healthyEndpoint, sickEndpoint)
+	}
+
+	// One pod's apply fails outright: nothing about its state changed, so it is
+	// still the pod that applies plan-2.
+	sick.FailOnce()
+	plan3, config3, aux3 := renderFor("plan-3", "10.0.0.3", mapEntry)
+	completed := deployTo(t, component, bus, plan3, config3, aux3, "config_validation",
+		healthyEndpoint, sickEndpoint)
+	require.Equal(t, 1, completed.Failed)
+
+	assert.NotNil(t, component.plans.Plan("plan-2"),
+		"the pod whose apply failed still applies the render before it")
+	assert.NotNil(t, component.plans.Plan("plan-1"),
+		"the worker of both pods still runs the first render")
+}
+
+// Every pod failing at once is a blip, not a fleet that refers to nothing. A
+// cache emptied by it costs the whole fleet a full-state reload on the round
+// after, for a change HAProxy could have taken at runtime.
+func TestApply_PlanCacheSurvivesARoundEveryPodFails(t *testing.T) {
+	first := agenttest.New(t)
+	second := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoints := []dataplane.Endpoint{agentEndpoint(first, "haproxy-0"), agentEndpoint(second, "haproxy-1")}
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoints...)
+
+	first.FailOnce()
+	second.FailOnce()
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoints...)
+	require.Equal(t, 2, completed.Failed)
+
+	assert.NotNil(t, component.plans.Plan("plan-1"), "both pods still hold the first render")
 }

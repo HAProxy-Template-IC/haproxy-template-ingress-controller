@@ -104,9 +104,9 @@ func contextCancelled(ctx context.Context) bool {
 // two deployments can never be in flight at once and the newest render is the
 // one that goes out. Runs for the whole leadership term; exits on ctx.Done().
 //
-// It enforces no interval of its own: reload pacing belongs to the agent
-// (--reload-interval-min), which coalesces reloads without holding back the
-// applies that need none. One deployment at a time is the only rate limit here.
+// Reload pacing belongs to the agent (--reload-interval-min), which coalesces
+// reloads without holding back the applies that need none; the only interval
+// this loop waits out is the one the fleet reported its pending reloads for.
 func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 	defer func() {
 		s.schedulerMutex.Lock()

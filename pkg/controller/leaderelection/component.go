@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"k8s.io/client-go/kubernetes"
 
@@ -25,7 +26,7 @@ type Component struct {
 	identity       string
 	leaseName      string
 	leaseNamespace string
-	epoch          *LeaseEpoch
+	epoch          *Term
 }
 
 // New creates a new leader election component.
@@ -40,7 +41,7 @@ func New(
 	clientset kubernetes.Interface,
 	eventBus *busevents.EventBus,
 	callbacks k8sleaderelection.Callbacks,
-	epoch *LeaseEpoch,
+	epoch *Term,
 	logger *slog.Logger,
 ) (*Component, error) {
 	if config == nil {
@@ -79,18 +80,21 @@ func New(
 func (c *Component) wrapCallbacks(identity string, callbacks k8sleaderelection.Callbacks) k8sleaderelection.Callbacks {
 	return k8sleaderelection.Callbacks{
 		OnStartedLeading: func(ctx context.Context) {
+			// Claim the fencing epoch BEFORE anything leader-only can dispatch:
+			// an apply carrying the previous term's epoch is refused by every
+			// pod the new leader already wrote to. Before Pause as well, so
+			// giving up here leaves no bus buffering with nothing to release it.
+			if err := c.claimEpoch(ctx); err != nil {
+				c.logger.Error("Could not claim the leader epoch, giving leadership back",
+					"error", err, "lease", c.leaseName)
+				c.epoch.StandDown("epoch_claim_failed")
+				return
+			}
+
 			// PAUSE - temporarily buffer events during leadership transition
 			// This prevents race conditions where leader-only components miss
 			// events published before they finish subscribing.
 			c.eventBus.Pause()
-
-			// Claim the fencing epoch BEFORE anything leader-only can dispatch:
-			// an apply carrying the previous term's epoch is refused by every
-			// pod the new leader already wrote to.
-			if err := c.epoch.Bump(ctx); err != nil {
-				c.logger.Error("Claiming the leader epoch failed; applies stay fenced out until it succeeds",
-					"error", err, "lease", c.leaseName)
-			}
 
 			// Publish event (buffered while paused)
 			c.eventBus.Publish(events.NewBecameLeaderEvent(identity))
@@ -123,6 +127,42 @@ func (c *Component) wrapCallbacks(identity string, callbacks k8sleaderelection.C
 			}
 		},
 	}
+}
+
+// epochClaimAttempts and epochClaimBackoff bound the retry of a failed claim.
+// The Lease is held while this runs, so a term that cannot claim its epoch in
+// about a second hands leadership back instead of blocking the fleet's writer.
+const (
+	epochClaimAttempts = 5
+	epochClaimBackoff  = 100 * time.Millisecond
+)
+
+// claimEpoch bumps the fencing epoch, retrying what a transient apiserver
+// failure costs. Only a claimed epoch may dispatch: a failed bump leaves the
+// previous term's value, which every pod that accepted a higher one refuses.
+func (c *Component) claimEpoch(ctx context.Context) error {
+	if c.epoch == nil {
+		return nil
+	}
+	delay := epochClaimBackoff
+	var err error
+	for attempt := 1; attempt <= epochClaimAttempts; attempt++ {
+		if err = c.epoch.Bump(ctx); err == nil {
+			return nil
+		}
+		if attempt == epochClaimAttempts {
+			break
+		}
+		c.logger.Warn("Claiming the leader epoch failed, retrying",
+			"attempt", attempt, "error", err, "lease", c.leaseName)
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(delay):
+		}
+		delay *= 2
+	}
+	return err
 }
 
 // Start starts the leader election loop.

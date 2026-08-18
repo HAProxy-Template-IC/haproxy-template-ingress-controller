@@ -134,7 +134,7 @@ func (c *Component) deployToEndpoints(
 	}
 	wg.Wait()
 
-	c.plans.Retain(state.planRefs())
+	c.plans.Retain(c.fleetPlanRefs(event.Endpoints))
 	c.clients.Retain(event.Endpoints)
 	c.recordFleetAck(event.Plan, atomic.LoadInt32(&state.ackCount))
 
@@ -241,7 +241,6 @@ type deploymentState struct {
 	mu                 sync.Mutex
 	totalOperations    int
 	operationBreakdown map[string]int
-	referencedPlans    []string
 	stoodDown          bool
 	pendingReloadUntil time.Time
 }
@@ -258,12 +257,6 @@ func (s *deploymentState) notePendingReload(scheduledAt string) {
 	if due.After(s.pendingReloadUntil) {
 		s.pendingReloadUntil = due
 	}
-}
-
-func (s *deploymentState) planRefs() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.referencedPlans...)
 }
 
 // deployToPod applies the render to one pod and folds its answer into state.
@@ -302,7 +295,8 @@ func (c *Component) deployToPod(
 
 // standDown stops dispatching: another controller holds a higher leader epoch,
 // so this one is not the fleet's writer any more. Losing the epoch race is
-// losing leadership, and the scheduler already knows how to clear its state.
+// losing leadership, and it is given up for real — a replica that only stopped
+// dispatching keeps renewing its Lease, and nothing would ever re-arm it.
 func (c *Component) standDown(state *deploymentState, endpoint *dataplane.Endpoint, err error) {
 	atomic.AddInt32(&state.failureCount, 1)
 
@@ -315,7 +309,13 @@ func (c *Component) standDown(state *deploymentState, endpoint *dataplane.Endpoi
 	}
 
 	c.Logger().Error("A newer leader epoch owns the fleet, standing down",
-		"pod", endpoint.PodName, "error", err)
+		"pod", endpoint.PodName, "identity", c.identity(), "error", err)
 	state.standDown()
-	c.EventBus().Publish(events.NewLostLeadershipEvent(c.identity(), "stale_leader_epoch"))
+	if c.fence == nil {
+		// No Lease to release: the leadership this reports is nominal, and the
+		// event is all the leader-only components have to stop on.
+		c.EventBus().Publish(events.NewLostLeadershipEvent(standaloneIdentity, "stale_leader_epoch"))
+		return
+	}
+	c.fence.StandDown("stale_leader_epoch")
 }

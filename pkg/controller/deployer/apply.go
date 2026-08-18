@@ -52,6 +52,33 @@ const (
 // controller is no longer the fleet's writer and must stop dispatching.
 var errStaleEpoch = errors.New("a newer leader epoch owns this pod")
 
+// errEpochReclaimed reports a pod that outranked this controller because the
+// epoch counter regressed, not because a rival exists: the epoch was lifted
+// past the fleet's and the next deployment carries it.
+var errEpochReclaimed = errors.New("the leader epoch had regressed below the fleet and was reclaimed")
+
+// epochRefused decides what a pod refusing this controller's epoch means. A
+// Lease this controller still holds at the epoch it claimed proves there is no
+// rival — the counter regressed, which a recreated or restored Lease does — so
+// the epoch is lifted past the fleet's and this deployment fails into the
+// scheduler's retry. Anything else is a newer leader, and standing down is the
+// only correct answer to it.
+func (c *Component) epochRefused(ctx context.Context, endpoint *dataplane.Endpoint, podEpoch, ourEpoch uint64) error {
+	outranked := fmt.Errorf("pod is at epoch %d, this controller at %d", podEpoch, ourEpoch)
+	if c.fence == nil {
+		return fmt.Errorf("%w: %w", errStaleEpoch, outranked)
+	}
+	claimed, err := c.fence.Reclaim(ctx, podEpoch)
+	if err != nil {
+		c.Logger().Error("A pod outranks this controller's leader epoch and the lease agrees",
+			"pod", endpoint.PodName, "error", err)
+		return fmt.Errorf("%w: %w", errStaleEpoch, outranked)
+	}
+	c.Logger().Warn("The leader epoch had regressed below the fleet, reclaimed it",
+		"pod", endpoint.PodName, "pod_epoch", podEpoch, "epoch", claimed)
+	return fmt.Errorf("%w: %w", errEpochReclaimed, outranked)
+}
+
 // podOutcome is what one pod answered, and whether it now runs the render.
 type podOutcome struct {
 	result   *api.ApplyResult
@@ -81,6 +108,7 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 	if err != nil {
 		return nil, fmt.Errorf("reading agent state: %w", err)
 	}
+	c.notePodPlans(endpoint, state.AppliedPlanID, state.RunningPlanID, state.WorkerOpsPlanID)
 	attempt := &podApply{client: client, endpoint: endpoint, req: req, state: state}
 	attempt.full, attempt.notes = c.applyPosture(endpoint, state)
 
@@ -94,8 +122,7 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 			return outcome, err
 		}
 		if conflict.Conflict.Reason == conflictStaleEpoch {
-			return nil, fmt.Errorf("%w: pod is at epoch %d, this controller at %d",
-				errStaleEpoch, conflict.Conflict.AppliedToken.LeaderEpoch, req.token.LeaderEpoch)
+			return nil, c.epochRefused(ctx, endpoint, conflict.Conflict.AppliedToken.LeaderEpoch, req.token.LeaderEpoch)
 		}
 		if round == maxApplyAttempts {
 			return nil, err
@@ -107,6 +134,7 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 		if attempt.state, err = client.State(ctx, false); err != nil {
 			return nil, fmt.Errorf("re-reading agent state: %w", err)
 		}
+		c.notePodPlans(endpoint, attempt.state.AppliedPlanID, attempt.state.RunningPlanID, attempt.state.WorkerOpsPlanID)
 		// A conflict means this pod's stored plan is not the one this
 		// controller composed against; the next apply carries it again.
 		attempt.resend = true
@@ -136,12 +164,15 @@ func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutco
 	if attempt.full || len(chunks) == 0 {
 		chunks = [][]api.Op{nil}
 	}
+	// The blob rides the first chunk only: every chunk carries the same plan id,
+	// so the pod stores it once and the other chunks would repeat 100-200 KB.
+	blob := attempt.sendsPlanBlob()
 	for i, ops := range chunks {
 		manifest := attempt.req.manifest(&decision, ops, prev, attempt.full)
 		if i > 0 {
 			manifest.InPlaceOps = nil
 		}
-		result, err := c.send(ctx, attempt, manifest)
+		result, err := c.send(ctx, attempt, manifest, blob && i == 0)
 		if err != nil {
 			return nil, err
 		}
@@ -161,7 +192,7 @@ func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutco
 // send performs one apply, resending the file parts the agent turns out not to
 // hold. Only that resend is retried here; a baseline conflict belongs to the
 // caller, which has to diff again.
-func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.Manifest) (*api.ApplyResult, error) {
+func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.Manifest, withBlob bool) (*api.ApplyResult, error) {
 	held := attempt.state.Files
 	if attempt.full {
 		held = nil
@@ -171,7 +202,7 @@ func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.M
 		if err != nil {
 			return nil, err
 		}
-		result, err := attempt.client.Apply(ctx, manifest, parts, attempt.planBlob())
+		result, err := attempt.client.Apply(ctx, manifest, parts, attempt.planBlob(withBlob))
 		var missing *agentclient.MissingError
 		if !errors.As(err, &missing) || held == nil {
 			return result, err
@@ -182,15 +213,23 @@ func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.M
 	}
 }
 
-// planBlob carries the plan to a pod that could otherwise not answer with a
-// usable baseline later: it holds none, it stored one from another leader, a
-// conflict proved its copy stale, or this is the drift pass that refreshes it.
-func (a *podApply) planBlob() io.Reader {
+// sendsPlanBlob reports whether this apply has to carry the plan. A pod hands
+// its stored blob back only while it describes the plan it applied, so every
+// apply that moves that plan on has to bring the new one: the pod is what a
+// leader with a cold cache reads its baseline from, and a pod with none costs
+// a full-state reload.
+func (a *podApply) sendsPlanBlob() bool {
 	if len(a.req.blob) == 0 {
-		return nil
+		return false
 	}
-	if !a.full && !a.resend && !a.req.verify &&
-		a.state.AppliedPlanID != "" && a.state.AppliedToken.LeaderEpoch == a.req.token.LeaderEpoch {
+	if a.full || a.resend || a.req.verify {
+		return true
+	}
+	return a.state.AppliedPlanID != a.req.planID || len(a.state.AppliedPlan) == 0
+}
+
+func (a *podApply) planBlob(send bool) io.Reader {
+	if !send {
 		return nil
 	}
 	return bytes.NewReader(a.req.blob)
@@ -267,15 +306,34 @@ func (r *deployRequest) decisionFor(state *api.State, plans *planCache) deploypl
 		ReloadPending:         state.ReloadPendingAt != "",
 	}
 	return r.diffs.get(&diffKey{
-		applied:       baselineID(baseline.Applied),
-		running:       state.RunningPlanID,
-		workerOps:     state.WorkerOpsPlanID,
-		caps:          state.HAProxy.Version + "\x00" + strings.Join(state.AgentOps, ","),
-		inventory:     state.Inventory.Generation,
-		reloadPending: baseline.ReloadPending,
+		applied:         baselineID(baseline.Applied),
+		running:         state.RunningPlanID,
+		workerOps:       state.WorkerOpsPlanID,
+		caps:            state.HAProxy.Version + "\x00" + strings.Join(state.AgentOps, ","),
+		inventory:       inventoryDigest(&state.Inventory),
+		pendingServers:  baseline.PendingServerDeletes,
+		pendingBackends: baseline.PendingBackendDeletes,
+		reloadPending:   baseline.ReloadPending,
 	}, func() deployplan.Decision {
 		return deployplan.Diff(r.plan, &baseline)
 	})
+}
+
+// inventoryDigest identifies what the worker has loaded by its content: the
+// generation next to it counts one pod's reloads, so two pods on the same plan
+// can report the same generation over different sets.
+func inventoryDigest(inventory *api.Inventory) string {
+	var sets strings.Builder
+	for _, paths := range [][]string{
+		inventory.Maps, inventory.Certs, inventory.CAFiles, inventory.CRLFiles, inventory.CRTLists,
+	} {
+		for _, path := range paths {
+			sets.WriteString(path)
+			sets.WriteByte(0)
+		}
+		sets.WriteByte('\n')
+	}
+	return renderplan.DigestString(sets.String())
 }
 
 func baselineID(plan *renderplan.Plan) string {

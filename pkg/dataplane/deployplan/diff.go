@@ -107,7 +107,8 @@ func (b *builder) decide() Decision {
 	if kind := b.unsupportedKind(ops); kind != "" {
 		b.failf("the agent does not execute %s", kind)
 	}
-	chunks := chunkCount(len(ops))
+	inPlace := b.inPlaceOps()
+	chunks := chunkCount(len(ops), len(inPlace))
 	if chunks > MaxChunks {
 		b.failf("op cap: %d ops need more than %d applies", len(ops), MaxChunks)
 	}
@@ -116,7 +117,7 @@ func (b *builder) decide() Decision {
 		Mode:    api.ModeAuto,
 		Files:   Files(b.next),
 		Reasons: b.reasons,
-		InPlace: b.inPlaceOps(),
+		InPlace: inPlace,
 	}
 	switch {
 	case b.reload:

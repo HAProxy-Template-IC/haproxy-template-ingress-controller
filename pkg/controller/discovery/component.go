@@ -15,8 +15,8 @@
 // Package discovery provides the Discovery event adapter component.
 //
 // It tracks the set of HAProxy pods reported by the resource watcher (via the
-// auto-injected haproxy-pods watcher), enriches each pod with credentials and
-// endpoint version proofs through pkg/dataplane, and publishes
+// auto-injected haproxy-pods watcher), admits the ones whose agent answers
+// /v1/state — carrying the HAProxy version it reports — and publishes
 // HAProxyPodsDiscoveredEvent / HAProxyPodTerminatedEvent so the deployer and
 // other consumers know which endpoints to talk to.
 package discovery
@@ -120,7 +120,8 @@ type Component struct {
 
 	discovery *Discovery
 	// discoveryMu orders endpoint-authority updates with complete discovery
-	// publications. A retry callback runs outside Base's serial event loop.
+	// publications. SetPodStore runs outside Base's serial event loop, so a
+	// store swap must not land mid-pass.
 	discoveryMu sync.Mutex
 
 	// State replay for leadership transitions

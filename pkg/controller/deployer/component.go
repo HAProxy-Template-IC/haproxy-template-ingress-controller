@@ -25,6 +25,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,12 +54,19 @@ const (
 	standaloneIdentity = "standalone"
 )
 
-// LeadershipFence is the current leadership term: who this controller is, and
-// the epoch every apply it sends is fenced by. A pod that has seen a higher
-// epoch refuses this controller's writes.
+// LeadershipFence is the current leadership term: who this controller is, the
+// epoch every apply it sends is fenced by, and the two answers to a pod that
+// refuses that epoch. A pod that has seen a higher epoch refuses this
+// controller's writes.
 type LeadershipFence interface {
 	Identity() string
 	LeaderEpoch() uint64
+	// Reclaim lifts the epoch past one a pod already accepted. It errors when
+	// a newer leader — not a regressed counter — is behind the refusal, which
+	// is the one case where the pod is right and this controller must stop.
+	Reclaim(ctx context.Context, floor uint64) (uint64, error)
+	// StandDown gives leadership up so a fresh term claims a fresh epoch.
+	StandDown(reason string)
 }
 
 // Component implements the deployer component.
@@ -97,11 +105,13 @@ type Component struct {
 	// in tests.
 	ackedPlans AckedPlanSink
 
-	// stateMu guards the two per-fleet facts the apply path reads: which pods
-	// must be re-sent their complete state, and which plan is proven good.
+	// stateMu guards the per-fleet facts the apply path reads: which pods must
+	// be re-sent their complete state, which plan is proven good, and which
+	// plans each pod last reported it holds.
 	stateMu         sync.Mutex
 	invalidBaseline map[string]struct{}
 	validatedPlanID string
+	observedPlans   map[string][]string
 
 	// Deployment cancellation support
 	cancelMu            sync.Mutex
@@ -124,6 +134,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, syncTimeout time.Dur
 		clients:         newAgentClients(agentStateTimeout, syncTimeout),
 		plans:           newPlanCache(),
 		invalidBaseline: map[string]struct{}{},
+		observedPlans:   map[string][]string{},
 		healthTracker:   lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 		metrics:         domainMetrics,
 	}
@@ -281,6 +292,52 @@ func (c *Component) clearBaselineInvalidations() {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	clear(c.invalidBaseline)
+	clear(c.observedPlans)
+}
+
+// notePodPlans records the plans one pod reports it holds — its state read
+// before the apply, then its ACK after it. Every pod that answered at all
+// contributes, not only the ones that ACKed: a pod whose apply failed still
+// runs its plans, and evicting them costs it a full-state reload on the retry
+// seconds later.
+func (c *Component) notePodPlans(endpoint *dataplane.Endpoint, ids ...string) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.observedPlans[podKey(endpoint)] = planIDs(ids)
+}
+
+// fleetPlanRefs is every plan the fleet still refers to, forgetting the pods
+// that are gone. A pod this deployment could not read keeps its last answer:
+// a blip that failed every pod would otherwise evict the whole cache and
+// reload the fleet on the next round.
+func (c *Component) fleetPlanRefs(endpoints []dataplane.Endpoint) []string {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	live := make(map[string]struct{}, len(endpoints))
+	for i := range endpoints {
+		live[podKey(&endpoints[i])] = struct{}{}
+	}
+	refs := make([]string, 0, len(c.observedPlans))
+	for key, ids := range c.observedPlans {
+		if _, wanted := live[key]; !wanted {
+			delete(c.observedPlans, key)
+			continue
+		}
+		refs = append(refs, ids...)
+	}
+	return refs
+}
+
+// planIDs drops the empty and repeated ids, so one pod's entry stays the few
+// plans it actually holds.
+func planIDs(ids []string) []string {
+	kept := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != "" && !slices.Contains(kept, id) {
+			kept = append(kept, id)
+		}
+	}
+	return kept
 }
 
 // applyPosture decides how much of the desired state one pod gets, and what to

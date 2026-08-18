@@ -15,6 +15,7 @@
 package agenttest_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -56,6 +57,9 @@ type observation struct {
 	RunningPlanID   string
 	WorkerOpsPlanID string
 	LKGPlanID       string
+	// StoredPlan is whether /v1/state hands a baseline back, which is what a
+	// leader with a cold plan cache diffs against.
+	StoredPlan bool
 }
 
 // parityAgent is one implementation behind the client both ends share.
@@ -70,7 +74,16 @@ type parityAgent struct {
 
 func (p *parityAgent) apply(t *testing.T, step string, m *api.Manifest, parts map[string]io.Reader) {
 	t.Helper()
-	result, err := p.client.Apply(t.Context(), m, parts, nil)
+	p.applyWithPlan(t, step, m, parts, nil)
+}
+
+func (p *parityAgent) applyWithPlan(t *testing.T, step string, m *api.Manifest, parts map[string]io.Reader, plan []byte) {
+	t.Helper()
+	var blob io.Reader
+	if len(plan) > 0 {
+		blob = bytes.NewReader(plan)
+	}
+	result, err := p.client.Apply(t.Context(), m, parts, blob)
 	seen := observation{Step: step, Status: http.StatusOK}
 	var conflict *client.ConflictError
 	var missing *client.MissingError
@@ -97,6 +110,9 @@ func (p *parityAgent) apply(t *testing.T, step string, m *api.Manifest, parts ma
 			seen.ErrorStage = result.Error.Stage
 		}
 	}
+	state, err := p.client.State(t.Context(), false)
+	require.NoError(t, err, step)
+	seen.StoredPlan = len(state.AppliedPlan) > 0
 	p.seen = append(p.seen, seen)
 }
 
@@ -112,6 +128,7 @@ func TestFakeAndRealAgentAnswerAlike(t *testing.T) {
 		{name: "first apply, runtime ops, a stale baseline and a missing part", run: lifecycleScenario},
 		{name: "a pending reload coalesces and only in-place ops run", run: pendingReloadScenario},
 		{name: "a revert restores the last known good set", run: revertScenario},
+		{name: "a stored plan is handed back only for the plan it describes", run: planBlobScenario},
 	}
 
 	for _, sc := range scenarios {
@@ -209,6 +226,28 @@ func revertScenario(t *testing.T, p *parityAgent) {
 		Mode:               api.ModeRevertLKG,
 	}
 	p.apply(t, "revert to the last known good set", revert, nil)
+}
+
+// planBlobScenario pins what a pod answers a leader with a cold plan cache: the
+// blob it stored, and only while it still describes the plan it applied. An
+// apply that moves that plan on without carrying a blob leaves it with none.
+func planBlobScenario(t *testing.T, p *parityAgent) {
+	t.Helper()
+	first, parts := build("plan-1", api.ModeReload, api.Token{LeaderEpoch: 1, RenderSeq: 1}, seedFiles)
+	p.applyWithPlan(t, "first apply carries the plan", first, parts, []byte("plan-1-blob"))
+
+	routed := map[string]string{"haproxy.cfg": "global\n", "maps/host.map": "example.com be-1\nnew.example.com be-2\n"}
+	next, parts := build("plan-2", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 2}, routed)
+	next.ExpectedPrevPlanID = "plan-1"
+	next.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
+	next.Ops = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "new.example.com", Value: "be-2"}}
+	p.apply(t, "the applied plan moves on without one", next, parts)
+
+	grown := map[string]string{"haproxy.cfg": "global\n", "maps/host.map": routed["maps/host.map"] + "third.example.com be-3\n"}
+	again, parts := build("plan-3", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 3}, grown)
+	again.ExpectedPrevPlanID = "plan-2"
+	again.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 2}
+	p.applyWithPlan(t, "the next apply brings the plan back", again, parts, []byte("plan-3-blob"))
 }
 
 func newFakeParityAgent(t *testing.T) *parityAgent {

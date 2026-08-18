@@ -686,11 +686,11 @@ type componentSetup struct {
 	ErrGroup              *errgroup.Group // Tracks all background goroutines for graceful shutdown
 	LeaderState           *leaderCallbackState
 
-	// LeaderEpoch is the fencing epoch the deployer stamps on every apply. It
-	// is built with the deploy stack and claimed by the leader-election
-	// component, so both halves must see the same object. Nil when leader
-	// election is disabled.
-	LeaderEpoch *leaderelectionctrl.LeaseEpoch
+	// LeaderEpoch is the fencing epoch the deployer stamps on every apply, plus
+	// the way to hand leadership back. It is built with the deploy stack and
+	// claimed by the leader-election component, so both halves must see the
+	// same object. Nil when leader election is disabled.
+	LeaderEpoch *leaderelectionctrl.Term
 
 	// SelfWrites links the status applier (writer) to the resource watchers
 	// (readers) so a status write's own echo doesn't re-render.
