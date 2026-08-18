@@ -70,6 +70,7 @@ type Agent struct {
 	reloadPending bool
 	rejectedOps   map[string]struct{}
 	conflictOnce  string
+	missingOnce   []string
 	applies       []RecordedApply
 	stateReads    int
 }
@@ -200,15 +201,13 @@ func (a *Agent) ConflictOnce(reason string) {
 	a.conflictOnce = reason
 }
 
-// ForgetContent drops the content the fake holds for this path while keeping
-// the path in its reported file set, so the next manifest declaring it comes
-// back as a missing part.
-func (a *Agent) ForgetContent(path string) {
+// MissingOnce makes the next apply answer 409 with these paths and write
+// nothing, which is what the agent does when its tree does not hold a file the
+// manifest declares and the caller did not send it.
+func (a *Agent) MissingOnce(paths ...string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if at, held := a.state.Files[path]; held {
-		delete(a.blobs, at.Digest)
-	}
+	a.missingOnce = paths
 }
 
 func (a *Agent) routes() http.Handler {

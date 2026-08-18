@@ -349,8 +349,8 @@ func TestApply_MissingPartsAreResent(t *testing.T) {
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
 	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
 
-	// The pod reports holding the map file, but does not.
-	agent.ForgetContent("maps/host.map")
+	// The pod reported holding the map file, but its tree does not.
+	agent.MissingOnce("maps/host.map")
 
 	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
 	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)

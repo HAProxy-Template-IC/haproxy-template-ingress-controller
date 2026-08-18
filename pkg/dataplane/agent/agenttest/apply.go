@@ -176,6 +176,10 @@ func (a *Agent) conflict(reason string) *api.Conflict {
 }
 
 func (a *Agent) missingParts(req *applyRequest) []string {
+	if forced := a.missingOnce; len(forced) > 0 {
+		a.missingOnce = nil
+		return forced
+	}
 	var missing []string
 	for _, f := range req.manifest.Files {
 		if _, sent := req.parts[f.Path]; sent {
