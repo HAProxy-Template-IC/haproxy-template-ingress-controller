@@ -84,3 +84,51 @@ func TestPendingReload_FollowsUpWhenTheReloadFires(t *testing.T) {
 	assert.Equal(t, checksum, cachedHash)
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 300*time.Millisecond)
 }
+
+// While the fleet's paced reloads are pending, new renders are held and the
+// newest one is dispatched once they have fired: one converged deployment per
+// pacing window instead of a fleet that stays one reload behind.
+func TestPendingReload_HoldsNewRendersUntilTheWindowPasses(t *testing.T) {
+	bus := testutil.NewTestBus()
+	scheduledCh := bus.SubscribeTypes("hold-watcher", 50, events.EventTypeDeploymentScheduled)
+	bus.Start()
+
+	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), 20*time.Millisecond, 30*time.Second)
+	s.mu.Lock()
+	s.lastRenderedConfig = "render-1"
+	s.lastContentChecksum = "checksum-1"
+	s.currentEndpoints = oneEndpoint()
+	s.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startLoopForTest(t, s, ctx)
+
+	s.handleValidationCompleted(ctx, events.NewValidationCompletedEvent(nil, 5, "config_change", nil, true,
+		seedRenderIdentity(s)))
+	sd1 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
+	require.Equal(t, "checksum-1", sd1.ContentChecksum)
+
+	// The fleet holds render 1 behind a reload due in 300 ms.
+	holdStart := time.Now()
+	s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
+		Total: 2, Succeeded: 0, Failed: 0,
+		PendingReloads: 2, PendingReloadUntil: holdStart.Add(300 * time.Millisecond),
+		ContentChecksum: "checksum-1", PodSetHash: "pods-1",
+	}))
+
+	// Two more renders arrive inside the window.
+	for _, checksum := range []string{"checksum-2", "checksum-3"} {
+		s.mu.Lock()
+		s.lastRenderedConfig = "render-" + checksum
+		s.lastContentChecksum = checksum
+		s.mu.Unlock()
+		s.handleValidationCompleted(ctx, events.NewValidationCompletedEvent(nil, 5, "config_change", nil, true,
+			seedRenderIdentity(s)))
+	}
+
+	sd2 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
+	assert.GreaterOrEqual(t, time.Since(holdStart), 300*time.Millisecond, "nothing dispatches before the reloads fired")
+	assert.Equal(t, "checksum-3", sd2.ContentChecksum, "the newest render is what dispatches")
+	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 400*time.Millisecond)
+}

@@ -80,7 +80,11 @@ func (s *Server) runApply(m *api.Manifest, got *received, digest string) api.App
 	}
 	s.finish(run)
 	s.commitPlanBlob(run)
-	go s.readBack(run)
+	s.background.Add(1)
+	go func() {
+		defer s.background.Done()
+		s.readBack(run)
+	}()
 	return run.result
 }
 

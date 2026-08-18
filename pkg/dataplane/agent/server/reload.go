@@ -170,7 +170,7 @@ func (s *Server) firePendingReload() {
 // readBack compares the running state with the desired one after a runtime
 // apply. A lost or truncated command must not latch, so a divergence reloads.
 func (s *Server) readBack(run *applyRun) {
-	if run.result.Mode != api.ResultRuntime || !run.result.OK {
+	if run.result.Mode != api.ResultRuntime || !run.result.OK || s.stopped.Load() {
 		return
 	}
 	diverged := false
@@ -188,7 +188,7 @@ func (s *Server) readBack(run *applyRun) {
 			diverged = true
 		}
 	}
-	if !diverged {
+	if !diverged || s.stopped.Load() {
 		return
 	}
 	s.metrics.divergence.Inc()

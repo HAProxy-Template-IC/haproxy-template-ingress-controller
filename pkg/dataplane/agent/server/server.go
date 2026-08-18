@@ -99,6 +99,12 @@ type Server struct {
 	ready atomic.Bool
 	addr  atomic.Pointer[string]
 	http  *http.Server
+
+	// background tracks the read-backs that outlive their apply handler, so
+	// Start returns only after the last one is done and stopped is what
+	// tells them the agent is going away.
+	background sync.WaitGroup
+	stopped    atomic.Bool
 }
 
 // New builds the agent. It probes the mounts under the base directory and
@@ -205,7 +211,10 @@ func (s *Server) Start(ctx context.Context) error {
 		defer cancel()
 		return s.http.Shutdown(shutdownCtx)
 	})
-	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+	err = group.Wait()
+	s.stopped.Store(true)
+	s.background.Wait()
+	if err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil

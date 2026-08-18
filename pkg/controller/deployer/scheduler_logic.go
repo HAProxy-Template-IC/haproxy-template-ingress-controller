@@ -121,6 +121,14 @@ func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 			return
 		}
 		s.schedulerMutex.Lock()
+		hold := time.Until(s.state.holdUntil)
+		if hold > 0 && s.state.pending != nil {
+			s.schedulerMutex.Unlock()
+			if !s.waitHold(ctx, hold) {
+				return
+			}
+			continue
+		}
 		dep := s.state.pending
 		s.state.pending = nil
 		s.schedulerMutex.Unlock()
@@ -137,6 +145,21 @@ func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 			return // ctx cancelled
 		}
 	}
+}
+
+// waitHold sleeps until the fleet's pending reloads have fired; a render that
+// arrives meanwhile replaces the pending slot and is what gets dispatched.
+// Returns false only on ctx cancellation.
+func (s *DeploymentScheduler) waitHold(ctx context.Context, hold time.Duration) bool {
+	timer := time.NewTimer(hold)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-s.pendingSignal:
+	case <-ctx.Done():
+		return false
+	}
+	return true
 }
 
 // dispatchPending publishes one DeploymentScheduledEvent and blocks until its

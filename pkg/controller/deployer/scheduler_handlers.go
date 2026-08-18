@@ -461,6 +461,7 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	case event.Total > 0 && event.Failed > 0:
 		s.scheduleFailureRetry(event)
 	case event.Total > 0 && event.PendingReloads > 0:
+		s.holdForPendingReloads(event)
 		s.schedulePendingReloadFollowUp(event)
 	case event.Total > 0 && event.Failed == 0:
 		s.cancelFailureRetry()
@@ -472,6 +473,25 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 // pendingReloadFollowUpMargin is added to the agent's scheduled_at so the
 // follow-up finds the reload done, not about to run.
 const pendingReloadFollowUpMargin = 250 * time.Millisecond
+
+// holdForPendingReloads keeps the deploy loop from dispatching another render
+// until the pods' paced reloads have fired. Runtime-only changes lose at most
+// one pacing window; structural churn converges once per window instead of
+// never.
+func (s *DeploymentScheduler) holdForPendingReloads(event *events.DeploymentCompletedEvent) {
+	until := time.Now().Add(pendingReloadFollowUpMargin)
+	if !event.PendingReloadUntil.IsZero() {
+		until = event.PendingReloadUntil.Add(pendingReloadFollowUpMargin)
+	}
+	if until.After(time.Now().Add(maxFailureRetryBackoff)) {
+		until = time.Now().Add(maxFailureRetryBackoff)
+	}
+	s.schedulerMutex.Lock()
+	if until.After(s.state.holdUntil) {
+		s.state.holdUntil = until
+	}
+	s.schedulerMutex.Unlock()
+}
 
 // schedulePendingReloadFollowUp re-drives the last validated render once the
 // pods' paced reloads have fired. The agent never cancels a scheduled reload
@@ -644,6 +664,13 @@ func (s *DeploymentScheduler) failureRetryBackoff(attempt int) time.Duration {
 // only if the work and retry revisions captured when its timer was armed remain
 // current. It never starts a second deploy path.
 func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision uint64, reason string) {
+	s.schedulerMutex.Lock()
+	newerPending := s.state.pending != nil && s.state.pending.retryGeneration == 0
+	s.schedulerMutex.Unlock()
+	if newerPending {
+		// A newer render is already waiting; dispatching it covers this one.
+		return
+	}
 	// If leadership was lost (or we're shutting down) between the timer arming and
 	// firing, s.ctx is cancelled and the deploy loop has exited — don't repopulate
 	// state.pending for a term that's already over. handleLostLeadership stops the
@@ -743,6 +770,7 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	s.state.activeDeploymentID = ""
 	s.state.activeCorrelationID = ""
 	s.state.pending = nil
+	s.state.holdUntil = time.Time{}
 
 	s.retryStopped = true
 	s.stopRetryTimerLocked()
