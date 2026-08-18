@@ -61,13 +61,12 @@ func newPodSetHashKey() [sha256.Size]byte {
 // schedulerState groups the deployment scheduling state into a single struct.
 // All fields are protected by DeploymentScheduler.schedulerMutex.
 //
-// The single deploy-loop goroutine (runDeployLoop) owns all rate-limit timing;
-// these fields are the shared state it coordinates with the event handlers.
-// `deployInFlight` replaces the old phase state machine: it is true from the
-// moment the loop publishes a DeploymentScheduledEvent until the matching
+// The single deploy-loop goroutine (runDeployLoop) dispatches; these fields are
+// the shared state it coordinates with the event handlers. `deployInFlight`
+// replaces the old phase state machine: it is true from the moment the loop
+// publishes a DeploymentScheduledEvent until the matching
 // DeploymentCompletedEvent clears it. A timeout marks that deployment as
-// retiring until the same attempt terminates. The single loop makes the
-// deployment interval authoritative.
+// retiring until the same attempt terminates.
 type schedulerState struct {
 	deployInFlight      bool
 	deploymentTimedOut  bool
@@ -112,10 +111,12 @@ type scheduledDeployment struct {
 	contentChecksum string                   // Hash of THIS deployment's config+aux — captured at schedule-time
 }
 
-// DeploymentScheduler implements deployment scheduling with rate limiting.
+// DeploymentScheduler decides which render is deployed next, and when.
 //
 // It subscribes to events that trigger deployments, maintains the state of
-// rendered and validated configurations, and enforces minimum deployment intervals.
+// rendered and validated configurations, and holds a new render while the
+// fleet's paced reloads are still pending. One deployment in flight is the
+// only rate limit it applies; reload pacing lives in the agent.
 //
 // Event subscriptions:
 //   - TemplateRenderedEvent: Track rendered config and auxiliary files
@@ -127,9 +128,12 @@ type scheduledDeployment struct {
 type DeploymentScheduler struct {
 	*component.ReadySignal
 
-	eventBus              *busevents.EventBus
-	eventChan             <-chan busevents.Event // Event subscription channel (subscribed in Start())
-	logger                *slog.Logger
+	eventBus  *busevents.EventBus
+	eventChan <-chan busevents.Event // Event subscription channel (subscribed in Start())
+	logger    *slog.Logger
+	// minDeploymentInterval seeds the fast-retry backoff. Reload pacing is the
+	// agent's (--reload-interval-min), which the chart templates from the same
+	// value; nothing here waits it out.
 	minDeploymentInterval time.Duration
 	ctx                   context.Context // Main event loop context for scheduling
 
@@ -191,7 +195,7 @@ type DeploymentScheduler struct {
 	lastFleetVersion string
 
 	// Deploy-loop coordination. The single long-lived runDeployLoop goroutine
-	// (started in Start) owns rate-limit timing. Created in Start so each
+	// (started in Start) is the only dispatcher. Created in Start so each
 	// leadership term gets fresh channels.
 	//   - pendingSignal (cap 1): event handlers wake the loop after setting pending.
 	//   - completed (cap 1): an accepted DeploymentCompletedEvent wakes the
@@ -312,14 +316,13 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	s.MarkReady()
 
-	// Start the single deploy loop that owns rate-limit timing. All event
-	// handlers only set state.pending (latest-wins) and signal it; this is the
-	// ONLY goroutine that waits out minDeploymentInterval and publishes
-	// DeploymentScheduledEvent, so reloads can never burst under churn.
+	// Start the single deploy loop. All event handlers only set state.pending
+	// (latest-wins) and signal it; this is the ONLY goroutine that publishes
+	// DeploymentScheduledEvent, so two deployments are never in flight at once.
 	go s.runDeployLoop(ctx)
 
 	s.logger.Debug("Deployment scheduler starting",
-		"min_deployment_interval_ms", s.minDeploymentInterval.Milliseconds(),
+		"failure_retry_base_ms", s.minDeploymentInterval.Milliseconds(),
 		"deployment_timeout_ms", s.deploymentTimeout.Milliseconds())
 
 	// Ticker to check for deployment timeouts

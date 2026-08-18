@@ -94,7 +94,7 @@ func TestCredentialsUpdatedPublishesFreshEndpointCredentials(t *testing.T) {
 // A discovery pass that started before a credential rotation must not publish
 // its result after it: the endpoints it carries authenticate with the retired
 // pair, and the deployer would keep using them until the next pass.
-func TestCredentialsUpdateCannotBeOverwrittenByOlderRetryDiscovery(t *testing.T) {
+func TestCredentialsUpdateCannotBeOverwrittenByAnOlderDiscoveryPass(t *testing.T) {
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 	podStore := &blockingFirstListStore{
@@ -165,7 +165,7 @@ func TestCredentialsUpdateCannotBeOverwrittenByOlderRetryDiscovery(t *testing.T)
 
 // The same ordering rule for the agent port: a pass that started against the
 // old port must not overwrite the result computed for the new one.
-func TestDataplanePortUpdateCannotBeOverwrittenByOlderRetryDiscovery(t *testing.T) {
+func TestDataplanePortUpdateCannotBeOverwrittenByAnOlderDiscoveryPass(t *testing.T) {
 	agent := agenttest.New(t, agenttest.WithCredentials("admin", "password"))
 	newPort := portOf(t, agent.URL())
 

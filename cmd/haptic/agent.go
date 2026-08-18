@@ -100,6 +100,10 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: logging.ParseLogLevel(os.Getenv(agentLogLevelEnv)),
 	}))
+	// Everything this process writes is the JSON the chart promises: the metrics
+	// server and net/http take their logger from the default one.
+	slog.SetDefault(logger)
+
 	username, password := os.Getenv(agentUsernameEnv), os.Getenv(agentPasswordEnv)
 	if username == "" || password == "" {
 		return errors.New("the agent needs " + agentUsernameEnv + " and " + agentPasswordEnv + " from the credentials Secret")

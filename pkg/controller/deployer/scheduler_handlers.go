@@ -89,9 +89,8 @@ func (s *DeploymentScheduler) handleConfigValidated(event *events.ConfigValidate
 // The Coordinator publishes TemplateRenderedEvent and ValidationCompletedEvent as
 // two separate Publish calls and the bus drops per subscriber, so losing only the
 // first leaves this cache holding the PREVIOUS render while the verdict describes
-// the current one. Deploying that pair sends render N-1's bytes together with
-// render N's ParsedConfig, so lane classification and the runtime-server diff are
-// computed against a config that is not the one being pushed.
+// the current one. Deploying that pair sends render N-1's bytes and plan under a
+// verdict that judged render N: a config no gate passed reaches the fleet.
 //
 // The verdict's causation ID is the render event's ID (the Coordinator propagates
 // it), which makes the pairing checkable. A mismatch discards the verdict instead
@@ -126,7 +125,6 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	s.logger.Debug("Validation completed, preparing deployment",
 		"warnings", len(event.Warnings),
 		"duration_ms", event.DurationMs,
-		"has_parsed_config", event.ParsedConfig != nil,
 		"correlation_id", correlationID)
 
 	// Log warnings if any
@@ -218,8 +216,6 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	}
 
 	// Schedule deployment to current endpoints (or queue if deployment in progress).
-	// scheduleOrQueue classifies the render into a lane (runtime-raw vs structural)
-	// against the last-dispatched config; the deploy loop applies it accordingly.
 	// Propagate coalescibility from validation event through the deployment pipeline.
 	//
 	// `configHash` was captured above from `s.lastContentChecksum` at the same
