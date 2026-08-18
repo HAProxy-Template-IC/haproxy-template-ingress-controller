@@ -5,7 +5,7 @@ package integration
 import (
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
 )
 
 // TestSyncAuxiliary runs table-driven synchronization tests for auxiliary file operations
@@ -19,20 +19,11 @@ func TestSyncAuxiliary(t *testing.T) {
 			initialConfigFile: "http-errors/base.cfg",
 			desiredConfigFile: "http-errors/with-errors.cfg",
 			generalFiles: map[string]string{
-				"/etc/haproxy/general/400.http": "error-files/400.http",
-				"/etc/haproxy/general/403.http": "error-files/403.http",
-				"/etc/haproxy/general/500.http": "error-files/500.http",
+				"general/400.http": "error-files/400.http",
+				"general/403.http": "error-files/403.http",
+				"general/500.http": "error-files/500.http",
 			},
-			expectedCreates: 1,
-			expectedUpdates: 0,
-			expectedDeletes: 0,
-			expectedOperations: []string{
-				"Create http-errors section 'myerrors'",
-				"Created general file 400.http",
-				"Created general file 403.http",
-				"Created general file 500.http",
-			},
-			expectedReload: true,
+			expectedVerdict: deployplan.VerdictReload,
 		},
 		{
 			name:              "remove-http-errors-section",
@@ -40,21 +31,13 @@ func TestSyncAuxiliary(t *testing.T) {
 			desiredConfigFile: "http-errors/base.cfg",
 			// Initial config needs these files
 			initialGeneralFiles: map[string]string{
-				"/etc/haproxy/general/400.http": "error-files/400.http",
-				"/etc/haproxy/general/403.http": "error-files/403.http",
-				"/etc/haproxy/general/500.http": "error-files/500.http",
+				"general/400.http": "error-files/400.http",
+				"general/403.http": "error-files/403.http",
+				"general/500.http": "error-files/500.http",
 			},
-			// Desired config has no error files (they should be deleted)
-			// Note: aux file deletions aren't tracked as operations when desired is empty
-			// (orchestrator short-circuits comparison when desired files list is empty)
+			// The desired manifest omits them, which is what deletes them.
 			generalFiles:    map[string]string{},
-			expectedCreates: 0,
-			expectedUpdates: 0,
-			expectedDeletes: 1,
-			expectedOperations: []string{
-				"Delete http-errors section 'myerrors'",
-			},
-			expectedReload: true,
+			expectedVerdict: deployplan.VerdictReload,
 		},
 		{
 			name:              "update-http-errors-section",
@@ -62,29 +45,17 @@ func TestSyncAuxiliary(t *testing.T) {
 			desiredConfigFile: "http-errors/modified-errors.cfg",
 			// Initial config needs these files
 			initialGeneralFiles: map[string]string{
-				"/etc/haproxy/general/400.http": "error-files/400.http",
-				"/etc/haproxy/general/403.http": "error-files/403.http",
-				"/etc/haproxy/general/500.http": "error-files/500.http",
+				"general/400.http": "error-files/400.http",
+				"general/403.http": "error-files/403.http",
+				"general/500.http": "error-files/500.http",
 			},
 			// Desired config needs different files
 			generalFiles: map[string]string{
-				"/etc/haproxy/general/custom400.http": "error-files/custom400.http",
-				"/etc/haproxy/general/404.http":       "error-files/404.http",
-				"/etc/haproxy/general/503.http":       "error-files/503.http",
+				"general/custom400.http": "error-files/custom400.http",
+				"general/404.http":       "error-files/404.http",
+				"general/503.http":       "error-files/503.http",
 			},
-			expectedCreates: 0,
-			expectedUpdates: 1,
-			expectedDeletes: 0,
-			expectedOperations: []string{
-				"Update http-errors section 'myerrors'",
-				"Created general file 404.http",
-				"Created general file 503.http",
-				"Created general file custom400.http",
-				"Deleted general file 400.http",
-				"Deleted general file 403.http",
-				"Deleted general file 500.http",
-			},
-			expectedReload: true,
+			expectedVerdict: deployplan.VerdictReload,
 		},
 
 		// ==================== SSL FRONTEND OPERATIONS ====================
@@ -93,18 +64,9 @@ func TestSyncAuxiliary(t *testing.T) {
 			initialConfigFile: "ssl-frontend/base.cfg",
 			desiredConfigFile: "ssl-frontend/with-ssl.cfg",
 			sslCertificates: map[string]string{
-				"example.com.pem": "ssl-certs/example.com.pem",
+				"ssl/example_com.pem": "ssl-certs/example.com.pem",
 			},
-			expectedCreates: 2,
-			expectedUpdates: 0,
-			expectedDeletes: 1,
-			expectedOperations: []string{
-				"Delete frontend 'http'",
-				"Create frontend 'https'",
-				"Create bind '*:443 ssl crt /etc/haproxy/ssl/example_com.pem' in frontend 'https'",
-				"Created SSL certificate example.com.pem",
-			},
-			expectedReload: true,
+			expectedVerdict: deployplan.VerdictReload,
 		},
 		{
 			name:              "remove-ssl-frontend",
@@ -112,21 +74,11 @@ func TestSyncAuxiliary(t *testing.T) {
 			desiredConfigFile: "ssl-frontend/base.cfg",
 			// Initial config needs SSL cert
 			initialSSLCertificates: map[string]string{
-				"example.com.pem": "ssl-certs/example.com.pem",
+				"ssl/example_com.pem": "ssl-certs/example.com.pem",
 			},
-			// Desired config has no SSL (cert should be deleted)
-			// Note: aux file deletions aren't tracked as operations when desired is empty
-			// (orchestrator short-circuits comparison when desired files list is empty)
+			// The desired manifest omits it, which is what deletes it.
 			sslCertificates: map[string]string{},
-			expectedCreates: 2,
-			expectedUpdates: 0,
-			expectedDeletes: 1,
-			expectedOperations: []string{
-				"Delete frontend 'https'",
-				"Create frontend 'http'",
-				"Create bind '*:80' in frontend 'http'",
-			},
-			expectedReload: true,
+			expectedVerdict: deployplan.VerdictReload,
 		},
 		{
 			name:              "update-ssl-frontend-cert",
@@ -134,42 +86,33 @@ func TestSyncAuxiliary(t *testing.T) {
 			desiredConfigFile: "ssl-frontend/modified-ssl.cfg",
 			// Initial config needs this cert
 			initialSSLCertificates: map[string]string{
-				"example.com.pem": "ssl-certs/example.com.pem",
+				"ssl/example_com.pem": "ssl-certs/example.com.pem",
 			},
 			// Desired config needs different cert
 			sslCertificates: map[string]string{
-				"updated.com.pem": "ssl-certs/updated.com.pem",
+				"ssl/updated_com.pem": "ssl-certs/updated.com.pem",
 			},
-			expectedCreates: 0,
-			expectedUpdates: 1,
-			expectedDeletes: 0,
-			expectedOperations: []string{
-				"Update bind '*:443 ssl crt /etc/haproxy/ssl/updated_com.pem' in frontend 'https'",
-				"Created SSL certificate updated.com.pem",
-				// Delete uses HAProxy's sanitized name (dots → underscores)
-				"Deleted SSL certificate example_com.pem",
-			},
-			expectedReload: true,
+			expectedVerdict: deployplan.VerdictReload,
 		},
 		{
-			// Same cert filename, new PEM bytes, identical config: applied to the
-			// live worker via the runtime API (set ssl cert + commit, v3.2+) with
-			// no reload. SyncMode=runtime confirms the runtime path fired — a wrong
-			// cert identifier would error and fall back to reload, failing this.
+			// Same certificate path, new PEM bytes, identical configuration:
+			// the change reaches the running worker through `set ssl cert` +
+			// `commit ssl cert` with no reload. A wrong runtime identifier
+			// would make HAProxy reject the command, which reloads instead and
+			// fails this case.
 			name:              "update-ssl-cert-content-no-config-change",
 			initialConfigFile: "ssl-frontend/with-ssl.cfg",
 			desiredConfigFile: "ssl-frontend/with-ssl.cfg", // SAME config
 			initialSSLCertificates: map[string]string{
-				"example.com.pem": "ssl-certs/example.com.pem",
+				"ssl/example_com.pem": "ssl-certs/example.com.pem",
 			},
 			sslCertificates: map[string]string{
-				"example.com.pem": "ssl-certs/updated.com.pem", // same name, different PEM
+				"ssl/example_com.pem": "ssl-certs/updated.com.pem", // same path, different PEM
 			},
-			// v3.2+: runtime `set ssl cert`, no reload. Older HAProxy reloads
-			// (the runner flips the expectation via runtimeRequiresSSLCertCap).
-			expectedReload:            false,
-			expectedSyncMode:          dataplane.SyncModeRuntime,
-			runtimeRequiresSSLCertCap: true,
+			expectedVerdict: deployplan.VerdictRuntime,
+			verifySSLCertificates: map[string]string{
+				"ssl/example_com.pem": "ssl-certs/updated.com.pem",
+			},
 		},
 
 		// ==================== MAP FILE OPERATIONS ====================
@@ -178,17 +121,9 @@ func TestSyncAuxiliary(t *testing.T) {
 			initialConfigFile: "map-frontend/base.cfg",
 			desiredConfigFile: "map-frontend/with-map.cfg",
 			mapFiles: map[string]string{
-				"domains.map": "map-files/domains.map",
+				"maps/domains.map": "map-files/domains.map",
 			},
-			expectedCreates: 1,
-			expectedUpdates: 1,
-			expectedDeletes: 0,
-			expectedOperations: []string{
-				"Create backend switching rule (%[req.hdr(host),lower,map(/etc/haproxy/maps/domains.map,web)]) in frontend 'http'",
-				"Update frontend 'http'",
-				"Created map file domains.map",
-			},
-			expectedReload: true,
+			expectedVerdict: deployplan.VerdictReload,
 		},
 		{
 			name:              "remove-map-frontend",
@@ -196,20 +131,11 @@ func TestSyncAuxiliary(t *testing.T) {
 			desiredConfigFile: "map-frontend/base.cfg",
 			// Initial config needs map file
 			initialMapFiles: map[string]string{
-				"domains.map": "map-files/domains.map",
+				"maps/domains.map": "map-files/domains.map",
 			},
-			// Desired config has no map file (should be deleted)
-			// Note: aux file deletions aren't tracked as operations when desired is empty
-			// (orchestrator short-circuits comparison when desired files list is empty)
+			// The desired manifest omits it, which is what deletes it.
 			mapFiles:        map[string]string{},
-			expectedCreates: 0,
-			expectedUpdates: 1,
-			expectedDeletes: 1,
-			expectedOperations: []string{
-				"Delete backend switching rule (%[req.hdr(host),lower,map(/etc/haproxy/maps/domains.map,web)]) from frontend 'http'",
-				"Update frontend 'http'",
-			},
-			expectedReload: true,
+			expectedVerdict: deployplan.VerdictReload,
 		},
 		{
 			name:              "update-map-frontend",
@@ -217,64 +143,35 @@ func TestSyncAuxiliary(t *testing.T) {
 			desiredConfigFile: "map-frontend/modified-map.cfg",
 			// Initial config needs this map
 			initialMapFiles: map[string]string{
-				"domains.map": "map-files/domains.map",
+				"maps/domains.map": "map-files/domains.map",
 			},
 			// Desired config needs different map (config also references this new filename)
 			mapFiles: map[string]string{
-				"updated-domains.map": "map-files/updated-domains.map",
+				"maps/updated-domains.map": "map-files/updated-domains.map",
 			},
-			expectedCreates: 4,
-			expectedUpdates: 1,
-			expectedDeletes: 2,
-			expectedOperations: []string{
-				"Delete backend 'admin'",
-				"Delete backend 'api'",
-				"Create backend 'api-v2'",
-				"Create backend 'mobile'",
-				"Create server 'srv1' in backend 'api-v2'",
-				"Create server 'srv1' in backend 'mobile'",
-				"Update backend switching rule (%[req.hdr(host),lower,map(/etc/haproxy/maps/updated-domains.map,web)]) in frontend 'http'",
-				"Created map file updated-domains.map",
-				"Deleted map file domains.map",
-			},
-			expectedReload: true,
+			expectedVerdict: deployplan.VerdictReload,
 		},
 		{
+			// Map content changed against an identical configuration: the entry
+			// delta runs on the live worker and nothing reloads. The updated map
+			// exercises all three entry ops against real HAProxy —
+			// api.example.com's value changes (`set map`, no transient gap),
+			// admin.example.com is removed (`del map`), blog and shop are added
+			// (`add map`).
 			name:              "update-map-only-no-config-change",
 			initialConfigFile: "map-frontend/with-map.cfg",
 			desiredConfigFile: "map-frontend/with-map.cfg", // SAME config - no changes
 			// Initial config needs this map
 			initialMapFiles: map[string]string{
-				"domains.map": "map-files/domains.map",
+				"maps/domains.map": "map-files/domains.map",
 			},
 			// Desired config needs different map content
 			mapFiles: map[string]string{
-				"domains.map": "map-files/domains-updated.map", // Same name, different content
+				"maps/domains.map": "map-files/domains-updated.map", // Same name, different content
 			},
-			expectedCreates: 0,
-			expectedUpdates: 0,
-			expectedDeletes: 0,
-			expectedOperations: []string{
-				// No HAProxy config operations expected - config is identical
-				// But map file update is tracked
-				"Updated map file domains.map",
-			},
-			// Map content changed while the config body is identical: the
-			// orchestrator applies the new map to the live worker via the
-			// runtime API (ReplaceRuntimeMap, no reload) instead of
-			// force-reloading. ReloadTriggered is false and the sync runs in
-			// the runtime mode. The on-disk map file is still updated (verified
-			// below) so any later unrelated reload converges.
-			//
-			// The updated map exercises all three runtime-delta op kinds
-			// against real HAProxy: api.example.com's value changes
-			// (atomic `set map`, no transient gap — the gitar-flagged case),
-			// admin.example.com is removed (`del map`), and blog/shop are
-			// added (`add map`).
-			expectedReload:   false,
-			expectedSyncMode: dataplane.SyncModeRuntime,
+			expectedVerdict: deployplan.VerdictRuntime,
 			verifyMapFiles: map[string]string{
-				"domains.map": "map-files/domains-updated.map",
+				"maps/domains.map": "map-files/domains-updated.map",
 			},
 			verifyRuntimeMap: true,
 		},
@@ -283,29 +180,22 @@ func TestSyncAuxiliary(t *testing.T) {
 			// policy value (here a body-size limit) that used to live in the
 			// backend section now lives in body-size.map, applied by a static,
 			// resource-agnostic frontend rule. Changing the value is therefore a
-			// map-content-only change against an identical config body — so it
-			// applies via the runtime API with NO reload. This pins the payoff
-			// of the relocation end-to-end: the exact rule form the chart emits
+			// map-content-only change against an identical config body, so it
+			// runs on the live worker with NO reload. This pins the payoff of the
+			// relocation end-to-end: the exact rule form the chart emits
 			// (frontend-filters-250-request-body-size) is runtime-map-applicable.
 			name:              "update-map-only-bodysize-no-reload",
 			initialConfigFile: "map-frontend/with-body-size-map.cfg",
 			desiredConfigFile: "map-frontend/with-body-size-map.cfg", // SAME config
 			initialMapFiles: map[string]string{
-				"body-size.map": "map-files/body-size.map", // web 1048576
+				"maps/body-size.map": "map-files/body-size.map", // web 1048576
 			},
 			mapFiles: map[string]string{
-				"body-size.map": "map-files/body-size-updated.map", // web 8388608 (same name, new value)
+				"maps/body-size.map": "map-files/body-size-updated.map", // web 8388608 (same name, new value)
 			},
-			expectedCreates: 0,
-			expectedUpdates: 0,
-			expectedDeletes: 0,
-			expectedOperations: []string{
-				"Updated map file body-size.map",
-			},
-			expectedReload:   false,
-			expectedSyncMode: dataplane.SyncModeRuntime,
+			expectedVerdict: deployplan.VerdictRuntime,
 			verifyMapFiles: map[string]string{
-				"body-size.map": "map-files/body-size-updated.map",
+				"maps/body-size.map": "map-files/body-size-updated.map",
 			},
 			verifyRuntimeMap: true,
 		},
@@ -320,21 +210,14 @@ func TestSyncAuxiliary(t *testing.T) {
 			initialConfigFile: "map-frontend/with-body-size-map.cfg",
 			desiredConfigFile: "map-frontend/with-body-size-map.cfg", // SAME config
 			initialMapFiles: map[string]string{
-				"body-size.map": "map-files/body-size-empty.map", // no entries
+				"maps/body-size.map": "map-files/body-size-empty.map", // no entries
 			},
 			mapFiles: map[string]string{
-				"body-size.map": "map-files/body-size.map", // web 1048576 (first entry)
+				"maps/body-size.map": "map-files/body-size.map", // web 1048576 (first entry)
 			},
-			expectedCreates: 0,
-			expectedUpdates: 0,
-			expectedDeletes: 0,
-			expectedOperations: []string{
-				"Updated map file body-size.map",
-			},
-			expectedReload:   false,
-			expectedSyncMode: dataplane.SyncModeRuntime,
+			expectedVerdict: deployplan.VerdictRuntime,
 			verifyMapFiles: map[string]string{
-				"body-size.map": "map-files/body-size.map",
+				"maps/body-size.map": "map-files/body-size.map",
 			},
 			verifyRuntimeMap: true,
 		},
