@@ -85,11 +85,8 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 	c.hasDataplanePort = true
 	initialDiscoveryDone := c.initialDiscoveryDone
 
-	// Recreate discovery instance with new port and local version
-	c.discovery = &Discovery{
-		dataplanePort: c.dataplanePort,
-		localVersion:  c.localVersion,
-	}
+	// Recreate discovery instance with the new port
+	c.discovery = &Discovery{dataplanePort: c.dataplanePort}
 
 	c.mu.Unlock()
 	c.discoveryMu.Unlock()
@@ -125,13 +122,9 @@ func (c *Component) handleCredentialsUpdated(event *events.CredentialsUpdatedEve
 	credentialsCopy := *credentials
 	c.discoveryMu.Lock()
 	c.mu.Lock()
-	credentialsChanged := c.credentials == nil || *c.credentials != credentialsCopy
 	c.credentials = &credentialsCopy
 	c.hasCredentials = true
 	initialDiscoveryDone := c.initialDiscoveryDone
-	if credentialsChanged {
-		clear(c.pendingRetries)
-	}
 	c.mu.Unlock()
 	c.discoveryMu.Unlock()
 

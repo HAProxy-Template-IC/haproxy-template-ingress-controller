@@ -32,7 +32,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -70,39 +69,16 @@ func newPodSetHashKey() [sha256.Size]byte {
 // retiring until the same attempt terminates. The single loop makes the
 // deployment interval authoritative.
 type schedulerState struct {
-	deployInFlight        bool
-	deploymentTimedOut    bool
-	activeDeploymentID    string
-	activeCorrelationID   string
-	deploymentStartTime   time.Time
-	pending               *scheduledDeployment
-	lastDeploymentEndTime time.Time
+	deployInFlight      bool
+	deploymentTimedOut  bool
+	activeDeploymentID  string
+	activeCorrelationID string
+	deploymentStartTime time.Time
+	pending             *scheduledDeployment
 }
-
-// lane is the apply lane a scheduled render is classified into, decided by
-// diffing the render against the last-DISPATCHED config (the in-flight/pending
-// deploy's render, NOT last-completed).
-type lane int
-
-const (
-	// laneStructural: the diff has at least one non-runtime-eligible op. Apply via
-	// a full raw push + reload, rate-limited by the deployment interval
-	// (latest-wins, ≤1 enqueued).
-	laneStructural lane = iota
-	// laneRuntimeRaw: the diff is purely runtime-eligible server fields (no
-	// structural/reload op). Apply via a single skip_reload raw push +
-	// X-Runtime-Actions, NO reload, IGNORING the deployment interval.
-	laneRuntimeRaw
-)
 
 // scheduledDeployment represents a deployment that was triggered while another
 // deployment was in progress. Only the latest scheduled deployment is kept (latest wins).
-//
-// `lane` is the apply lane this render was classified into (decided per latest
-// render by diffing against the last-dispatched config). `runtimeUpdates` is the
-// precomputed runtime-eligible render diff for the runtime-raw lane (nil/ignored
-// for the structural lane), threaded through so applyRuntimeRaw does NOT recompute
-// it.
 //
 // `contentChecksum` is captured at schedule-time (the hash of THIS scheduled
 // deployment's config+auxFiles). It MUST travel with the struct rather than
@@ -121,27 +97,14 @@ type scheduledDeployment struct {
 	retryGeneration uint64
 	config          string
 	auxFiles        *dataplane.AuxiliaryFiles
-	parsedConfig    *parser.StructuredConfig
 	plan            *renderplan.Plan // Structure of THIS deployment's render — captured with `config`, same rule as contentChecksum
 	planID          string
 	endpoints       []dataplane.Endpoint
 	reason          string
-	correlationID   string                          // Correlation ID for event tracing
-	statusPatches   []templating.StatusPatch        // Patches to forward to DeploymentScheduledEvent
-	coalescible     bool                            // Whether this deployment can be coalesced (skipped if newer available)
-	contentChecksum string                          // Hash of THIS deployment's config+aux — captured at schedule-time
-	lane            lane                            // Apply lane (structural vs runtime-raw)
-	runtimeUpdates  *dataplane.RuntimeServerUpdates // Precomputed runtime diff for the runtime-raw lane
-
-	// runtimeConfigName / runtimeConfigNamespace identify the HAProxyCfg resource
-	// whose status.deployedToPods this deploy advances. Resolved at dispatch
-	// (resolveRuntimeConfigName) and set ONLY for the runtime-raw lane, where the
-	// apply reloads nothing and is therefore the complete deploy — so the bypass
-	// publishes ConfigAppliedToPodEvent. Left empty for the structural lane (its
-	// runtime subset may be applied pre-interval, but the Component publishes the
-	// truthful per-pod status only after the reload completes).
-	runtimeConfigName      string
-	runtimeConfigNamespace string
+	correlationID   string                   // Correlation ID for event tracing
+	statusPatches   []templating.StatusPatch // Patches to forward to DeploymentScheduledEvent
+	coalescible     bool                     // Whether this deployment can be coalesced (skipped if newer available)
+	contentChecksum string                   // Hash of THIS deployment's config+aux — captured at schedule-time
 }
 
 // DeploymentScheduler implements deployment scheduling with rate limiting.
@@ -179,7 +142,6 @@ type DeploymentScheduler struct {
 	lastValidatedContentChecksum string                    // Hash captured WITH lastValidatedConfig — must travel together, never reconstructed
 	lastValidatedPlan            *renderplan.Plan          // Plan captured WITH lastValidatedConfig
 	lastValidatedPlanID          string                    // Digest of lastValidatedPlan
-	lastParsedConfig             *parser.StructuredConfig  // Pre-parsed desired config
 	lastCorrelationID            string                    // Correlation ID from last validation event
 	lastCoalescible              bool                      // Coalescibility flag from last validation event
 	currentEndpoints             []dataplane.Endpoint      // Current HAProxy pod endpoints
@@ -205,35 +167,10 @@ type DeploymentScheduler struct {
 	deployFailureRetries    int
 	lastFailedRetryChecksum string
 
-	// lastDispatchedParsed / lastDispatchedConfig are the render that the most
-	// recent DISPATCH committed to (the in-flight/pending deploy's render), used
-	// as the SINGLE diff baseline for classifying the next render's lane
-	// (baseline->current => the undeployed server changes). They advance at
-	// DISPATCH for BOTH lanes — structural: when the deploy is published;
-	// runtime-raw: right before the inline applyRuntimeRaw — and are reset on lost
-	// leadership. lastDispatchedConfig is the matching raw config STRING (the
-	// desired body the runtime-raw push carries). Both MUST be written together
-	// under schedulerMutex. Protected by schedulerMutex.
-	lastDispatchedParsed *parser.StructuredConfig
-	lastDispatchedConfig string
-	// lastDispatchedPodSetHash binds the diff baseline to the endpoint
-	// authorities it was dispatched against.
-	lastDispatchedPodSetHash string
-
-	// lastActivatedConfig is the raw config last proven to be RUNNING on the
-	// fleet — a structural deploy that completed with zero failures, or a
-	// runtime-raw apply, whose push body and runtime actions are themselves the
-	// activation. It is deliberately NOT the dispatched render: a structural
-	// dispatch advances lastDispatchedConfig BEFORE the deploy lands, so during
-	// the flight the two differ, and that window is exactly when
-	// applyRuntimeSubset runs.
-	//
-	// Patching the dispatched-but-unlanded render instead wrote the pending
-	// structural content to disk under skip_reload — content HAProxy never
-	// loaded — after which the next sync's empty diff reported success and the
-	// render was never activated (#112). Protected by schedulerMutex; written
-	// together with lastDispatchedConfig where both advance.
-	lastActivatedConfig string
+	// lastPodSetHash is the endpoint authority set the last dispatch targeted.
+	// A change to it retires any in-flight deploy: its pods are not the fleet
+	// any more. Protected by schedulerMutex.
+	lastPodSetHash string
 
 	// Cache for deployment optimization - skip if config unchanged
 	lastDeployedConfigHash string    // SHA-256 hash of last successfully deployed config
@@ -243,12 +180,10 @@ type DeploymentScheduler struct {
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
 
-	// runtimeBypass applies pure-runtime server changes (e.g. a pod-IP rotation)
-	// to the live HAProxy workers via the runtime-raw lane. The deploy loop calls
-	// it SYNCHRONOUSLY, serialized AFTER any in-flight structural deploy's reload,
-	// so a runtime `set server` can never land on a worker that reload replaces.
-	// Best-effort; the scheduled deploy is the correctness floor.
-	runtimeBypass *runtimeBypass
+	// capabilities receives the capability set derived from the fleet's lowest
+	// reported HAProxy version. Nil in tests; guarded by mu with lastFleetVersion.
+	capabilities     FleetCapabilitiesSink
+	lastFleetVersion string
 
 	// Deploy-loop coordination. The single long-lived runDeployLoop goroutine
 	// (started in Start) owns rate-limit timing. Created in Start so each
@@ -284,18 +219,17 @@ func hashEndpointAuthority(endpoint *dataplane.Endpoint) [sha256.Size]byte {
 }
 
 func hashEndpointAuthorityWithKey(endpoint *dataplane.Endpoint, key []byte) [sha256.Size]byte {
-	authority := endpointAuthorityOf(endpoint)
 	values := []string{
-		authority.url,
-		authority.username,
-		authority.password,
-		authority.podName,
-		authority.podNamespace,
-		authority.podUID,
-		authority.podRuntimeID,
-		strconv.Itoa(authority.detectedMajorVersion),
-		strconv.Itoa(authority.detectedMinorVersion),
-		authority.detectedFullVersion,
+		endpoint.URL,
+		endpoint.Username,
+		endpoint.Password,
+		endpoint.PodName,
+		endpoint.PodNamespace,
+		endpoint.PodUID,
+		endpoint.PodRuntimeID,
+		strconv.Itoa(endpoint.DetectedMajorVersion),
+		strconv.Itoa(endpoint.DetectedMinorVersion),
+		endpoint.DetectedFullVersion,
 	}
 	// Keying prevents the logged hash prefix from becoming a password verifier.
 	h := hmac.New(sha256.New, key)
@@ -320,7 +254,6 @@ func newDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 		minDeploymentInterval: minDeploymentInterval,
 		deploymentTimeout:     deploymentTimeout,
 		healthTracker:         lifecycle.NewProcessingTracker(SchedulerComponentName, lifecycle.DefaultProcessingTimeout),
-		runtimeBypass:         newRuntimeBypass(logger, eventBus),
 	}
 }
 
@@ -343,7 +276,6 @@ func (s *DeploymentScheduler) Name() string {
 //   - Error only in exceptional circumstances
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	s.ctx = ctx // Save context for scheduling operations
-	s.runtimeBypass.beginLeadershipTerm()
 	s.schedulerMutex.Lock()
 	s.retryStopped = false
 	s.retryGeneration++
@@ -400,7 +332,6 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			s.logger.Info("DeploymentScheduler shutting down", "reason", ctx.Err())
 			s.stopFailureRetries()
-			s.runtimeBypass.Close()
 			<-s.loopDone // join the deploy loop (it returns on ctx.Done())
 			return nil
 		}

@@ -29,13 +29,21 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
 )
 
-// createTestDiscovery creates a Discovery instance for testing without requiring haproxy.
-// This is used by tests that only test DiscoverEndpoints, which doesn't need localVersion.
+// createTestDiscovery creates a Discovery instance for testing.
 func createTestDiscovery(dataplanePort int) *Discovery {
-	return &Discovery{
-		dataplanePort: dataplanePort,
-		// localVersion is nil - not needed for DiscoverEndpoints tests
+	return &Discovery{dataplanePort: dataplanePort}
+}
+
+// admittable projects the candidates that are worth probing onto their
+// endpoints, which is what the discovery assertions are about.
+func admittable(candidates []Candidate) []dataplane.Endpoint {
+	endpoints := make([]dataplane.Endpoint, 0, len(candidates))
+	for i := range candidates {
+		if candidates[i].Reason == "" {
+			endpoints = append(endpoints, candidates[i].Endpoint)
+		}
 	}
+	return endpoints
 }
 
 func TestDiscovery_DiscoverEndpoints_Success(t *testing.T) {
@@ -58,7 +66,7 @@ func TestDiscovery_DiscoverEndpoints_Success(t *testing.T) {
 			},
 			expectedEndpoints: []dataplane.Endpoint{
 				{
-					URL:          "http://10.0.0.1:5555/v3",
+					URL:          "http://10.0.0.1:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-0",
@@ -80,21 +88,21 @@ func TestDiscovery_DiscoverEndpoints_Success(t *testing.T) {
 			},
 			expectedEndpoints: []dataplane.Endpoint{
 				{
-					URL:          "http://10.0.0.1:5555/v3",
+					URL:          "http://10.0.0.1:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-0",
 					PodNamespace: "default",
 				},
 				{
-					URL:          "http://10.0.0.2:5555/v3",
+					URL:          "http://10.0.0.2:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-1",
 					PodNamespace: "default",
 				},
 				{
-					URL:          "http://10.0.0.3:5555/v3",
+					URL:          "http://10.0.0.3:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-2",
@@ -114,7 +122,7 @@ func TestDiscovery_DiscoverEndpoints_Success(t *testing.T) {
 			},
 			expectedEndpoints: []dataplane.Endpoint{
 				{
-					URL:          "http://10.0.0.1:8080/v3",
+					URL:          "http://10.0.0.1:8080",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-0",
@@ -146,14 +154,14 @@ func TestDiscovery_DiscoverEndpoints_Success(t *testing.T) {
 			},
 			expectedEndpoints: []dataplane.Endpoint{
 				{
-					URL:          "http://10.0.0.1:5555/v3",
+					URL:          "http://10.0.0.1:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-0",
 					PodNamespace: "default",
 				},
 				{
-					URL:          "http://10.0.0.3:5555/v3",
+					URL:          "http://10.0.0.3:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-2",
@@ -175,14 +183,14 @@ func TestDiscovery_DiscoverEndpoints_Success(t *testing.T) {
 			},
 			expectedEndpoints: []dataplane.Endpoint{
 				{
-					URL:          "http://10.0.0.1:5555/v3",
+					URL:          "http://10.0.0.1:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-0",
 					PodNamespace: "default",
 				},
 				{
-					URL:          "http://10.0.0.3:5555/v3",
+					URL:          "http://10.0.0.3:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-2",
@@ -203,7 +211,7 @@ func TestDiscovery_DiscoverEndpoints_Success(t *testing.T) {
 			},
 			expectedEndpoints: []dataplane.Endpoint{
 				{
-					URL:          "http://10.0.0.1:5555/v3",
+					URL:          "http://10.0.0.1:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-0",
@@ -227,14 +235,14 @@ func TestDiscovery_DiscoverEndpoints_Success(t *testing.T) {
 			},
 			expectedEndpoints: []dataplane.Endpoint{
 				{
-					URL:          "http://10.0.0.2:5555/v3",
+					URL:          "http://10.0.0.2:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-1",
 					PodNamespace: "default",
 				},
 				{
-					URL:          "http://10.0.0.4:5555/v3",
+					URL:          "http://10.0.0.4:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-3",
@@ -256,14 +264,14 @@ func TestDiscovery_DiscoverEndpoints_Success(t *testing.T) {
 			},
 			expectedEndpoints: []dataplane.Endpoint{
 				{
-					URL:          "http://10.0.0.1:5555/v3",
+					URL:          "http://10.0.0.1:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-0",
 					PodNamespace: "default",
 				},
 				{
-					URL:          "http://10.0.0.3:5555/v3",
+					URL:          "http://10.0.0.3:5555",
 					Username:     "admin",
 					Password:     "secret",
 					PodName:      "haproxy-2",
@@ -286,7 +294,8 @@ func TestDiscovery_DiscoverEndpoints_Success(t *testing.T) {
 			// Create discovery instance (using test helper that doesn't require haproxy)
 			discovery := createTestDiscovery(tt.dataplanePort)
 
-			endpoints, err := discovery.DiscoverEndpoints(podStore, tt.credentials)
+			candidates, err := discovery.DiscoverEndpoints(podStore, tt.credentials)
+			endpoints := admittable(candidates)
 
 			// Verify
 			require.NoError(t, err)
@@ -315,11 +324,11 @@ func TestDiscovery_DiscoverEndpoints_NilStore(t *testing.T) {
 		DataplanePassword: "secret",
 	}
 
-	endpoints, err := discovery.DiscoverEndpoints(nil, credentials)
+	candidates, err := discovery.DiscoverEndpoints(nil, credentials)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "pod store is nil")
-	assert.Nil(t, endpoints)
+	assert.Nil(t, candidates)
 }
 
 func TestDiscovery_DiscoverEndpoints_StoreListError(t *testing.T) {
@@ -334,11 +343,11 @@ func TestDiscovery_DiscoverEndpoints_StoreListError(t *testing.T) {
 		DataplanePassword: "secret",
 	}
 
-	endpoints, err := discovery.DiscoverEndpoints(mockStore, credentials)
+	candidates, err := discovery.DiscoverEndpoints(mockStore, credentials)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "listing pods")
-	assert.Nil(t, endpoints)
+	assert.Nil(t, candidates)
 }
 
 // This is the actual format stored in production after float-to-int conversion.
@@ -351,25 +360,13 @@ func TestDiscovery_DiscoverEndpoints_MapResources(t *testing.T) {
 			"name":      "haproxy-0",
 			"namespace": "default",
 		},
-		"spec": map[string]any{
-			"containers": []any{
-				map[string]any{
-					"name": "dataplane",
-					"ports": []any{
-						map[string]any{
-							"containerPort": int64(5555),
-						},
-					},
-				},
-			},
-		},
 		"status": map[string]any{
 			"podIP": "10.0.0.1",
 			"phase": "Running",
 			"containerStatuses": []any{
 				map[string]any{
-					"name":  "dataplane",
-					"ready": true,
+					"name":  agentContainerName,
+					"state": map[string]any{"running": map[string]any{}},
 				},
 			},
 		},
@@ -386,12 +383,13 @@ func TestDiscovery_DiscoverEndpoints_MapResources(t *testing.T) {
 		DataplanePassword: "secret",
 	}
 
-	endpoints, err := discovery.DiscoverEndpoints(podStore, credentials)
+	candidates, err := discovery.DiscoverEndpoints(podStore, credentials)
+	endpoints := admittable(candidates)
 
 	// Verify
 	require.NoError(t, err)
 	require.Len(t, endpoints, 1)
-	assert.Equal(t, "http://10.0.0.1:5555/v3", endpoints[0].URL)
+	assert.Equal(t, "http://10.0.0.1:5555", endpoints[0].URL)
 	assert.Equal(t, "admin", endpoints[0].Username)
 	assert.Equal(t, "secret", endpoints[0].Password)
 	assert.Equal(t, "haproxy-0", endpoints[0].PodName)
@@ -404,10 +402,11 @@ func TestDiscovery_DiscoverEndpoints_IncludesPodUID(t *testing.T) {
 	podStore := store.NewMemoryStore(2)
 	require.NoError(t, podStore.Add(pod, []string{"default", "haproxy-0"}))
 
-	endpoints, err := createTestDiscovery(5555).DiscoverEndpoints(podStore, coreconfig.Credentials{
+	candidates, err := createTestDiscovery(5555).DiscoverEndpoints(podStore, coreconfig.Credentials{
 		DataplaneUsername: "admin",
 		DataplanePassword: "secret",
 	})
+	endpoints := admittable(candidates)
 
 	require.NoError(t, err)
 	require.Len(t, endpoints, 1)
@@ -419,8 +418,8 @@ func TestDiscovery_DiscoverEndpoints_IdentifiesContainerRuntimeEpoch(t *testing.
 	setStatuses := func(haproxyImage, haproxyContainer string) {
 		require.NoError(t, unstructured.SetNestedSlice(pod.Object, []any{
 			map[string]any{
-				"name": "dataplane", "ready": true,
-				"imageID": "sha256:dataplane", "containerID": "containerd://dataplane-1",
+				"name": agentContainerName, "state": map[string]any{"running": map[string]any{}},
+				"imageID": "sha256:agent", "containerID": "containerd://agent-1",
 			},
 			map[string]any{
 				"name": "haproxy", "ready": true,
@@ -432,36 +431,37 @@ func TestDiscovery_DiscoverEndpoints_IdentifiesContainerRuntimeEpoch(t *testing.
 	discovery := createTestDiscovery(5555)
 	credentials := coreconfig.Credentials{}
 
-	oldEndpoint, admitted, err := discovery.evaluatePod(pod, credentials, nil)
+	old, evaluated, err := discovery.evaluatePod(pod, credentials, nil)
 	require.NoError(t, err)
-	require.True(t, admitted)
-	require.NotEmpty(t, oldEndpoint.PodRuntimeID)
+	require.True(t, evaluated)
+	require.NotEmpty(t, old.Endpoint.PodRuntimeID)
 
 	setStatuses("sha256:haproxy-old", "haproxy-2")
-	restartedEndpoint, admitted, err := discovery.evaluatePod(pod, credentials, nil)
+	restarted, evaluated, err := discovery.evaluatePod(pod, credentials, nil)
 	require.NoError(t, err)
-	require.True(t, admitted)
-	assert.NotEqual(t, oldEndpoint.PodRuntimeID, restartedEndpoint.PodRuntimeID)
+	require.True(t, evaluated)
+	assert.NotEqual(t, old.Endpoint.PodRuntimeID, restarted.Endpoint.PodRuntimeID)
 
 	setStatuses("sha256:haproxy-new", "haproxy-3")
-	updatedEndpoint, admitted, err := discovery.evaluatePod(pod, credentials, nil)
+	updated, evaluated, err := discovery.evaluatePod(pod, credentials, nil)
 	require.NoError(t, err)
-	require.True(t, admitted)
-	assert.NotEqual(t, restartedEndpoint.PodRuntimeID, updatedEndpoint.PodRuntimeID)
+	require.True(t, evaluated)
+	assert.NotEqual(t, restarted.Endpoint.PodRuntimeID, updated.Endpoint.PodRuntimeID)
 }
 
 func TestDiscovery_DiscoverEndpoints_FormatsIPv6URL(t *testing.T) {
 	podStore := store.NewMemoryStore(2)
 	require.NoError(t, podStore.Add(createPod("haproxy-0", "fd00::1"), []string{"default", "haproxy-0"}))
 
-	endpoints, err := createTestDiscovery(5555).DiscoverEndpoints(podStore, coreconfig.Credentials{
+	candidates, err := createTestDiscovery(5555).DiscoverEndpoints(podStore, coreconfig.Credentials{
 		DataplaneUsername: "admin",
 		DataplanePassword: "secret",
 	})
+	endpoints := admittable(candidates)
 
 	require.NoError(t, err)
 	require.Len(t, endpoints, 1)
-	assert.Equal(t, "http://[fd00::1]:5555/v3", endpoints[0].URL)
+	assert.Equal(t, "http://[fd00::1]:5555", endpoints[0].URL)
 }
 
 // createPod creates a test pod with the specified name and IP in the default namespace.
@@ -475,8 +475,8 @@ func createPodWithPhase(name, podIP, phase string) *unstructured.Unstructured {
 	return createPodWithPortAndPhase(name, podIP, phase, 5555)
 }
 
-// createPodWithPortAndPhase creates a test pod with the specified name, IP, phase, and dataplane port in the default namespace.
-func createPodWithPortAndPhase(name, podIP, phase string, dataplanePort int) *unstructured.Unstructured {
+// createPodWithPortAndPhase creates a test pod with the specified name, IP and phase in the default namespace.
+func createPodWithPortAndPhase(name, podIP, phase string, _ int) *unstructured.Unstructured {
 	pod := &unstructured.Unstructured{}
 	pod.SetAPIVersion("v1")
 	pod.SetKind("Pod")
@@ -491,40 +491,16 @@ func createPodWithPortAndPhase(name, podIP, phase string, dataplanePort int) *un
 
 	_ = unstructured.SetNestedField(pod.Object, phase, "status", "phase")
 
-	// Set spec.containers with dataplane container
-	containers := []any{
-		map[string]any{
-			"name": "haproxy",
-			"ports": []any{
-				map[string]any{
-					"name":          "http",
-					"containerPort": int64(80),
-					"protocol":      "TCP",
-				},
-			},
-		},
-		map[string]any{
-			"name": "dataplane",
-			"ports": []any{
-				map[string]any{
-					"name":          "dataplane",
-					"containerPort": int64(dataplanePort),
-					"protocol":      "TCP",
-				},
-			},
-		},
-	}
-	_ = unstructured.SetNestedSlice(pod.Object, containers, "spec", "containers")
-
-	// Set status.containerStatuses with ready containers
+	// The agent container is running; its ready flag is deliberately unset,
+	// because admission must not depend on it.
 	containerStatuses := []any{
 		map[string]any{
 			"name":  "haproxy",
-			"ready": true,
+			"ready": false,
 		},
 		map[string]any{
-			"name":  "dataplane",
-			"ready": true,
+			"name":  agentContainerName,
+			"state": map[string]any{"running": map[string]any{}},
 		},
 	}
 	_ = unstructured.SetNestedSlice(pod.Object, containerStatuses, "status", "containerStatuses")
@@ -602,51 +578,4 @@ func (m *mockStore) Refresh(resource any, oldKeys, newKeys []string) (changed, d
 
 func (m *mockStore) Count() int {
 	return 0
-}
-
-func TestDiscovery_LocalVersion(t *testing.T) {
-	tests := []struct {
-		name          string
-		localVersion  *dataplane.Version
-		expectVersion *dataplane.Version
-	}{
-		{
-			name: "returns configured version",
-			localVersion: &dataplane.Version{
-				Major: 3,
-				Minor: 2,
-				Full:  "3.2.1",
-			},
-			expectVersion: &dataplane.Version{
-				Major: 3,
-				Minor: 2,
-				Full:  "3.2.1",
-			},
-		},
-		{
-			name:          "returns nil when not set",
-			localVersion:  nil,
-			expectVersion: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			d := &Discovery{
-				dataplanePort: 5555,
-				localVersion:  tt.localVersion,
-			}
-
-			got := d.LocalVersion()
-
-			if tt.expectVersion == nil {
-				assert.Nil(t, got)
-			} else {
-				require.NotNil(t, got)
-				assert.Equal(t, tt.expectVersion.Major, got.Major)
-				assert.Equal(t, tt.expectVersion.Minor, got.Minor)
-				assert.Equal(t, tt.expectVersion.Full, got.Full)
-			}
-		})
-	}
 }

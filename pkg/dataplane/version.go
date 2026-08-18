@@ -101,6 +101,24 @@ func DetectLocalVersionContext(ctx context.Context) (*Version, error) {
 	return ParseHAProxyVersionOutput(output)
 }
 
+// MinimumVersion returns the lowest of the reported versions, ignoring the
+// ones it cannot parse. It is how the controller derives what the whole fleet
+// supports: during a rolling upgrade the oldest pod is the one that decides.
+// Returns nil when no version is readable.
+func MinimumVersion(versions []string) *Version {
+	var lowest *Version
+	for _, raw := range versions {
+		parsed, err := client.ParseVersion(raw)
+		if err != nil {
+			continue
+		}
+		if lowest == nil || parsed.Compare(lowest) < 0 {
+			lowest = parsed
+		}
+	}
+	return lowest
+}
+
 // VersionFromAPIInfo converts client.VersionInfo (from /v3/info) to Version.
 // The API version string format is "vX.Y.Z commit" (e.g., "v3.2.6 87ad0bcf").
 func VersionFromAPIInfo(info *client.VersionInfo) (*Version, error) {
