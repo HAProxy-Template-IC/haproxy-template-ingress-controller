@@ -57,7 +57,7 @@ templateSnippets:
             }
 
             // The directory segment comes from pathResolver, not a literal:
-            // dataplane.generalStorageDir is configurable, and a hardcoded
+            // generalStorageDir is configurable, and a hardcoded
             // "general" would point the Include at a directory the files were
             // never pushed to, matching nothing.
             var crsRelPath, crsPathErr = pathResolver.GetPath("crs-*.conf", "file")

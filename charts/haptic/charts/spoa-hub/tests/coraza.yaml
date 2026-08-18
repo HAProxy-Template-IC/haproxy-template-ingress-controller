@@ -182,7 +182,7 @@ validationTests:
     # is disabled: the fixture's nginx.ingress.kubernetes.io/* annotations are
     # scanned only by nginx-ingress's util-nginx-ingress-coraza-scan.
     _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
-    description: "Multiple Ingresses with modsecurity-snippet annotations are inlined into the rendered coraza directives in deterministic order — sorted by `<namespace>/<name>` — so renders are reproducible and don't churn the dataplane API push payload across reconciliations."
+    description: "Multiple Ingresses with modsecurity-snippet annotations are inlined into the rendered coraza directives in deterministic order — sorted by `<namespace>/<name>` — so renders are reproducible and don't churn the push payload across reconciliations."
     extraContext: *extracontextCoraza
     fixtures:
       ingresses:
