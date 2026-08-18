@@ -9,7 +9,7 @@ Development context for integration testing infrastructure.
 Work in this directory when:
 
 - Writing integration tests against real Kubernetes/HAProxy
-- Testing dataplane synchronization logic
+- Testing what the agent does to a pod's file tree and HAProxy's runtime state
 - Verifying HAProxy configuration changes
 - Testing multi-component interactions
 
@@ -40,25 +40,25 @@ Test Fixtures (fixenv)
     │   └── KindCluster
     │       └── Kubernetes API
     │
+    ├── AgentImage (package-scoped)
+    │   └── HAProxy image + the haptic binary, loaded into the Kind node
+    │
     ├── TestNamespace (test-scoped, isolated)
     │   └── Created per test
     │
     ├── TestHAProxy (test-scoped)
-    │   └── HAProxyInstance (pod + dataplane API)
+    │   └── HAProxyInstance (pod: haproxy + agent containers)
     │
-    ├── TestDataplaneClient
-    │   └── Low-level client-native client
-    │
-    └── TestDataplaneHighLevelClient
-        └── High-level dataplane.Client (Sync API)
+    └── TestAgentClient
+        └── pkg/dataplane/agent/client.Client through a forwarded port
 ```
 
 Fixture dependency chain:
 
 ```
-TestDataplaneHighLevelClient
+TestAgentClient
     → TestHAProxy
-        → TestNamespace
+        → TestNamespace + AgentImage
             → SharedCluster
 ```
 
@@ -74,7 +74,7 @@ func TestSyncMyFeature(t *testing.T) {
 
     // Request fixture - dependencies resolved automatically
     haproxy := TestHAProxy(env)
-    client := TestDataplaneHighLevelClient(env)
+    session := NewSession(t, env)
 
     // Test logic...
 }
@@ -159,10 +159,11 @@ Test-scoped HAProxy deployment:
 
 ```go
 func TestHAProxy(env fixenv.Env) *HAProxyInstance {
-    ns := TestNamespace(env)  // Dependency on namespace
+    ns := TestNamespace(env)      // Dependency on namespace
+    image := AgentImage(env)      // Dependency on the built pod image
 
     return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*HAProxyInstance], error) {
-        haproxy, err := DeployHAProxy(ns, DefaultHAProxyConfig())
+        haproxy, err := DeployHAProxy(ns, DefaultHAProxyConfig(image))
         if err != nil {
             return nil, err
         }
@@ -179,51 +180,42 @@ func TestHAProxy(env fixenv.Env) *HAProxyInstance {
 
 **Provides**:
 
-- HAProxy pod with dataplane API enabled
-- Default credentials (admin/password)
-- Minimal initial configuration
-- Dataplane endpoint (URL, username, password)
+- An HAProxy pod with two containers, `haproxy` (master-worker) and `agent`
+- The bootstrap configuration, with the worker stats socket the agent commands
+- Default credentials (admin/adminpwd) in `DATAPLANE_USERNAME` / `DATAPLANE_PASSWORD`
+- A forwarded local port for the agent's API
 
-### Client Fixtures
+### Session
 
-**Low-level client** (client-native):
-
-```go
-func TestDataplaneClient(env fixenv.Env) *client.DataplaneClient {
-    haproxy := TestHAProxy(env)
-
-    return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*client.DataplaneClient], error) {
-        endpoint := haproxy.GetDataplaneEndpoint()
-
-        dataplaneClient, err := client.New(context.Background(), &client.Config{
-            BaseURL:  endpoint.URL,
-            Username: endpoint.Username,
-            Password: endpoint.Password,
-        })
-        // ...
-    })
-}
-```
-
-**High-level client** (dataplane.Client - Sync API):
+`NewSession(t, env)` is the controller's side of one pod. It holds the desired
+file set, renders it as a `renderplan.Plan`, asks `deployplan.Diff` what the pod
+has to do, and sends the apply with the fencing token the deployer would send.
 
 ```go
-func TestDataplaneHighLevelClient(env fixenv.Env) *dataplane.Client {
-    haproxy := TestHAProxy(env)
-
-    return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*dataplane.Client], error) {
-        endpoint := haproxy.GetDataplaneEndpoint()
-
-        dpEndpoint := dataplane.Endpoint{
-            URL:      endpoint.URL,
-            Username: endpoint.Username,
-            Password: endpoint.Password,
-        }
-        client, err := dataplane.NewClient(context.Background(), &dpEndpoint)
-        // ...
-    })
-}
+session := NewSession(t, env)
+session.SetConfig(LoadTestConfig(t, "basic/one-backend.cfg"))
+session.Set("maps/domains.map", LoadTestFileContent(t, "map-files/domains.map"))
+decision := session.MustApply(ctx)   // fails the test on a NACK
 ```
+
+A plan built here declares the whole configuration as one core section, because
+nothing in this suite parses HAProxy syntax. So any configuration change is a
+reload, and only a change confined to auxiliary files can be reload-free — which
+is exactly what makes the map and certificate cases worth asserting.
+
+### Reading the pod
+
+The agent serves `/v1/state` and `/v1/apply` and nothing else, so every
+assertion about files or runtime state reads the pod directly:
+
+```go
+config, err := haproxy.ReadFile(ctx, ConfigPath)          // kubectl exec … cat
+entries, err := haproxy.RuntimeMapEntries(ctx, mapPath)   // socat … show map
+pid, err := haproxy.WorkerPID(ctx)                        // socat … show info
+inventory := session.State(ctx).Inventory                 // GET /v1/state
+```
+
+The worker PID is the reload witness: a runtime apply must leave it alone.
 
 ## Usage Patterns
 
@@ -235,95 +227,61 @@ func TestDataplaneHighLevelClient(env fixenv.Env) *dataplane.Client {
 package integration
 
 import (
+    "context"
     "testing"
+
     "github.com/rekby/fixenv"
     "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
 )
 
-func TestSyncMyFeature(t *testing.T) {
+func TestMyFeature(t *testing.T) {
     env := fixenv.New(t)
+    ctx := context.Background()
+    session := NewSession(t, env)
 
-    // Get fixtures (dependencies resolved automatically)
-    client := TestDataplaneHighLevelClient(env)
+    session.SetConfig(LoadTestConfig(t, "basic/one-backend.cfg"))
+    require.Equal(t, deployplan.VerdictReload, session.MustApply(ctx).Verdict)
 
-    // Test logic
-    newConfig := `
-global
-    maxconn 2000
-
-frontend http-in
-    bind *:80
-    default_backend servers
-`
-
-    // Real API: Sync(ctx, desiredConfig, *AuxiliaryFiles, *SyncOptions) (*SyncResult, error)
-    result, err := client.Sync(context.Background(), newConfig, nil, nil)
+    onDisk, err := session.haproxy.ReadFile(ctx, ConfigPath)
     require.NoError(t, err)
-
-    // Inspect the SyncResult — there is no GetDeployedConfig method on
-    // *Client; assert against result.AppliedOperations / SyncMode / ReloadTriggered
-    // instead. To re-read the live config use the low-level client (see below).
-    assert.NotEmpty(t, result.AppliedOperations)
-    t.Logf("sync mode=%s reload=%v applied=%d", result.SyncMode, result.ReloadTriggered, len(result.AppliedOperations))
+    assert.Equal(t, session.Content(ConfigPath), onDisk)
 }
 ```
 
-### Testing with Auxiliary Files
+`LoadTestConfig` adds the pod's `global` lines — the worker stats socket,
+`default-path origin` and `crt-base` — to the fixture, so a fixture references
+auxiliary files the way the chart renders them: `maps/x.map`, `general/x.http`,
+and a bare filename for a certificate.
+
+### Testing with auxiliary files
 
 ```go
-func TestAuxiliaryFiles(t *testing.T) {
+func TestCertificateRotation(t *testing.T) {
     env := fixenv.New(t)
-    client := TestDataplaneHighLevelClient(env)
+    ctx := context.Background()
+    session := NewSession(t, env)
 
-    // Create config using SSL certificate
-    config := `
-global
-    maxconn 2000
+    session.SetConfig(LoadTestConfig(t, "ssl-frontend/with-ssl.cfg"))
+    session.Set("ssl/example_com.pem", LoadTestFileContent(t, "ssl-certs/example.com.pem"))
+    session.MustApply(ctx)
 
-frontend https-in
-    bind *:443 ssl crt /etc/haproxy/ssl/server.pem
-    default_backend servers
-`
-
-    // Provide SSL certificate as auxiliary file. The real type is
-    // auxiliaryfiles.SSLCertificate{Path, Content} — no Name field.
-    auxFiles := &dataplane.AuxiliaryFiles{
-        SSLCertificates: []auxiliaryfiles.SSLCertificate{
-            {
-                Path:    "/etc/haproxy/ssl/server.pem",
-                Content: testSSLCertificate,
-            },
-        },
-    }
-
-    // Sync(ctx, desiredConfig, *AuxiliaryFiles, *SyncOptions) (*SyncResult, error)
-    result, err := client.Sync(context.Background(), config, auxFiles, nil)
-    require.NoError(t, err)
-    assert.NotEmpty(t, result.AppliedOperations)
+    // Same path, new bytes, identical configuration: runtime, no reload.
+    session.Set("ssl/example_com.pem", LoadTestFileContent(t, "ssl-certs/updated.com.pem"))
+    assert.Equal(t, deployplan.VerdictRuntime, session.MustApply(ctx).Verdict)
 }
 ```
 
-### Low-Level API Testing
+A CA bundle and a crt-list live beside ordinary files, so their kind cannot be
+derived from the directory — declare it with `SetOfKind(path, content, kind)`.
 
-```go
-func TestLowLevelAPI(t *testing.T) {
-    env := fixenv.New(t)
-    lowLevelClient := TestDataplaneClient(env)
-    parser := TestParser(env)
+### Table cases
 
-    // Parse configuration
-    parsed, err := parser.Parse(config)
-    assert.NoError(t, err)
-
-    // Use low-level API
-    frontends, err := lowLevelClient.Frontend().GetAll(context.Background())
-    assert.NoError(t, err)
-
-    // Add frontend using parsed data
-    err = lowLevelClient.Frontend().Create(context.Background(), parsed.Frontends[0])
-    assert.NoError(t, err)
-}
-```
+`syncTestCase` (in `sync_common_test.go`) declares two file sets and what the
+pod must end up with. It states no operation counts and no operation names: the
+controller composes commands from two plans, not from a comparison of two
+configuration texts, and a case that only declares configuration text cannot
+describe them.
 
 ## Common Patterns
 
@@ -414,13 +372,13 @@ go test -tags=integration ./tests/integration/...
 **Problem**: Test accesses resource that wasn't requested.
 
 ```go
-// Bad - client not requested from env
+// Bad - session not built from env
 func TestSomething(t *testing.T) {
     env := fixenv.New(t)
     namespace := TestNamespace(env)
 
-    // Trying to use client without requesting it
-    client.Sync(...)  // Where did client come from?
+    // Trying to use a session without requesting its fixtures
+    session.MustApply(ctx)  // Where did session come from?
 }
 ```
 
@@ -430,9 +388,9 @@ func TestSomething(t *testing.T) {
 // Good - declare all dependencies
 func TestSomething(t *testing.T) {
     env := fixenv.New(t)
-    client := TestDataplaneHighLevelClient(env)  // Requests client fixture
+    session := NewSession(t, env)  // Requests the pod and client fixtures
 
-    client.Sync(...)  // Works!
+    session.MustApply(ctx)  // Works!
 }
 ```
 
@@ -534,38 +492,19 @@ stays small and the kept namespace is actually useful.
 
 ```go
 func TestSyncVariousConfigs(t *testing.T) {
-    tests := []struct {
-        name   string
-        config string
-        check  func(t *testing.T, deployed string)
-    }{
+    tests := []syncTestCase{
         {
-            name: "frontend with ACL",
-            config: `
-frontend http
-    acl is_api path_beg /api
-    use_backend api if is_api
-`,
-            check: func(t *testing.T, deployed string) {
-                assert.Contains(t, deployed, "acl is_api")
-            },
+            name:              "frontend-with-acl",
+            initialConfigFile: "frontends/basic.cfg",
+            desiredConfigFile: "frontends/with-acl.cfg",
         },
         // More test cases...
     }
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            env := fixenv.New(t)
-            client := TestDataplaneHighLevelClient(env)
-            lowLevel := TestDataplaneClient(env)
-
-            _, err := client.Sync(context.Background(), tt.config, nil, nil)
-            require.NoError(t, err)
-
-            // To assert against the live config, fetch it via the low-level
-            // client (e.g. lowLevel.Frontend().GetAll(ctx)) — there is no
-            // GetDeployedConfig method on dataplane.Client.
-            tt.check(t, lowLevel)
+            t.Parallel()
+            runSyncTest(t, tt)
         })
     }
 }
@@ -591,11 +530,11 @@ func TestParallelSyncs(t *testing.T) {
             t.Parallel()  // Run in parallel
 
             env := fixenv.New(t)
-            client := TestDataplaneHighLevelClient(env)
+            session := NewSession(t, env)
 
             // Each test gets isolated namespace
-            _, err := client.Sync(context.Background(), tt.config, nil, nil)
-            require.NoError(t, err)
+            session.SetConfig(tt.config)
+            session.MustApply(context.Background())
         })
     }
 }
@@ -631,14 +570,21 @@ kubectl exec -n $NS haproxy-xxx -- cat /etc/haproxy/haproxy.cfg
 kind delete cluster --name=haproxy-test
 ```
 
-### Access Dataplane API
+### Ask the agent what the pod holds
 
 ```bash
-# Forward dataplane API port
-kubectl port-forward -n $NS haproxy-xxx 5555:5555
+# Forward the agent's port
+kubectl port-forward -n $NS haproxy-test 5555:5555
 
-# Access API
-curl -u admin:password http://localhost:5555/v2/services/haproxy/configuration/frontends
+# Applied plan, file digests, runtime inventory, last apply
+curl -u admin:adminpwd http://localhost:5555/v1/state | jq
+```
+
+### Ask HAProxy what it is running
+
+```bash
+kubectl exec -n $NS haproxy-test -c haproxy -- \
+    sh -c 'printf "show map\n" | socat stdio unix-connect:/etc/haproxy/haproxy-worker.sock'
 ```
 
 ### View Real-Time Logs
@@ -678,29 +624,22 @@ go test -tags=integration -parallel=4 ./tests/integration/...
 
 Each test gets isolated namespace, so parallel execution is safe.
 
-## Enterprise Testing
+## HAProxy version gates
 
-`enterprise_botmgmt_test.go` exercises the full EE sync flow (parse config →
-compare → push) for Enterprise-only config sections (bot-management profiles,
-captchas, WAF profiles/global). It gracefully skips when running against
-HAProxy Community edition via the capability-based skip helpers in `env.go`
-(`skipIfBotManagementSyncNotSupported`, `skipIfCaptchaNotSupported`,
-`skipIfWAFProfilesNotSupported`, `skipIfWAFGlobalNotSupported`).
-
-```bash
-# Run all integration tests (enterprise tests skip on community)
-make test-integration
-
-# Run the EE section sync tests (requires enterprise HAProxy)
-KEEP_CLUSTER=true go test -tags=integration ./tests/integration -run TestSyncEnterpriseSections -v
-```
+The HAProxy release under test comes from `HAPROXY_VERSION`, which also selects
+the image, so a gate and the pod can never disagree. Use `minHAProxy` on a table
+case, or `skipBelowHAProxy(t, "3.1")` in a hand-written test. There is no
+Enterprise pod: the bot-management suite was dropped with the Data Plane API and
+the resulting coverage gap is recorded in ADR-0022.
 
 ## Resources
 
 - fixenv documentation: <https://github.com/rekby/fixenv>
 - Kind documentation: <https://kind.sigs.k8s.io/>
-- Test examples: `sync_*_test.go` (split by section: backends, frontends, servers, global-defaults, sections, observability, auxiliary, idempotency, common), plus `auxiliaryfiles_test.go`
-- Enterprise tests: `enterprise_botmgmt_test.go`
-- Fixture definitions: `env.go`
-- Kind cluster management: `kind_cluster.go`
+- Test examples: `sync_*_test.go` (split by section: backends, frontends, servers, global-defaults, sections, observability, auxiliary, idempotency, ca-file), plus `auxiliaryfiles_test.go`
+- Fixture definitions: `env.go`; the controller side: `session.go`
+- Reading the pod: `exec.go`
+- Kind cluster management: `kind_cluster.go`; pod image: `image.go`
 - HAProxy deployment: `haproxy.go`
+- The same contract without a cluster: `tests/agent/`
+- The wire contract: `docs/site/docs/development/agent.md`
