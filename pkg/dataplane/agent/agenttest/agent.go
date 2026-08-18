@@ -73,6 +73,7 @@ type Agent struct {
 	reloadPending bool
 	rejectedOps   map[string]struct{}
 	conflictOnce  string
+	failOnce      bool
 	missingOnce   []string
 	applies       []RecordedApply
 	stateReads    int
@@ -200,6 +201,15 @@ func (a *Agent) AcceptOp(kind string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	delete(a.rejectedOps, kind)
+}
+
+// FailOnce makes the next apply answer 500 and write nothing, the way an agent
+// that hit an internal error does. The caller sees a failure, not a judgement:
+// nothing about the pod's state is known to have changed.
+func (a *Agent) FailOnce() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.failOnce = true
 }
 
 // ConflictOnce makes the next apply answer this 409 reason and write nothing,

@@ -59,6 +59,16 @@ func (a *Agent) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.mu.Lock()
+	if a.failOnce {
+		a.failOnce = false
+		a.applies = append(a.applies, RecordedApply{
+			Manifest: req.manifest, Parts: req.parts, Plan: req.plan,
+			Status: http.StatusInternalServerError,
+		})
+		a.mu.Unlock()
+		http.Error(w, "the agent hit an internal error", http.StatusInternalServerError)
+		return
+	}
 	out := a.apply(req)
 	a.applies = append(a.applies, RecordedApply{
 		Manifest: req.manifest,

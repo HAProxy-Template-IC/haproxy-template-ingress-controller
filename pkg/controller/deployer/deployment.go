@@ -134,7 +134,7 @@ func (c *Component) deployToEndpoints(
 	}
 	wg.Wait()
 
-	c.plans.Retain(state.planRefs())
+	c.plans.Retain(c.fleetPlanRefs(event.Endpoints))
 	c.clients.Retain(event.Endpoints)
 	c.recordFleetAck(event.Plan, atomic.LoadInt32(&state.ackCount))
 
@@ -241,7 +241,6 @@ type deploymentState struct {
 	mu                 sync.Mutex
 	totalOperations    int
 	operationBreakdown map[string]int
-	referencedPlans    []string
 	stoodDown          bool
 	pendingReloadUntil time.Time
 }
@@ -258,12 +257,6 @@ func (s *deploymentState) notePendingReload(scheduledAt string) {
 	if due.After(s.pendingReloadUntil) {
 		s.pendingReloadUntil = due
 	}
-}
-
-func (s *deploymentState) planRefs() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.referencedPlans...)
 }
 
 // deployToPod applies the render to one pod and folds its answer into state.

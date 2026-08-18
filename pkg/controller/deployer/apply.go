@@ -108,6 +108,7 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 	if err != nil {
 		return nil, fmt.Errorf("reading agent state: %w", err)
 	}
+	c.notePodPlans(endpoint, state.AppliedPlanID, state.RunningPlanID, state.WorkerOpsPlanID)
 	attempt := &podApply{client: client, endpoint: endpoint, req: req, state: state}
 	attempt.full, attempt.notes = c.applyPosture(endpoint, state)
 
@@ -133,6 +134,7 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 		if attempt.state, err = client.State(ctx, false); err != nil {
 			return nil, fmt.Errorf("re-reading agent state: %w", err)
 		}
+		c.notePodPlans(endpoint, attempt.state.AppliedPlanID, attempt.state.RunningPlanID, attempt.state.WorkerOpsPlanID)
 		// A conflict means this pod's stored plan is not the one this
 		// controller composed against; the next apply carries it again.
 		attempt.resend = true

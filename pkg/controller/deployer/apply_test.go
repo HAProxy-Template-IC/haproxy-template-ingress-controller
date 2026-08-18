@@ -739,3 +739,55 @@ func TestApply_PlanCacheRetainsWhatTheFleetRuns(t *testing.T) {
 		"the runtime applies never reloaded, so the worker still runs the first render")
 	assert.NotNil(t, component.plans.Plan("plan-3"))
 }
+
+// A pod that failed still holds the plans it reported, so they are not the
+// fleet's garbage: the cache keeps what every pod answered with, not only what
+// the pods that ACKed did.
+func TestApply_PlanCacheKeepsTheBaselineOfAFailedPod(t *testing.T) {
+	healthy := agenttest.New(t)
+	sick := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	healthyEndpoint := agentEndpoint(healthy, "haproxy-0")
+	sickEndpoint := agentEndpoint(sick, "haproxy-1")
+
+	for i := 1; i <= 2; i++ {
+		plan, config, aux := renderFor(fmt.Sprintf("plan-%d", i), fmt.Sprintf("10.0.0.%d", i), mapEntry)
+		deployTo(t, component, bus, plan, config, aux, "config_validation", healthyEndpoint, sickEndpoint)
+	}
+
+	// One pod's apply fails outright: nothing about its state changed, so it is
+	// still the pod that applies plan-2.
+	sick.FailOnce()
+	plan3, config3, aux3 := renderFor("plan-3", "10.0.0.3", mapEntry)
+	completed := deployTo(t, component, bus, plan3, config3, aux3, "config_validation",
+		healthyEndpoint, sickEndpoint)
+	require.Equal(t, 1, completed.Failed)
+
+	assert.NotNil(t, component.plans.Plan("plan-2"),
+		"the pod whose apply failed still applies the render before it")
+	assert.NotNil(t, component.plans.Plan("plan-1"),
+		"the worker of both pods still runs the first render")
+}
+
+// Every pod failing at once is a blip, not a fleet that refers to nothing. A
+// cache emptied by it costs the whole fleet a full-state reload on the round
+// after, for a change HAProxy could have taken at runtime.
+func TestApply_PlanCacheSurvivesARoundEveryPodFails(t *testing.T) {
+	first := agenttest.New(t)
+	second := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoints := []dataplane.Endpoint{agentEndpoint(first, "haproxy-0"), agentEndpoint(second, "haproxy-1")}
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoints...)
+
+	first.FailOnce()
+	second.FailOnce()
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoints...)
+	require.Equal(t, 2, completed.Failed)
+
+	assert.NotNil(t, component.plans.Plan("plan-1"), "both pods still hold the first render")
+}

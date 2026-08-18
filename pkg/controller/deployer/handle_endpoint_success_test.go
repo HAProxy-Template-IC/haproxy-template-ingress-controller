@@ -131,7 +131,7 @@ func TestHandleEndpointSuccess_RecordsReferencedPlans(t *testing.T) {
 	c.handleEndpointSuccess(endpoint, outcome, 50,
 		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
-	assert.Equal(t, []string{"plan-1", "plan-1", "plan-1"}, state.planRefs())
+	assert.Equal(t, []string{"plan-1"}, c.fleetPlanRefs([]dataplane.Endpoint{*endpoint}))
 	assert.Equal(t, int32(1), atomic.LoadInt32(&state.reloadsTriggered))
 }
 
