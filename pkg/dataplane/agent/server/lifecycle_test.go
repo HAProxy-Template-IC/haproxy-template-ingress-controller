@@ -15,16 +15,21 @@
 package server_test
 
 import (
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/server"
 )
 
 func TestARestartBetweenAppliesKeepsTheBaseline(t *testing.T) {
@@ -155,6 +160,103 @@ func TestGeneralOnItsOwnMountIsWrittenAndRolledBack(t *testing.T) {
 	require.False(t, result.OK)
 	assert.Equal(t, "global\n", h.read(configPath))
 	assert.Equal(t, "HTTP/1.0 503\n", h.read("general/503.http"), "the second mount rolls back with the first")
+}
+
+// The pacer is the one entry into the state machine that no request drives, so
+// it has to wait for startup like every other one: firing before HAProxy is up
+// rolls the tree back to the last known good set for no reason.
+func TestAScheduledReloadWaitsForStartupToFinish(t *testing.T) {
+	baseDir := t.TempDir()
+	socketDir := t.TempDir()
+	backup := filepath.Join(baseDir, ".haptic-lkg", "0-backup.bak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(backup), 0o755))
+	require.NoError(t, os.WriteFile(backup, []byte("bootstrap\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(baseDir, configPath), []byte("global\n"), 0o600))
+	state := fmt.Sprintf(`{"generation":1,"applied_plan_id":"plan-1","running_plan_id":"plan-1",
+		"lkg_plan_id":"plan-1","manifest_paths":["haproxy.cfg"],
+		"journal":{"entries":[{"path":"haproxy.cfg","kind":"modified","backup":%q}]},
+		"pending_reload_plan_id":"plan-2","reload_pending_at":"2020-01-01T00:00:00Z"}`, backup)
+	require.NoError(t, os.WriteFile(filepath.Join(baseDir, ".haptic-agent.json"), []byte(state), 0o600))
+
+	// No listener under socketDir: HAProxy has not come up yet.
+	agent, err := server.New(t.Context(), &server.Config{
+		BaseDir:      baseDir,
+		ConfigFile:   configPath,
+		MasterSocket: filepath.Join(socketDir, "haproxy-master.sock"),
+		WorkerSocket: filepath.Join(socketDir, "haproxy-worker.sock"),
+		StateFile:    ".haptic-agent.json",
+		Listen:       "127.0.0.1:0",
+		Username:     testUser,
+		Password:     testPassword,
+		Logger:       slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	go func() { _ = agent.Start(t.Context()) }()
+
+	require.Never(t, func() bool {
+		raw, readErr := os.ReadFile(filepath.Join(baseDir, configPath))
+		return readErr != nil || string(raw) != "global\n"
+	}, time.Second, 20*time.Millisecond, "the pacer rolled the tree back before the agent was ready")
+	assert.False(t, agent.Ready())
+}
+
+// A reload the master socket never answered is not HAProxy's verdict on the
+// config, so it must not fence the repair path for the cooldown.
+func TestATransportFailureIsNotRememberedAsKnownBad(t *testing.T) {
+	h := newHarness(t)
+	first := firstApply(t, h)
+	h.model.StopMaster()
+
+	files := baseFiles("global\n  maxconn 1200\n")
+	m := buildManifest("plan-2", files)
+	m.Mode = api.ModeReload
+	m.ExpectedPrevPlanID = first.AppliedPlanID
+	m.ExpectedPrevToken = first.AppliedToken
+	result := h.apply(&m, files)
+
+	require.False(t, result.OK)
+	require.NotNil(t, result.Error)
+	assert.NotEmpty(t, result.Error.Message, "the operator needs the reason the reload never happened")
+	require.NotNil(t, result.Reload)
+	assert.False(t, result.Reload.Performed, "HAProxy never saw this configuration")
+
+	attempts := h.metric("haptic_agent_reloads_total", "failed")
+	retry := buildManifest("plan-2", files)
+	retry.Mode = api.ModeReload
+	require.False(t, h.apply(&retry, files).OK)
+	assert.Greater(t, h.metric("haptic_agent_reloads_total", "failed"), attempts,
+		"the retry of a transport failure must reach HAProxy again")
+}
+
+// The read-back's own reload clears the backup journal on disk. A state file
+// that still names those backups makes the next rollback delete files it
+// cannot put back.
+func TestADivergenceReloadPersistsTheClearedJournal(t *testing.T) {
+	h := newHarness(t)
+	first := firstApply(t, h)
+	h.model.With(func(m *haproxytest.Model) {
+		m.Reject = func(command string) (string, bool) {
+			return "No such map file.", strings.HasPrefix(command, "show map maps/")
+		}
+	})
+
+	files := baseFiles("global\n")
+	files[1].Content = "example.com be-a\nb.example.com be-b\n"
+	m := buildManifest("plan-2", files)
+	m.ExpectedPrevPlanID = first.AppliedPlanID
+	m.ExpectedPrevToken = first.AppliedToken
+	m.Ops = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "b.example.com", Value: "be-b"}}
+	result := h.apply(&m, files)
+	require.True(t, result.OK, "%+v", result.Error)
+	require.Equal(t, api.ResultRuntime, result.Mode)
+
+	require.Eventually(t, func() bool {
+		return h.metric("haptic_runtime_map_divergence_total") == 1
+	}, 10*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool {
+		journal, _ := h.persisted()["journal"].(map[string]any)
+		return len(journal) == 0
+	}, 10*time.Second, 20*time.Millisecond, "the reload cleared the journal; the state file must say so")
 }
 
 // insertJSON splices fields into the agent's state file without needing the

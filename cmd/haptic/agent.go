@@ -90,7 +90,7 @@ func init() {
 	agentCmd.Flags().StringVar(&agentStateFile, "state-file", ".haptic-agent.json",
 		"Name of the agent's state file inside --base-dir")
 	agentCmd.Flags().DurationVar(&agentReloadIntervalMin, "reload-interval-min", 5*time.Second,
-		"Shortest interval between two reloads; a reload inside the window is scheduled, never dropped")
+		"Shortest interval between two reloads, at most 60s; a reload inside the window is scheduled, never dropped")
 }
 
 func runAgent(_ *cobra.Command, _ []string) error {

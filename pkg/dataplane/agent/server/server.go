@@ -87,6 +87,12 @@ type Server struct {
 	// reportedInventory is the inventory generation the last ACK carried, so a
 	// delta rides an apply exactly once.
 	reportedInventory uint64
+	// baselineInvalidations counts how often the running worker became
+	// unexplained, so an apply can tell whether one happened underneath it.
+	baselineInvalidations uint64
+	// appliedPlan is the opaque blob of the plan the pod applied; the state
+	// file names the plan it belongs to, so a stale one is never handed out.
+	appliedPlan []byte
 
 	ready atomic.Bool
 	addr  atomic.Pointer[string]
@@ -106,7 +112,11 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 	if err := files.ValidatePath(cfg.ConfigFile); err != nil {
 		return nil, fmt.Errorf("--config: %w", err)
 	}
-	store, err := files.NewStore(cfg.BaseDir, cfg.Logger)
+	maxInterval := api.MaxReloadIntervalMs * time.Millisecond
+	if cfg.ReloadIntervalMin < 0 || cfg.ReloadIntervalMin > maxInterval {
+		return nil, fmt.Errorf("--reload-interval-min %s is outside 0..%s", cfg.ReloadIntervalMin, maxInterval)
+	}
+	store, err := files.NewStore(cfg.BaseDir, cfg.Logger, cfg.MasterSocket, cfg.WorkerSocket)
 	if err != nil {
 		return nil, err
 	}
@@ -118,13 +128,17 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	deferralClient, err := runtimeClient.Sibling(ctx)
+	if err != nil {
+		return nil, err
+	}
 	metrics := NewMetrics(cfg.Registry, cfg.Logger)
 	s := &Server{
 		cfg:        *cfg,
 		logger:     cfg.Logger,
 		store:      store,
 		runtime:    runtimeClient,
-		deferrals:  cli.NewDeferrals(runtimeClient, cfg.Logger, metrics),
+		deferrals:  cli.NewDeferrals(deferralClient, cfg.Logger, metrics),
 		metrics:    metrics,
 		states:     newStateStore(store.BaseDir(), cfg.StateFile),
 		reloadWake: make(chan struct{}, 1),
@@ -132,6 +146,7 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 	if s.state, err = s.states.load(); err != nil {
 		return nil, err
 	}
+	s.loadPlanBlob()
 	s.http = &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           s.routes(),

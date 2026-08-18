@@ -207,7 +207,11 @@ func makeCertificate(t *testing.T, commonName string, serial int64) certificate 
 	if err != nil {
 		t.Fatalf("marshal key for %s: %v", commonName, err)
 	}
+	// The blank line between the two blocks is what a Secret whose tls.crt
+	// ends in a newline produces, and it is what ends HAProxy's default
+	// payload block — so every certificate op here carries that hazard.
 	bundle := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	bundle = append(bundle, '\n')
 	bundle = append(bundle, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})...)
 	return certificate{pem: string(bundle), serial: big.NewInt(serial), common: commonName}
 }

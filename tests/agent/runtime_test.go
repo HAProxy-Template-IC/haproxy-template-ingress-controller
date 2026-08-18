@@ -99,6 +99,44 @@ func TestMapOpsRunAtRuntimeAndKeepEveryByte(t *testing.T) {
 	assert.Equal(t, s.files[noteMapPath], e.read(noteMapPath), "the file on disk must match the desired set")
 }
 
+// A versioned replace pushes the entries the plan declares, never the file's
+// own bytes: HAProxy's payload parser has no comment syntax, so a '#' header
+// would be stored as a key, and a blank line ends the default payload block.
+func TestMapReplaceInstallsExactlyTheEntries(t *testing.T) {
+	e, s := converged(t)
+	worker := e.workerPID()
+
+	// The shape every chart-rendered map has: a header, blank lines between
+	// the per-library snippets, and a TAB-separated entry.
+	s.set(noteMapPath, "# host to note mapping\n\n"+
+		"a.example.com first value\n\n"+
+		"# ingress/default\n"+
+		"b.example.com replaced; value\n"+
+		"c.example.com\tthird value\n")
+	m := s.next(api.ModeAuto)
+	m.Ops = []api.Op{{Kind: api.OpMapReplace, Path: noteMapPath}}
+	result := s.apply(m, s.allParts())
+
+	require.True(t, result.OK, "map_replace was rejected: %+v", result.Error)
+	assert.Equal(t, api.ResultRuntime, result.Mode)
+	assert.Equal(t, worker, e.workerPID(), "a map replace must not reload")
+	assert.Equal(t, map[string]string{
+		"a.example.com": "first value",
+		"b.example.com": "replaced; value",
+		"c.example.com": "third value",
+	}, mapEntries(e.worker("show map "+noteMapPath)), "the running map must be the plan's entries")
+
+	_, header, _ := e.requestWithHost("b.example.com", notePath)
+	assert.Equal(t, "replaced; value", header.Get("x-note"), "the running worker must serve the new value")
+
+	// The read-back compares that same file against `show map`; a divergence
+	// would reload, so an unchanged worker pid is what proves they agree.
+	state, err := e.client.State(context.Background(), false)
+	require.NoError(t, err)
+	assert.Equal(t, result.PlanID, state.AppliedPlanID)
+	assert.Equal(t, worker, e.workerPID(), "the read-back found no divergence")
+}
+
 func TestServerOpsRunAtRuntime(t *testing.T) {
 	e, s := converged(t)
 	worker := e.workerPID()

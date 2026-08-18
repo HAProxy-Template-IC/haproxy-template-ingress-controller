@@ -52,10 +52,6 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	s.apply.Lock()
 	defer s.apply.Unlock()
 
-	if err := s.promoteLKG(manifest); err != nil {
-		writeJSON(w, http.StatusInternalServerError, api.ApplyError{Stage: "lkg", Message: err.Error()})
-		return
-	}
 	if conflict := s.fence(manifest); conflict != nil {
 		s.metrics.rejected.WithLabelValues("fencing").Inc()
 		writeJSON(w, http.StatusConflict, conflict)
@@ -65,15 +61,21 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, cached)
 		return
 	}
+	// Promotion comes after both refusals: neither may move the rollback
+	// baseline, and clearing the journal is not undoable.
+	if err := s.promoteLKG(manifest); err != nil {
+		writeJSON(w, http.StatusInternalServerError, api.ApplyError{Stage: "lkg", Message: err.Error()})
+		return
+	}
 	s.stageAndRun(w, reader, manifest, digest)
 }
 
 // stageAndRun consumes the file parts and hands the request to the state
 // machine.
 func (s *Server) stageAndRun(w http.ResponseWriter, reader *multipart.Reader, manifest *api.Manifest, digest string) {
-	staged, err := s.stageParts(reader, manifest)
+	got, err := s.stageParts(reader, manifest)
 	defer func() {
-		for _, part := range staged {
+		for _, part := range got.files {
 			part.Discard()
 		}
 	}()
@@ -82,11 +84,11 @@ func (s *Server) stageAndRun(w http.ResponseWriter, reader *multipart.Reader, ma
 		writeJSON(w, http.StatusBadRequest, api.ApplyError{Stage: "parts", Message: err.Error()})
 		return
 	}
-	if missing := s.missingParts(manifest, staged); len(missing) > 0 {
+	if missing := s.missingParts(manifest, got.files); len(missing) > 0 {
 		writeJSON(w, http.StatusConflict, api.Missing{Missing: missing})
 		return
 	}
-	result := s.runApply(manifest, staged, digest)
+	result := s.runApply(manifest, got, digest)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -205,34 +207,43 @@ func (s *Server) fence(m *api.Manifest) *api.Conflict {
 	}
 }
 
+// received is what the parts of one apply carry: the verified file contents,
+// staged in their mounts, and the opaque plan blob.
+type received struct {
+	files map[string]*files.Staged
+	plan  []byte
+}
+
 // stageParts writes every received part into its mount's temp directory and
 // verifies it against the manifest digest before it can reach the tree.
-func (s *Server) stageParts(reader *multipart.Reader, m *api.Manifest) (map[string]*files.Staged, error) {
+func (s *Server) stageParts(reader *multipart.Reader, m *api.Manifest) (*received, error) {
 	declared := make(map[string]api.File, len(m.Files))
 	for _, f := range m.Files {
 		declared[f.Path] = f
 	}
-	staged := map[string]*files.Staged{}
+	got := &received{files: map[string]*files.Staged{}}
 	for count := 0; count <= api.MaxFiles; count++ {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
-			return staged, nil
+			return got, nil
 		}
 		if err != nil {
-			return staged, err
+			return got, err
 		}
-		err = s.stagePart(part, declared, staged)
+		err = s.stagePart(part, declared, got)
 		_ = part.Close()
 		if err != nil {
-			return staged, err
+			return got, err
 		}
 	}
-	return staged, fmt.Errorf("more than %d parts", api.MaxFiles)
+	return got, fmt.Errorf("more than %d parts", api.MaxFiles)
 }
 
-func (s *Server) stagePart(part *multipart.Part, declared map[string]api.File, staged map[string]*files.Staged) error {
+func (s *Server) stagePart(part *multipart.Part, declared map[string]api.File, got *received) error {
 	if part.FormName() == api.PartPlan {
-		return s.storePlanBlob(part)
+		blob, err := readPlanBlob(part)
+		got.plan = blob
+		return err
 	}
 	path, err := partPath(part)
 	if err != nil {
@@ -242,14 +253,14 @@ func (s *Server) stagePart(part *multipart.Part, declared map[string]api.File, s
 	if !known {
 		return fmt.Errorf("part %q is not in the manifest", path)
 	}
-	if _, duplicate := staged[path]; duplicate {
+	if _, duplicate := got.files[path]; duplicate {
 		return fmt.Errorf("part %q appears twice", path)
 	}
 	verified, err := s.store.Stage(path, part, declaration.Digest, declaration.Size)
 	if err != nil {
 		return err
 	}
-	staged[path] = verified
+	got.files[path] = verified
 	return nil
 }
 

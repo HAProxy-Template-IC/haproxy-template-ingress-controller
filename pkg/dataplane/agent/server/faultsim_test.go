@@ -96,6 +96,10 @@ func (s *simulation) next() {
 	if injected.expects != "" {
 		s.allowed[injected.expects] = true
 	}
+	if m.Mode == api.ModeRevertLKG {
+		// A revert names the set it puts back, so it carries no files.
+		m.Files, files = nil, nil
+	}
 	status, raw := s.h.post(&m, files)
 
 	switch status {
@@ -112,6 +116,16 @@ func (s *simulation) next() {
 func (s *simulation) record(m *api.Manifest, raw []byte) {
 	result := api.ApplyResult{}
 	require.NoError(s.t, json.Unmarshal(raw, &result))
+	if result.OK && m.Mode == api.ModeRevertLKG {
+		// The revert put the last known good set back, which the model does
+		// not track; continue from what the pod now reports and holds.
+		s.generation++
+		s.reconcileDisk()
+		s.token = m.Token
+		require.Equal(s.t, result.LKGPlanID, result.AppliedPlanID,
+			"step %d: a revert applied the last known good plan", s.step)
+		return
+	}
 	if result.OK {
 		s.onDisk = copyOf(s.desired)
 		s.applied = result.AppliedPlanID
@@ -268,6 +282,13 @@ var faults = []fault{
 		name: "the agent restarted between applies",
 		arm: func(s *simulation, _ *api.Manifest, _ []file) {
 			s.h = s.h.restart()
+		},
+		disarm: func(*simulation) {},
+	},
+	{
+		name: "the controller reverts to the last known good set",
+		arm: func(_ *simulation, m *api.Manifest, _ []file) {
+			m.Mode = api.ModeRevertLKG
 		},
 		disarm: func(*simulation) {},
 	},

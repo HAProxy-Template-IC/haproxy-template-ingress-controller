@@ -15,16 +15,16 @@
 package server
 
 import (
-	"bufio"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
+	"sort"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/files"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
 // nackCooldown is how long the agent refuses to redo work for a manifest
@@ -153,6 +153,15 @@ func (s *Server) invalidateBaseline() {
 	defer s.mu.Unlock()
 	s.state.AppliedPlanID = ""
 	s.state.WorkerOpsPlanID = ""
+	s.baselineInvalidations++
+}
+
+// invalidationCount is what an apply captures at its start, so its commit can
+// tell whether the baseline was invalidated underneath it.
+func (s *Server) invalidationCount() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.baselineInvalidations
 }
 
 func (s *Server) workerOpsBaselineMatches(expected string) bool {
@@ -176,6 +185,39 @@ func (s *Server) adoptWorker(info api.HAProxyInfo) {
 		inventory.Generation = s.inventory.Generation + 1
 		s.inventory = inventory
 	}
+}
+
+// foldCreated records the runtime stores a completed batch created. Without
+// it the controller composes `cert_new` again on the next rotation, which
+// HAProxy refuses because the store is already there; the generation advances
+// so the delta rides the ACK.
+func (s *Server) foldCreated(run *applyRun) {
+	if len(run.createdCerts) == 0 && len(run.createdCAs) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for _, path := range run.createdCerts {
+		s.inventory.Certs, changed = withPath(s.inventory.Certs, path, changed)
+	}
+	for _, path := range run.createdCAs {
+		s.inventory.CAFiles, changed = withPath(s.inventory.CAFiles, path, changed)
+	}
+	if changed {
+		s.inventory.Generation++
+	}
+}
+
+// withPath adds a path to an inventory listing. It copies rather than appends
+// in place, because the last ACK handed the caller that same slice.
+func withPath(list []string, path string, changed bool) ([]string, bool) {
+	if slices.Contains(list, path) {
+		return list, changed
+	}
+	out := make([]string, len(list), len(list)+1)
+	copy(out, list)
+	return append(out, path), true
 }
 
 // checkWorker compares the worker the agent is about to talk to with the one
@@ -243,7 +285,7 @@ func (s *Server) promoteLKG(m *api.Manifest) error {
 func (s *Server) restoreJournal() error {
 	s.mu.Lock()
 	err := s.store.Restore(&s.state.Journal, s.cfg.ConfigFile)
-	paths := append([]string(nil), s.state.ManifestPaths...)
+	paths := lkgPaths(s.state.ManifestPaths, &s.state.Journal)
 	s.mu.Unlock()
 	if err != nil {
 		return err
@@ -255,10 +297,34 @@ func (s *Server) restoreJournal() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tree = tree
+	s.state.ManifestPaths = paths
 	s.state.TreeDigest = treeDigest(tree)
 	// The tree is the last known good set again, so the backups have nothing
 	// left to protect; the next apply starts a fresh journal from here.
 	return s.store.ClearJournal(&s.state.Journal)
+}
+
+// lkgPaths is the ownership set a restored journal leaves behind: what the
+// current manifest owns, minus the paths it created, plus the ones it deleted.
+func lkgPaths(current []string, j *files.Journal) []string {
+	set := make(map[string]struct{}, len(current))
+	for _, path := range current {
+		set[path] = struct{}{}
+	}
+	for _, e := range j.Entries {
+		switch e.Kind {
+		case files.KindCreated:
+			delete(set, e.Path)
+		case files.KindDeleted:
+			set[e.Path] = struct{}{}
+		}
+	}
+	paths := make([]string, 0, len(set))
+	for path := range set {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 // cachedNACK answers a manifest the agent already knows HAProxy rejects,
@@ -321,31 +387,25 @@ func (s *Server) recoverFromCrash() error {
 	return saveErr
 }
 
-// readMapFile reads the desired entries of a map file straight off the disk.
-// HAProxy's map format is the agent's own output format, not a config it has
-// to understand.
+// readMapFile reads the desired entries of a map file straight off the disk,
+// through the same parser the render composed the plan's entries with, so the
+// two cannot disagree on what a line means.
 func (s *Server) readMapFile(path string) (map[string][]string, error) {
 	abs, err := s.store.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	file, err := os.Open(filepath.Clean(abs))
+	content, err := os.ReadFile(filepath.Clean(abs))
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = file.Close() }()
-	entries := map[string][]string{}
-	scanner := bufio.NewScanner(file)
-	for count := 0; scanner.Scan(); count++ {
-		if count > api.MaxInventoryEntries {
-			return nil, errors.New("map file has more entries than the inventory limit")
-		}
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, _ := strings.Cut(line, " ")
-		entries[key] = append(entries[key], strings.TrimSpace(value))
+	parsed := renderplan.ParseMapEntries(string(content))
+	if len(parsed) > api.MaxMapEntries {
+		return nil, fmt.Errorf("map file %s has more than %d entries", path, api.MaxMapEntries)
 	}
-	return entries, scanner.Err()
+	entries := make(map[string][]string, len(parsed))
+	for _, e := range parsed {
+		entries[e.Key] = append(entries[e.Key], e.Value)
+	}
+	return entries, nil
 }

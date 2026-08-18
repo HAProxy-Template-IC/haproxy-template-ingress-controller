@@ -16,6 +16,7 @@ package server
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"time"
 
@@ -60,10 +61,15 @@ func (s *Server) stateResponse(verify bool) (api.State, error) {
 		WorkerOpsPlanID:   s.state.WorkerOpsPlanID,
 		AppliedToken:      s.state.AppliedToken,
 		LKGPlanID:         s.state.LKGPlanID,
-		Files:             s.tree,
-		Inventory:         s.inventory,
-		PendingDeletes:    s.deferrals.Pending(),
-		LastApply:         s.state.LastApply,
+		// Cloned: the apply path mutates the tree in place and the answer is
+		// marshalled after this lock is released.
+		Files:          maps.Clone(s.tree),
+		Inventory:      s.inventory,
+		PendingDeletes: s.deferrals.Pending(),
+		LastApply:      s.state.LastApply,
+	}
+	if s.state.PlanBlobPlanID != "" && s.state.PlanBlobPlanID == s.state.AppliedPlanID {
+		out.AppliedPlan = s.appliedPlan
 	}
 	if !s.state.ReloadPendingAt.IsZero() {
 		out.ReloadPendingAt = s.state.ReloadPendingAt.UTC().Format(time.RFC3339)
