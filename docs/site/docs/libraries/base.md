@@ -571,7 +571,7 @@ The base library declares the user-facing HAProxy LoadBalancer Service under the
 
 This replaces the chart-static `templates/haproxy-service.yaml` main-Service block, which was emitted by Helm at install time with a fixed port set. Two operational consequences operators should be aware of:
 
-- **First-render delay**: when the chart is installed for the first time, the Service doesn't exist until the controller renders once (typically a few seconds). External tools (cert-manager, external-dns) that look up the Service immediately after `helm install` should expect a brief absence. The internal `<release>-haproxy-dataplane` Service remains chart-static and is created at install time as before.
+- **First-render delay**: when the chart is installed for the first time, the Service doesn't exist until the controller renders once (typically a few seconds). External tools (cert-manager, external-dns) that look up the Service immediately after `helm install` should expect a brief absence. The internal `<release>-haproxy-dataplane` Service — the one that fronts the agent — remains chart-static and is created at install time as before.
 - **`helm uninstall` cleans up via cascade-GC**: the `OwnerReference` ties the Service's lifecycle to the CR. When `helm uninstall` removes the CR, the Service goes with it; no extra cleanup hook is required.
 
 The Service port set is a single list assembled by the chart at install / upgrade time. There is no static / dynamic split inside the Scriggo template — `templates/haproxytemplateconfig.yaml` builds the list and hands it to the renderer via `extraContext.haproxyService.ports`. Two stages contribute:

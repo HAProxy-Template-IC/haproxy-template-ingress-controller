@@ -121,10 +121,10 @@ sequenceDiagram
     Deployer->>EventBus: Publish(DeploymentStartedEvent)
 
     par Parallel Deployment
-        Deployer->>HAProxy1: dataplane.Sync via Dataplane API
+        Deployer->>HAProxy1: POST /v1/apply to the agent
         HAProxy1-->>Deployer: Success
     and
-        Deployer->>HAProxy2: dataplane.Sync via Dataplane API
+        Deployer->>HAProxy2: POST /v1/apply to the agent
         HAProxy2-->>Deployer: Success
     end
 
@@ -141,7 +141,7 @@ sequenceDiagram
 4. **Pipeline**: runs `RenderService.Render` (template engine + auxiliary files), computes the content checksum once, then runs the fast `ValidationService.Validate` (syntax via client-native parser → OpenAPI schema; the leader pipeline skips the `haproxy -c` phase — the strict service runs it at admission and on HTTP-store promotion).
 5. **Coordinator post-pipeline**: on success, publishes `TemplateRenderedEvent` + `ValidationCompletedEvent` for downstream consumers; on failure, publishes `ReconciliationFailedEvent` carrying a `*PipelineError` (use `errors.AsType[*PipelineError]` to extract the failed phase).
 6. **DeploymentScheduler (leader-only)**: subscribes to `TemplateRenderedEvent`, `ValidationCompletedEvent`, and `HAProxyPodsDiscoveredEvent`; only deploys when all three inputs are present. Enforces `minDeploymentInterval` and "latest wins" coalescing.
-7. **Deployer (leader-only)**: executes parallel `dataplane.Sync` calls to every endpoint, logs successful endpoints directly, and publishes per-endpoint `InstanceDeploymentFailedEvent` plus aggregate `DeploymentCompletedEvent`.
+7. **Deployer (leader-only)**: diffs the render against each pod's baseline, applies the result to every endpoint in parallel, logs successful endpoints directly, and publishes per-endpoint `InstanceDeploymentFailedEvent` plus aggregate `DeploymentCompletedEvent`.
 8. **Completion**: Coordinator subscribes to `DeploymentCompletedEvent` and publishes `ReconciliationCompletedEvent` with duration metrics.
 
 There is no event-adapter for rendering or HAProxy-config validation — the synchronous Pipeline owns both. Coordination still happens entirely via EventBus pub/sub *between* components; only the render-validate split inside the Coordinator is a direct function call.
@@ -202,10 +202,10 @@ sequenceDiagram
 **Validation Steps:**
 
 1. **Pipeline call**: `Coordinator.handleReconciliationTriggered` calls `Pipeline.Execute` synchronously. The pipeline first renders, then validates — both in the same call stack, no event hop.
-2. **Cache check**: `ValidationService` keys its per-instance cache on a SHA-256 of `(config + aux files)` (`pkg/dataplane.ComputeContentChecksum`). Identical content during drift-prevention cycles returns the cached `*parser.StructuredConfig` without running any phase. Failures are *not* cached — every failure retries.
+2. **Cache check**: `ValidationService` keys its cache on a digest of `(config + aux files)`. Identical content during drift-prevention cycles returns the cached `*parser.StructuredConfig` without running any phase. Failures are *not* cached — every failure retries.
 3. **Sandbox**: each `Validate` call creates its own `os.MkdirTemp("", "haproxy-validation-*")` and rewrites the rendered config's `default-path origin` to point at it. File I/O is fully isolated per call. A context-aware gate serialises `haproxy -c`; cancellation removes queued checks or terminates the running process. A per-instance `cacheMu` (`sync.RWMutex`) guards the cached `*parser.StructuredConfig` lookup.
 4. **Phase 1 — Syntax**: client-native parser checks grammar and section structure. Cheap.
-5. **Phase 1.5 — OpenAPI schema**: parsed structure cross-checked against the version-specific Dataplane API OpenAPI spec via `pkg/generated/validators`. Catches out-of-range values, pattern violations, missing required fields. Also cheap (in-memory, no fork).
+5. **Phase 1.5 — OpenAPI schema**: parsed structure cross-checked against a version-specific OpenAPI schema via `pkg/generated/validators`. Catches out-of-range values, pattern violations, missing required fields. Also cheap (in-memory, no fork).
 6. **Phase 2 — Semantic**: writes the config + auxiliary files into a per-call temp directory, runs `haproxy -c -f <tempdir>/haproxy.cfg`, parses the binary's stderr on failure. The temp directory mirrors the production layout (`maps/`, `ssl/`, `general/`) under `default-path origin <tempdir>` so file references resolve exactly like at runtime.
 7. **Rendered-output validators**: after the built-in phases pass, the pipeline sends the complete rendered file set to each configured pluggable validator. An error becomes phase `external`; warnings remain attached to the successful result.
 8. **Result**: Pipeline wraps the result into a `*PipelineResult` (success) or `*PipelineError` (failure carrying `Phase` for `errors.AsType[*PipelineError]`); the Coordinator then publishes `ValidationCompletedEvent` or `ReconciliationFailedEvent` accordingly.
@@ -215,40 +215,40 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Deployer as Deployer<br/>(pkg/controller/deployer)
-    participant Client as dataplane.Client
-    participant DP as Dataplane API
+    participant Client as agent client
+    participant Agent as HAPTIC agent
     participant HAProxy
 
-    Deployer->>Client: Sync(ctx, desiredConfig, auxFiles, opts)
-    Client->>DP: GET /v3/services/haproxy/configuration/raw
-    DP-->>Client: Current config
+    Deployer->>Client: State(ctx)
+    Client->>Agent: GET /v1/state
+    Agent-->>Client: applied plan, file digests, runtime inventory
 
-    Client->>Client: Parse + comparator.Compare
+    Deployer->>Deployer: deployplan.Diff(render, baseline)
 
-    alt Only runtime changes
-        Note over Client: Server weight/address/port/maintenance fields,<br/>and/or map/cert content updates only
-        Client->>DP: set map / set ssl cert (existing+referenced maps/certs)
-        Client->>DP: POST /v3/services/haproxy/configuration/raw?skip_reload=true (+ X-Runtime-Actions header)
-        DP->>HAProxy: Runtime API commands via master socket
-        HAProxy-->>DP: Updated
-        DP-->>Client: Success (no reload)
-    else Structural changes
-        Note over Client: Backends, frontends, binds, ACLs, or mixed
-        Client->>DP: POST /v3/services/haproxy/configuration/raw?force_reload=true
-        DP->>HAProxy: Replace config + reload
-        HAProxy-->>DP: Reload complete
-        DP-->>Client: Success (reload)
+    alt Verdict runtime
+        Note over Deployer: Map entries, certificate content,<br/>server address/weight/state, backends on 3.4
+        Deployer->>Agent: POST /v1/apply (mode auto, typed ops)
+        Agent->>HAProxy: the ops verbatim, on the worker stats socket
+        HAProxy-->>Agent: Applied
+        Agent-->>Deployer: ACK (mode runtime, no reload)
+    else Verdict reload
+        Note over Deployer: A changed section, a new profile,<br/>or text no section accounts for
+        Deployer->>Agent: POST /v1/apply (mode reload)
+        Agent->>HAProxy: Write the file set, then reload through the master socket
+        HAProxy-->>Agent: Reload complete
+        Agent-->>Deployer: ACK (mode reload, new worker pid)
     end
-
-    Client-->>Deployer: *SyncResult
 ```
 
 **Deployment Optimization:**
 
-`pkg/dataplane.Client.Sync` analyses configuration changes to determine the optimal deployment strategy:
+`deployplan.Diff` compares the render with the pod's baseline to decide what that pod has to do:
 
-1. **Runtime-Only Updates**: Server weight/address/port/maintenance changes, and/or content updates to an existing, already-referenced map (`set map`, v3.0+) or certificate (`set ssl cert`, v3.2+), are applied to the live worker via the Runtime API, then a single `skip_reload` raw push carries the `X-Runtime-Actions` server fields → no reload
-2. **Mixed Updates**: Apply runtime-eligible server changes via the Runtime API first, then ship the rendered config in one `force_reload` raw push → single reload
-3. **Structural Updates**: Backend/frontend/bind/ACL changes, map/cert **create or delete**, and other auxiliary-file changes (general, CA, crt-list) → one `force_reload` raw config push → reload required
+1. **`runtime`**: every change is a typed command the pod's HAProxy can run — map entries, certificate and CA content, crt-list entries, server address, weight or state, and on HAProxy 3.4 a backend the render declared dynamic. The agent writes the files, runs the commands on the worker socket, and the process keeps serving.
+2. **`file_only`**: the files changed but nothing has to run — a general file no section reads, or a map the running worker never loaded. The next reload picks it up.
+3. **`reload`**: a section's text changed, a profile appeared or disappeared, a file declares `reloadOnChange`, or the configuration changed in a way no section accounts for. The agent writes the whole set and reloads.
 
-The controller maintains its own `serverRuntimeSupportedJSONFields` table in `pkg/dataplane/comparator/sections/factory_server.go`, mirroring the Dataplane API's `RuntimeSupportedFields["server"]`. The comparator uses this table to classify each server-field change as runtime-eligible (no reload) or structural (reload required).
+Every reason a change didn't stay reload-free is on the pod's status, so an
+operator can see which part of a render cost them a reload.
+
+The rules live in `pkg/dataplane/deployplan`, table tested per rule. A server keyword HAProxy has no runtime setter for makes that server's change structural; the keyword allow-list is `keywords.go`.

@@ -27,6 +27,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -39,7 +41,7 @@ func createTestDeployer(eventBus *busevents.EventBus) *Component {
 	//
 	// A real Metrics on a private registry, so tests can assert the divergence
 	// counters the deployer now records directly instead of publishing.
-	return New(eventBus, logger, 0, 0, metrics.NewMetrics(prometheus.NewRegistry()))
+	return New(eventBus, logger, 0, metrics.NewMetrics(prometheus.NewRegistry()))
 }
 
 func TestHandleDeploymentScheduled(t *testing.T) {
@@ -164,56 +166,66 @@ loop:
 	time.Sleep(50 * time.Millisecond)
 }
 
-func TestComponent_ConvertSyncResultToMetadata(t *testing.T) {
-	t.Run("nil input", func(t *testing.T) {
-		result := syncResultToMetadata(nil, "")
-		assert.Nil(t, result)
-	})
+// applyResultToMetadata is what one pod's status entry is built from: the two
+// plan ids, the mode the agent reported, and the reasons the diff recorded.
+func TestComponent_ApplyResultToMetadata(t *testing.T) {
+	outcome := &podOutcome{
+		result: &api.ApplyResult{
+			PlanID:        "plan-2",
+			OK:            true,
+			Mode:          api.ResultRuntime,
+			AppliedPlanID: "plan-2",
+			RunningPlanID: "plan-1",
+			Reload:        &api.ReloadInfo{Performed: false},
+		},
+		decision: deployplan.Decision{Reasons: []string{"map host.map changed"}},
+		notes:    []string{"the previous apply was rejected, resending the complete state"},
+		sent: []api.Op{
+			{Kind: api.OpServerAdd},
+			{Kind: api.OpServerSetAddr},
+			{Kind: api.OpMapSet},
+		},
+	}
 
-	t.Run("valid sync result", func(t *testing.T) {
-		syncResult := &dataplane.SyncResult{
-			ReloadTriggered: true,
-			ReloadID:        "12345",
-			Duration:        100 * time.Millisecond,
-			SyncMode:        dataplane.SyncModeReload,
-			Details: dataplane.DiffDetails{
-				TotalOperations:  10,
-				BackendsAdded:    []string{"backend1", "backend2"},
-				BackendsDeleted:  []string{"backend3"},
-				BackendsModified: []string{"backend4"},
-				ServersAdded: map[string][]string{
-					"backend1": {"server1", "server2"},
-				},
-				ServersDeleted: map[string][]string{
-					"backend3": {"server3"},
-				},
-				ServersModified: map[string][]string{
-					"backend4": {"server4"},
-				},
-				FrontendsAdded:    []string{"frontend1"},
-				FrontendsDeleted:  []string{},
-				FrontendsModified: []string{"frontend2"},
-			},
-		}
+	metadata := applyResultToMetadata(outcome)
 
-		result := syncResultToMetadata(syncResult, "")
+	require.NotNil(t, metadata)
+	assert.False(t, metadata.ReloadTriggered)
+	assert.Equal(t, "plan-2", metadata.AppliedPlanID)
+	assert.Equal(t, "plan-1", metadata.RunningPlanID)
+	assert.Equal(t, api.ResultRuntime, metadata.Mode)
+	assert.Equal(t, []string{
+		"the previous apply was rejected, resending the complete state",
+		"map host.map changed",
+	}, metadata.Reasons, "the controller's own notes come before the diff's")
+	assert.Equal(t, 3, metadata.OperationCounts.TotalAPIOperations)
+	assert.Equal(t, 1, metadata.OperationCounts.ServersAdded)
+	assert.Equal(t, 1, metadata.OperationCounts.ServersModified)
+	assert.Equal(t, 1, metadata.OperationCounts.MapsModified)
+	assert.Empty(t, metadata.Error)
+}
 
-		require.NotNil(t, result)
-		assert.True(t, result.ReloadTriggered)
-		assert.Equal(t, "12345", result.ReloadID)
-		assert.Equal(t, 100*time.Millisecond, result.SyncDuration)
-		assert.Equal(t, 10, result.OperationCounts.TotalAPIOperations)
-		assert.Equal(t, 2, result.OperationCounts.BackendsAdded)
-		assert.Equal(t, 1, result.OperationCounts.BackendsRemoved)
-		assert.Equal(t, 1, result.OperationCounts.BackendsModified)
-		assert.Equal(t, 2, result.OperationCounts.ServersAdded)
-		assert.Equal(t, 1, result.OperationCounts.ServersRemoved)
-		assert.Equal(t, 1, result.OperationCounts.ServersModified)
-		assert.Equal(t, 1, result.OperationCounts.FrontendsAdded)
-		assert.Equal(t, 0, result.OperationCounts.FrontendsRemoved)
-		assert.Equal(t, 1, result.OperationCounts.FrontendsModified)
-		assert.Empty(t, result.Error)
-	})
+// MaxItems on the CRD field rejects a longer list rather than trimming it, and
+// a rejected status patch is a silent status stall.
+func TestComponent_ApplyResultToMetadataCapsReasons(t *testing.T) {
+	reasons := make([]string, maxStatusReasons+4)
+	for i := range reasons {
+		reasons[i] = "reason"
+	}
+	outcome := &podOutcome{
+		result:   &api.ApplyResult{OK: true, Mode: api.ResultReload},
+		decision: deployplan.Decision{Reasons: reasons},
+	}
+
+	capped := applyResultToMetadata(outcome).Reasons
+	assert.Len(t, capped, maxStatusReasons)
+	assert.Equal(t, "… 5 more reasons omitted", capped[maxStatusReasons-1], "the cap is visible in the status")
+
+	few := &podOutcome{
+		result:   &api.ApplyResult{OK: true, Mode: api.ResultReload},
+		decision: deployplan.Decision{Reasons: []string{"one", "two"}},
+	}
+	assert.Equal(t, []string{"one", "two"}, applyResultToMetadata(few).Reasons)
 }
 
 func TestComponent_HandleEvent(t *testing.T) {

@@ -15,6 +15,14 @@ or generated HAProxy configuration to drift.
 | `controller.config.controller.healthzPort` | `controller.ports.healthz` |
 | `controller.config.controller.metricsPort` or `controller.extraEnv[].name=METRICS_PORT` | `controller.ports.metrics` (`0` disables metrics) |
 | `controller.config.dataplane.port` | `haproxy.ports.dataplane` |
+| `haproxy.dataplane.logLevel` | `haproxy.agent.logLevel` |
+| `haproxy.dataplane.resources` | `haproxy.agent.resources` |
+| `haproxy.dataplane.extraEnv` | `haproxy.agent.extraEnv` |
+| `haproxy.dataplane.service` | `haproxy.agent.service` |
+| `haproxy.dataplane.validateConfig` | Removed. The pod's own HAProxy binary judges the configuration at reload, and the webhook and the config-load gate still run the full `haproxy -c` |
+| `haproxy.dataplane.debugSocketPath` | Removed. Profile the agent through its own metrics and `GET /v1/state` |
+| `haproxy.dataplane.aclFormat` | Removed. It formatted the Data Plane API's own access log; the agent logs one structured line per apply instead |
+| `haproxy.dataplaneBin` | Removed. The agent is the controller's binary, in the controller's image |
 | `controller.config.routing.regexMatchOrder` | `controller.config.templatingSettings.extraContext.routing.regexMatchOrder` |
 | `controller.defaultSSLCertificate` | `defaultSSLCertificate` |
 | `haproxy.enterprise.version` | `haproxyVersion` |
@@ -327,7 +335,7 @@ For HAProxy behind a layer-4 load balancer. See [PROXY protocol](haproxy-deploym
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.config.credentialsSecretRef.name` | string | Auto-generated | Secret containing Dataplane API credentials |
+| `controller.config.credentialsSecretRef.name` | string | Auto-generated | Secret containing the agent credentials |
 | `controller.config.credentialsSecretRef.namespace` | string | `""` | Credentials secret namespace |
 | `controller.config.podSelector.matchLabels` | map | `{app.kubernetes.io/component: loadbalancer}` | Labels to match HAProxy pods |
 
@@ -341,16 +349,22 @@ For HAProxy behind a layer-4 load balancer. See [PROXY protocol](haproxy-deploym
 | `controller.config.controller.leaderElection.renewDeadline` | duration | `20s` | Leader renewal timeout |
 | `controller.config.controller.leaderElection.retryPeriod` | duration | `5s` | Retry interval between attempts |
 
-## Dataplane Configuration
+## Agent Configuration
+
+The CRD block is still called `dataplane` — it configures the endpoint the
+controller applies to, which is now the HAPTIC agent. Four of its fields changed
+meaning with the agent; the paths didn't.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.config.dataplane.minDeploymentInterval` | duration | `5s` | Minimum time between deployments |
-| `controller.config.dataplane.driftPreventionInterval` | duration | `60s` | Periodic drift prevention interval |
+| `controller.config.dataplane.minDeploymentInterval` | duration | `5s` | Shortest interval between two reloads of one pod. The chart passes it to the agent as `--reload-interval-min`: a reload inside the window is scheduled, never dropped, and the controller polls the pod at the scheduled time. With `haproxy.enabled=true` the agent's 60-second ceiling applies, and the chart fails the render above it |
+| `controller.config.dataplane.driftPreventionInterval` | duration | `60s` | How often the controller asks each pod to re-hash its tree (`GET /v1/state?verify=1`) and re-applies when a digest disagrees. The same call carries the newest validated plan, so a pod's rollback baseline never lags by more than one interval |
+| `controller.config.dataplane.reloadVerificationTimeout` | duration | `60s` | How long the agent waits for HAProxy's master to report a reload finished before calling it failed and restoring the last known good file set. The chart passes it to the agent as `--reload-timeout`; unset, the agent uses its 60-second ceiling |
+| `controller.config.dataplane.syncTimeout` | duration | `2m` | How long the controller waits for one pod to answer an apply |
 | `controller.config.dataplane.mapsDir` | string | `/etc/haproxy/maps` | HAProxy maps directory. With the bundled fleet (`haproxy.enabled=true`) it must sit directly under `/etc/haproxy`, which is where the pod mounts its config volume and resolves every auxiliary path |
 | `controller.config.dataplane.sslCertsDir` | string | `/etc/haproxy/ssl` | SSL certificates directory. Same `/etc/haproxy` constraint as `mapsDir` when the bundled fleet is enabled; the directory name itself is free |
 | `controller.config.dataplane.generalStorageDir` | string | `/etc/haproxy/general` | General storage directory. With the bundled fleet this exact path is required: it's a separate volume the spoa-hub and vector sidecars mount to read rendered files without reaching SSL private keys. The chart fails the render rather than deploy a pod where those sidecars see an empty directory |
-| `controller.config.dataplane.configFile` | string | `/etc/haproxy/haproxy.cfg` | HAProxy config file path |
+| `controller.config.dataplane.configFile` | string | `/etc/haproxy/haproxy.cfg` | HAProxy config file path. Same `/etc/haproxy` constraint as `mapsDir` when the bundled fleet is enabled |
 
 ## Watched Resources
 
@@ -463,8 +477,8 @@ The validator sidecar runs a second `haproxy-spoa-hub` instance in `--validate-s
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `credentials.dataplane.username` | string | `admin` | Dataplane API username |
-| `credentials.dataplane.password` | string | `""` | Dataplane API password. Empty generates a random 32-char password. When `lookup` works (a normal `helm upgrade`, or an install against a reachable cluster) the chart reads the existing Secret and preserves the current password across renders. GitOps tools that render without cluster access (ArgoCD/Flux) can't `lookup`, so an empty value regenerates every sync — **set an explicit value** (SealedSecret / external secret) in those setups. |
+| `credentials.dataplane.username` | string | `admin` | Agent username. The Secret keys keep their `dataplane_` names, so a rotation set up before the agent still works |
+| `credentials.dataplane.password` | string | `""` | Agent password. Empty generates a random 32-char password. When `lookup` works (a normal `helm upgrade`, or an install against a reachable cluster) the chart reads the existing Secret and preserves the current password across renders. GitOps tools that render without cluster access (ArgoCD/Flux) can't `lookup`, so an empty value regenerates every sync — **set an explicit value** (SealedSecret / external secret) in those setups. |
 
 ## ServiceAccount & RBAC
 
@@ -602,7 +616,7 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `controller.monitoring.prometheusRule.enabled` | bool | `false` | Create PrometheusRule with alerting rules |
 | `controller.monitoring.prometheusRule.labels` | map | `{}` | PrometheusRule labels |
 | `controller.monitoring.prometheusRule.rules` | list | `[]` | Custom alerting rules; overrides the default rule set when non-empty |
-| `controller.monitoring.prometheusRule.defaultRules.enabled` | bool | `true` | Emit the chart's default rule set — ten alerts, each individually toggleable below; only consulted when `rules` is empty |
+| `controller.monitoring.prometheusRule.defaultRules.enabled` | bool | `true` | Emit the chart's default rule set — thirteen alerts, each individually toggleable below; only consulted when `rules` is empty |
 | `controller.monitoring.prometheusRule.defaultRules.reconciliationErrors` | bool | `true` | Include the `HAProxyControllerReconciliationErrors` warning rule |
 | `controller.monitoring.prometheusRule.defaultRules.deploymentFailures` | bool | `true` | Include the `HAProxyControllerDeploymentFailures` critical rule |
 | `controller.monitoring.prometheusRule.defaultRules.highQueueDepth` | bool | `true` | Include the `HAProxyControllerHighQueueDepth` warning rule |
@@ -613,6 +627,9 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `controller.monitoring.prometheusRule.defaultRules.noHAProxyPods` | bool | `true` | Include the `HAProxyControllerNoHAProxyPods` critical rule: the controller finds no HAProxy pods to manage, so no config reaches the data plane |
 | `controller.monitoring.prometheusRule.defaultRules.accessLogDropped` | bool | `true` | Include the `HAProxyAccessLogRecordsDropped` warning rule: HAProxy discarded access-log records because the Vector sidecar stopped draining the Unix datagram socket. Traffic is unaffected; the log is incomplete |
 | `controller.monitoring.prometheusRule.defaultRules.criticalEventsDropped` | bool | `true` | Include the `HAProxyControllerCriticalEventsDropped` critical rule: a critical event-bus subscriber's buffer overflowed — reconciliation work was lost and the data plane may be stale |
+| `controller.monitoring.prometheusRule.defaultRules.applyRejected` | bool | `true` | Include the `HAProxyAgentApplyRejected` warning rule: an HAProxy pod refused an apply and serves its last known good file set; HAProxy's message is in the pod's status condition |
+| `controller.monitoring.prometheusRule.defaultRules.agentInvariantViolated` | bool | `true` | Include the `HAProxyAgentInvariantViolated` critical rule: an agent observed one of its own invariants failing — a defect, not an operator error |
+| `controller.monitoring.prometheusRule.defaultRules.agentVersionSkew` | bool | `true` | Include the `HAProxyAgentVersionSkew` warning rule: applies degrade to full state plus a reload because a pod's agent doesn't match the controller; expected during a rolling upgrade, a defect after one |
 | `controller.monitoring.grafanaDashboard.enabled` | bool | `false` | Create a ConfigMap holding the Grafana dashboard JSON (picked up by the Grafana sidecar via the configured discovery label) |
 | `controller.monitoring.grafanaDashboard.labels` | map | `{grafana_dashboard: "1"}` | Discovery labels for the Grafana sidecar |
 | `controller.monitoring.grafanaDashboard.annotations` | map | `{grafana_folder: "HAProxy"}` | Annotations on the dashboard ConfigMap; the folder annotation must match `grafana.sidecar.dashboards.folderAnnotation` |
@@ -632,7 +649,6 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `haproxy.image.tag` | string | `""` | HAProxy image tag; empty = derive from `haproxyVersion` plus the matching entry in `haproxyPatchVersions` (for example `3.2` → whichever 3.2.x patch the chart currently pins). Override to pin a specific patch yourself. |
 | `haproxy.enterprise.enabled` | bool | `false` | Use HAProxy Enterprise. `haproxyVersion` selects the compatibility series, image revision map, and binary path together |
 | `haproxy.haproxyBin` | string | Auto-detected | HAProxy binary path |
-| `haproxy.dataplaneBin` | string | Auto-detected | Dataplane API binary path |
 | `haproxy.initialConfig` | string | See values.yaml | HAProxy bootstrap config served until the controller pushes the first rendered config; processed via Helm `tpl`. Keep the `/ready` 503 gate or clients hit an empty backend set — see the [HAProxy deployment guide](./haproxy-deployment.md) |
 
 ## HAProxy Pod Configuration
@@ -641,6 +657,7 @@ Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*`
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `haproxy.podSpec.imagePullSecrets` | list | `[]` | Image pull secrets for the HAProxy pod, which pulls both the HAProxy image and the HAPTIC image its agent container runs from. Empty follows `controller.podSpec.imagePullSecrets` |
 | `haproxy.podSpec.podAnnotations` | map | `{}` | Extra pod annotations for HAProxy pods (supports template expressions) |
 | `haproxy.podSpec.shareProcessNamespace` | bool | `false` | Share process namespace between containers (required for signal-based sidecar reload) |
 | `haproxy.podSpec.priorityClassName` | string | `""` | Pod priority class |
@@ -667,11 +684,12 @@ Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*`
 | `haproxy.ports.http` | int | `80` | HTTP frontend container port |
 | `haproxy.ports.https` | int | `443` | HTTPS frontend container port |
 | `haproxy.ports.stats` | int | `8404` | Stats/health page port |
-| `haproxy.ports.dataplane` | int | `5555` | Single source of truth for the Dataplane API listener, Service, NetworkPolicy, supervisor watchdog, and the controller's connection port |
+| `haproxy.ports.dataplane` | int | `5555` | Single source of truth for the agent's apply/state API: its listener, the Service, the NetworkPolicy, the container probes, and the controller's connection port |
+| `haproxy.ports.agentMetrics` | int | `5557` | The agent's Prometheus endpoint. Scraped by `haproxy.monitoring.podMonitor` through the named container port `agent-metrics`, and allowed from the NetworkPolicy's metrics sources |
 
 ## HAProxy Service
 
-The controller renders the user-facing HAProxy Service from these values (the base library's `k8sResources.haproxy-service` template) and owns it via Server-Side Apply — the chart itself only creates the internal dataplane Service. Changes therefore land when the controller reconciles, not at `helm upgrade` time.
+The controller renders the user-facing HAProxy Service from these values (the base library's `k8sResources.haproxy-service` template) and owns it via Server-Side Apply — the chart itself only creates the internal agent Service. Changes therefore land when the controller reconciles, not at `helm upgrade` time.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -692,21 +710,32 @@ The controller renders the user-facing HAProxy Service from these values (the ba
 | `haproxy.service.stats.nodePort` | int | `30404` | Stats NodePort |
 | `haproxy.service.extraPorts` | list | `[]` | Additional Service ports (`corev1.ServicePort` shape) appended to the http/https/stats entries — for example a raw TCP frontend declared via a custom `haproxyConfig` snippet. Drop a default entry by setting `haproxy.service.{http,https,stats}.port: 0` |
 
-## HAProxy Dataplane sidecar
+## HAPTIC agent container
+
+The agent owns the HAProxy pod's file tree and its runtime sockets. It runs the
+controller's own image, so its version always matches the controller that talks
+to it.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `haproxy.dataplane.service.type` | string | `ClusterIP` | Dataplane service type |
-| `haproxy.dataplane.logLevel` | string | `info` | Log level for the Dataplane API sidecar: `trace`, `debug`, `info`, `warning`, `error`. It logs one line per file operation, so `trace` produced ~671 lines for a single startup plus config cycle. Raise it when diagnosing a config push the controller reports as failing but HAProxy accepts. The stream carries no end-user data — the only client is the controller |
-| `haproxy.dataplane.resources.requests.cpu` | string | `50m` | Dataplane sidecar CPU request |
-| `haproxy.dataplane.resources.requests.memory` | string | `256Mi` | Dataplane sidecar memory request (Guaranteed QoS — limits.memory matches) |
-| `haproxy.dataplane.resources.limits.memory` | string | `256Mi` | Dataplane sidecar memory limit |
-| `haproxy.dataplane.extraEnv` | list | `[]` | Extra env vars for the dataplane sidecar; `GOMAXPROCS` here overrides the auto-calculation from CPU/memory limits |
-| `haproxy.dataplane.validateConfig` | bool | `false` | Run a server-side `haproxy -c` against each transaction (through `/etc/haproxy/validate.sh`, which reads the transaction file the Dataplane API passes in `DATAPLANEAPI_TRANSACTION_FILE`). The controller already validates locally, so server-side validation is redundant; enable for double-validation when extra safety is required |
-| `haproxy.dataplane.debugSocketPath` | string | `""` | Unix socket path for runtime profiling of the dataplane sidecar (sets `debug_socket_path` in `dataplaneapi.yaml`) |
-| `haproxy.dataplane.aclFormat` | string | `""` | Apache Common Log Format override for the dataplane API access log. Empty leaves the dataplane API's built-in default in place; set this to a format with timing fields (for example `%{us}T` microseconds, `%D` milliseconds) to surface per-request publish-step latency in the access log |
+| `haproxy.agent.service.type` | string | `ClusterIP` | Type of the internal Service that fronts the agent port |
+| `haproxy.agent.logLevel` | string | `info` | Log level for the agent, which logs JSON on stdout: `trace`, `debug`, `info`, `warning`, `error`. At `debug` the agent logs a line per apply with its verdict, the ops it ran and the reload it performed — raise it when diagnosing an apply the controller reports as failing but HAProxy accepts. The stream carries no end-user data; the only client is the controller |
+| `haproxy.agent.resources.requests.cpu` | string | `50m` | Agent CPU request |
+| `haproxy.agent.resources.requests.memory` | string | `256Mi` | Agent memory request (Guaranteed QoS — limits.memory matches) |
+| `haproxy.agent.resources.limits.memory` | string | `256Mi` | Agent memory limit |
+| `haproxy.agent.extraEnv` | list | `[]` | Extra env vars for the agent container; `GOMAXPROCS` here overrides the auto-calculation from CPU/memory limits |
 
-Dataplane API credentials moved to the top-level `credentials.dataplane.*` section — see [Credentials](#credentials) above.
+The agent's reload pacing and reload deadline aren't separate values: the chart
+templates them from [`controller.config.dataplane.minDeploymentInterval` and
+`controller.config.dataplane.reloadVerificationTimeout`](#agent-configuration),
+so the controller and the agent can't disagree.
+
+Agent credentials are the top-level `credentials.dataplane.*` section — see [Credentials](#credentials) above.
+
+The agent's probes are fixed: `startupProbe` on `/readyz` and `livenessProbe` on
+`/healthz`. `/readyz` means "the agent can accept applies" and stays true after
+a rejected apply, because a pod that can't be applied to is exactly the pod the
+next apply has to reach.
 
 ## HAProxy tuning
 
@@ -859,7 +888,7 @@ No CPU limit is set by default to avoid throttling. With no limit, HAProxy's `nb
 | `controller.networkPolicy.enabled` | bool | `true` | Enable controller NetworkPolicy |
 | `controller.networkPolicy.egress.allowDNS` | bool | `true` | Allow DNS resolution |
 | `controller.networkPolicy.egress.kubernetesApi` | list | See values.yaml | Kubernetes API access rules |
-| `controller.networkPolicy.egress.haproxyPods.enabled` | bool | `true` | Allow controller egress to HAProxy Dataplane API pods (release namespace unless `namespaceSelector` is set) |
+| `controller.networkPolicy.egress.haproxyPods.enabled` | bool | `true` | Allow controller egress to the agent on each HAProxy pod (release namespace unless `namespaceSelector` is set) |
 | `controller.networkPolicy.egress.haproxyPods.podSelector` | map | See values.yaml | Pod-label selector matching the HAProxy pods to reach |
 | `controller.networkPolicy.egress.haproxyPods.namespaceSelector` | map | `{}` | Namespace selector. **`{}` emits no selector**, restricting the rule to the release namespace — set `matchLabels` to reach HAProxy pods in other namespaces |
 | `controller.networkPolicy.egress.additionalRules` | list | See values.yaml | Additional egress rules; the chart default allows egress to every in-cluster pod (keeps `http.Fetch()` working) — set `[]` to lock down |

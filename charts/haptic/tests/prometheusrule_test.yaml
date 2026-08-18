@@ -146,6 +146,69 @@ tests:
               summary: "Critical events dropped from the event bus"
               description: "A critical subscriber's buffer overflowed - reconciliation work has been lost and the data plane may be stale"
 
+  - it: should include the agent apply rejected alert
+    asserts:
+      - contains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyAgentApplyRejected
+            expr: increase(haptic_apply_rejected_total[5m]) > 0
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "An HAProxy pod refused a config apply"
+              description: "Pod {{ $labels.pod }} rejected an apply and is serving its last known good file set; HAProxy's own message is in the pod's status condition and Warning event"
+
+  - it: should include the agent invariant violated alert
+    asserts:
+      - contains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyAgentInvariantViolated
+            expr: increase(haptic_agent_invariant_violations_total[5m]) > 0
+            labels:
+              severity: critical
+            annotations:
+              summary: "The HAPTIC agent observed one of its invariants failing"
+              description: "Invariant {{ $labels.name }} failed on pod {{ $labels.pod }} - this is a defect, not an operator error; collect the agent state (haptic agent state --output json, run in the pod's agent container) and open an issue"
+
+  - it: should include the agent version skew alert
+    asserts:
+      - contains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyAgentVersionSkew
+            expr: increase(haptic_agent_version_skew_total[15m]) > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "HAProxy pods run an agent that does not match the controller"
+              description: "Applies fall back to a full file set plus a reload because a pod's agent speaks another API major or lacks an op kind - expected during a rolling upgrade, a defect if it persists after one"
+
+  - it: should disable the three agent alerts when configured
+    set:
+      controller.monitoring.prometheusRule.defaultRules.applyRejected: false
+      controller.monitoring.prometheusRule.defaultRules.agentInvariantViolated: false
+      controller.monitoring.prometheusRule.defaultRules.agentVersionSkew: false
+    asserts:
+      - notContains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyAgentApplyRejected
+          any: true
+      - notContains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyAgentInvariantViolated
+          any: true
+      - notContains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyAgentVersionSkew
+          any: true
+
   - it: should disable no HAProxy pods alert when configured
     set:
       controller.monitoring.prometheusRule.defaultRules.noHAProxyPods: false

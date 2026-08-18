@@ -15,18 +15,16 @@
 // Package discovery provides the Discovery event adapter component.
 //
 // It tracks the set of HAProxy pods reported by the resource watcher (via the
-// auto-injected haproxy-pods watcher), enriches each pod with credentials and
-// endpoint version proofs through pkg/dataplane, and publishes
+// auto-injected haproxy-pods watcher), admits the ones whose agent answers
+// /v1/state — carrying the HAProxy version it reports — and publishes
 // HAProxyPodsDiscoveredEvent / HAProxyPodTerminatedEvent so the deployer and
 // other consumers know which endpoints to talk to.
 package discovery
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sync"
-	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -44,18 +42,7 @@ const (
 	// EventBufferSize is the buffer size for event subscriptions.
 	// High-volume to absorb pod churn bursts during scaling and rolling updates.
 	EventBufferSize = busevents.HighVolumeSubscriberBuffer
-
-	// Version check retry configuration.
-	initialRetryInterval = 5 * time.Second
-	maxRetryInterval     = 1 * time.Minute
-	retryBackoffFactor   = 2
 )
-
-// retryState tracks retry information for pods pending version check.
-type retryState struct {
-	lastAttempt time.Time
-	retryCount  int
-}
 
 type endpointIdentity struct {
 	podNamespace string
@@ -79,6 +66,19 @@ type endpointAuthority struct {
 	detectedFullVersion  string
 }
 
+// applyHAProxyVersion records what the pod's agent reported its HAProxy to be.
+// The controller derives the fleet's template capabilities and each pod's
+// runtime capabilities from it.
+func applyHAProxyVersion(endpoint *dataplane.Endpoint, version string) {
+	endpoint.DetectedFullVersion = version
+	parsed, err := dataplane.ParseVersionString(version)
+	if err != nil {
+		return
+	}
+	endpoint.DetectedMajorVersion = parsed.Major
+	endpoint.DetectedMinorVersion = parsed.Minor
+}
+
 func endpointAuthorityOf(endpoint *dataplane.Endpoint) endpointAuthority {
 	return endpointAuthority{
 		identity:             endpointIdentityOf(endpoint),
@@ -98,18 +98,6 @@ func endpointIdentityOf(endpoint *dataplane.Endpoint) endpointIdentity {
 		podRuntimeID: endpoint.PodRuntimeID,
 		url:          endpoint.URL,
 	}
-}
-
-type versionAdmissionProof struct {
-	dataPlaneAPI dataplane.Version
-	haproxy      dataplane.Version
-}
-
-func applyVersionProof(candidate *dataplane.Endpoint, proof *versionAdmissionProof) *dataplane.Endpoint {
-	candidate.DetectedMajorVersion = proof.dataPlaneAPI.Major
-	candidate.DetectedMinorVersion = proof.dataPlaneAPI.Minor
-	candidate.DetectedFullVersion = proof.dataPlaneAPI.Full
-	return candidate
 }
 
 // Component is the Discovery event adapter.
@@ -132,7 +120,8 @@ type Component struct {
 
 	discovery *Discovery
 	// discoveryMu orders endpoint-authority updates with complete discovery
-	// publications. A retry callback runs outside Base's serial event loop.
+	// publications. SetPodStore runs outside Base's serial event loop, so a
+	// store swap must not land mid-pass.
 	discoveryMu sync.Mutex
 
 	// State replay for leadership transitions
@@ -150,20 +139,10 @@ type Component struct {
 	initialDiscoveryDone bool // Set after the first discovery is performed
 	lifecycleCtx         context.Context
 
-	// Version filtering state
-	localVersion      *dataplane.Version
-	admissionProofs   map[endpointIdentity]versionAdmissionProof
-	versionRejections map[endpointIdentity]string
-	pendingRetries    map[endpointIdentity]*retryState
-
-	// Retry timer for pending pods
-	retryTimer        *time.Timer
-	retryTimerAt      time.Time
-	retryTimerDone    func()
-	retryTimerMu      sync.Mutex
-	retryCallbacks    sync.WaitGroup
-	retryGeneration   uint64
-	retryTimerStopped bool
+	// admitted maps an exact pod identity — namespace, name, UID, container
+	// fingerprint and URL — to the HAProxy version its agent reported. A
+	// restart or a new address is a different identity and is probed again.
+	admitted map[endpointIdentity]string
 }
 
 // New creates a new Discovery event adapter component.
@@ -172,29 +151,15 @@ type Component struct {
 //   - eventBus: The event bus for subscribing to and publishing events
 //   - logger: Structured logger for observability
 //
-// Returns a configured Component ready to be started, or an error if
-// local HAProxy version detection fails (which is fatal - the controller
-// cannot start without knowing its local version for compatibility checking).
+// Returns a configured Component ready to be started.
 //
 // Note: The Discovery pure component is created lazily when the dataplane port
-// is configured via ConfigValidatedEvent. This constructor only detects the
-// local HAProxy version for future compatibility checking.
-func New(ctx context.Context, eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) {
-	// Detect local HAProxy version at startup (fatal if fails). Happens
-	// before the Base subscribes so a failed constructor doesn't leak a
-	// subscription.
-	localVersion, err := dataplane.DetectLocalVersionContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
-	}
-
+// is configured via ConfigValidatedEvent.
+func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
 	c := &Component{
 		discoveredReplayer: leadership.NewStateReplayer[*events.HAProxyPodsDiscoveredEvent](eventBus),
 		lastEndpoints:      make(map[podIdentity]endpointAuthority),
-		localVersion:       localVersion,
-		admissionProofs:    make(map[endpointIdentity]versionAdmissionProof),
-		versionRejections:  make(map[endpointIdentity]string),
-		pendingRetries:     make(map[endpointIdentity]*retryState),
+		admitted:           make(map[endpointIdentity]string),
 	}
 	// The Base subscribes to the EventBus during construction (before
 	// EventBus.Start()). This ensures proper startup synchronization without
@@ -216,12 +181,7 @@ func New(ctx context.Context, eventBus *busevents.EventBus, logger *slog.Logger)
 		},
 	})
 
-	c.Logger().Debug("Detected local HAProxy version",
-		"version", localVersion.Full,
-		"major", localVersion.Major,
-		"minor", localVersion.Minor)
-
-	return c, nil
+	return c
 }
 
 // Start runs the embedded component.Base event loop until the context is
@@ -234,27 +194,8 @@ func (c *Component) Start(ctx context.Context) error {
 	c.mu.Lock()
 	c.lifecycleCtx = ctx
 	c.mu.Unlock()
-	defer c.stopRetryTimer()
 
 	return c.Base.Start(ctx)
-}
-
-// stopRetryTimer prevents new retries and joins callbacks already in progress.
-func (c *Component) stopRetryTimer() {
-	c.retryTimerMu.Lock()
-	c.retryTimerStopped = true
-	c.retryGeneration++
-	if c.retryTimer != nil {
-		if c.retryTimer.Stop() && c.retryTimerDone != nil {
-			c.retryTimerDone()
-		}
-		c.retryTimer = nil
-		c.retryTimerDone = nil
-	}
-	c.retryTimerAt = time.Time{}
-	c.retryTimerMu.Unlock()
-
-	c.retryCallbacks.Wait()
 }
 
 // HandleEvent implements component.EventHandler: it processes incoming

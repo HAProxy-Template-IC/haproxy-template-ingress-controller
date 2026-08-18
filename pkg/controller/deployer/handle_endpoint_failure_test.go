@@ -10,11 +10,9 @@ package deployer
 
 import (
 	"errors"
-	"fmt"
 	"sync/atomic"
 	"testing"
 
-	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -68,10 +66,8 @@ func TestHandleEndpointFailure_PublishesFailureEventWithCorrelation(t *testing.T
 	}
 	state := &deploymentState{}
 
-	c.handleEndpointFailure(
-		ep, errors.New(errMsg), 100, "checksum-abc", false,
-		runtimeNm, runtimeNs, corrID, state,
-	)
+	c.handleEndpointFailure(ep, errors.New(errMsg), 100,
+		scheduledEvent(runtimeNm, runtimeNs, corrID), state)
 
 	failed := testutil.WaitForEvent[*events.InstanceDeploymentFailedEvent](
 		t, eventChan, testutil.LongTimeout)
@@ -117,10 +113,8 @@ func TestHandleEndpointFailure_PublishesAppliedEventWhenRuntimeConfigSet(t *test
 	}
 	state := &deploymentState{}
 
-	c.handleEndpointFailure(
-		ep, errors.New("boom"), 100, "checksum-abc", false,
-		"rt-cfg-1", "haptic", "corr-1", state,
-	)
+	c.handleEndpointFailure(ep, errors.New("boom"), 100,
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
 	// Drain BOTH events. Order is implementation-defined within a
 	// single handler so use a typed wait for each.
@@ -159,11 +153,9 @@ func TestHandleEndpointFailure_NoAppliedEventWhenRuntimeConfigEmpty(t *testing.T
 	ep := &dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "p"}
 	state := &deploymentState{}
 
-	c.handleEndpointFailure(
-		ep, errors.New("boom"), 100, "checksum-abc", false,
-		"", "", // ← runtime config empty
-		"corr-1", state,
-	)
+	// Runtime config empty: the bootstrap window has no HAProxyCfg yet.
+	c.handleEndpointFailure(ep, errors.New("boom"), 100,
+		scheduledEvent("", "", "corr-1"), state)
 
 	// InstanceDeploymentFailedEvent MUST still fire.
 	require.NotNil(t,
@@ -175,71 +167,4 @@ func TestHandleEndpointFailure_NoAppliedEventWhenRuntimeConfigEmpty(t *testing.T
 	// ConfigAppliedToPodEvent MUST NOT fire on the empty-config branch.
 	testutil.AssertNoEvent[*events.ConfigAppliedToPodEvent](
 		t, eventChan, testutil.NoEventTimeout)
-}
-
-// TestHandleEndpointFailure_DivergenceCountsSeparately pins the
-// issue #84 observability contract: a CONFIRMED post-reload read-back
-// divergence — the on-disk config structurally diverged from the pushed body
-// after a verified reload — increments haptic_deploy_runtime_divergence_total
-// IN ADDITION to the ordinary failure events. Any other failure must NOT
-// increment it, or the counter degrades into a second deployment_errors_total.
-func TestHandleEndpointFailure_DivergenceCountsSeparately(t *testing.T) {
-	tests := []struct {
-		name          string
-		err           error
-		wantDivergent bool
-	}{
-		{
-			name: "post-reload divergence publishes the divergence event",
-			// The deployer sees the sync error wrapped, exactly like
-			// deployToSingleEndpoint returns it.
-			err: fmt.Errorf("sync failed: %w", &dataplane.SyncError{
-				Stage:   "post_reload_divergence",
-				Message: "on-disk config after reload structurally diverged from the pushed body",
-			}),
-			wantDivergent: true,
-		},
-		{
-			name:          "ordinary sync failure does not publish it",
-			err:           errors.New("dataplane returned 500"),
-			wantDivergent: false,
-		},
-		{
-			name: "read-back fetch failure (unknown state) does not publish it",
-			err: fmt.Errorf("sync failed: %w", &dataplane.SyncError{
-				Stage:   "post_reload_readback",
-				Message: "failed to read back on-disk config after reload",
-			}),
-			wantDivergent: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			bus := testutil.NewTestBus()
-			eventChan := bus.Subscribe("test-sub", 50)
-			bus.Start()
-			c := createTestDeployer(bus)
-
-			ep := &dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "haproxy-pod-1"}
-			state := &deploymentState{}
-
-			c.handleEndpointFailure(ep, tt.err, 100, "checksum-abc", false,
-				"rt-cfg-1", "haptic", "corr-1", state)
-
-			require.NotNil(t,
-				testutil.WaitForEvent[*events.InstanceDeploymentFailedEvent](
-					t, eventChan, testutil.LongTimeout),
-				"the ordinary failure event always fires")
-
-			want := 0.0
-			if tt.wantDivergent {
-				want = 1.0
-			}
-			assert.Equal(t, want, promtestutil.ToFloat64(c.metrics.DeployRuntimeDivergence),
-				"only a confirmed post-reload divergence may increment this counter; "+
-					"widening it to any sync failure makes it a duplicate of "+
-					"deployment_errors_total and the #84 alert meaningless")
-		})
-	}
 }

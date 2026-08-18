@@ -479,8 +479,8 @@ depends_on = {{ . | toJson }}
        controller-rendered TOML (rendered by libraries/spoa-hub/)
        can append per-Ingress modsecurity-snippet values into it.
        The bootstrap placeholder rendered here is just enough to let
-       the hub start; the controller pushes the real config via the
-       dataplane API and the hub reloads on file-watch. */}}
+       the hub start; the controller pushes the real config through
+       the agent and the hub reloads on file-watch. */}}
 {{- if and (eq $name "coraza") $plugin.directives }}
 directives = """
 {{- $plugin.directives | nindent 0 }}

@@ -63,13 +63,16 @@ type Baseline struct {
 // Files is always the complete desired set. Reasons name every change that was
 // not applied at runtime, whether it forced a reload or only a file write.
 type Decision struct {
-	Verdict Verdict
-	Ops     []api.Op
-	InPlace []api.Op // executable while a reload is pending; empty otherwise
-	Chunks  int      // applies Ops is split into, >1 only past api.MaxOpsPerApply
-	Reasons []string
-	Files   []api.File
-	Mode    string // api.ModeAuto or api.ModeReload
+	Verdict Verdict  `json:"verdict"`
+	Ops     []api.Op `json:"ops,omitempty"`
+	InPlace []api.Op `json:"in_place_ops,omitempty"` // executable while a reload is pending; empty otherwise
+	// WorkerPlan is what the worker holds once InPlace ran; its ID is the
+	// pod's next worker-ops baseline. Set exactly when InPlace is.
+	WorkerPlan *renderplan.Plan `json:"-"`
+	Chunks     int              `json:"chunks,omitempty"` // applies Ops is split into, >1 only past api.MaxOpsPerApply
+	Reasons    []string         `json:"reasons,omitempty"`
+	Files      []api.File       `json:"files"`
+	Mode       string           `json:"mode"` // api.ModeAuto or api.ModeReload
 }
 
 // composedOps are every op kind Diff can put in a Decision. shutdown_sessions
@@ -108,14 +111,20 @@ func ComposedOps() []string {
 }
 
 // Chunk splits Ops into the applies the deployer sends, each an ordered prefix
-// of the remaining ops.
+// of the remaining ops. The first apply carries the in-place batch as well and
+// the cap is on their sum, so that batch comes out of its budget — an apply
+// over the cap is refused before it is sent, and reaches no pod at all.
 func (d *Decision) Chunk() [][]api.Op {
 	if len(d.Ops) == 0 {
 		return nil
 	}
-	chunks := make([][]api.Op, 0, chunkCount(len(d.Ops)))
-	for start := 0; start < len(d.Ops); start += api.MaxOpsPerApply {
-		chunks = append(chunks, d.Ops[start:min(start+api.MaxOpsPerApply, len(d.Ops))])
+	chunks := make([][]api.Op, 0, chunkCount(len(d.Ops), len(d.InPlace)))
+	budget := max(api.MaxOpsPerApply-len(d.InPlace), 0)
+	for start := 0; start < len(d.Ops); {
+		end := min(start+budget, len(d.Ops))
+		chunks = append(chunks, d.Ops[start:end])
+		start = end
+		budget = api.MaxOpsPerApply
 	}
 	return chunks
 }
@@ -139,9 +148,10 @@ func Files(p *renderplan.Plan) []api.File {
 	return files
 }
 
-func chunkCount(ops int) int {
+func chunkCount(ops, inPlace int) int {
 	if ops == 0 {
 		return 0
 	}
-	return (ops + api.MaxOpsPerApply - 1) / api.MaxOpsPerApply
+	first := min(max(api.MaxOpsPerApply-inPlace, 0), ops)
+	return 1 + (ops-first+api.MaxOpsPerApply-1)/api.MaxOpsPerApply
 }

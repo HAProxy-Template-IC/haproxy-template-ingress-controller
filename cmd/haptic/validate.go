@@ -175,11 +175,15 @@ func newValidateLogger() *slog.Logger {
 // compilers. Results are returned even when tests fail, alongside the error.
 func validateAndReport(ctx context.Context, schemas schemaSource, logger *slog.Logger) (*testrunner.TestResults, error) {
 	// Setup validation environment
-	setup, err := setupValidation(ctx, schemas, logger)
+	setup, err := setupValidation(ctx, validateConfigFiles, schemas, nil, logger)
 	if err != nil {
 		return nil, err
 	}
 	defer setup.Cleanup()
+
+	if len(setup.ConfigSpec.ValidationTests) == 0 {
+		return nil, errNoValidationTests
+	}
 
 	results, err := runValidationTests(ctx, setup.ConfigSpec, setup.Engine, setup.ValidationPaths, setup.Capabilities, setup.HAProxyVersion, setup.TypedResourceTypes, logger)
 	if err != nil {
@@ -213,6 +217,13 @@ type ValidationSetup struct {
 	Capabilities    dataplane.Capabilities
 	HAProxyVersion  *dataplane.Version
 
+	// Env is the filesystem environment this render resolved its map and
+	// certificate paths against. Hand it to a second setupValidation so both
+	// renders name their files identically — those paths appear verbatim in
+	// haproxy.cfg, so two renders that resolved them differently compare as
+	// entirely rewritten.
+	Env *renderEnv
+
 	// TypedResourceTypes is the per-resource generated Go type produced
 	// by typebootstrap against schemas loaded from --schema-dir /
 	// HAPTIC_SCHEMA_DIR. Populated for any watched resource whose
@@ -228,10 +239,21 @@ type ValidationSetup struct {
 	Cleanup func()
 }
 
-// setupValidation loads config, creates engine, and sets up validation paths.
-func setupValidation(ctx context.Context, schemas schemaSource, logger *slog.Logger) (*ValidationSetup, error) {
+// renderEnv is the filesystem environment a render resolves its file paths
+// against, plus what the local HAProxy binary can do. Its creator cleans it up.
+type renderEnv struct {
+	paths        *dataplane.ValidationPaths
+	capabilities dataplane.Capabilities
+	version      *dataplane.Version
+	cleanup      func()
+}
+
+// setupValidation loads the config file set, creates the engine, and sets up
+// validation paths. A non-nil env reuses another setup's directories instead of
+// creating its own, and the returned setup then cleans up nothing.
+func setupValidation(ctx context.Context, files []string, schemas schemaSource, env *renderEnv, logger *slog.Logger) (*ValidationSetup, error) {
 	// Load HAProxyTemplateConfig from file
-	configSpec, err := loadConfigFromFiles(validateConfigFiles)
+	configSpec, err := loadConfigFromFiles(files)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
@@ -261,16 +283,16 @@ func setupValidation(ctx context.Context, schemas schemaSource, logger *slog.Log
 	}
 	printStrippedTests(specResolution)
 
-	// Check if config has validation tests
-	if len(configSpec.ValidationTests) == 0 {
-		return nil, errNoValidationTests
-	}
-
 	// Setup validation paths in temp directory
 	// Pass configSpec so setupValidationPaths can derive subdirectory names from dataplane configuration
-	validationPaths, capabilities, haproxyVersion, cleanupFunc, err := setupValidationPaths(ctx, configSpec)
-	if err != nil {
-		return nil, err
+	cleanupFunc := func() {}
+	if env == nil {
+		paths, capabilities, haproxyVersion, cleanup, pathErr := setupValidationPaths(ctx, configSpec)
+		if pathErr != nil {
+			return nil, pathErr
+		}
+		env = &renderEnv{paths: paths, capabilities: capabilities, version: haproxyVersion, cleanup: cleanup}
+		cleanupFunc = cleanup
 	}
 
 	// Generate the typed resource structs so the engine is constructed with
@@ -304,10 +326,11 @@ func setupValidation(ctx context.Context, schemas schemaSource, logger *slog.Log
 	return &ValidationSetup{
 		ConfigSpec:         configSpec,
 		Engine:             engine,
-		ValidationPaths:    validationPaths,
-		Capabilities:       capabilities,
-		HAProxyVersion:     haproxyVersion,
+		ValidationPaths:    env.paths,
+		Capabilities:       env.capabilities,
+		HAProxyVersion:     env.version,
 		TypedResourceTypes: typedResult.Types,
+		Env:                env,
 		Cleanup:            cleanupFunc,
 	}, nil
 }

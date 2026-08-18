@@ -37,7 +37,7 @@ import (
 // the contract is pinned independently of the fake.
 
 func TestHandleConfigValidated_WrongTypeLeavesStateUntouched(t *testing.T) {
-	c := newTestComponentWithoutHAProxy(t)
+	c := newTestComponent(t)
 	require.False(t, c.hasDataplanePort,
 		"baseline: hasDataplanePort must start false for the negative assertion to be meaningful")
 	require.Zero(t, c.dataplanePort,
@@ -70,7 +70,7 @@ func TestHandleConfigValidated_WrongTypeLeavesStateUntouched(t *testing.T) {
 }
 
 func TestHandleCredentialsUpdated_WrongTypeLeavesStateUntouched(t *testing.T) {
-	c := newTestComponentWithoutHAProxy(t)
+	c := newTestComponent(t)
 	require.False(t, c.hasCredentials,
 		"baseline: hasCredentials must start false")
 	require.Nil(t, c.credentials,

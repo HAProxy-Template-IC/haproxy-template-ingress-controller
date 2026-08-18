@@ -107,6 +107,65 @@ Analyse with `go tool pprof -http=:8081 cpu.pprof`.
 
 ## Common recipes
 
+**Does this change reload HAProxy?**
+
+`haptic diff` compares two configurations and prints what a pod has to do to
+reach the second one. It runs the decision the controller makes per pod, so the
+verdict is what a deployment would do. The first line is that verdict —
+`runtime`, `file_only` or `reload` — and the lines under it name every change
+that couldn't run at runtime, then the runtime commands it composed.
+
+```bash
+# Against the first HAProxy pod the cluster reports
+haptic diff -f candidate.yaml
+
+# Against one named pod
+haptic diff -f candidate.yaml --from pod://haptic/haptic-haproxy-0
+
+# Two files, with no cluster involved
+haptic diff --from deployed.yaml --to candidate.yaml
+```
+
+A rendered side renders against no watched resources at all, so the answer is
+about the configuration itself. Pass `--test <name>` to render both sides with
+that `validationTest`'s fixtures instead, and ask the same question about one
+Ingress or Gateway set.
+
+`--all` lists every composed op rather than the first 20, and `--output json`
+prints the decision for a pipeline gate. The exit code is 0 whenever the
+comparison succeeded: the verdict is the answer, not a failure.
+
+**What does one HAProxy pod hold and run?**
+
+`haptic agent state` prints the agent's own view of its pod: the plans it
+applied, runs and can fall back to, what its worker has loaded, what it still
+has to delete, and how the last apply went. Run it in the `agent` container,
+where the credentials it authenticates with are already in the environment:
+
+```bash
+POD=$(kubectl get pod -n haptic -l app.kubernetes.io/component=loadbalancer -o name | head -1)
+kubectl exec -n haptic "$POD" -c agent -- haptic agent state
+```
+
+Re-hash the tree first, so the reported digests are observations rather than the
+agent's last-known set:
+
+```bash
+kubectl exec -n haptic "$POD" -c agent -- haptic agent state --verify
+```
+
+List every file the agent holds with its digest and size:
+
+```bash
+kubectl exec -n haptic "$POD" -c agent -- haptic agent state --files
+```
+
+A `running` plan behind the `applied` one means a reload is pending. `last
+apply` carries the stage that failed and HAProxy's own message when an apply was
+refused, which is what an alert on `haptic_apply_rejected_total` or
+`haptic_agent_invariant_violations_total` sends you here for. `--output json`
+prints the raw `/v1/state` response.
+
 **Did your config actually load?**
 
 ```bash

@@ -258,9 +258,10 @@ func readPayload(reader *bufio.Reader, pattern string) string {
 
 // reply is one command's answer: a message carries a severity, a dump does not.
 type reply struct {
-	text  string
-	dump  bool
-	fatal bool
+	text    string
+	dump    bool
+	fatal   bool
+	warning bool
 }
 
 func silent() reply { return reply{} }
@@ -271,6 +272,12 @@ func message(format string, a ...any) reply {
 
 func failure(format string, a ...any) reply {
 	return reply{text: fmt.Sprintf(format, a...), fatal: true}
+}
+
+// warning is the LOG_WARNING answer `set server addr` gives whether it changed
+// something or refused; only the words tell.
+func warning(format string, a ...any) reply {
+	return reply{text: fmt.Sprintf(format, a...), warning: true}
 }
 
 func dump(text string) reply { return reply{text: text, dump: true} }
@@ -285,6 +292,8 @@ func write(out *strings.Builder, r reply, severity bool) {
 		out.WriteString(r.text)
 	case severity && r.fatal:
 		out.WriteString("[3]: " + r.text)
+	case severity && r.warning:
+		out.WriteString("[4]: " + r.text)
 	case severity:
 		out.WriteString("[6]: " + r.text)
 	default:

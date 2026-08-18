@@ -295,7 +295,7 @@ endif
 test-agent-docker: ## Run the agent docker suite (real HAProxy + agent containers, no cluster)
 	@echo "Running agent docker tests against HAProxy $(HAPROXY_VERSION)..."
 	@# The suite builds the haptic binary itself and lays it into the HAProxy
-	@# image; HAPTIC_BINARY points it at a prebuilt one instead (CI artifact).
+	@# image; HAPTIC_BINARY points it at a prebuilt one instead.
 	HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) tool gotestsum --junitfile report-agent-docker.xml --format testname -- \
 		-tags=agentdocker -v -timeout 20m -count=1 ./tests/agent/...
 
@@ -561,7 +561,7 @@ test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run
 	@echo "  SKIP_CLUSTER_CREATE - CI mode: assume cluster already exists; skip kind create"
 	@echo "  SKIP_DOCKER_BUILD   - CI mode: assume haptic:test-haproxyX.Y already loaded"
 	@echo "  TEST_RUN_PATTERN    - Run specific tests matching pattern"
-	@echo "  HAPTIC_E2E_DPAPI_DEBUG - Set 1 to install the chart with haproxy.dataplane.logLevel=debug"
+	@echo "  HAPTIC_E2E_AGENT_DEBUG - Set 1 to install the chart with haproxy.agent.logLevel=debug"
 	@echo "  PARALLEL            - Max concurrent tests. Defaults to Go's default (GOMAXPROCS,"
 	@echo "                        i.e. nproc), which auto-scales to the host. Verified stable"
 	@echo "                        from 4 up through 16 on a 16-core box. Override with"

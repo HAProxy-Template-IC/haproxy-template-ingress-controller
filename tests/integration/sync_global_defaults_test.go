@@ -14,25 +14,11 @@ func TestSyncGlobalDefaults(t *testing.T) {
 			name:              "global-change-maxconn",
 			initialConfigFile: "global/maxconn-2000.cfg",
 			desiredConfigFile: "global/maxconn-4000.cfg",
-			expectedCreates:   0,
-			expectedUpdates:   1,
-			expectedDeletes:   0,
-			expectedOperations: []string{
-				"Update global section",
-			},
-			expectedReload: true,
 		},
 		{
 			name:              "defaults-change-mode",
 			initialConfigFile: "basic/one-backend.cfg",
 			desiredConfigFile: "defaults/mode-tcp.cfg",
-			expectedCreates:   0,
-			expectedUpdates:   1,
-			expectedDeletes:   0,
-			expectedOperations: []string{
-				"Update defaults section 'unnamed_defaults_1'",
-			},
-			expectedReload: true,
 		},
 
 		// ==================== TIMEOUT DIRECTIVE OPERATIONS ====================
@@ -40,13 +26,6 @@ func TestSyncGlobalDefaults(t *testing.T) {
 			name:              "defaults-change-timeouts",
 			initialConfigFile: "timeouts/defaults-base.cfg",
 			desiredConfigFile: "timeouts/defaults-modified.cfg",
-			expectedCreates:   0,
-			expectedUpdates:   1,
-			expectedDeletes:   0,
-			expectedOperations: []string{
-				"Update defaults section 'unnamed_defaults_1'",
-			},
-			expectedReload: true,
 		},
 	}
 

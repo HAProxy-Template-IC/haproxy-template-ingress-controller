@@ -34,7 +34,7 @@ import (
 // The dump captures everything a future debugger would want without
 // requiring a re-run:
 //   - Controller pod logs (all containers)
-//   - HAProxy pod logs (haproxy, dataplane, spoa-hub containers)
+//   - HAProxy pod logs (haproxy, agent, spoa-hub containers)
 //   - Backend fixture pod logs (echo-server, auth-server, blocklist-server)
 //   - Pod events from the test namespace and the controller namespace
 //   - HAProxyCfg JSON (with status), so the rendered config and per-pod
@@ -63,22 +63,22 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 			"logs", "-l", LabelSelectorController, "--all-containers", "--tail=50000")
 
 		// --prefix tags each line with [pod/<name> container/<name>] so the
-		// haproxy / dataplane / spoa-hub containers can be told apart when
+		// haproxy / agent / spoa-hub containers can be told apart when
 		// reading back the dump. Without it, all three containers'
 		// stdout collapses into one un-attributable stream — investigating
-		// publish-step latency or dataplane errors requires re-running the
+		// publish-step latency or apply errors requires re-running the
 		// test just to know which container said what.
 		//
-		// --tail=50000 (vs the historical 500): the dataplane API at
-		// log_level=trace plus per-transaction access lines emits ~200
-		// lines/s under parallel-test load. With three containers shared
-		// in one selector, 500 lines amounts to <1 s of real-time
-		// coverage — a CI failure happening more than a second before
-		// dump time has its dataplane log clipped out of the artifact
-		// entirely. 50000 covers ~4 minutes of trace-level activity per
-		// container, which fits within the artifact upload limit and
-		// reliably preserves the window around a probe-loop failure
-		// (typical e2e probe loop ≤ 30 s).
+		// --tail=50000 (vs the historical 500): at debug level the agent
+		// logs a line per apply and HAProxy one per reload, and the
+		// spoa-hub emits ~200 lines/s under parallel-test load. With three
+		// containers shared in one selector, 500 lines amounts to <1 s of
+		// real-time coverage — a CI failure happening more than a second
+		// before dump time has its log clipped out of the artifact
+		// entirely. 50000 covers ~4 minutes of activity per container,
+		// which fits within the artifact upload limit and reliably
+		// preserves the window around a probe-loop failure (typical e2e
+		// probe loop <= 30 s).
 		dumpCommand(t, dumpDir, "haproxy-logs.txt",
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
 			"logs", "-l", LabelSelectorHAProxy, "--all-containers", "--prefix", "--tail=50000")
@@ -166,22 +166,19 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 			"kubectl", "--kubeconfig", kubeconfigPath,
 			"get", "endpointslices", "-A", "-o", "yaml")
 
-		// HAProxy's view of every server slot — admin_state, operational_state,
-		// runtime_addr, runtime_port. Ground truth for "which SRV slot points
-		// where right now" that no controller log can match. Captured per
-		// HAProxy pod via the dataplane /runtime/backends endpoint family
-		// (the only network-accessible surface; HAProxy's stats socket is
-		// not reachable from outside the pod). One file per HAProxy pod
-		// keeps the dump readable when there are multiple replicas.
+		// HAProxy's view of every server — admin state, operational state,
+		// address and port. Ground truth for "where does this server point
+		// right now" that no controller log can match, read from HAProxy
+		// itself. One file per HAProxy pod keeps the dump readable when
+		// there are multiple replicas.
 		dumpHAProxyRuntimeServers(t, dumpDir)
 	})
 }
 
-// dumpHAProxyRuntimeServers fetches `GET /runtime/backends` (all backends and
-// their runtime server state) from each HAProxy pod's dataplane API and
-// writes one file per pod. Without this, post-mortem inspection has to
-// reverse-engineer slot mappings from the rendered config + dataplane access
-// log — which is exactly the kind of forensics that takes hours.
+// dumpHAProxyRuntimeServers writes, per HAProxy pod, what the agent believes
+// it applied and what HAProxy is actually running. Without it, post-mortem
+// inspection has to reverse-engineer the pod's state from the rendered config
+// alone — which is exactly the kind of forensics that takes hours.
 func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 	t.Helper()
 
@@ -206,44 +203,41 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 
 	for _, podBytes := range pods {
 		pod := string(podBytes)
-		// curl from inside the dataplane container against localhost.
-		// Auth: the dataplane API rejects unauthenticated requests on
-		// every route, localhost included. The container has
-		// $DATAPLANE_USERNAME / $DATAPLANE_PASSWORD in its environment
-		// (set from the credentials Secret in the deployment spec); we
-		// pass them through curl's -u with shell expansion. Without
-		// the auth this returned 401 and every artifact was empty
-		// (verified on MR !1019 e2e [3.1]).
+		// curl from inside the agent container against localhost. Auth: the
+		// agent rejects unauthenticated requests on every route, localhost
+		// included. The container has $DATAPLANE_USERNAME /
+		// $DATAPLANE_PASSWORD in its environment (set from the credentials
+		// Secret in the deployment spec); we pass them through curl's -u with
+		// shell expansion. Without the auth this returns 401 and every
+		// artifact is empty (verified on MR !1019 e2e [3.1]).
 		//
-		// `GET /configuration/backends` is the only network-exposed
-		// collection endpoint that lists every backend.
+		// /v1/state answers the two questions a post-mortem starts with: which
+		// plan the pod applied and is running, and what the agent last did
+		// with an apply — plus the digest of every file it holds and the
+		// runtime inventory it diffs against.
 		curlAuth := `curl -sS --max-time 5 -u "$DATAPLANE_USERNAME:$DATAPLANE_PASSWORD"`
-		dumpCommand(t, dumpDir, "haproxy-configured-backends-"+pod+".json",
+		dumpCommand(t, dumpDir, "haproxy-agent-state-"+pod+".json",
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
-			"exec", pod, "-c", "dataplane", "--",
-			"sh", "-c", curlAuth+" http://localhost:5555/v3/services/haproxy/configuration/backends")
+			"exec", pod, "-c", "agent", "--",
+			"sh", "-c", curlAuth+" http://localhost:5555/v1/state")
 
-		// Capture the full HAProxy config from disk — single shot, no
-		// per-backend iteration needed.
+		// The configuration HAProxy is running, read from disk — single shot,
+		// no per-backend iteration needed.
 		dumpCommand(t, dumpDir, "haproxy-config-raw-"+pod+".cfg",
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
-			"exec", pod, "-c", "dataplane", "--",
-			"sh", "-c", curlAuth+" http://localhost:5555/v3/services/haproxy/configuration/raw")
+			"exec", pod, "-c", "haproxy", "--",
+			"cat", "/etc/haproxy/haproxy.cfg")
 
 		// HAProxy's runtime (in-memory) server table via `show servers
 		// state` on the master socket, routed to worker 1 with the
-		// `@1` prefix. This dumps every backend's slot in a single
+		// `@1` prefix. This dumps every backend's server in a single
 		// shot: srv_addr / srv_port / srv_op_state / srv_admin_state
-		// per row. Ground truth for "what address was SRV_1 carrying
-		// at the moment of the failure" — the dataplane API's
-		// /runtime/backends/{name}/servers is the JSON equivalent but
-		// needs one curl per backend, which times out the t.Cleanup
-		// budget on a large cluster.
+		// per row. Ground truth for "what address was this server
+		// carrying at the moment of the failure".
 		//
-		// The chart's HAProxy global section doesn't declare a stats
-		// socket (only the master-worker socket); without the `@1`
-		// prefix the master interprets the command directly and
-		// returns "Unknown command: 'show'".
+		// The master socket relays exactly one command per connection,
+		// which is all this needs; the worker stats socket the agent
+		// uses would do as well.
 		dumpCommand(t, dumpDir, "haproxy-show-servers-state-"+pod+".txt",
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",

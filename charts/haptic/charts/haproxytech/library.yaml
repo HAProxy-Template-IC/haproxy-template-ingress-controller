@@ -702,7 +702,7 @@ templateSnippets:
           {%- var authSecret = ingress.Metadata.Annotations["haproxy.org/auth-secret"] %}
           {%- var authRealm = ingress.Metadata.Annotations["haproxy.org/auth-realm"] %}
           {%- if authRealm == "" %}{%- authRealm = "Protected-Content" %}{%- end %}
-          {#- The DataPlane API realm field forbids spaces (^[^\s]+$); upstream dashes them too, so don't fail. -#}
+          {#- Upstream dashes spaces in the realm; match it rather than fail. -#}
           {%- authRealm = replace(authRealm, " ", "-") %}
           {#- Auth is security-critical: fail closed on a control char (it cannot live in a
               double-quoted realm string). The " / \ / $ are escaped for the quoted emission. -#}
@@ -2142,7 +2142,7 @@ _migrationCoverage:
         doc: annotation-support
       haproxy.org/auth-realm:
         status: different
-        note: Default "Protected-Content" (matching the upstream controller); spaces in the realm are replaced with dashes, as upstream does, since the DataPlane API forbids spaces.
+        note: Default "Protected-Content" (matching the upstream controller); spaces in the realm are replaced with dashes, as upstream does.
         doc: annotation-support
       haproxy.org/send-proxy-protocol:
         status: different

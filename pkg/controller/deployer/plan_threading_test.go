@@ -31,13 +31,19 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
-// recordingPlanSink captures what the deployer reports the fleet is running.
+// recordingPlanSink captures what the deployer reports the fleet is running,
+// and what capabilities the fleet's HAProxy version supports.
 type recordingPlanSink struct {
-	plans []*renderplan.Plan
+	plans        []*renderplan.Plan
+	capabilities []dataplane.Capabilities
 }
 
 func (s *recordingPlanSink) SetAckedPlan(plan *renderplan.Plan) {
 	s.plans = append(s.plans, plan)
+}
+
+func (s *recordingPlanSink) SetCapabilities(capabilities dataplane.Capabilities) {
+	s.capabilities = append(s.capabilities, capabilities)
 }
 
 func renderedEventWithPlan(config string, plan *renderplan.Plan) *events.TemplateRenderedEvent {
@@ -146,75 +152,14 @@ func TestDeployToEndpoints_UnreachablePodAcksNothing(t *testing.T) {
 	component := createTestDeployer(bus)
 	component.ackedPlans = sink
 
-	// Port 1 refuses connections, so every endpoint sync fails.
-	component.deployToEndpoints(context.Background(), "global\n  daemon\n", nil, nil,
+	// Port 1 refuses connections, so every pod's state read fails.
+	plan := &renderplan.Plan{ID: "plan-abc"}
+	event := events.NewDeploymentScheduledEvent("global\n  daemon\n", nil, nil,
 		[]dataplane.Endpoint{{URL: "http://127.0.0.1:1", PodName: "haproxy-1"}},
-		"", "", "test", "checksum", nil, &renderplan.Plan{ID: "plan-abc"}, "plan-abc",
-		"deployment-1", "correlation-1")
+		"", "", "test", "checksum", plan, plan.ID, nil, true)
+	component.deployToEndpoints(context.Background(), func() {}, event, "deployment-1")
 
 	assert.Empty(t, sink.plans, "a failed deployment must not claim the fleet runs the plan")
-}
-
-func TestHandleEndpointSuccess_StampsThePlanOntoThePodStatus(t *testing.T) {
-	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe("plan-status-sub", 10)
-	bus.Start()
-	component := createTestDeployer(bus)
-	state := &deploymentState{operationBreakdown: make(map[string]int)}
-
-	component.handleEndpointSuccess(
-		&dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "haproxy-1", PodNamespace: "haptic"},
-		&dataplane.SyncResult{Details: dataplane.DiffDetails{TotalOperations: 3}},
-		250, "checksum-abc", false, "rt-cfg-1", "haptic", "plan-abc", "corr-1", state)
-
-	applied := testutil.WaitForEvent[*events.ConfigAppliedToPodEvent](t, eventChan, testutil.LongTimeout)
-	require.NotNil(t, applied.SyncMetadata)
-	// A Dataplane API sync writes and activates in one step, so the pod both
-	// applied and runs this plan.
-	assert.Equal(t, "plan-abc", applied.SyncMetadata.AppliedPlanID)
-	assert.Equal(t, "plan-abc", applied.SyncMetadata.RunningPlanID)
-}
-
-func TestRuntimeRawApply_AcksThePlanItLanded(t *testing.T) {
-	tests := []struct {
-		name    string
-		lane    lane
-		partial bool
-		wantAck bool
-	}{
-		{name: "complete runtime-raw apply acks", lane: laneRuntimeRaw, wantAck: true},
-		{name: "partial apply does not ack", lane: laneRuntimeRaw, partial: true},
-		{name: "structural render's runtime subset does not ack", lane: laneStructural},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			sink := &recordingPlanSink{}
-			plan := &renderplan.Plan{ID: "plan-abc"}
-			bypass := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
-				return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
-					return &dataplane.SyncResult{Success: true}, nil
-				}}, nil
-			})
-			bypass.ackedPlans = sink
-
-			dep := depFor([]dataplane.Endpoint{{URL: "http://a"}})
-			dep.lane = test.lane
-			dep.plan = plan
-			dep.planID = plan.ID
-
-			bypass.applyRuntimeRaw(context.Background(), dep, bypassPush{body: "config", partial: test.partial})
-
-			if test.wantAck {
-				// No reload and no structural deploy follows this lane, so the
-				// renderer would never see the servers it just changed.
-				require.Len(t, sink.plans, 1)
-				assert.Same(t, plan, sink.plans[0])
-				return
-			}
-			assert.Empty(t, sink.plans, "an apply that is not the complete deploy proves nothing about the fleet")
-		})
-	}
 }
 
 func TestNewDeployStack_WiresTheAckedPlanSink(t *testing.T) {
@@ -222,10 +167,10 @@ func TestNewDeployStack_WiresTheAckedPlanSink(t *testing.T) {
 	sink := &recordingPlanSink{}
 
 	stack := NewDeployStack(bus, &coreconfig.Config{}, logger,
-		metrics.NewMetrics(prometheus.NewRegistry()), sink)
+		metrics.NewMetrics(prometheus.NewRegistry()), sink, nil)
 
 	assert.Same(t, sink, stack.Deployer.ackedPlans,
 		"without the sink the renderer keeps rendering from its own plans forever")
-	assert.Same(t, sink, stack.Scheduler.runtimeBypass.ackedPlans,
-		"the runtime-raw lane reloads nothing, so its applies reach the renderer only through this sink")
+	assert.Same(t, sink, stack.Scheduler.capabilities,
+		"without the sink the renderer keeps rendering against the controller image's own HAProxy")
 }

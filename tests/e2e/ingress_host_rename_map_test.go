@@ -29,7 +29,7 @@ import (
 )
 
 // TestIngressHostRenameMapOnly verifies the full deployed stack — the chart with
-// its relative DataPlane storage dirs — correctly applies a *pure map change*.
+// its base-relative auxiliary paths — correctly applies a *pure map change*.
 //
 // Renaming an Ingress's host keeps the same backend (HAPTIC derives the backend
 // name from the Ingress name + Service + port, not the host), so only host/path

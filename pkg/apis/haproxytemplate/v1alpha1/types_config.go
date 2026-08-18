@@ -321,11 +321,14 @@ type DataplaneConfig struct {
 	// +optional
 	Port int `json:"port,omitempty"`
 
-	// MinDeploymentInterval enforces minimum time between consecutive deployments.
+	// MinDeploymentInterval is the shortest interval between two HAProxy
+	// reloads of one pod. The chart passes it to the HAPTIC agent as
+	// --reload-interval-min: a reload inside the window is scheduled, never
+	// dropped, and the controller holds further renders until it fires. Runtime
+	// applies are never paced by it. At most 60s.
 	//
-	// This prevents rapid-fire deployments from hammering HAProxy instances.
-	// Format: Go duration string (e.g., "2s", "500ms")
-	// Default: 2s
+	// Format: Go duration string (e.g., "5s", "500ms")
+	// Default: 5s
 	// +optional
 	MinDeploymentInterval string `json:"minDeploymentInterval,omitempty"`
 
@@ -386,12 +389,13 @@ type DataplaneConfig struct {
 	// +optional
 	ConfigPublishInterval string `json:"configPublishInterval,omitempty"`
 
-	// ReloadVerificationTimeout is the maximum time the Dataplane sync waits for
-	// HAProxy to report a graceful reload as completed before failing the sync.
-	// Set this higher than the Dataplane API's own reload-delay setting.
+	// ReloadVerificationTimeout is how long the HAPTIC agent waits for the
+	// HAProxy master to report a reload as finished before it fails the apply
+	// and restores the last known good file set. The chart passes it to the
+	// agent as --reload-timeout; at most 60s.
 	//
 	// Format: Go duration string (e.g., "10s", "30s").
-	// Default: 10s
+	// Default: 60s (the agent's ceiling)
 	// +optional
 	ReloadVerificationTimeout string `json:"reloadVerificationTimeout,omitempty"`
 

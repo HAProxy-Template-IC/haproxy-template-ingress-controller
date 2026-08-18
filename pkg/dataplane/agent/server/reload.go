@@ -28,15 +28,26 @@ import (
 // A scheduled reload is never cancelled, so the tick only decides its latency.
 const pacerTick = 100 * time.Millisecond
 
-// workerSettleTimeout bounds the wait for the new worker to answer after a
+// reloadReasonMode is the reload the controller asked for (mode: reload), as
+// opposed to the agent's own fallbacks.
+const reloadReasonMode = "mode"
+
+// DefaultReloadTimeout bounds the wait for the new worker to answer after a
 // reload. Past it the apply reports what it knows rather than blocking.
-const workerSettleTimeout = api.MaxReloadMs * time.Millisecond
+const DefaultReloadTimeout = api.MaxReloadMs * time.Millisecond
 
 // reload either reloads now or schedules one, depending on the pacing window.
 func (r *applyRun) reload(reason string) error {
 	r.server.logger.Info("reloading", "plan_id", r.manifest.PlanID, "reason", reason)
 	if due, open := r.server.pacingWindow(); open {
-		return r.schedule(due)
+		if err := r.schedule(due); err != nil || reason != reloadReasonMode {
+			return err
+		}
+		// The controller decided this reload and composed the in-place subset
+		// for the worker that keeps serving until it fires; a fallback reload
+		// has no such subset (its ops were refused or composed against a
+		// baseline the worker is not on).
+		return r.runInPlace()
 	}
 	if err := r.performReload(r.manifest.PlanID); err != nil {
 		return r.abort("reload", err)
@@ -51,7 +62,7 @@ func (r *applyRun) reload(reason string) error {
 func (r *applyRun) schedule(due time.Time) error {
 	r.server.schedulePendingReload(due, r.manifest.PlanID)
 	r.result.Mode = api.ResultScheduled
-	r.result.Reload = &api.ReloadInfo{ScheduledAt: due.UTC().Format(time.RFC3339)}
+	r.result.Reload = &api.ReloadInfo{ScheduledAt: due.UTC().Format(time.RFC3339Nano)}
 	r.server.setPhase(phaseScheduled, r.manifest.PlanID)
 	return nil
 }
@@ -103,7 +114,7 @@ func (s *Server) masterAnswers() bool {
 // from the one the agent recorded before the reload.
 func (s *Server) awaitNewWorker() (api.HAProxyInfo, error) {
 	previous := s.workerIdentity()
-	deadline := time.Now().Add(workerSettleTimeout)
+	deadline := time.Now().Add(s.cfg.ReloadTimeout)
 	for {
 		info, err := s.runtime.Info()
 		if err == nil && info.WorkerPID != previous.WorkerPID {
@@ -170,7 +181,7 @@ func (s *Server) firePendingReload() {
 // readBack compares the running state with the desired one after a runtime
 // apply. A lost or truncated command must not latch, so a divergence reloads.
 func (s *Server) readBack(run *applyRun) {
-	if run.result.Mode != api.ResultRuntime || !run.result.OK {
+	if run.result.Mode != api.ResultRuntime || !run.result.OK || s.stopped.Load() {
 		return
 	}
 	diverged := false
@@ -188,7 +199,7 @@ func (s *Server) readBack(run *applyRun) {
 			diverged = true
 		}
 	}
-	if !diverged {
+	if !diverged || s.stopped.Load() {
 		return
 	}
 	s.metrics.divergence.Inc()

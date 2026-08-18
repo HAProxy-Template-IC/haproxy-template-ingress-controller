@@ -198,7 +198,7 @@ tests:
             port: 9599
             protocol: TCP
 
-  - it: should open only the HAProxy stats port when the sidecar is off
+  - it: should open no vector port when the sidecar is off
     template: haproxy-networkpolicy.yaml
     set:
       haproxy.networkPolicy.allowExternal: false
@@ -208,6 +208,12 @@ tests:
               app: prometheus
       vector.enabled: false
     asserts:
+      # stats + the agent's endpoint, which is always there.
       - lengthEqual:
           path: spec.ingress[?(@.ports[0].port==8404)].ports
-          count: 1
+          count: 2
+      - notContains:
+          path: spec.ingress[?(@.ports[0].port==8404)].ports
+          content:
+            port: 9598
+            protocol: TCP

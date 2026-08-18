@@ -26,6 +26,7 @@ package agenttest
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -62,13 +63,21 @@ type Agent struct {
 	username string
 	password string
 
-	mu            sync.Mutex
-	state         api.State
-	kinds         map[string]string
-	lkgFiles      map[string]api.FileAt
-	reloadPending bool
-	rejectedOps   map[string]struct{}
-	applies       []RecordedApply
+	mu sync.Mutex
+	// state carries no AppliedPlan: the stored blob is handed back only while
+	// it describes the applied plan, which snapshot decides.
+	state          api.State
+	appliedPlan    []byte
+	planBlobPlanID string
+	kinds          map[string]string
+	lkgFiles       map[string]api.FileAt
+	reloadPending  bool
+	rejectedOps    map[string]struct{}
+	conflictOnce   string
+	failOnce       bool
+	missingOnce    []string
+	applies        []RecordedApply
+	stateReads     int
 }
 
 // Option customises the fake before it starts serving.
@@ -150,6 +159,14 @@ func (a *Agent) Applies() []RecordedApply {
 	return append([]RecordedApply(nil), a.applies...)
 }
 
+// StateReads is how many times /v1/state was answered, which is what a caller
+// that caches per pod is measured by.
+func (a *Agent) StateReads() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.stateReads
+}
+
 // SetReloadPending makes the fake behave as if a paced reload were already
 // scheduled: files are written and coalesced, ops are ignored, and only the
 // in-place ops run.
@@ -163,12 +180,80 @@ func (a *Agent) SetReloadPending(pending bool) {
 	}
 }
 
+// FirePendingReload is the pacer firing: the worker re-executes from the
+// applied file set, so the applied plan becomes the running one.
+func (a *Agent) FirePendingReload() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.reloadPending {
+		return
+	}
+	a.performReload()
+	a.state.RunningPlanID = a.state.AppliedPlanID
+	a.state.WorkerOpsPlanID = a.state.AppliedPlanID
+	a.state.LKGPlanID = a.state.AppliedPlanID
+	a.lkgFiles = maps.Clone(a.state.Files)
+}
+
+// SetAppliedEpoch raises the leader epoch the fake has accepted. The agent
+// persists the applied token, so a pod a previous leader wrote to outranks a
+// controller whose epoch counter is behind — every apply below it is a 409.
+func (a *Agent) SetAppliedEpoch(epoch uint64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.state.AppliedToken.LeaderEpoch = epoch
+}
+
 // RejectOp makes every apply carrying this op kind come back as a NACK, the
 // way HAProxy refusing a runtime command does.
 func (a *Agent) RejectOp(kind string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.rejectedOps[kind] = struct{}{}
+}
+
+// AcceptOp undoes RejectOp for this kind.
+func (a *Agent) AcceptOp(kind string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.rejectedOps, kind)
+}
+
+// SetPendingDeletes seeds the deferred deletes this pod is still waiting to
+// complete. A pod at the cap refuses another batch, so what the controller
+// composes for it has to be judged against its own count.
+func (a *Agent) SetPendingDeletes(servers, backends []string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.state.PendingDeletes = api.PendingDeletes{Servers: servers, Backends: backends}
+}
+
+// FailOnce makes the next apply answer 500 and write nothing, the way an agent
+// that hit an internal error does. The caller sees a failure, not a judgement:
+// nothing about the pod's state is known to have changed.
+func (a *Agent) FailOnce() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.failOnce = true
+}
+
+// ConflictOnce makes the next apply answer this 409 reason and write nothing,
+// which is what the agent does when its baseline moved between the caller's
+// state read and its apply. The reason is one of prev_mismatch, stale_epoch or
+// unknown_baseline.
+func (a *Agent) ConflictOnce(reason string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.conflictOnce = reason
+}
+
+// MissingOnce makes the next apply answer 409 with these paths and write
+// nothing, which is what the agent does when its tree does not hold a file the
+// manifest declares and the caller did not send it.
+func (a *Agent) MissingOnce(paths ...string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.missingOnce = paths
 }
 
 func (a *Agent) routes() http.Handler {
@@ -203,6 +288,7 @@ func (a *Agent) handleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mu.Lock()
+	a.stateReads++
 	state := a.snapshot()
 	a.mu.Unlock()
 	writeJSON(w, http.StatusOK, state)
@@ -215,6 +301,9 @@ func (a *Agent) snapshot() api.State {
 	state.Files = make(map[string]api.FileAt, len(a.state.Files))
 	for path, at := range a.state.Files {
 		state.Files[path] = at
+	}
+	if a.planBlobPlanID != "" && a.planBlobPlanID == a.state.AppliedPlanID {
+		state.AppliedPlan = a.appliedPlan
 	}
 	return state
 }

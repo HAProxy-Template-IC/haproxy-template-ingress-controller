@@ -192,7 +192,7 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "user admin password"}
 
   test-haproxy-ingress-auth-tls-secret:
-    description: haproxy-ingress.github.io/auth-tls-secret references a Secret whose `ca.crt` is written to the general file dir (not ssl/ — Dataplane validates ssl/ uploads as cert+key) and used in the crt-list line...
+    description: haproxy-ingress.github.io/auth-tls-secret references a Secret whose `ca.crt` is written to the general file dir (not ssl/, whose entries are cert+key bundles) and used in the crt-list line...
     fixtures:
       secrets:
         - apiVersion: v1

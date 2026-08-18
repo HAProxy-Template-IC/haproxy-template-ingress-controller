@@ -19,242 +19,163 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 )
 
-// handleEndpointSuccess is the per-endpoint success path inside
-// the parallel deployment fan-out. It mirrors handleEndpointFailure
-// but with three additional load-bearing contracts that are
-// distinct from the failure path:
+// handleEndpointSuccess is the per-pod ACK path inside the deployment fan-out.
+// Its contracts:
 //
-//  1. ConfigAppliedToPodEvent is published unconditionally on
-//     every successful endpoint sync, regardless of whether the
-//     sync did any HAProxy operations. The earlier "skip no-op"
-//     optimisation broke the spec.checksum ↔
-//     status.deployedToPods[].checksum invariant — a deploy with
-//     content X but zero HAProxy ops (because pod was already in
-//     sync at the directive level) would advance spec.checksum
-//     via the publisher path while leaving deployedToPods[] stale.
-//     See the comment in deployment.go's handleEndpointSuccess for
-//     the failure trace.
-//
-//  2. reloadsTriggered counter is conditionally incremented based
-//     on syncResult.ReloadTriggered. The aggregator uses this to
-//     report "deployed N pods, M reloads" — operators rely on this
-//     ratio to spot config changes that require reloads vs
-//     runtime-only changes.
-//
-//  3. backendDiffFields is captured ONLY ONCE (first writer wins).
-//     This is documented invariant: the diff fields are identical
-//     across endpoints because they all receive the same config,
-//     so capturing per-endpoint would be redundant churn under
-//     the breakdownMu lock.
+//  1. Publish ConfigAppliedToPodEvent whenever the HAProxyCfg identity is
+//     known — unconditionally, including for a no-op apply. Skipping the no-op
+//     broke the spec.Checksum ↔ status.deployedToPods[].Checksum invariant: a
+//     render whose bytes changed without changing any HAProxy object left the
+//     pods recorded at the previous checksum forever.
+//  2. Count the ACK, and count convergence separately. A pod whose reload is
+//     only scheduled accepted the files but does not serve them yet, so it must
+//     not make the fleet look converged.
+//  3. Record the apply and its ops on the per-pod counters.
+func ackOutcome(mode string, converged bool, ops ...api.Op) *podOutcome {
+	return &podOutcome{
+		result: &api.ApplyResult{
+			PlanID:        "plan-1",
+			OK:            true,
+			Mode:          mode,
+			AppliedPlanID: "plan-1",
+			RunningPlanID: "plan-1",
+			Reload:        &api.ReloadInfo{Performed: mode == api.ResultReload, OK: true},
+		},
+		sent:      ops,
+		converged: converged,
+	}
+}
 
-func TestHandleEndpointSuccess_PublishesAppliedWhenNotNoOp(t *testing.T) {
+func TestHandleEndpointSuccess_PublishesPodStatusWithPlanIdentity(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 	c := createTestDeployer(bus)
 
-	ep := &dataplane.Endpoint{
-		URL:          "http://10.0.0.1:5555",
-		PodName:      "haproxy-pod-1",
-		PodNamespace: "haptic",
-	}
-	// Non-no-op result: both reload triggered AND operations present.
-	syncResult := &dataplane.SyncResult{
-		ReloadTriggered: true,
-		Details: dataplane.DiffDetails{
-			TotalOperations: 3,
-		},
-	}
-	state := &deploymentState{
-		operationBreakdown: make(map[string]int),
-	}
+	endpoint := &dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "haproxy-0", PodNamespace: "haptic"}
+	state := &deploymentState{operationBreakdown: map[string]int{}}
+	outcome := ackOutcome(api.ResultRuntime, true, api.Op{Kind: api.OpServerSetAddr})
 
-	c.handleEndpointSuccess(
-		ep, syncResult, 250, "checksum-abc", false,
-		"rt-cfg-1", "haptic", "", "corr-1", state,
-	)
+	c.handleEndpointSuccess(endpoint, outcome, 250,
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
-	// ConfigAppliedToPodEvent fires because !isNoOp (operations > 0).
-	applied := testutil.WaitForEvent[*events.ConfigAppliedToPodEvent](
-		t, eventChan, testutil.LongTimeout)
-	require.NotNil(t, applied,
-		"ConfigAppliedToPodEvent MUST fire on a non-no-op success — the "+
-			"statusapplier consumes this to record the deployed checksum "+
-			"on the runtime config's status subresource")
+	applied := testutil.WaitForEvent[*events.ConfigAppliedToPodEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, applied)
+	assert.Equal(t, "haproxy-0", applied.PodName)
+	assert.Equal(t, "checksum-abc", applied.Checksum)
+	require.NotNil(t, applied.SyncMetadata)
+	assert.Equal(t, "plan-1", applied.SyncMetadata.AppliedPlanID)
+	assert.Equal(t, "plan-1", applied.SyncMetadata.RunningPlanID)
+	assert.Equal(t, api.ResultRuntime, applied.SyncMetadata.Mode)
+	assert.False(t, applied.SyncMetadata.ReloadTriggered)
+	assert.Empty(t, applied.SyncMetadata.Error)
 
-	// State counters: success + reload + operations.
-	assert.Equal(t, int32(1), atomic.LoadInt32(&state.successCount),
-		"successCount MUST be incremented")
-	assert.Equal(t, int32(1), atomic.LoadInt32(&state.reloadsTriggered),
-		"reloadsTriggered MUST be incremented when syncResult.ReloadTriggered "+
-			"is true — this is what powers the operator-facing "+
-			"'N deploys, M reloads' summary")
-	assert.Equal(t, int32(3), atomic.LoadInt32(&state.totalOperations),
-		"totalOperations MUST be added from syncResult.Details.TotalOperations")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&state.ackCount))
+	assert.Equal(t, int32(1), atomic.LoadInt32(&state.convergedCount))
+	assert.Equal(t, int32(0), atomic.LoadInt32(&state.reloadsTriggered))
+	assert.Equal(t, 1, state.totalOperations)
 }
 
-func TestHandleEndpointSuccess_PublishesAppliedEventOnNoOpDeployment(t *testing.T) {
-	// No-op result (no reload, no operations). Pre-change, this
-	// suppressed ConfigAppliedToPodEvent — that was wrong: it broke
-	// the spec.checksum ↔ status.deployedToPods[].checksum invariant.
-	// A deploy with content X but zero HAProxy ops (because the pod
-	// was already directive-identical) advanced spec.checksum via the
-	// publisher path while leaving deployedToPods[] stuck at the
-	// previous checksum. Repro: pipeline 2559825226 e2e [3.1] /
-	// TestIngressBasicAuthHaproxyIngress et al — pod stuck reporting
-	// `5f1f6d0…` while spec sat at `b8fac3…` for 90+ s.
-	//
-	// The fix is to always publish: SSA Apply is idempotent against
-	// byte-identical managedFields entries (no resourceVersion bump)
-	// so the API cost is bounded to a round-trip per pod per deploy.
+// A no-op apply still advances the pod's recorded checksum: the render's bytes
+// may differ without changing a single HAProxy object.
+func TestHandleEndpointSuccess_PublishesPodStatusForANoop(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 	c := createTestDeployer(bus)
 
-	ep := &dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "p"}
-	noOpResult := &dataplane.SyncResult{
-		ReloadTriggered: false,
-		Details:         dataplane.DiffDetails{TotalOperations: 0},
-	}
-	state := &deploymentState{
-		operationBreakdown: make(map[string]int),
-	}
+	endpoint := &dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "haproxy-0"}
+	state := &deploymentState{operationBreakdown: map[string]int{}}
 
-	c.handleEndpointSuccess(
-		ep, noOpResult, 50, "checksum-abc", false,
-		"rt-cfg-1", "haptic", "", "corr-1", state,
-	)
+	c.handleEndpointSuccess(endpoint, ackOutcome(api.ResultNoop, true), 50,
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
-	// ConfigAppliedToPodEvent MUST fire on a no-op too. status-applier
-	// consumes this to record the deployed checksum on the runtime
-	// config's status subresource; suppressing it leaves
-	// status.deployedToPods[].checksum stale while spec.checksum
-	// advances via the publisher path on the same content.
-	applied := testutil.WaitForEvent[*events.ConfigAppliedToPodEvent](
-		t, eventChan, testutil.LongTimeout)
-	require.NotNil(t, applied,
-		"ConfigAppliedToPodEvent MUST fire on a no-op success — without "+
-			"it, status.deployedToPods[].checksum diverges from spec.checksum")
-	assert.Equal(t, "checksum-abc", applied.Checksum,
-		"the event MUST carry the contentChecksum of THIS deploy, so the "+
-			"status-applier records the correct value (not a stale one)")
-
-	// Counters: success counted, reload NOT counted (false), no ops.
-	assert.Equal(t, int32(1), atomic.LoadInt32(&state.successCount))
-	assert.Equal(t, int32(0), atomic.LoadInt32(&state.reloadsTriggered),
-		"reloadsTriggered MUST stay 0 when syncResult.ReloadTriggered is "+
-			"false — a regression that always incremented would inflate "+
-			"the reload count in the operator summary")
+	applied := testutil.WaitForEvent[*events.ConfigAppliedToPodEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, applied)
+	assert.Equal(t, api.ResultNoop, applied.SyncMetadata.Mode)
 }
 
-func TestHandleEndpointSuccess_BackendDiffFieldsCapturedOnceFirstWriterWins(t *testing.T) {
-	// Documented invariant: backendDiffFields is captured ONLY ONCE
-	// because the diff fields are identical across endpoints (same
-	// config). A regression that re-captured every call would race
-	// other writers under breakdownMu, but more importantly would
-	// risk overwriting the first endpoint's value with a later
-	// endpoint's empty/different one (e.g. if the dataplane
-	// returned a partial diff for a later pod).
+// A scheduled reload is an accepted apply that has not converged: the files are
+// written, the worker still runs the previous plan.
+func TestHandleEndpointSuccess_ScheduledReloadIsNotConverged(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
 	c := createTestDeployer(bus)
 
-	ep1 := &dataplane.Endpoint{URL: "http://1:5555", PodName: "p1"}
-	ep2 := &dataplane.Endpoint{URL: "http://2:5555", PodName: "p2"}
+	endpoint := &dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "haproxy-0"}
+	state := &deploymentState{operationBreakdown: map[string]int{}}
 
-	first := &dataplane.SyncResult{
-		ReloadTriggered: true,
-		Details: dataplane.DiffDetails{
-			TotalOperations:   1,
-			BackendDiffFields: map[string][]string{"backend-a": {"GUID"}},
-		},
-	}
-	second := &dataplane.SyncResult{
-		ReloadTriggered: true,
-		Details: dataplane.DiffDetails{
-			TotalOperations:   1,
-			BackendDiffFields: map[string][]string{"backend-a": {"DIFFERENT-FIELD"}},
-		},
-	}
-	state := &deploymentState{
-		operationBreakdown: make(map[string]int),
-	}
+	c.handleEndpointSuccess(endpoint, ackOutcome(api.ResultScheduled, false), 50,
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
-	c.handleEndpointSuccess(ep1, first, 100, "k", false, "", "", "", "corr-1", state)
-	captured := state.backendDiffFields
-	require.NotEmpty(t, captured,
-		"first call MUST populate backendDiffFields — it's how the "+
-			"aggregator surfaces 'which backends differ' in operator output")
-
-	c.handleEndpointSuccess(ep2, second, 100, "k", false, "", "", "", "corr-2", state)
-
-	state.breakdownMu.Lock()
-	defer state.breakdownMu.Unlock()
-	assert.Equal(t, captured, state.backendDiffFields,
-		"second call MUST NOT overwrite backendDiffFields — the value is "+
-			"captured first-writer-wins under the documented invariant that "+
-			"the diff fields are identical across endpoints (all receive the "+
-			"same config). A regression that re-captured per call would let a "+
-			"later endpoint's partial/different diff clobber the first "+
-			"endpoint's authoritative value")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&state.ackCount))
+	assert.Equal(t, int32(0), atomic.LoadInt32(&state.convergedCount),
+		"a pod waiting for its reload must not count towards fleet convergence")
 }
 
-// TestHandleEndpointSuccess_PublishesRuntimeMapDivergence pins the reporting
-// half of the reload-free lane's health signal. A map that fails its
-// post-apply read-back costs the sync its runtime lane, but the sync still
-// SUCCEEDS (the reload fallback converges), so the report has to ride the
-// success path — publishing it only on failure would never fire.
-func TestHandleEndpointSuccess_CountsRuntimeMapDivergence(t *testing.T) {
+// The pod's plan ids feed the plan cache's retention set: a plan some pod still
+// runs must survive the fleet's garbage collection.
+func TestHandleEndpointSuccess_RecordsReferencedPlans(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
 	c := createTestDeployer(bus)
 
-	ep := &dataplane.Endpoint{
-		URL:          "http://10.0.0.1:5555",
-		PodName:      "haproxy-pod-1",
-		PodNamespace: "haptic",
-	}
-	syncResult := &dataplane.SyncResult{
-		ReloadTriggered:     true,
-		DivergedRuntimeMaps: []string{"pod-names.map"},
-		Details:             dataplane.DiffDetails{TotalOperations: 1},
-	}
-	state := &deploymentState{operationBreakdown: make(map[string]int)}
+	endpoint := &dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "haproxy-0"}
+	state := &deploymentState{operationBreakdown: map[string]int{}}
+	outcome := ackOutcome(api.ResultReload, true)
+	outcome.result.WorkerOpsPlanID = "plan-1"
 
-	c.handleEndpointSuccess(
-		ep, syncResult, 250, "checksum-abc", false,
-		"rt-cfg-1", "haptic", "", "corr-1", state,
-	)
+	c.handleEndpointSuccess(endpoint, outcome, 50,
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
-	assert.Equal(t, 1.0,
-		promtestutil.ToFloat64(c.metrics.RuntimeMapDivergence.WithLabelValues("pod-names.map")),
-		"haptic_runtime_map_divergence_total MUST be incremented, labelled by map — "+
-			"it is the only signal that endpoint churn has started reloading HAProxy")
+	assert.Equal(t, []string{"plan-1"}, c.fleetPlanRefs([]dataplane.Endpoint{*endpoint}))
+	assert.Equal(t, int32(1), atomic.LoadInt32(&state.reloadsTriggered))
 }
 
-// A healthy sync must stay silent, or the counter measures nothing.
-func TestHandleEndpointSuccess_NoDivergenceCountWhenConverged(t *testing.T) {
+// No HAProxyCfg identity yet (bootstrap): the status write is skipped rather
+// than published with empty references, which the status applier cannot use.
+func TestHandleEndpointSuccess_NoPodStatusWithoutRuntimeConfig(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.Subscribe("test-sub", 50)
+	bus.Start()
+	c := createTestDeployer(bus)
+
+	endpoint := &dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "haproxy-0"}
+	state := &deploymentState{operationBreakdown: map[string]int{}}
+
+	c.handleEndpointSuccess(endpoint, ackOutcome(api.ResultReload, true), 50,
+		scheduledEvent("", "", "corr-1"), state)
+
+	testutil.AssertNoEvent[*events.ConfigAppliedToPodEvent](t, eventChan, testutil.NoEventTimeout)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&state.ackCount))
+}
+
+// The per-pod counters are what an operator queries for the reload-free share
+// of a rollout, so pin that an ACK moves them.
+func TestHandleEndpointSuccess_RecordsApplyAndOpCounters(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
 	c := createTestDeployer(bus)
 
-	ep := &dataplane.Endpoint{
-		URL:          "http://10.0.0.1:5555",
-		PodName:      "haproxy-pod-1",
-		PodNamespace: "haptic",
-	}
-	syncResult := &dataplane.SyncResult{Details: dataplane.DiffDetails{TotalOperations: 1}}
-	state := &deploymentState{operationBreakdown: make(map[string]int)}
+	endpoint := &dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "haproxy-0"}
+	state := &deploymentState{operationBreakdown: map[string]int{}}
+	outcome := ackOutcome(api.ResultRuntime, true,
+		api.Op{Kind: api.OpBackendAdd}, api.Op{Kind: api.OpServerAdd}, api.Op{Kind: api.OpServerAdd})
 
-	c.handleEndpointSuccess(
-		ep, syncResult, 250, "checksum-abc", false,
-		"rt-cfg-1", "haptic", "", "corr-1", state,
-	)
+	c.handleEndpointSuccess(endpoint, outcome, 50,
+		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
-	// A converged sync must count nothing, or the counter measures noise.
-	assert.Equal(t, 0.0,
-		promtestutil.ToFloat64(c.metrics.RuntimeMapDivergence.WithLabelValues("pod-names.map")))
+	assert.Equal(t, 1.0, promtestutil.ToFloat64(
+		c.metrics.AgentApplyTotal.WithLabelValues("haproxy-0", api.ResultRuntime)))
+	assert.Equal(t, 1.0, promtestutil.ToFloat64(
+		c.metrics.RuntimeBackendOpsTotal.WithLabelValues(api.OpBackendAdd)))
+	assert.Equal(t, 2.0, promtestutil.ToFloat64(
+		c.metrics.RuntimeServerOpsTotal.WithLabelValues(api.OpServerAdd)))
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	assert.Equal(t, map[string]int{api.OpBackendAdd: 1, api.OpServerAdd: 2}, state.operationBreakdown)
 }

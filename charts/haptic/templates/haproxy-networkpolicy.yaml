@@ -81,10 +81,13 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
 
-    # HAProxy's exporter (stats) plus the vector exporters: separate targets on
-    # separate ports, so opening `stats` alone silently loses every vector series.
+    # HAProxy's exporter (stats), the agent's, plus the vector exporters:
+    # separate targets on separate ports, so opening `stats` alone silently
+    # loses every agent and vector series.
     - ports:
         - port: {{ $ports.stats }}
+          protocol: TCP
+        - port: {{ $ports.agentMetrics }}
           protocol: TCP
         {{- if .Values.vector.enabled }}
         - port: {{ .Values.vector.metricsPort | int }}
@@ -119,7 +122,9 @@ spec:
               app.kubernetes.io/instance: {{ include "haptic.varnish.cacheName" . }}
     {{- end }}
 
-    # Allow HAProxy Dataplane API access from controller
+    # Allow HAPTIC agent access from the controller. The agent's metrics port
+    # is deliberately NOT here: Prometheus scrapes it, so it rides the
+    # metrics rule above.
     - ports:
         - port: {{ $ports.dataplane }}
           protocol: TCP

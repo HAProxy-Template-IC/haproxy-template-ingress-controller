@@ -86,49 +86,55 @@ func TestMetrics_RecordDeployment(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.DeploymentErrors))
 }
 
-func TestMetrics_RecordDeploymentOperations(t *testing.T) {
+func TestMetrics_RecordDeploymentReloads(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
 
-	// Accumulate reloads and API operations.
-	metrics.RecordDeploymentOperations(2, 17)
+	metrics.RecordDeploymentReloads(2)
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.HAProxyReloadsTotal))
-	assert.Equal(t, 17.0, testutil.ToFloat64(metrics.DataplaneAPIOperationsTotal))
 
-	// A runtime-only deployment (no reload) still records its API operations.
-	metrics.RecordDeploymentOperations(0, 3)
+	// A reload-free deployment perturbs nothing.
+	metrics.RecordDeploymentReloads(0)
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.HAProxyReloadsTotal))
-	assert.Equal(t, 20.0, testutil.ToFloat64(metrics.DataplaneAPIOperationsTotal))
-
-	// A no-op deployment perturbs neither counter.
-	metrics.RecordDeploymentOperations(0, 0)
-	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.HAProxyReloadsTotal))
-	assert.Equal(t, 20.0, testutil.ToFloat64(metrics.DataplaneAPIOperationsTotal))
 }
 
-func TestMetrics_RecordRuntimeFastPath(t *testing.T) {
+func TestMetrics_RecordAgentApply(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
 
-	// Fired, nothing runtime-eligible to apply.
-	metrics.RecordRuntimeFastPath(0, false)
-	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeFastPathFires))
-	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.RuntimeFastPathApplies))
-	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.RuntimeFastPathServerUpdates))
-	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.RuntimeFastPathFailures))
+	metrics.RecordAgentApply("haproxy-0", "runtime")
+	metrics.RecordAgentApply("haproxy-0", "runtime")
+	metrics.RecordAgentApply("haproxy-0", "reload")
+	metrics.RecordAgentApply("haproxy-1", "runtime")
 
-	// Fired and applied two server updates.
-	metrics.RecordRuntimeFastPath(2, false)
-	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeFastPathFires))
-	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeFastPathApplies))
-	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeFastPathServerUpdates))
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.AgentApplyTotal.WithLabelValues("haproxy-0", "runtime")))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.AgentApplyTotal.WithLabelValues("haproxy-0", "reload")))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.AgentApplyTotal.WithLabelValues("haproxy-1", "runtime")))
+}
 
-	// Failed: a fire + a failure, but NOT an apply (server-update count unchanged).
-	metrics.RecordRuntimeFastPath(0, true)
-	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.RuntimeFastPathFires))
-	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeFastPathApplies))
-	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeFastPathFailures))
-	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeFastPathServerUpdates))
+func TestMetrics_RecordApplyRejectedAndSkew(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	metrics.RecordApplyRejected("haproxy-0")
+	metrics.RecordAgentVersionSkew()
+	metrics.RecordAgentVersionSkew()
+
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.ApplyRejectedTotal.WithLabelValues("haproxy-0")))
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ApplyRejectedTotal.WithLabelValues("haproxy-1")))
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.AgentVersionSkewTotal))
+}
+
+func TestMetrics_RecordRuntimeOps(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	metrics.RecordRuntimeBackendOp("backend_add")
+	metrics.RecordRuntimeServerOp("server_add")
+	metrics.RecordRuntimeServerOp("server_add")
+
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeBackendOpsTotal.WithLabelValues("backend_add")))
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeServerOpsTotal.WithLabelValues("server_add")))
 }
 
 func TestMetrics_RecordValidation(t *testing.T) {
@@ -280,7 +286,6 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 		"haptic_haproxy_fleet_converged",
 		"haptic_last_full_sync_timestamp_seconds",
 		"haptic_deployment_consecutive_failures",
-		"haptic_deploy_runtime_divergence_total",
 	}
 
 	// Collect registered metric names

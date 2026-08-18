@@ -289,6 +289,9 @@ controller:
         haproxyPodsRejected: true
         noHAProxyPods: true
         criticalEventsDropped: true
+        applyRejected: true
+        agentInvariantViolated: true
+        agentVersionSkew: true
         # HAProxy discarded access-log records because the vector sidecar
         # stopped draining the UNIX datagram socket. Traffic is unaffected;
         # the log is not.
@@ -602,7 +605,10 @@ controller:
     dataplane:
       # The controller connection port is injected from
       # haproxy.ports.dataplane so the client and managed sidecar cannot drift.
-      # Minimum time between reload-inducing (structural) deployments.
+      # Minimum time between reload-inducing (structural) deployments. With the
+      # bundled fleet this same value paces the agent's reloads
+      # (--reload-interval-min), so the two cannot drift. The agent accepts at
+      # most 60s and exits at startup above it, so the chart fails the render.
       # A new or changed Ingress / Gateway route reloads HAProxy at most
       # once per this interval; bursts coalesce (latest-wins) into the
       # next window. This deliberately does NOT gate endpoint changes:
@@ -649,7 +655,7 @@ controller:
       configFile: /etc/haproxy/haproxy.cfg
       # Optional sync knobs (uncomment to override):
       # configPublishInterval: 10s     # observability CRD republish throttle
-      # reloadVerificationTimeout: 10s # wait for HAProxy reload to complete
+      # reloadVerificationTimeout: 10s # agent --reload-timeout; unset = 1m, its max
       # syncTimeout: 2m                # per-endpoint sync budget
     # Runtime log level override (optional)
     # Uncomment to override controller.logLevel at runtime without pod restart
@@ -1407,7 +1413,7 @@ credentials:
     username: admin
     password: ""  # Leave empty for a random auto-generated password
 # HAProxy data plane configuration
-# Deploys HAProxy pods with Dataplane API sidecars
+# Deploys HAProxy pods with a HAPTIC agent sidecar
 # The controller manages these pods' configurations
 haproxy:
   # Enable HAProxy deployment as part of this chart
@@ -1420,7 +1426,8 @@ haproxy:
     http: 80  # HTTP frontend
     https: 443  # HTTPS frontend
     stats: 8404  # Health/stats page
-    dataplane: 5555  # Dataplane API (for controller communication)
+    dataplane: 5555  # Agent apply/state API (for controller communication)
+    agentMetrics: 5557  # Agent Prometheus endpoint (scraped by the PodMonitor)
   # Number of HAProxy replicas
   replicaCount: 2
   # Preserve at least one ready HAProxy pod during voluntary disruptions.
@@ -1464,16 +1471,11 @@ haproxy:
   # Enterprise images have different binary paths and user configuration
   enterprise:
     enabled: false
-  # Binary paths - automatically derived from enterprise settings
-  # Override these only if using custom images with non-standard paths
-  # Community defaults:
-  #   haproxyBin: /usr/local/sbin/haproxy
-  #   dataplaneBin: /usr/local/bin/dataplaneapi
-  # Enterprise defaults (when enterprise.enabled=true):
-  #   haproxyBin: /opt/hapee-{haproxyVersion}/sbin/hapee-lb
-  #   dataplaneBin: /opt/hapee-extras/sbin/hapee-dataplaneapi
+  # HAProxy binary path - automatically derived from enterprise settings.
+  # Override only if using a custom image with a non-standard path.
+  # Community default:  /usr/local/sbin/haproxy
+  # Enterprise default: /opt/hapee-{haproxyVersion}/sbin/hapee-lb
   haproxyBin: ""
-  dataplaneBin: ""
   # HAProxy service configuration
   # Service exposes HAProxy container ports externally
   # targetPort references are defined in template using named ports
@@ -1510,21 +1512,20 @@ haproxy:
     # with the http/https/stats entries above. Set http/https/stats.port=0
     # to drop a default entry.
     extraPorts: []
-  # Dataplane API sidecar configuration
-  dataplane:
-    # Log level for the Dataplane API sidecar. It logs one line per file
-    # operation, so `trace` — which this chart used to hardcode — produced ~671
-    # lines for a single startup plus config cycle, all of it about the
-    # controller's own pushes and none of it about request traffic. `info` keeps
-    # the config-change record without the per-file chatter.
+  # HAPTIC agent sidecar. It runs from the controller image and owns this pod's
+  # file tree and HAProxy runtime socket: the controller sends it the rendered
+  # file set plus the runtime commands, and it writes, reloads, and reports.
+  # Pod readiness stays with HAProxy's own /ready — see the HAProxy deployment
+  # page in the docs for the readiness semantics.
+  agent:
+    # Log level for the agent, which logs JSON on stdout: one record per apply,
+    # plus every reload and every runtime command HAProxy rejected.
     #
-    # Raise to `debug` or `trace` when diagnosing a config push that the
-    # controller reports as failing but HAProxy accepts.
+    # Raise to `debug` or `trace` when diagnosing an apply that the controller
+    # reports as failing but HAProxy accepts.
     #
     # This stream carries no end-user data: the only client is the HAPTIC
-    # controller, so the logged addresses are its pod IP and the paths are
-    # Dataplane API endpoints. Verified against a live cluster — no request
-    # bodies, no certificate material, not even for a cert push.
+    # controller, so the logged addresses are its pod IP.
     #
     #   trace | debug | info | warning | error
     logLevel: info
@@ -1532,7 +1533,7 @@ haproxy:
       type: ClusterIP
       # port references haproxy.ports.dataplane (set in template)
     # Credentials are configured via top-level 'credentials.dataplane' section
-    # Resource limits and requests for Dataplane API sidecar
+    # Resource limits and requests for the agent sidecar.
     # Default configuration uses Guaranteed QoS for memory (requests = limits).
     # No CPU limit is set to avoid throttling.
     resources:
@@ -1541,7 +1542,7 @@ haproxy:
         memory: 256Mi
       limits:
         memory: 256Mi
-    # Extra environment variables for Dataplane API container
+    # Extra environment variables for the agent container
     # Example:
     #   extraEnv:
     #     - name: GOMAXPROCS
@@ -1549,24 +1550,6 @@ haproxy:
     # Note: GOMAXPROCS is auto-calculated from memory limits when no CPU limit is set.
     # Setting it here overrides the automatic calculation.
     extraEnv: []
-    # validateConfig: Whether Dataplane API should validate configs before applying.
-    # The controller already validates locally, so server-side validation is redundant.
-    # Set to true if you want double-validation for extra safety.
-    validateConfig: false
-    # Enable debug socket for runtime profiling (pprof, goroutines, stack traces).
-    # When set, Dataplane API listens on this Unix socket for debug commands.
-    # Usage: kubectl exec <pod> -c dataplane -- socat - UNIX-CONNECT:<path>
-    # Commands: "pprof cpu start /tmp/cpu.prof 30", "pprof mem /tmp/mem.prof",
-    #           "pprof web start 6060 300", "goroutines", "stack"
-    debugSocketPath: ""
-    # Apache Common Log Format override for the dataplane API access log.
-    # Empty string keeps the dataplane API's built-in default. Set this to a
-    # format that includes timing fields (e.g. %{us}T microseconds, %D
-    # milliseconds) when investigating publish-step latency:
-    #   aclFormat: '%h %l %u %t "%m %U%q %H" %>s %b "%{Referer}i" "%{User-agent}i" %{us}T'
-    # Tests opt in to the timing-augmented format via their values overrides;
-    # production keeps the default to avoid changing existing log shapes.
-    aclFormat: ""
   # Extra environment variables for HAProxy container
   # Example:
   #   extraEnv:
@@ -1609,6 +1592,10 @@ haproxy:
   # from this block. podSecurityContext, podAnnotations, and shareProcessNamespace
   # are consumed directly by templates/haproxy-deployment.yaml.
   podSpec:
+    # Image pull secrets (private registry access). The pod pulls the HAProxy
+    # image and the HAPTIC image (for its agent container); empty follows
+    # controller.podSpec.imagePullSecrets.
+    imagePullSecrets: []
     # Priority class for pod scheduling
     # Used to mark critical workloads for preferential scheduling and preemption
     # Common values:

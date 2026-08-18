@@ -1,7 +1,7 @@
 {{/*
 Bootstrap config for the vector sidecar, copied into the shared general-storage
 volume by an init container before the sidecar starts. HAPTIC overwrites
-general/vector.yaml via the dataplane API within seconds of startup and vector's
+general/vector.yaml through the agent within seconds of startup and vector's
 --watch-config reloads it.
 
 Two deliberate properties:
@@ -23,7 +23,7 @@ metadata:
     app.kubernetes.io/component: vector
 data:
   vector.yaml: |
-    # Bootstrap config — replaced by HAPTIC via the dataplane API.
+    # Bootstrap config — replaced by HAPTIC through the agent.
     # The rendered config adds metrics export and request processing.
     data_dir: /var/lib/vector
 

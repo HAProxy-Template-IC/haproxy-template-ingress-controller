@@ -18,7 +18,7 @@ Find your symptom in the quick reference below, then follow its diagnosis and fi
 | "template rendering failed" in logs | [Invalid Template Syntax](#invalid-template-syntax) |
 | "validation failed" / HAProxy errors | [Configuration Validation Failures](#configuration-validation-failures) |
 | `kubectl apply` denied by an admission webhook | [Admission webhook denied the apply](#admission-webhook-denied-the-apply) |
-| "connection refused" to Dataplane API | [Can't connect to Dataplane API](#cannot-connect-to-dataplane-api) |
+| "connection refused" to an HAProxy pod | [Can't reach the agent](#cannot-reach-the-agent) |
 | Controller reports success but HAProxy unchanged | [Configuration Not Updating](#configuration-not-updating) |
 | 503 errors / no servers in HAProxy stats | [Requests Not Reaching Backend](#requests-not-reaching-backend) |
 | 404 for a host or path that should route | [404: no route matched](#404-no-route-matched) |
@@ -77,7 +77,7 @@ Debug NetworkPolicy:
 kubectl exec -n haptic <controller-pod> -- nslookup kubernetes.default
 
 # Check controller can reach HAProxy pod
-kubectl exec -n haptic <controller-pod> -- curl http://<haproxy-pod-ip>:5555/v3/info
+kubectl exec -n haptic <controller-pod> -- curl http://<haproxy-pod-ip>:5555/healthz
 ```
 
 For NetworkPolicy configuration details, see [Networking](./operations/networking.md).
@@ -118,7 +118,7 @@ kubectl describe pod -n haptic <pod>   # read the Events and per-container State
 - **A container is in `Waiting` with `CrashLoopBackOff` or `ImagePullBackOff`**: the pod never starts, so it can't be Ready. Follow [Controller not starting](#controller-not-starting) for crashes, or [Image pull errors](#image-pull-errors) for pull failures.
 - **Every container is `Running` but the pod stays not Ready**: a readiness probe is failing. Branch by which pod:
     - **Controller pod** (`1/2`): the readiness probe hits `/healthz` on `controller.ports.healthz` (`8080` by default), which returns ready only once the controller has loaded a valid `HAProxyTemplateConfig` and rendered its first config. A render or config-load failure keeps it not Ready — check `kubectl logs -n haptic <pod>` for template or validation errors and follow [Invalid template syntax](#invalid-template-syntax). `/healthz` shares the `/debug/*` listener and is required by the probe (see [Debugging](./operations/debugging.md)).
-    - **HAProxy pod** (`3/4` on a default install, fewer with sidecars disabled): HAProxy's `/ready` probe is failing. Inspect the HAProxy logs and the activated config. Dataplane API, SPOA hub, and Vector child health doesn't control this probe; their supervisors log child failures. If configuration can't converge, follow [Can't connect to Dataplane API](#cannot-connect-to-dataplane-api).
+    - **HAProxy pod** (`3/4` on a default install, fewer with sidecars disabled): HAProxy's `/ready` probe is failing, which means no rendered configuration is running — the pod is still on the bootstrap config that answers 503. Inspect the HAProxy logs and the activated config. The agent's own readiness never gates this probe: it reports that the agent can accept applies, and stays true after one it rejected. SPOA hub and Vector child health doesn't gate it either; their supervisors log child failures. If configuration can't converge, follow [Can't reach the agent](#cannot-reach-the-agent).
 
 ### Controller running but not processing
 
@@ -223,9 +223,9 @@ Two different gates sit behind this, depending on what you applied:
 
 ## HAProxy Pod Issues
 
-<a id="cannot-connect-to-dataplane-api"></a>
+<a id="cannot-reach-the-agent"></a>
 
-### Can't connect to Dataplane API
+### Can't reach the agent
 
 **Symptoms**: `connection refused`, `timeout`, deployment failures
 
@@ -234,16 +234,21 @@ Two different gates sit behind this, depending on what you applied:
 ```bash
 HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
 kubectl port-forward -n haptic $HAPROXY_POD 5555:5555
-# Substitute your actual dataplane password; see spec.credentialsSecretRef
-curl -u admin:<password> http://localhost:5555/v3/info
+# Substitute your actual agent password; see spec.credentialsSecretRef
+curl -u admin:<password> http://localhost:5555/v1/state
 ```
+
+`/v1/state` answers with the plan the pod applied, the plan its worker is
+running, the digest of every file it holds, and what it last did with an apply.
+`/healthz` needs no credentials, which is what the controller's connectivity
+check above uses.
 
 **Common Causes**:
 
 | Cause | Check | Solution |
 |-------|-------|----------|
-| Dataplane not running | `kubectl logs $HAPROXY_POD -c dataplane` | Verify container started, check port conflicts |
-| Wrong credentials | Compare secret vs dataplaneapi.yaml | Update the credentials Secret — `credentialsloader` picks it up live; also rotate the matching `dataplaneapi.yaml` on the HAProxy sidecar |
+| Agent not running | `kubectl logs $HAPROXY_POD -c agent` | Verify the container started, check port conflicts |
+| Wrong credentials | `kubectl get secret <release>-haptic-credentials -o yaml` | Update the credentials Secret; the controller's `credentialsloader` picks it up live, and the agent reads the same Secret through its environment — restart the HAProxy pods to pick up a rotation |
 | Network policy | `kubectl get networkpolicy` | Update egress rules for controller → HAProxy |
 
 ### Configuration not updating
@@ -263,7 +268,7 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 | Cause | Check | Solution |
 |-------|-------|----------|
 | Volume mount issue | `kubectl get pod $HAPROXY_POD -o yaml \| grep -A5 volumeMounts` | Ensure both containers share config volume |
-| HAProxy not reloading | `kubectl logs $HAPROXY_POD -c dataplane` | Check reload command, master socket access |
+| HAProxy not reloading | `kubectl logs $HAPROXY_POD -c agent` | The agent logs the reload it asked for and HAProxy's answer; check master socket access |
 
 ### Shared memory stats limit
 

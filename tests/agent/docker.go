@@ -17,12 +17,9 @@
 package agent
 
 import (
-	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"net"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -30,19 +27,9 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
-const dockerTimeout = 3 * time.Minute
-
 // runDocker runs one docker command with stdin and returns its combined output.
 func runDocker(stdin io.Reader, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), dockerTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdin = stdin
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err := cmd.Run()
-	return out.String(), err
+	return kindutil.RunDocker(stdin, args...)
 }
 
 func mustDocker(t *testing.T, args ...string) string {
@@ -57,17 +44,6 @@ func mustDockerInput(t *testing.T, stdin string, args ...string) string {
 		t.Fatalf("docker %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return out
-}
-
-// dockerUsable reports why the suite cannot run, or nil.
-func dockerUsable() error {
-	if _, err := exec.LookPath("docker"); err != nil {
-		return fmt.Errorf("docker CLI not on PATH: %w", err)
-	}
-	if out, err := runDocker(nil, "version", "--format", "{{.Server.Version}}"); err != nil {
-		return fmt.Errorf("docker daemon not reachable: %v (%s)", err, strings.TrimSpace(out))
-	}
-	return nil
 }
 
 // publishAddress is the address docker binds a published port to. Under

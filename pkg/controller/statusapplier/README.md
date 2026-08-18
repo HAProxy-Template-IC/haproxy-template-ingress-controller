@@ -33,8 +33,8 @@ go applier.Start(ctx)
 | Event | Action |
 |-------|--------|
 | `ResourcesAppliedEvent` | Apply the `rendered` variant directly from the event payload if leader (published by the ResourceApplier after the same render's resources exist — no caching, stateless) |
-| `DeploymentCompletedEvent` | Apply the `deployed` variant if leader |
-| `DeploymentSkippedEvent` | Apply the `deployed` variant if leader (deployment skipped because config unchanged) |
+| `DeploymentCompletedEvent` | Apply the `deployed` variant when every pod runs the render, `deployFailed` when a pod failed; a fleet that accepted it behind a paced reload gets neither until the Deployer observes it running (if leader) |
+| `DeploymentSkippedEvent` | Apply the `deployed` variant if leader (`config_unchanged`: the render equals the deployed one; `reload_observed`: a later deployment's ACKs report the fleet running it) |
 | `ReconciliationFailedEvent` | Apply `renderFailed` or `deployFailed` variant (depending on which phase failed) if leader |
 | `BecameLeaderEvent` | Flip the leader flag on; clear the SSA checksum cache so the new leader writes at least once for every active resource on the next reconciliation (triggered by the `Reconciler`) |
 | `LostLeadershipEvent` | Flip the leader flag off; in-flight handlers re-check via `leaderRLocked()` |

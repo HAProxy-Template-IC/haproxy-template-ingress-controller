@@ -39,11 +39,11 @@ Configuration:
   Credentials Secret: {{ include "haptic.dataplane.credentialsSecretName" . }}
 {{- if not .Values.credentials.dataplane.password }}
 
-  ⚠ DataPlane API password: auto-generated (random) and stored in the Secret above.
+  ⚠ Agent password: auto-generated (random) and stored in the Secret above.
     It is preserved across `helm upgrade` via cluster lookup.
     GitOps users (ArgoCD/Flux render without cluster lookup) MUST pin it:
     a blank password regenerates every sync and continuously rolls the
-    controller AND HAProxy data-plane pods. Set an explicit value:
+    controller AND HAProxy pods. Set an explicit value:
       credentials.dataplane.password: <your-secret>   # e.g. via a SealedSecret
 {{- end }}
 
@@ -96,7 +96,7 @@ NetworkPolicy:
   NetworkPolicy has been created to allow:
   - DNS resolution (kube-system namespace)
   - Kubernetes API access
-  - HAProxy Dataplane API access (cross-namespace)
+  - HAPTIC agent access (cross-namespace)
   {{- if .ingress.monitoring.enabled }}
   - Prometheus metrics scraping ✓
   {{- else }}
@@ -109,7 +109,7 @@ NetworkPolicy:
 
 {{- if .Values.haproxy.enabled }}
 HAProxy Data Plane:
-  HAProxy pods with Dataplane API sidecars have been deployed by this chart.
+  HAProxy pods with a HAPTIC agent sidecar have been deployed by this chart.
 
   Verify HAProxy pods are running:
     kubectl get pods -l app.kubernetes.io/name={{ $name }},app.kubernetes.io/component=loadbalancer -n {{ $ns }}
@@ -129,9 +129,9 @@ Next Steps:
 {{- end }}
 
   2. Each HAProxy pod should include:
-     - HAProxy container with Dataplane API sidecar
+     - HAProxy container with a HAPTIC agent sidecar
      - Shared emptyDir volume for config
-     - Dataplane API accessible on port 5555
+     - The agent accessible on port {{ .Values.haproxy.ports.dataplane }}
      - Same pod labels for NetworkPolicy matching
 
   3. Create Ingress resources to configure routing

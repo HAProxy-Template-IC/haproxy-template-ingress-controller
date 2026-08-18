@@ -1,6 +1,6 @@
 # HAPTIC Helm Chart
 
-HAPTIC (HAProxy Template Ingress Controller) ships as a single Helm chart that installs the controller, its CRDs, an `HAProxyTemplateConfig` resource, and (optionally) the HAProxy pods it manages. The controller watches Ingress / Gateway API / CRD resources, renders [Scriggo](https://scriggo.com/) templates to HAProxy configuration, and pushes the result to HAProxy via the [Dataplane API](https://github.com/haproxytech/dataplaneapi).
+HAPTIC (HAProxy Template Ingress Controller) ships as a single Helm chart that installs the controller, its CRDs, an `HAProxyTemplateConfig` resource, and (optionally) the HAProxy pods it manages. The controller watches Ingress / Gateway API / CRD resources, renders [Scriggo](https://scriggo.com/) templates to HAProxy configuration, and pushes the result to a HAPTIC agent sidecar in each HAProxy pod, which writes the files and reloads or applies them at runtime.
 
 Full documentation: [haproxy-haptic.org/docs](https://haproxy-haptic.org/docs/dev/) (this chart's pages live under *Deploying with Helm*).
 

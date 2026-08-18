@@ -35,11 +35,6 @@ SPEC.loader.exec_module(ANALYZER)
 
 
 SCRIPTS = {
-    "dataplane": """
-_child_pid=
-_start_watchdog() { :; }
-/usr/local/bin/dataplaneapi -f /etc/haproxy/dataplaneapi.yaml &
-""",
     "spoa-hub": """
 _child_pid=
 _start_watchdog() { :; }
@@ -67,7 +62,7 @@ def container(name, ports=()):
 def topology_inputs():
     containers = [
         container("haproxy", (("stats", 8404),)),
-        container("dataplane", (("dataplane", 5555),)),
+        container("agent", (("dataplane", 5555),)),
         container("spoa-hub"),
         container("vector", (("vector-metrics", 9598),)),
     ]
@@ -488,20 +483,17 @@ redact_secret_matches "$4" "$5" "$6"
     def test_extracts_exact_supervised_topology(self):
         workloads, pods = topology_inputs()
         result = ANALYZER.extract_topology(workloads, pods)
-        self.assertEqual(
-            result["supervised_container_names"], ["dataplane", "spoa-hub", "vector"]
-        )
+        self.assertEqual(result["supervised_container_names"], ["spoa-hub", "vector"])
         self.assertEqual(
             [item["expected_executable"] for item in result["tasks"]],
             [
-                "/usr/local/bin/dataplaneapi",
                 "/usr/local/bin/haproxy-spoa-hub",
                 "/usr/bin/vector",
             ],
         )
         self.assertEqual(
             [item["health"]["port"] for item in result["tasks"]],
-            [5555, 8404, 9598],
+            [8404, 9598],
         )
         vector = next(item for item in result["tasks"] if item["container"] == "vector")
         self.assertEqual(vector["health"]["method"], "GET")
@@ -537,48 +529,30 @@ redact_secret_matches "$4" "$5" "$6"
         with self.assertRaisesRegex(ANALYZER.AnalysisFailure, "unexpected supervised container vector"):
             ANALYZER.extract_topology(workloads, pods)
 
-    def test_accepts_enterprise_dataplane_executable(self):
+    def test_rejects_unrecognized_child_executable(self):
         workloads, pods = topology_inputs()
-        enterprise = SCRIPTS["dataplane"].replace(
-            "/usr/local/bin/dataplaneapi",
-            "/opt/hapee-extras/sbin/hapee-dataplaneapi",
+        unrecognized = SCRIPTS["spoa-hub"].replace(
+            "/usr/local/bin/haproxy-spoa-hub", "/tmp/haproxy-spoa-hub"
         )
         for document in (workloads["items"][0]["spec"]["template"], pods["items"][0]):
             target = next(
-                item for item in document["spec"]["containers"] if item["name"] == "dataplane"
-            )
-            target["args"] = [enterprise]
-        result = ANALYZER.extract_topology(workloads, pods)
-        dataplane = next(item for item in result["tasks"] if item["container"] == "dataplane")
-        self.assertEqual(
-            dataplane["expected_executable"],
-            "/opt/hapee-extras/sbin/hapee-dataplaneapi",
-        )
-
-    def test_rejects_unrecognized_dataplane_executable(self):
-        workloads, pods = topology_inputs()
-        unrecognized = SCRIPTS["dataplane"].replace(
-            "/usr/local/bin/dataplaneapi", "/tmp/dataplaneapi"
-        )
-        for document in (workloads["items"][0]["spec"]["template"], pods["items"][0]):
-            target = next(
-                item for item in document["spec"]["containers"] if item["name"] == "dataplane"
+                item for item in document["spec"]["containers"] if item["name"] == "spoa-hub"
             )
             target["args"] = [unrecognized]
         with self.assertRaisesRegex(ANALYZER.AnalysisFailure, "derive one child executable"):
             ANALYZER.extract_topology(workloads, pods)
 
     def test_rejects_missing_or_duplicate_named_port(self):
-        for replacement in ([], [{"name": "dataplane", "containerPort": 5555}] * 2):
+        for replacement in ([], [{"name": "stats", "containerPort": 8404}] * 2):
             with self.subTest(replacement=replacement):
                 workloads, pods = topology_inputs()
                 deployment_container = next(
                     item
                     for item in workloads["items"][0]["spec"]["template"]["spec"]["containers"]
-                    if item["name"] == "dataplane"
+                    if item["name"] == "haproxy"
                 )
                 deployment_container["ports"] = copy.deepcopy(replacement)
-                with self.assertRaisesRegex(ANALYZER.AnalysisFailure, "one numeric dataplane port"):
+                with self.assertRaisesRegex(ANALYZER.AnalysisFailure, "one numeric stats port"):
                     ANALYZER.extract_topology(workloads, pods)
 
     def test_baseline_and_continuity_pass(self):
@@ -648,9 +622,9 @@ redact_secret_matches "$4" "$5" "$6"
             "ppid": None,
             "starttime": None,
         }
-        after["children"][2]["identity_before_health"] = copy.deepcopy(missing)
-        after["children"][2]["identity_after_health"] = copy.deepcopy(missing)
-        after["children"][2]["health"].update(
+        after["children"][1]["identity_before_health"] = copy.deepcopy(missing)
+        after["children"][1]["identity_after_health"] = copy.deepcopy(missing)
+        after["children"][1]["health"].update(
             {
                 "pass": False,
                 "probe_exit_code": 10,
@@ -663,7 +637,7 @@ redact_secret_matches "$4" "$5" "$6"
         self.assertFalse(result["pass"])
         self.assertIn(
             "final process is missing, ambiguous, invalid, or changed during capture",
-            result["children"][2]["negative_reasons"],
+            result["children"][1]["negative_reasons"],
         )
 
     def test_missing_final_capture_is_evidence_invalid(self):

@@ -823,8 +823,8 @@ templateSnippets:
       http-request set-var(txn.gw_request_scheme) str(http) if !{ ssl_fc }
       http-request set-var(txn.gw_request_scheme) str(https) if { ssl_fc }
       {# txn.gw_listener_port must stay set unconditionally upstream (15-pod-port-allocator):
-          a map converter first appearing at runtime is added by the DataPlane API without its
-          map ever being loaded, so the lookup misses and the pod port leaks into Location. #}
+          a map converter first appearing at runtime is added without its map ever being
+          loaded, so the lookup misses and the pod port leaks into Location. #}
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
         {%- var filters = []any{} %}
         {%%
@@ -914,7 +914,7 @@ templateSnippets:
                 {# Use txn.gw_listener_port, not txn.listener_port or raw dst_port: on the
                     per-Gateway-IP path the latter two are the allocated pod port (e.g. 18000)
                     and would leak into Location; the map translates back to the listener port. #}
-                {# Fallbacks are the dataplane-internal 8080/8443 (chart-wide convention), not
+                {# Fallbacks are the pod-internal 8080/8443 (chart-wide convention), not
                     80/443; extraContext.httpPort/httpsPort is always plumbed in production. #}
                 {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
                 {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}

@@ -46,7 +46,7 @@ import (
 //     bearing state transition.
 
 func TestHandleResourceSyncComplete_WrongResourceTypeIsNoOp(t *testing.T) {
-	c := newTestComponentWithoutHAProxy(t)
+	c := newTestComponent(t)
 	require.False(t, c.initialSyncComplete,
 		"baseline: initialSyncComplete must start false")
 
@@ -69,7 +69,7 @@ func TestHandleResourceSyncComplete_WrongResourceTypeIsNoOp(t *testing.T) {
 }
 
 func TestHandleResourceSyncComplete_FirstHAProxyPodsEventFlipsFlag(t *testing.T) {
-	c := newTestComponentWithoutHAProxy(t)
+	c := newTestComponent(t)
 	require.False(t, c.initialSyncComplete)
 
 	c.handleResourceSyncComplete(
@@ -96,7 +96,7 @@ func TestHandleResourceSyncComplete_FirstHAProxyPodsEventFlipsFlag(t *testing.T)
 }
 
 func TestHandleResourceSyncComplete_DuplicateEventIsIdempotent(t *testing.T) {
-	c := newTestComponentWithoutHAProxy(t)
+	c := newTestComponent(t)
 
 	// First call: flips the flag.
 	c.handleResourceSyncComplete(

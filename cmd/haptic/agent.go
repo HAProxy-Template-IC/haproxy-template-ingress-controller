@@ -49,6 +49,7 @@ var (
 	agentMetricsListen     string
 	agentStateFile         string
 	agentReloadIntervalMin time.Duration
+	agentReloadTimeout     time.Duration
 )
 
 var agentCmd = &cobra.Command{
@@ -83,7 +84,8 @@ func init() {
 		"Master CLI socket, used only for reload and show proc (relative to --base-dir unless absolute)")
 	agentCmd.Flags().StringVar(&agentWorkerSocket, "worker-socket", "haproxy-worker.sock",
 		"Worker stats socket that carries every runtime command (relative to --base-dir unless absolute)")
-	agentCmd.Flags().StringVar(&agentListen, "listen", ":5555",
+	// Persistent, because `agent state` reads the same endpoint this serves.
+	agentCmd.PersistentFlags().StringVar(&agentListen, "listen", ":5555",
 		"Address the apply and state API listens on")
 	agentCmd.Flags().StringVar(&agentMetricsListen, "metrics-listen", ":9101",
 		"Address the Prometheus endpoint listens on; empty disables it")
@@ -91,12 +93,18 @@ func init() {
 		"Name of the agent's state file inside --base-dir")
 	agentCmd.Flags().DurationVar(&agentReloadIntervalMin, "reload-interval-min", 5*time.Second,
 		"Shortest interval between two reloads, at most 60s; a reload inside the window is scheduled, never dropped")
+	agentCmd.Flags().DurationVar(&agentReloadTimeout, "reload-timeout", server.DefaultReloadTimeout,
+		"How long a reload may take before the apply reports what it knows; capped at the API's reload limit")
 }
 
 func runAgent(_ *cobra.Command, _ []string) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: logging.ParseLogLevel(os.Getenv(agentLogLevelEnv)),
 	}))
+	// Everything this process writes is the JSON the chart promises: the metrics
+	// server and net/http take their logger from the default one.
+	slog.SetDefault(logger)
+
 	username, password := os.Getenv(agentUsernameEnv), os.Getenv(agentPasswordEnv)
 	if username == "" || password == "" {
 		return errors.New("the agent needs " + agentUsernameEnv + " and " + agentPasswordEnv + " from the credentials Secret")
@@ -114,6 +122,7 @@ func runAgent(_ *cobra.Command, _ []string) error {
 		StateFile:         agentStateFile,
 		Listen:            agentListen,
 		ReloadIntervalMin: agentReloadIntervalMin,
+		ReloadTimeout:     agentReloadTimeout,
 		Username:          username,
 		Password:          password,
 		AgentVersion:      version,

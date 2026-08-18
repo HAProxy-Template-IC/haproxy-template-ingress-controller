@@ -94,9 +94,11 @@ type DeploymentCompletedEvent struct {
 	// DeploymentID identifies the exact DeploymentScheduledEvent that finished.
 	DeploymentID string
 
-	Total              int   // Total number of instances
-	Succeeded          int   // Number of successful deployments
-	Failed             int   // Number of failed deployments
+	Total              int // Total number of instances
+	Succeeded          int // Number of successful deployments
+	Failed             int // Number of failed deployments
+	PendingReloads     int // Pods holding the render behind a paced reload
+	PendingReloadUntil time.Time
 	DurationMs         int64 // Total deployment duration in milliseconds
 	ReloadsTriggered   int   // Count of instances that triggered HAProxy reload
 	TotalAPIOperations int   // Sum of API operations across all instances
@@ -160,6 +162,10 @@ type DeploymentResult struct {
 	DurationMs         int64 // Total deployment duration in milliseconds
 	ReloadsTriggered   int   // Count of instances that triggered HAProxy reload
 	TotalAPIOperations int   // Sum of API operations across all instances
+	// PendingReloads are pods that accepted the render but hold it behind a
+	// paced reload; PendingReloadUntil is when the latest of them fires.
+	PendingReloads     int
+	PendingReloadUntil time.Time
 
 	// OperationBreakdown provides a generic breakdown of operations performed.
 	// Keys are formatted as "section_type" (e.g., "backend_create", "server_update", "global_update").
@@ -222,6 +228,8 @@ func NewDeploymentCompletedEvent(result *DeploymentResult, opts ...CorrelationOp
 		Total:              result.Total,
 		Succeeded:          result.Succeeded,
 		Failed:             result.Failed,
+		PendingReloads:     result.PendingReloads,
+		PendingReloadUntil: result.PendingReloadUntil,
 		DurationMs:         result.DurationMs,
 		ReloadsTriggered:   result.ReloadsTriggered,
 		TotalAPIOperations: result.TotalAPIOperations,
@@ -277,10 +285,8 @@ type DeploymentSkippedEvent struct {
 	// can apply the same "is there actually a data plane to talk to?" guard.
 	Total int
 
-	// Reason is a short tag describing why the deployment was skipped.
-	// Currently always "config_unchanged"; left as a string to leave room
-	// for future skip causes (e.g. "drift_check_only") without an event
-	// schema change.
+	// Reason is a short tag describing why no deployment ran for this
+	// config: SkipReasonConfigUnchanged or SkipReasonReloadObserved.
 	Reason string
 
 	// ConfigHash is the content checksum of the rendered HAProxy

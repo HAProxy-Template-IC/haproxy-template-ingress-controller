@@ -16,39 +16,49 @@ package deployer
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/planblob"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
+
+// deployRequest is one deployment's desired state, identical for every pod.
+type deployRequest struct {
+	plan            *renderplan.Plan
+	planID          string
+	contents        map[string]string // file content by digest, the manifest's join key
+	blob            []byte            // the plan, zstd-compressed, as the agent stores it
+	token           api.Token
+	validatedPlanID string
+	// verify makes each pod re-hash its tree before it reports: the drift pass
+	// asks what is on disk, not what the agent last wrote.
+	verify bool
+	diffs  *diffMemo
+}
 
 // performDeployment executes a single deployment.
 //
 // This method is called from HandleEvent for each dispatched
 // DeploymentScheduledEvent. "Latest wins" coalescing of pending coalescible
 // DeploymentScheduledEvents is provided by the embedded component.Base via
-// the CoalescesOn hook (see component.go) — after each dispatch the Base
-// drains the subscription channel and re-dispatches only the latest pending
-// coalescible event, so intermediate configs queued during a deployment are
-// superseded instead of deployed one by one.
+// the CoalescesOn hook (see component.go).
 //
 // Defensive: drops duplicate events if a deployment is already in progress.
 func (c *Component) performDeployment(ctx context.Context, event *events.DeploymentScheduledEvent) {
-	// Track processing for health check stall detection
 	c.healthTracker.StartProcessing()
 	defer c.healthTracker.EndProcessing()
 
 	correlationID := event.CorrelationID()
 	deploymentID := event.EventID()
 
-	// Defensive check: atomically set deploymentInProgress from false to true
-	// This prevents concurrent deployments if scheduler has bugs
+	// Defensive check: atomically set deploymentInProgress from false to true.
+	// This prevents concurrent deployments if the scheduler has bugs.
 	if !c.deploymentInProgress.CompareAndSwap(false, true) {
 		c.Logger().Error("Dropping duplicate DeploymentScheduledEvent - deployment already in progress",
 			"reason", event.Reason,
@@ -56,12 +66,10 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 			"correlation_id", correlationID)
 		return
 	}
-	// Note: flag will be cleared by deployToEndpoints after deployment completes
 
 	deployCtx, cancel := c.beginDeployment(ctx, deploymentID, correlationID)
 	defer cancel()
 
-	// Ensure we clean up cancel state when deployment completes
 	defer func() {
 		c.cancelMu.Lock()
 		c.activeDeploymentID = ""
@@ -78,472 +86,271 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 		"reason", event.Reason,
 		"endpoint_count", len(event.Endpoints),
 		"config_bytes", len(event.Config),
-		"has_parsed_config", event.ParsedConfig != nil,
+		"plan", event.PlanID,
 		"deployment_id", deploymentID,
 		"correlation_id", correlationID)
 
-	// Execute deployment with cancellable context
-	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, event.ParsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, event.ContentChecksum, event.StatusPatches, event.Plan, event.PlanID, deploymentID, correlationID)
+	c.deployToEndpoints(deployCtx, cancel, event, deploymentID)
 }
 
-// deployToEndpoints deploys configuration to all HAProxy endpoints in parallel.
-//
-// This method:
-//  1. Publishes DeploymentStartedEvent
-//  2. Deploys to all endpoints in parallel
-//  3. Logs successful endpoints and publishes InstanceDeploymentFailedEvent for failures
-//  4. Publishes ConfigAppliedToPodEvent for successful deployments
-//  5. Publishes DeploymentCompletedEvent with summary
+// deployToEndpoints applies the render to every pod, at most maxConcurrentPods
+// at a time, and reports the fleet's answer.
 func (c *Component) deployToEndpoints(
 	ctx context.Context,
-	config string,
-	auxFiles *dataplane.AuxiliaryFiles,
-	parsedConfig *parser.StructuredConfig,
-	endpoints []dataplane.Endpoint,
-	runtimeConfigName string,
-	runtimeConfigNamespace string,
-	reason string,
-	contentChecksum string,
-	statusPatches []templating.StatusPatch,
-	plan *renderplan.Plan,
-	planID string,
+	standDown context.CancelFunc,
+	event *events.DeploymentScheduledEvent,
 	deploymentID string,
-	correlationID string,
 ) {
-	// Clear deployment flag after this function completes (after wg.Wait())
 	defer c.deploymentInProgress.Store(false)
 
 	startTime := time.Now()
-
-	if len(endpoints) == 0 {
-		c.Logger().Error("No valid endpoints to deploy to")
-		// Publish completion event so downstream components know deployment didn't happen.
-		// Forward the status patches anyway so the StatusApplier can still write the
-		// "deployed" variant if appropriate (the zero-endpoint guard in StatusApplier
-		// will skip the apply, but the data is on the event for consistency).
-		// ContentChecksum stays empty — nothing was deployed, so the scheduler
-		// must not record this as a successful deploy.
-		c.EventBus().Publish(events.NewDeploymentCompletedEvent(
-			&events.DeploymentResult{DeploymentID: deploymentID, StatusPatches: statusPatches},
-			events.WithCorrelation(correlationID, deploymentID),
-		))
+	correlationID := event.CorrelationID()
+	if len(event.Endpoints) == 0 || event.Plan == nil {
+		c.reportUndeployable(event, deploymentID)
 		return
 	}
 
-	// Use the content checksum (config + auxiliary files) as the per-pod
-	// "what was applied here" checksum so HAProxyCfg.status.deployedToPods[].Checksum
-	// is directly comparable to HAProxyCfg.spec.Checksum (which the publisher
-	// derives from the same dataplane.ComputeContentChecksum). When every
-	// pod's per-pod checksum equals spec.Checksum, the cluster has fully
-	// converged on the current spec — that's the post-convergence signal
-	// operators and the e2e suite poll for. Previously the deployer computed
-	// a separate sha256(config) which used a different format (full hex vs
-	// truncated) AND a different input set (config-only vs config+aux), so
-	// the two could never match and there was no clean "everyone at current"
-	// signal.
-	checksum := contentChecksum
-	podSetHash := computePodSetHash(endpoints)
+	// contentChecksum covers config plus auxiliary files, so it is the value
+	// HAProxyCfg.spec.Checksum is comparable to. Plan ids do not replace it:
+	// aux bytes outside the plan still ride it.
+	podSetHash := computePodSetHash(event.Endpoints)
+	request := c.newDeployRequest(event)
 
-	c.Logger().Debug("Starting deployment",
-		"reason", reason,
-		"endpoint_count", len(endpoints),
-		"config_bytes", len(config),
-		"has_aux_files", auxFiles != nil,
-		"correlation_id", correlationID)
-
-	// Publish DeploymentStartedEvent with correlation
 	c.EventBus().Publish(events.NewDeploymentStartedEvent(
-		len(endpoints),
+		len(event.Endpoints),
 		events.WithCorrelation(correlationID, deploymentID),
 	))
 
-	// Deploy to all endpoints in parallel
+	state := &deploymentState{standDown: standDown, operationBreakdown: map[string]int{}}
 	var wg sync.WaitGroup
-
-	// deploymentState holds aggregated metrics protected for concurrent access
-	state := &deploymentState{
-		operationBreakdown: make(map[string]int),
-	}
-
-	for i := range endpoints {
+	slots := make(chan struct{}, maxConcurrentPods)
+	for i := range event.Endpoints {
 		wg.Add(1)
-		go func(ep *dataplane.Endpoint) {
+		go func(endpoint *dataplane.Endpoint) {
 			defer wg.Done()
-			c.processEndpointDeployment(ctx, ep, config, auxFiles, parsedConfig, checksum, reason,
-				runtimeConfigName, runtimeConfigNamespace, contentChecksum, planID, correlationID, state)
-		}(&endpoints[i])
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			c.deployToPod(ctx, endpoint, request, event, state)
+		}(&event.Endpoints[i])
 	}
-
-	// Wait for all deployments to complete
 	wg.Wait()
 
-	totalDurationMs := time.Since(startTime).Milliseconds()
-
-	c.recordFleetAck(plan, atomic.LoadInt32(&state.successCount))
+	c.plans.Retain(c.fleetPlanRefs(event.Endpoints))
+	c.clients.Retain(event.Endpoints)
+	c.recordFleetAck(event.Plan, atomic.LoadInt32(&state.ackCount))
 
 	c.Logger().Debug("Deployment completed",
-		"total_endpoints", len(endpoints),
-		"succeeded", state.successCount,
-		"failed", state.failureCount,
-		"reloads_triggered", state.reloadsTriggered,
-		"total_operations", state.totalOperations,
-		"duration_ms", totalDurationMs,
+		"total_endpoints", len(event.Endpoints),
+		"converged", atomic.LoadInt32(&state.convergedCount),
+		"failed", atomic.LoadInt32(&state.failureCount),
+		"reloads_triggered", atomic.LoadInt32(&state.reloadsTriggered),
+		"duration_ms", time.Since(startTime).Milliseconds(),
 		"correlation_id", correlationID)
 
-	// Publish DeploymentCompletedEvent with correlation. StatusPatches and
-	// ContentChecksum are forwarded unchanged from the DeploymentScheduledEvent
-	// so downstream consumers (StatusApplier, DeploymentScheduler's
-	// lastDeployedConfigHash cache) describe what THIS deployment carried —
-	// not what the latest in-memory render happens to hold at completion
-	// time (which an intervening reconcile may have changed).
-	c.EventBus().Publish(events.NewDeploymentCompletedEvent(
-		&events.DeploymentResult{
-			DeploymentID:       deploymentID,
-			Total:              len(endpoints),
-			Succeeded:          int(state.successCount),
-			Failed:             int(state.failureCount),
-			DurationMs:         totalDurationMs,
-			ReloadsTriggered:   int(state.reloadsTriggered),
-			TotalAPIOperations: int(state.totalOperations),
-			StatusPatches:      statusPatches,
-			ContentChecksum:    contentChecksum,
-			PodSetHash:         podSetHash,
-			OperationBreakdown: state.operationBreakdown,
-			BackendDiffFields:  state.backendDiffFields,
-		},
-		events.WithCorrelation(correlationID, deploymentID),
-	))
+	c.publishCompleted(event, deploymentID, podSetHash, state, time.Since(startTime).Milliseconds())
+	c.publishDeployedConfig(event, int(atomic.LoadInt32(&state.ackCount)))
+	c.observeConvergence(event, podSetHash, state)
+}
 
-	// Publish the just-deployed config as the HAProxyCfg spec so its checksum —
-	// the same value stamped onto each pod's status.deployedToPods entry above —
-	// is always observable as a published spec.Checksum. Without this, a render
-	// whose validation-driven publish was throttled/coalesced away under churn
-	// leaves pods recorded at a checksum that no consumer (operators, the e2e
-	// convergence wait) can verify against spec. Gated on a real, successful,
-	// non-drift deploy: drift checks are GET-only and carry an already-deployed
-	// (hence already-published) checksum.
-	if state.successCount > 0 && runtimeConfigName != "" && contentChecksum != "" && reason != events.TriggerReasonDriftPrevention {
-		c.EventBus().Publish(events.NewDeployedConfigPublishRequest(
-			runtimeConfigName, runtimeConfigNamespace, config, auxFiles, contentChecksum,
-		))
+// reportUndeployable completes a deployment that cannot be executed: a render
+// without a plan carries no file set, and a fleet without pods has no target.
+// Both report through the normal completion so the scheduler is never wedged.
+func (c *Component) reportUndeployable(event *events.DeploymentScheduledEvent, deploymentID string) {
+	result := &events.DeploymentResult{DeploymentID: deploymentID, StatusPatches: event.StatusPatches}
+	if event.Plan == nil && len(event.Endpoints) > 0 {
+		c.Logger().Error("Render carries no plan; the agent needs one to apply it",
+			"endpoint_count", len(event.Endpoints),
+			"correlation_id", event.CorrelationID())
+		result.Total = len(event.Endpoints)
+		result.Failed = len(event.Endpoints)
+	} else {
+		c.Logger().Error("No valid endpoints to deploy to")
 	}
+	c.EventBus().Publish(events.NewDeploymentCompletedEvent(result,
+		events.WithCorrelation(event.CorrelationID(), deploymentID)))
+}
+
+func (c *Component) newDeployRequest(event *events.DeploymentScheduledEvent) *deployRequest {
+	c.plans.Put(event.Plan)
+	blob, err := planblob.Encode(event.Plan)
+	if err != nil {
+		// Without the blob a pod that outlives this controller reports a
+		// baseline nobody can decode, which costs it one reload — never
+		// correctness, so the deployment goes ahead.
+		c.Logger().Error("Encoding the plan blob failed; pods will not retain this baseline",
+			"plan", event.PlanID, "error", err)
+	}
+	return &deployRequest{
+		plan:            event.Plan,
+		planID:          event.PlanID,
+		contents:        contentsByDigest(event.Config, event.AuxiliaryFiles),
+		blob:            blob,
+		token:           api.Token{LeaderEpoch: c.leaderEpoch(), RenderSeq: c.nextRenderSeq()},
+		validatedPlanID: c.validatedPlan(),
+		verify:          event.Reason == events.TriggerReasonDriftPrevention,
+		diffs:           newDiffMemo(),
+	}
+}
+
+// contentsByDigest indexes every rendered byte string by its plan digest. The
+// digest is the manifest's join key, so no consumer re-derives the path
+// conventions the render used.
+func contentsByDigest(config string, aux *dataplane.AuxiliaryFiles) map[string]string {
+	contents := map[string]string{renderplan.DigestString(config): config}
+	if aux == nil {
+		return contents
+	}
+	add := func(content string) { contents[renderplan.DigestString(content)] = content }
+	for i := range aux.MapFiles {
+		add(aux.MapFiles[i].Content)
+	}
+	for i := range aux.SSLCertificates {
+		add(aux.SSLCertificates[i].Content)
+	}
+	for i := range aux.SSLCaFiles {
+		add(aux.SSLCaFiles[i].Content)
+	}
+	for i := range aux.CRTListFiles {
+		add(aux.CRTListFiles[i].Content)
+	}
+	for i := range aux.GeneralFiles {
+		add(aux.GeneralFiles[i].Content)
+	}
+	return contents
 }
 
 // recordFleetAck hands the renderer the plan the fleet now runs — one pod that
 // took it is enough, the rest converge on the same render. Called directly, not
 // over the bus: the next render must read it (ADR-0001).
-func (c *Component) recordFleetAck(plan *renderplan.Plan, successes int32) {
-	if plan == nil || c.ackedPlans == nil || successes == 0 {
+func (c *Component) recordFleetAck(plan *renderplan.Plan, acked int32) {
+	if plan == nil || c.ackedPlans == nil || acked == 0 {
 		return
 	}
 	c.ackedPlans.SetAckedPlan(plan)
 }
 
-// deploymentState holds aggregated metrics protected for concurrent access.
+// deploymentState aggregates what the pods answered. Counts are atomic; the
+// mutex guards the maps and slices.
 type deploymentState struct {
-	successCount       int32
-	failureCount       int32
-	reloadsTriggered   int32
-	totalOperations    int32
-	breakdownMu        sync.Mutex
+	standDown context.CancelFunc
+
+	ackCount         int32 // pods that accepted the apply
+	convergedCount   int32 // pods now running the render
+	failureCount     int32
+	reloadsTriggered int32
+	pendingReloads   int32 // pods holding the render behind a paced reload
+
+	mu                 sync.Mutex
+	totalOperations    int
 	operationBreakdown map[string]int
-	backendDiffFields  string // set from first endpoint's diff fields (same for all)
+	stoodDown          bool
+	pendingReloadUntil time.Time
+	running            map[string]string // pod → the plan its worker runs, from its ACK
 }
 
-// processEndpointDeployment handles deployment to a single endpoint and updates shared state.
-// This method is called from goroutines and must be thread-safe.
-func (c *Component) processEndpointDeployment(
+// noteRunning records which plan a pod's worker runs after its apply.
+func (s *deploymentState) noteRunning(endpoint *dataplane.Endpoint, planID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running == nil {
+		s.running = map[string]string{}
+	}
+	s.running[podKey(endpoint)] = planID
+}
+
+// fleetRunningPlan is the plan every pod reported running, or "" when a pod
+// did not answer or the fleet disagrees.
+func (s *deploymentState) fleetRunningPlan(total int) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if total == 0 || len(s.running) != total {
+		return ""
+	}
+	consensus := ""
+	for _, planID := range s.running {
+		switch {
+		case planID == "":
+			return ""
+		case consensus == "":
+			consensus = planID
+		case consensus != planID:
+			return ""
+		}
+	}
+	return consensus
+}
+
+// notePendingReload records a pod that scheduled its reload for later.
+func (s *deploymentState) notePendingReload(scheduledAt string) {
+	atomic.AddInt32(&s.pendingReloads, 1)
+	due, err := time.Parse(time.RFC3339, scheduledAt)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if due.After(s.pendingReloadUntil) {
+		s.pendingReloadUntil = due
+	}
+}
+
+// deployToPod applies the render to one pod and folds its answer into state.
+func (c *Component) deployToPod(
 	ctx context.Context,
-	ep *dataplane.Endpoint,
-	config string,
-	auxFiles *dataplane.AuxiliaryFiles,
-	parsedConfig *parser.StructuredConfig,
-	checksum string,
-	reason string,
-	runtimeConfigName string,
-	runtimeConfigNamespace string,
-	contentChecksum string,
-	planID string,
-	correlationID string,
+	endpoint *dataplane.Endpoint,
+	request *deployRequest,
+	event *events.DeploymentScheduledEvent,
 	state *deploymentState,
 ) {
-	// Check if context is already cancelled (e.g., timeout fired)
 	if ctx.Err() != nil {
 		c.Logger().Debug("Skipping endpoint deployment - context cancelled",
-			"endpoint", ep.URL,
-			"pod", ep.PodName,
-			"error", ctx.Err(),
-			"correlation_id", correlationID)
+			"pod", endpoint.PodName, "error", ctx.Err())
 		atomic.AddInt32(&state.failureCount, 1)
 		return
 	}
 
-	instanceStart := time.Now()
-	syncResult, err := c.deployToSingleEndpoint(ctx, config, auxFiles, parsedConfig, contentChecksum, reason, ep)
-	durationMs := time.Since(instanceStart).Milliseconds()
+	start := time.Now()
+	outcome, err := c.applyToPod(ctx, endpoint, request)
+	durationMs := time.Since(start).Milliseconds()
 
-	// Determine if this is a drift check based on deployment reason
-	isDriftCheck := reason == "drift_prevention"
-
-	if err != nil {
-		c.handleEndpointFailure(ep, err, durationMs, checksum, isDriftCheck,
-			runtimeConfigName, runtimeConfigNamespace, correlationID, state)
-	} else {
-		c.handleEndpointSuccess(ep, syncResult, durationMs, checksum, isDriftCheck,
-			runtimeConfigName, runtimeConfigNamespace, planID, correlationID, state)
+	switch {
+	case errors.Is(err, errStaleEpoch):
+		c.standDown(state, endpoint, err)
+	case err != nil:
+		c.handleEndpointFailure(endpoint, err, durationMs, event, state)
+	// An apply that reports an error did not do what it was asked, whether or
+	// not the agent called the transaction a success: a refused in-place batch
+	// answers OK with an error and no applied plan.
+	case !outcome.result.OK || outcome.result.Error != nil:
+		c.handleEndpointRejection(endpoint, outcome, event, state)
+	default:
+		c.handleEndpointSuccess(endpoint, outcome, durationMs, event, state)
 	}
 }
 
-// handleEndpointFailure processes a failed endpoint deployment.
-func (c *Component) handleEndpointFailure(
-	ep *dataplane.Endpoint,
-	err error,
-	durationMs int64,
-	checksum string,
-	isDriftCheck bool,
-	runtimeConfigName string,
-	runtimeConfigNamespace string,
-	correlationID string,
-	state *deploymentState,
-) {
-	c.Logger().Error("Deployment failed for endpoint",
-		"endpoint", ep.URL,
-		"pod", ep.PodName,
-		"error", err,
-		"duration_ms", durationMs,
-		"correlation_id", correlationID)
-
-	// Publish InstanceDeploymentFailedEvent with correlation
-	c.EventBus().Publish(events.NewInstanceDeploymentFailedEvent(
-		ep,
-		err.Error(),
-		true, // retryable
-		events.WithCorrelation(correlationID, correlationID),
-	))
-
-	// A confirmed post-reload read-back divergence (issue #84) gets its own
-	// counter (haptic_deploy_runtime_divergence_total): unlike ordinary
-	// transient sync failures, it means a concurrent writer clobbered the
-	// on-disk config a reload had just activated — a defect signal to alert
-	// on, even though the fast retry self-heals the pod.
-	if dataplane.IsPostReloadDivergence(err) && c.metrics != nil {
-		c.metrics.RecordDeployRuntimeDivergence()
-	}
-
-	// Publish ConfigAppliedToPodEvent with error info (for status tracking)
-	if runtimeConfigName != "" && runtimeConfigNamespace != "" {
-		syncMetadata := &events.SyncMetadata{
-			Error: err.Error(),
-		}
-		c.EventBus().Publish(events.NewConfigAppliedToPodEvent(
-			runtimeConfigName,
-			runtimeConfigNamespace,
-			ep.PodName,
-			ep.PodNamespace,
-			ep.PodUID,
-			ep.PodRuntimeID,
-			checksum,
-			isDriftCheck,
-			syncMetadata,
-		))
-	}
-
+// standDown stops dispatching: another controller holds a higher leader epoch,
+// so this one is not the fleet's writer any more. Losing the epoch race is
+// losing leadership, and it is given up for real — a replica that only stopped
+// dispatching keeps renewing its Lease, and nothing would ever re-arm it.
+func (c *Component) standDown(state *deploymentState, endpoint *dataplane.Endpoint, err error) {
 	atomic.AddInt32(&state.failureCount, 1)
-}
 
-// handleEndpointSuccess processes a successful endpoint deployment.
-func (c *Component) handleEndpointSuccess(
-	ep *dataplane.Endpoint,
-	syncResult *dataplane.SyncResult,
-	durationMs int64,
-	checksum string,
-	isDriftCheck bool,
-	runtimeConfigName string,
-	runtimeConfigNamespace string,
-	planID string,
-	correlationID string,
-	state *deploymentState,
-) {
-	c.Logger().Debug("Deployment succeeded for endpoint",
-		"endpoint", ep.URL,
-		"pod", ep.PodName,
-		"duration_ms", durationMs,
-		"reload_triggered", syncResult.ReloadTriggered,
-		"correlation_id", correlationID)
-
-	// A runtime map that failed its read-back cost this sync the reload-free
-	// lane. The sync still SUCCEEDED (the reload fallback is convergent), so
-	// this rides the success path — without it the degradation is a WARN line
-	// nothing alerts on.
-	if c.metrics != nil {
-		for _, mapName := range syncResult.DivergedRuntimeMaps {
-			c.metrics.RecordRuntimeMapDivergence(mapName)
-		}
+	state.mu.Lock()
+	first := !state.stoodDown
+	state.stoodDown = true
+	state.mu.Unlock()
+	if !first {
+		return
 	}
 
-	// Publish ConfigAppliedToPodEvent unconditionally, regardless of
-	// whether the sync did any HAProxy operations.
-	//
-	// The earlier "skip no-op deployments to reduce API load" optimisation
-	// broke the spec.checksum ↔ status.deployedToPods[].checksum invariant.
-	// Scenario from CI pipeline 2559825226 / TestIngressBackendSSL etc.:
-	//
-	//   1. Deploy with content X — sync applies operations, ConfigApplied
-	//      event fires with checksum=X, pod's deployedToPods entry → X.
-	//   2. Render produces content Y (same HAProxy operations but different
-	//      checksum: e.g. an aux file's byte order changed, or a label-only
-	//      delta on a watched resource shifted the content hash without
-	//      changing the rendered HAProxy directives).
-	//   3. Deploy with content Y — sync reports 0 ops, no reload. The old
-	//      skip-path treated this as a no-op and DIDN'T publish the
-	//      ConfigAppliedToPodEvent.
-	//   4. config-publisher writes spec.checksum=Y (it dedups against
-	//      content, not ops). status.deployedToPods[].checksum stays at X.
-	//   5. waitForControllerDeployed polls (Y vs X) → 90 s timeout.
-	//
-	// The Kubernetes API saving from skipping was illusory: server-side
-	// apply with a no-change payload doesn't bump resourceVersion when the
-	// managedFields entry is byte-identical, so the cost is bounded to
-	// the request round-trip. The correctness cost of skipping is
-	// unbounded — operators see permanently mismatched status until the
-	// next content change happens to also be a non-no-op sync. Always
-	// publish.
-	if runtimeConfigName != "" && runtimeConfigNamespace != "" {
-		syncMetadata := syncResultToMetadata(syncResult, planID)
-		c.EventBus().Publish(events.NewConfigAppliedToPodEvent(
-			runtimeConfigName,
-			runtimeConfigNamespace,
-			ep.PodName,
-			ep.PodNamespace,
-			ep.PodUID,
-			ep.PodRuntimeID,
-			checksum,
-			isDriftCheck,
-			syncMetadata,
-		))
+	c.Logger().Error("A newer leader epoch owns the fleet, standing down",
+		"pod", endpoint.PodName, "identity", c.identity(), "error", err)
+	state.standDown()
+	if c.fence == nil {
+		// No Lease to release: the leadership this reports is nominal, and the
+		// event is all the leader-only components have to stop on.
+		c.EventBus().Publish(events.NewLostLeadershipEvent(standaloneIdentity, "stale_leader_epoch"))
+		return
 	}
-
-	atomic.AddInt32(&state.successCount, 1)
-
-	// Track reloads and operations for aggregate metrics
-	if syncResult.ReloadTriggered {
-		atomic.AddInt32(&state.reloadsTriggered, 1)
-	}
-
-	// Details is always populated per dataplane.SyncResult contract
-	atomic.AddInt32(&state.totalOperations, safeIntToInt32(syncResult.Details.TotalOperations))
-
-	// Accumulate operation breakdown from AppliedOperations
-	// All operations (config + aux files) are now in AppliedOperations
-	state.breakdownMu.Lock()
-	for _, op := range syncResult.AppliedOperations {
-		key := op.Section + "_" + op.Type
-		state.operationBreakdown[key]++
-	}
-	// Capture backend diff fields from first endpoint (same for all since config is identical)
-	if state.backendDiffFields == "" {
-		state.backendDiffFields = formatBackendDiffFields(syncResult.Details.BackendDiffFields)
-	}
-	state.breakdownMu.Unlock()
-}
-
-// deployToSingleEndpoint deploys configuration to a single HAProxy endpoint.
-//
-// Returns the sync result containing detailed operation metadata, or an error if the sync failed.
-func (c *Component) deployToSingleEndpoint(
-	ctx context.Context,
-	config string,
-	auxFiles *dataplane.AuxiliaryFiles,
-	parsedConfig *parser.StructuredConfig,
-	contentChecksum string,
-	reason string,
-	endpoint *dataplane.Endpoint,
-) (*dataplane.SyncResult, error) {
-	// Create client for this endpoint
-	client, err := dataplane.NewClient(ctx, endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("creating client: %w", err)
-	}
-	defer client.Close()
-
-	// Use default sync options and apply configuration limits
-	opts := dataplane.DefaultSyncOptions()
-	if c.reloadVerificationTimeout > 0 {
-		opts.ReloadVerificationTimeout = c.reloadVerificationTimeout
-	}
-	if c.syncTimeout > 0 {
-		opts.Timeout = c.syncTimeout
-	}
-
-	// Pass pre-parsed config to skip redundant parsing during sync
-	if parsedConfig != nil {
-		opts.PreParsedConfig = parsedConfig
-	}
-
-	cacheSnapshot := c.versionCache.snapshot(endpoint)
-	if cacheSnapshot.parsedConfig != nil && cacheSnapshot.currentConfigChecksum != "" {
-		opts.CachedCurrentConfig = cacheSnapshot.parsedConfig
-		opts.CachedConfigVersion = cacheSnapshot.version
-		opts.CachedCurrentConfigChecksum = cacheSnapshot.currentConfigChecksum
-	}
-
-	// Pass content checksum for aux file comparison cache.
-	// Drift prevention deployments must always force comparison (bypass cache)
-	// to detect out-of-band changes on the HAProxy pod.
-	opts.ContentChecksum = contentChecksum
-	if reason != events.TriggerReasonDriftPrevention && cacheSnapshot.contentChecksum != "" {
-		opts.LastDeployedChecksum = cacheSnapshot.contentChecksum
-	}
-
-	// What this endpoint was last PROVEN to be running. Unlike the caches above
-	// this is passed on EVERY sync including drift prevention: it does not skip
-	// work, it decides whether an empty diff may be trusted at all, and drift
-	// prevention is exactly when a stale answer is most costly.
-	opts.LastActivatedConfigChecksum = cacheSnapshot.activatedChecksum
-
-	// Sync configuration
-	result, err := client.Sync(ctx, config, auxFiles, opts)
-	if err != nil {
-		// A newer writer owns any later generation; its proof-only state still
-		// forces a raw fetch before reuse.
-		c.versionCache.abortSync(endpoint, cacheSnapshot.generation)
-		return nil, fmt.Errorf("sync failed: %w", err)
-	}
-
-	// Update the complete endpoint observation in one generation-checked write.
-	cachedParsed, cachedSharedDesired := selectCachedParsedConfig(result, parsedConfig)
-	cacheCommitted := c.versionCache.commitSync(
-		endpoint,
-		cacheSnapshot.generation,
-		result.PostSyncVersion,
-		cachedParsed,
-		result.ActivatedConfigChecksum,
-		contentChecksum,
-		result.ActivatedConfigChecksum,
-	)
-
-	c.Logger().Debug("Sync completed for endpoint",
-		"endpoint", endpoint.URL,
-		"pod", endpoint.PodName,
-		"applied_operations", len(result.AppliedOperations),
-		"reload_triggered", result.ReloadTriggered,
-		"used_preparsed_config", parsedConfig != nil,
-		"cache_hit", opts.CachedCurrentConfig != nil,
-		"cache_committed", cacheCommitted,
-		"post_sync_version", result.PostSyncVersion,
-		"cached_actual_post_sync", cacheCommitted && result.PostSyncParsedConfig != nil && !cachedSharedDesired,
-		"cached_shared_desired", cacheCommitted && cachedSharedDesired,
-		"duration", result.Duration)
-
-	return result, nil
-}
-
-func selectCachedParsedConfig(result *dataplane.SyncResult, desired *parser.StructuredConfig) (*parser.StructuredConfig, bool) {
-	if result.PostSyncConfigMatchesDesired && desired != nil {
-		return desired, true
-	}
-	if result.PostSyncParsedConfig != nil {
-		return result.PostSyncParsedConfig, false
-	}
-	return desired, false
+	c.fence.StandDown("stale_leader_epoch")
 }

@@ -292,6 +292,8 @@ func TestInventoryListsWhatTheWorkerLoaded(t *testing.T) {
 	assert.Equal(t, uint64(7), inventory.Generation)
 	assert.Equal(t, []string{"maps/host.map"}, inventory.Maps)
 	assert.Equal(t, []string{"certs/tls.crt"}, inventory.Certs)
+	// The CA listing suffixes every row with a certificate count and always
+	// lists the built-in trust store, which is not a file and stays out.
 	assert.Equal(t, []string{"certs/ca.crt"}, inventory.CAFiles)
 	assert.Equal(t, []string{"certs/list.txt"}, inventory.CRTLists)
 }
@@ -474,4 +476,36 @@ func TestADeleteInFlightStaysOutstanding(t *testing.T) {
 func waitForWorker(client *cli.Client) error {
 	_, err := client.Info()
 	return err
+}
+
+// TestExecuteReadsSetServerAddrByItsWords: HAProxy answers `set server addr`
+// at WARNING severity whether it changed something, had nothing to change or
+// refused, so the verdict comes from the words, never the level.
+func TestExecuteReadsSetServerAddrByItsWords(t *testing.T) {
+	client, model := newClient(t)
+	setup := []api.Op{
+		{Kind: api.OpBackendAdd, Backend: "be-a", Profile: "prof", Mode: "http"},
+		{Kind: api.OpServerAdd, Backend: "be-a", Server: "srv1", Address: "10.0.0.1", Port: 8080},
+	}
+	_, err := client.Execute(compileAll(t, setup, nil))
+	require.NoError(t, err)
+
+	moved := []api.Op{{Kind: api.OpServerSetAddr, Backend: "be-a", Server: "srv1", Address: "10.0.0.2", Port: 9090}}
+	results, err := client.Execute(compileAll(t, moved, nil))
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.True(t, results[0].OK, "%s", results[0].Output)
+	model.With(func(m *haproxytest.Model) {
+		assert.Equal(t, "10.0.0.2:9090", m.Backends["be-a"].Servers[0].Address)
+	})
+
+	results, err = client.Execute(compileAll(t, moved, nil))
+	require.NoError(t, err)
+	assert.True(t, results[0].OK, "an address the server already has is not a refusal: %s", results[0].Output)
+
+	bad := []api.Op{{Kind: api.OpServerSetAddr, Backend: "be-a", Server: "srv1", Address: "not-an-ip"}}
+	results, err = client.Execute(compileAll(t, bad, nil))
+	require.ErrorIs(t, err, cli.ErrRejected)
+	assert.False(t, results[0].OK)
+	assert.Contains(t, results[0].Output, "Invalid addr")
 }

@@ -35,7 +35,7 @@ templateSnippets:
           {%- fail("failed to register spoe.conf: " + regErr.Error()) %}
         {%- end -%}
         {#- Register the runtime hub config (TOML) at <GeneralStorageDir>/spoa-hub-config.toml.
-            The dataplane API delivers it to the haproxy pod's filesystem and the
+            The agent delivers it to the haproxy pod's filesystem and the
             spoa-hub sidecar's file-watch + graceful-reload picks it up without a
             restart. ADR-0007 captures the end-to-end flow.
             reloadOnPush=false: HAProxy never opens this file, only the sidecar
