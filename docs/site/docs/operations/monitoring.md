@@ -154,7 +154,9 @@ rate(haptic_reconciliation_duration_seconds_count[5m])
 | `haptic_deployment_duration_seconds` | Histogram | Time spent deploying to HAProxy |
 | `haptic_deployment_errors_total` | Counter | Failed deployments |
 | `haptic_haproxy_reloads_total` | Counter | HAProxy reloads triggered by deployments. A reload forks the HAProxy process; reload rate (vs runtime-API updates) is the canonical capacity and Service Level Objective (SLO) signal |
-| `haptic_dataplane_api_operations_total` | Counter | DataPlane API operations issued across deployments (structural changes applied to HAProxy) |
+| `haptic_deploy_apply_total` | Counter | Applies an agent accepted, by `pod` and by the `mode` it reported: `runtime`, `file_only`, `reload`, `scheduled` or `noop`. The reload-free share of a rollout is the `runtime`+`file_only`+`noop` fraction |
+| `haptic_apply_rejected_total` | Counter | Applies an agent refused or rolled back, by `pod`. Every increment carries HAProxy's own message in a Warning event and the pod's status condition |
+| `haptic_agent_version_skew_total` | Counter | Applies degraded to full state plus a reload because the pod's agent speaks a different API major or doesn't execute an op kind. Nonzero during a rolling upgrade, zero after it |
 
 **Key queries:**
 
@@ -167,6 +169,12 @@ rate(haptic_haproxy_reloads_total[5m])
 
 # Share of deployments that needed a reload vs runtime-only updates
 rate(haptic_haproxy_reloads_total[5m]) / rate(haptic_deployment_total[5m])
+
+# Applies by what they did to the pod — `runtime` is the reload-free lane
+sum by (mode) (rate(haptic_deploy_apply_total[5m]))
+
+# Pods rejecting applies, worst first
+topk(5, sum by (pod) (rate(haptic_apply_rejected_total[5m])))
 
 # 95th percentile deployment latency
 histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
@@ -207,37 +215,71 @@ haptic_deployment_consecutive_failures
 
 The bundled `HAProxyFleetDiverged` alert (see [Alerting Rules](#alerting-rules)) fires when pods stay behind the desired config — the robust, cadence-independent signal. A staleness alert on `time() - haptic_last_full_sync_timestamp_seconds` is left to you: in steady state that value tracks the drift-prevention cadence, so a safe threshold depends on your configured `driftPreventionInterval` (a fixed default would false-fire for operators who raise it).
 
-### Runtime fast-path metrics
+### Runtime operation metrics
 
-The runtime fast path applies runtime-eligible server changes (weight, address, port, admin state) directly to the running HAProxy worker via the Dataplane API, bypassing a config reload. `applies` stuck at 0 while `fires` climbs means the fast path runs but the render diff never carries a runtime-eligible change.
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `haptic_runtime_fast_path_fires_total` | Counter | Runtime-eligible fast-path apply attempts (one per pod per reconcile) |
-| `haptic_runtime_fast_path_applies_total` | Counter | Fast-path attempts that applied at least one runtime-eligible server update |
-| `haptic_runtime_fast_path_failures_total` | Counter | Fast-path attempts that errored (best-effort; the scheduled deploy converges) |
-| `haptic_runtime_fast_path_server_updates_total` | Counter | Total runtime-eligible server updates applied via the fast path |
-
-Two more counters record when the reload-free lane was *lost* — each increment is a sync that fell back to a reload or needed a retry:
+The controller counts what it asked the fleet to run without a reload. A change
+the render couldn't express as a runtime op is a reload, and the reasons for
+that are in the pod's status.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `haptic_runtime_map_divergence_total` | Counter | `map` | Runtime maps whose post-apply read-back disagreed with the desired content, forcing a reload fallback. The `map` label names the file, so a single map dominating the rate points at the template that builds it. |
-| `haptic_deploy_runtime_divergence_total` | Counter | — | Endpoints whose post-reload read-back found the on-disk config structurally diverged from the pushed body — a concurrent writer clobbered a just-activated config. The fast deploy retry self-heals it; sustained growth means something outside HAPTIC is writing to the same HAProxy. |
+| `haptic_runtime_backend_ops_total` | Counter | `op` | Backend lifecycle operations the fleet applied at runtime, by op kind |
+| `haptic_runtime_server_ops_total` | Counter | `op` | Server lifecycle operations the fleet applied at runtime, by op kind |
+| `haptic_runtime_map_divergence_total` | Counter | `map` | Runtime maps whose post-apply read-back disagreed with the desired content, forcing a reload fallback. The `map` label names the file, so one map dominating the rate points at the template that builds it |
 
 **Key queries:**
 
 ```promql
-# Fraction of fast-path attempts that carried a runtime-eligible change
-rate(haptic_runtime_fast_path_applies_total[5m]) /
-rate(haptic_runtime_fast_path_fires_total[5m])
+# Server changes applied without a reload
+sum by (op) (rate(haptic_runtime_server_ops_total[5m]))
 
-# Runtime server updates applied without a reload
-rate(haptic_runtime_fast_path_server_updates_total[5m])
-
-# Maps that lost the reload-free lane, worst first
-topk(5, sum by (map) (rate(haptic_runtime_map_divergence_total[5m])))
+# Route adds and removes that stayed reload-free
+sum by (op) (rate(haptic_runtime_backend_ops_total[5m]))
 ```
+
+### Agent metrics
+
+Each agent serves its own `/metrics` on the pod's `agent-metrics` port, scraped
+by the bundled PodMonitor. These are per-pod facts the controller can't see:
+what the agent did with an apply after it accepted it.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `haptic_agent_apply_total` | Counter | `mode` | Applies this agent completed, by outcome mode |
+| `haptic_agent_apply_rejected_total` | Counter | `stage` | Applies this agent refused or rolled back, by the stage that failed |
+| `haptic_agent_reloads_total` | Counter | `result` | Reloads this agent asked the master process for |
+| `haptic_agent_rollbacks_total` | Counter | — | Applies whose file set was restored to the last known good |
+| `haptic_agent_op_errors_total` | Counter | `kind` | Runtime ops HAProxy rejected, by op kind |
+| `haptic_agent_invariant_violations_total` | Counter | `name` | Invariants the agent observed failing. Any increment is a defect — alert on it |
+| `haptic_agent_deferred_deletes_total` | Counter | `kind`, `outcome` | Deferred runtime deletes, by object kind and whether they completed |
+| `haptic_agent_generation` | Gauge | — | The agent's apply generation, which increases by one per successful apply |
+| `haptic_agent_map_divergence_total` | Counter | — | Read-backs that found the running state different from the desired one; the controller counts the same events per `map` in `haptic_runtime_map_divergence_total` |
+
+**Key queries:**
+
+```promql
+# Reload-free applies, fleet-wide
+sum(rate(haptic_agent_apply_total{mode="runtime"}[5m]))
+
+# Where applies are failing, by stage
+sum by (stage) (rate(haptic_agent_apply_rejected_total[5m]))
+
+# Any invariant violation at all
+sum by (name) (increase(haptic_agent_invariant_violations_total[1h])) > 0
+```
+
+The controller and the agents count the same applies from either end: `haptic_deploy_apply_total{pod,mode}` on the controller, `haptic_agent_apply_total{mode}` on each pod. They agree in steady state; a difference is an apply one side never saw.
+
+### Where the old metrics went
+
+| Removed | Replacement |
+|---------|-------------|
+| `haptic_dataplane_api_operations_total` | `haptic_deploy_apply_total{pod,mode}` — applies, by what the pod did with them |
+| `haptic_runtime_fast_path_fires_total` | `haptic_deploy_apply_total{mode="runtime"}` |
+| `haptic_runtime_fast_path_applies_total` | `haptic_runtime_server_ops_total` |
+| `haptic_runtime_fast_path_failures_total` | `haptic_agent_op_errors_total{kind}` on the pod, `haptic_apply_rejected_total{pod}` on the controller |
+| `haptic_runtime_fast_path_server_updates_total` | `haptic_runtime_server_ops_total{op}` |
+| `haptic_deploy_runtime_divergence_total` | `haptic_runtime_map_divergence_total{map}`, which now also covers what the agent reads back after its own ops |
 
 ### Validation metrics
 
@@ -815,7 +857,7 @@ This is a starting point — add panels using the [PromQL queries](#grafana-dash
 |-----------|---------------|---------------------|
 | Reconciliation success rate | >99% | Check logs for template/validation errors |
 | Deployment success rate | >99% | Check HAProxy pod connectivity |
-| P95 deployment latency | <`2s` | Check HAProxy DataPlane API performance |
+| P95 deployment latency | <`2s` | Check `haptic_agent_apply_total{mode}` — a `reload` share climbing means the render lost the reload-free lane |
 | Leader count | Exactly 1 | Check HA configuration and network |
 | Event subscribers | Shouldn't decrease during normal operation | Restart controller if dropping |
 

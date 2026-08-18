@@ -35,6 +35,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/eventemitter"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
+	leaderelectionctrl "gitlab.com/haproxy-haptic/haptic/pkg/controller/leaderelection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
@@ -74,6 +75,19 @@ type reconciliationWiring struct {
 	gvrMapper             meta.RESTMapper
 }
 
+// leadershipFence builds the epoch every apply is fenced by and hands it to
+// the leader-election component through setup, so both halves share one
+// counter. Nil without leader election: a single writer needs no fence.
+func leadershipFence(setup *componentSetup, cfg *coreconfig.Config, k8sClient *client.Client, logger *slog.Logger) deployer.LeadershipFence {
+	if !cfg.Controller.LeaderElection.Enabled {
+		return nil
+	}
+	podName, podNamespace := leaderIdentity(k8sClient, logger)
+	setup.LeaderEpoch = leaderelectionctrl.NewLeaseEpoch(k8sClient.Clientset(),
+		podNamespace, cfg.Controller.LeaderElection.LeaseName, podName, logger)
+	return setup.LeaderEpoch
+}
+
 // createReconciliationComponents creates all reconciliation components and
 // registers them with the lifecycle registry (setup.Registry). It returns
 // only the slim reconciliationWiring — every component not referenced again
@@ -97,7 +111,11 @@ func createReconciliationComponents(
 	// minDeploymentInterval (which the runtime-eligible fast path bypasses).
 	reconcilerComponent := reconciler.New(setup.Bus, logger)
 
-	// Detect local HAProxy version and compute capabilities
+	// The controller image's own HAProxy binary seeds the template
+	// `capabilities` input. Discovery replaces it with the fleet's lowest
+	// reported version once the pods answer; the chart pins the same
+	// haproxyVersion for both images, so the seed is right on a healthy fleet
+	// and only an in-flight upgrade moves it.
 	localVersion, err := dataplane.DetectLocalVersionContext(setup.IterCtx)
 	if err != nil {
 		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
@@ -169,18 +187,14 @@ func createReconciliationComponents(
 
 	// One constructor, wired inside the deployer package: the connections
 	// between these three used to be optional setters a caller could forget.
-	deployStack := deployer.NewDeployStack(setup.Bus, cfg, logger, setup.MetricsComponent.Metrics(), renderService)
+	deployStack := deployer.NewDeployStack(setup.Bus, cfg, logger,
+		setup.MetricsComponent.Metrics(), renderService, leadershipFence(setup, cfg, k8sClient, logger))
 	deployerComponent := deployStack.Deployer
 	deploymentSchedulerComponent := deployStack.Scheduler
 	driftMonitorComponent := deployStack.DriftMonitor
 
 	// Create Discovery component and set pod store
-	// This detects the local HAProxy version (fatal if fails - controller cannot start
-	// without knowing its local version for compatibility checking)
-	discoveryComponent, err := discovery.New(setup.IterCtx, setup.Bus, logger)
-	if err != nil {
-		return nil, fmt.Errorf("creating discovery component: %w", err)
-	}
+	discoveryComponent := discovery.New(setup.Bus, logger)
 	podStore := resourceWatcher.GetStore(names.HAProxyPodsResourceType)
 	if podStore == nil {
 		return nil, fmt.Errorf("%s store not found (should be auto-injected)", names.HAProxyPodsResourceType)

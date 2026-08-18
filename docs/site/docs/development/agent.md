@@ -16,6 +16,43 @@ The agent is the same binary as the controller: `haptic agent`.
 Source: `pkg/dataplane/agent/{api,server,files,cli}`; the controller's end is
 `pkg/dataplane/agent/client`.
 
+## The controller's side
+
+The controller decides, the agent executes. Between a render and an apply there
+are three pure steps and one round trip.
+
+1. **The render declares its structure.** Chart macros register what they emit —
+   the sections of `haproxy.cfg`, the backend and server records behind them, the
+   entries of every map and crt-list, the file set — and the result is a
+   `renderplan.Plan` (`pkg/dataplane/renderplan`). Nothing parses HAProxy
+   configuration: the generator knows what it generated. A plan's ID is the
+   digest of its canonical encoding, so two identical renders produce the same
+   ID and the second apply changes nothing.
+2. **The controller reads the pod's baseline.** `GET /v1/state` answers with the
+   plan the pod acknowledged, the plan its worker runs, the digest of every file it
+   holds, and the runtime inventory — the maps, certificates, CA files and
+   crt-lists the worker actually loaded. A path that isn't in that inventory is
+   a file write, never a runtime command.
+3. **`deployplan.Diff` decides.** It compares the render with that baseline and
+   returns a `Decision`: a verdict (`runtime`, `file_only` or `reload`), the
+   typed ops for this pod, the complete file set, and a reason for every change
+   that couldn't run at runtime. It's pure data in, data out — table tested per
+   rule, and the playground runs the same function in a browser to answer "does
+   this change reload?".
+4. **The deployer applies.** One `POST /v1/apply` per pod, in parallel across the
+   fleet, fenced with the leader epoch and the render sequence. Content travels
+   only for the files the agent answers that it lacks. A `409` carrying the pod's
+   actual baseline means the ops were composed against a state the pod no longer
+   has: re-diff from what it returned. Nothing was written.
+
+A pod whose agent speaks a different API major, or doesn't execute an op kind
+the decision needs, gets the complete file set plus a reload. Version skew
+degrades the change; it never refuses it.
+
+Which macros declare what, and what takes a backend off the reload-free lane, is
+the template author's side of the same contract; the chart's `Backend()`,
+`BackendServers()` and `RegisterMap()` macros are where a render states it.
+
 ## Running it
 
 ```console
@@ -274,7 +311,10 @@ They live in `pkg/dataplane/agent/api/limits.go` and are asserted at both ends.
 
 ## Metrics
 
-The agent exports its own metrics on `--metrics-listen`.
+The agent exports its own metrics on `--metrics-listen`, scraped by the chart's
+PodMonitor. The controller's own view of the same applies is in
+[Monitoring](../operations/monitoring.md#deployment-metrics); these are the
+per-pod facts it can't see.
 
 | Metric | Labels | Meaning |
 |---|---|---|
@@ -286,7 +326,7 @@ The agent exports its own metrics on `--metrics-listen`.
 | `haptic_agent_deferred_deletes_total` | `kind`, `outcome` | Deferred runtime deletes: `done`, `deferred` (still draining, retried), or `abandoned` (given up; the object stays until the next reload). |
 | `haptic_agent_op_errors_total` | `kind` | Ops HAProxy rejected. |
 | `haptic_agent_generation` | — | The apply generation. |
-| `haptic_runtime_map_divergence_total` | — | Read-backs that found the worker out of step. |
+| `haptic_agent_map_divergence_total` | — | Read-backs that found the worker out of step. |
 
 ## Testing
 
@@ -298,6 +338,7 @@ Four layers cover the agent, and each answers a different question.
 | Fake HAProxy | Does the agent's transaction, fencing, and op execution behave against a modelled worker and master socket, including under injected faults? | `pkg/dataplane/agent/haproxytest`, used by `server` and `cli` tests |
 | Fake agent | Does the controller's deployer react correctly to fencing, conflicts and rejections? | `pkg/dataplane/agent/agenttest` |
 | Docker suite | Does a real HAProxy do what the contract says it does? | `tests/agent` |
+| Integration suite | Does a real HAProxy pod in a cluster converge on what a render declares? | `tests/integration` |
 
 ### The in-process fake agent
 
@@ -369,3 +410,22 @@ go test -tags=agentdocker -run TestMapOpsRunAtRuntimeAndKeepEveryByte -v ./tests
 
 Each test dumps the agent's and HAProxy's logs when it fails, then removes its
 containers and volumes.
+
+### The integration suite
+
+`tests/integration` deploys the same topology into a Kind cluster — the HAProxy
+container plus an `agent` container against the same mounts — and drives it
+through `deployplan.Diff` and the client, one pod per test. It asserts what an
+operator can observe: the pod's file tree through `kubectl exec … cat`, HAProxy's
+runtime state through `show map` and `show info` on the worker stats socket, and
+the runtime inventory through `GET /v1/state`.
+
+Where the docker suite hand-writes ops to pin one behaviour, the integration
+suite declares two file sets and lets the diff compose the ops — so it covers
+the decision and the execution together, against 120 configuration fixtures.
+
+```bash
+make test-integration HAPROXY_VERSION=3.4
+```
+
+CI runs it on 3.0 and 3.4 on merge requests, and on 3.1 to 3.3 on main.

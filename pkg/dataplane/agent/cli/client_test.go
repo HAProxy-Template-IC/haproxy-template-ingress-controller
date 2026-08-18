@@ -292,6 +292,8 @@ func TestInventoryListsWhatTheWorkerLoaded(t *testing.T) {
 	assert.Equal(t, uint64(7), inventory.Generation)
 	assert.Equal(t, []string{"maps/host.map"}, inventory.Maps)
 	assert.Equal(t, []string{"certs/tls.crt"}, inventory.Certs)
+	// The CA listing suffixes every row with a certificate count and always
+	// lists the built-in trust store, which is not a file and stays out.
 	assert.Equal(t, []string{"certs/ca.crt"}, inventory.CAFiles)
 	assert.Equal(t, []string{"certs/list.txt"}, inventory.CRTLists)
 }

@@ -132,7 +132,10 @@ Dependencies rule violations:
 
 **Framework**: fixenv + Kind
 
-**Purpose**: Test components against real Kubernetes cluster and HAProxy instances.
+**Purpose**: Test against a real Kubernetes cluster and real HAProxy pods, each
+with the agent as its second container. A case declares two file sets; the suite
+diffs them, applies the result, and reads the pod back — the tree through
+`kubectl exec`, HAProxy's runtime state through its worker stats socket.
 
 **See**: `tests/integration/CLAUDE.md` for details
 

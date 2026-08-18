@@ -33,7 +33,7 @@ helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
 The chart deploys:
 
 - **Controller Deployment** -- the controller that watches resources and generates configurations
-- **HAProxy Deployment** (optional, on by default) -- the load balancers that serve your traffic, with Dataplane API sidecars
+- **HAProxy Deployment** (optional, on by default) -- the load balancers that serve your traffic, each with the HAPTIC agent alongside
 - **CRDs** -- six resource types under the `haproxy-haptic.org` API group: `HAProxyTemplateConfig` (input — the operator's own templates, watched resources, settings) and `HAProxyTemplateLibrary` (one object per enabled template library, referenced from the config), plus `HAProxyCfg`, `HAProxyGeneralFile`, `HAProxyCRTListFile`, and `HAProxyMapFile` (outputs the controller publishes for observability). Installed from `charts/haptic/crds/`; preserved across `helm uninstall` (delete them explicitly — see [Uninstalling](#uninstalling))
 - **`HAProxyTemplateConfig` custom resource** -- built from `controller.config`, listing the enabled libraries in merge order via `spec.libraryRefs`
 - **`HAProxyTemplateLibrary` custom resources** -- one per enabled `controller.templateLibraries.*` entry, each carrying that library's snippets, templating settings, maps, files, and tests

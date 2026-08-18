@@ -14,9 +14,10 @@
 
 // Package discovery provides HAProxy pod discovery functionality.
 //
-// This package implements pure business logic for discovering HAProxy pod endpoints
-// based on pod resources from the Kubernetes API. It extracts pod IPs and constructs
-// Dataplane API endpoints with credentials.
+// This package implements pure business logic for discovering HAProxy pod
+// endpoints from pod resources: it extracts pod IPs, checks that the agent
+// container is running, and constructs agent endpoints with credentials.
+// Whether the agent answers is the event adapter's half of the rule.
 //
 // This is a pure component with no event bus dependency - event coordination is
 // handled by the adapter in pkg/controller/discovery.
@@ -44,25 +45,26 @@ import (
 const (
 	stateRunning = "running"
 	phaseRunning = "Running"
+
+	// agentContainerName is the container HAPTIC deploys to every HAProxy pod
+	// and talks to. It is the controller's own operational identity, not a
+	// resource an operator describes, so naming it here is correct.
+	agentContainerName = "agent"
+)
+
+// Rejection reasons, reported as haptic_haproxy_pods_rejected_total{reason}.
+const (
+	RejectionAgentNotRunning  = "agent_container_not_running"
+	RejectionAgentUnreachable = "agent_unreachable"
 )
 
 // Discovery discovers HAProxy pod endpoints from Kubernetes resources.
 //
 // This is a pure component that takes a pod store and credentials and returns
-// a list of Dataplane API endpoints. It has no knowledge of events or the
-// event bus - that coordination is handled by the event adapter.
-//
-// The Discovery also holds the local HAProxy version, detected at startup,
-// which is used by the event adapter for version compatibility checking.
+// the pods worth probing. It has no knowledge of events or the event bus -
+// that coordination is handled by the event adapter.
 type Discovery struct {
 	dataplanePort int
-	localVersion  *dataplane.Version
-}
-
-// LocalVersion returns the detected local HAProxy version.
-// This is used by the event adapter for version compatibility checking.
-func (d *Discovery) LocalVersion() *dataplane.Version {
-	return d.localVersion
 }
 
 // traceIf logs msg at the trace level with the supplied attributes when
@@ -78,135 +80,46 @@ func traceIf(logger *slog.Logger, msg string, args ...any) {
 	logger.Log(context.Background(), logging.LevelTrace, msg, args...)
 }
 
-// isDataplaneContainerReady checks if the container exposing the dataplane port is ready.
+// agentContainerRunning reports whether the pod's agent container is running.
 //
-// This method:
-//   - Finds which container has the dataplane port in spec.containers[].ports
-//   - Checks that container's ready status in status.containerStatuses[]
-//
-// Returns true only if the dataplane container exists and is ready.
-func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, logger *slog.Logger) (bool, error) {
-	dataplaneContainerName, err := d.findDataplaneContainerName(pod)
-	if err != nil {
-		return false, err
-	}
-
-	traceIf(logger, "Found dataplane container in spec",
-		"pod", pod.GetName(),
-		"container", dataplaneContainerName,
-		"port", d.dataplanePort)
-
-	return checkContainerReady(pod, dataplaneContainerName, logger)
-}
-
-// findDataplaneContainerName finds which container exposes the dataplane port.
-func (d *Discovery) findDataplaneContainerName(pod *unstructured.Unstructured) (string, error) {
-	containersSpec, found, err := unstructured.NestedSlice(pod.Object, "spec", "containers")
+// The container's ready flag is deliberately not consulted, and neither is pod
+// Ready: HAProxy's readiness probe only turns 200 after the first apply lands,
+// so gating discovery on it would never admit a fresh pod.
+func agentContainerRunning(pod *unstructured.Unstructured, logger *slog.Logger) bool {
+	statuses, found, err := unstructured.NestedSlice(pod.Object, "status", "containerStatuses")
 	if err != nil || !found {
-		return "", fmt.Errorf("getting containers spec: %w", err)
-	}
-
-	for _, c := range containersSpec {
-		container, ok := c.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		name, found, err := unstructured.NestedString(container, "name")
-		if err != nil || !found {
-			continue
-		}
-
-		if containerHasPort(container, d.dataplanePort) {
-			return name, nil
-		}
-	}
-
-	return "", fmt.Errorf("no container found with dataplane port %d", d.dataplanePort)
-}
-
-// containerHasPort checks if a container spec contains the given port.
-func containerHasPort(container map[string]any, targetPort int) bool {
-	ports, found, err := unstructured.NestedSlice(container, "ports")
-	if err != nil || !found {
+		traceIf(logger, "No containerStatuses found in pod status", "pod", pod.GetName(), "error", err)
 		return false
 	}
-
-	for _, p := range ports {
-		port, ok := p.(map[string]any)
+	for _, entry := range statuses {
+		status, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
-
-		containerPort, found, err := unstructured.NestedInt64(port, "containerPort")
-		if err != nil || !found {
-			continue
-		}
-
-		if int(containerPort) == targetPort {
-			return true
-		}
-	}
-
-	return false
-}
-
-// checkContainerReady checks the ready status of a named container in pod status.
-func checkContainerReady(pod *unstructured.Unstructured, containerName string, logger *slog.Logger) (bool, error) {
-	containerStatuses, found, err := unstructured.NestedSlice(pod.Object, "status", "containerStatuses")
-	if err != nil || !found {
-		traceIf(logger, "No containerStatuses found in pod status",
-			"pod", pod.GetName(),
-			"error", err)
-		return false, nil
-	}
-
-	for _, cs := range containerStatuses {
-		status, ok := cs.(map[string]any)
-		if !ok {
-			continue
-		}
-
 		name, found, err := unstructured.NestedString(status, "name")
-		if err != nil || !found {
+		if err != nil || !found || name != agentContainerName {
 			continue
 		}
-
-		if name != containerName {
-			continue
-		}
-
-		ready, found, err := unstructured.NestedBool(status, "ready")
-
-		logContainerStatus(logger, pod.GetName(), name, status, ready, found, err)
-
-		if err != nil {
-			return false, fmt.Errorf("getting ready status: %w", err)
-		}
-		if !found {
-			return false, nil
-		}
-		return ready, nil
+		state, found, _ := unstructured.NestedMap(status, "state")
+		running := found && hasKey(state, stateRunning)
+		logContainerStatus(logger, pod.GetName(), name, status, running)
+		return running
 	}
-
-	traceIf(logger, "Dataplane container not found in containerStatuses",
-		"pod", pod.GetName(),
-		"expected_container", containerName)
-	return false, nil
+	traceIf(logger, "Agent container not found in containerStatuses",
+		"pod", pod.GetName(), "expected_container", agentContainerName)
+	return false
 }
 
 // logContainerStatus logs detailed container status for debugging. When
 // logger is nil the function returns immediately without computing the
 // auxiliary fields, matching the rest of the trace-on-demand sites in this
 // file.
-func logContainerStatus(logger *slog.Logger, podName, containerName string, status map[string]any, ready, readyFound bool, readyErr error) {
+func logContainerStatus(logger *slog.Logger, podName, containerName string, status map[string]any, running bool) {
 	if logger == nil {
 		return
 	}
 
-	started, _, _ := unstructured.NestedBool(status, "started")
 	restartCount, _, _ := unstructured.NestedInt64(status, "restartCount")
-
 	state, stateFound, _ := unstructured.NestedMap(status, "state")
 	var stateType string
 	if stateFound {
@@ -220,13 +133,10 @@ func logContainerStatus(logger *slog.Logger, podName, containerName string, stat
 		}
 	}
 
-	traceIf(logger, "Dataplane container status check",
+	traceIf(logger, "Agent container status check",
 		"pod", podName,
 		"container", containerName,
-		"ready", ready,
-		"ready_found", readyFound,
-		"ready_error", readyErr,
-		"started", started,
+		"running", running,
 		"restart_count", restartCount,
 		"state_type", stateType)
 }
@@ -254,34 +164,23 @@ func resourceToPod(resource any) *unstructured.Unstructured {
 	}
 }
 
-// DiscoverEndpoints discovers HAProxy Dataplane API endpoints from pod resources.
+// Candidate is one pod's verdict: an endpoint the adapter should probe, or the
+// reason the pod is not one.
+type Candidate struct {
+	Endpoint dataplane.Endpoint
+	Reason   string // empty when the pod is a candidate
+}
+
+// DiscoverEndpoints returns the candidate endpoints from pod resources.
 //
-// This method:
-//   - Lists all pods from the provided store
-//   - Extracts pod IPs from pod.status.podIP
-//   - Checks that the dataplane container is ready
-//   - Constructs Dataplane API URLs (http://{IP}:{port})
-//   - Creates Endpoint structs with credentials
-//
-// Parameters:
-//   - podStore: Store containing HAProxy pod resources
-//   - credentials: Dataplane API credentials to use for all endpoints
-//
-// Returns:
-//   - A slice of discovered Endpoint structs
-//   - An error if discovery fails
-//
-// Example:
-//
-//	endpoints, err := discovery.DiscoverEndpoints(podStore, credentials)
-//	if err != nil {
-//	    return fmt.Errorf("discovery failed: %w", err)
-//	}
-//	// Use endpoints for HAProxy synchronization
+// It lists every pod in the store, keeps the ones with an IP whose agent
+// container is running, and builds the agent endpoint from the pod IP, the
+// configured port and the credentials. Whether the agent answers is decided by
+// the caller, which owns the HTTP client.
 func (d *Discovery) DiscoverEndpoints(
 	podStore types.Store,
 	credentials coreconfig.Credentials,
-) ([]dataplane.Endpoint, error) {
+) ([]Candidate, error) {
 	return d.DiscoverEndpointsWithLogger(podStore, credentials, nil)
 }
 
@@ -290,7 +189,7 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 	podStore types.Store,
 	credentials coreconfig.Credentials,
 	logger *slog.Logger,
-) ([]dataplane.Endpoint, error) {
+) ([]Candidate, error) {
 	if podStore == nil {
 		return nil, errors.New("pod store is nil")
 	}
@@ -300,29 +199,28 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 		return nil, fmt.Errorf("listing pods: %w", err)
 	}
 
-	endpoints := make([]dataplane.Endpoint, 0, len(resources))
-
+	candidates := make([]Candidate, 0, len(resources))
 	for _, resource := range resources {
-		endpoint, ok, err := d.evaluatePod(resource, credentials, logger)
+		candidate, ok, err := d.evaluatePod(resource, credentials, logger)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
-			endpoints = append(endpoints, endpoint)
+			candidates = append(candidates, candidate)
 		}
 	}
-
-	return endpoints, nil
+	return candidates, nil
 }
 
-// evaluatePod evaluates a single pod resource and returns an endpoint if it is eligible.
-// Returns ok=false if the pod should be skipped.
+// evaluatePod evaluates a single pod resource. ok is false for a pod that is
+// not HAPTIC's to talk to at all — one that is terminating, not Running, or not
+// a pod at all — which is a state change rather than a rejection.
 func (d *Discovery) evaluatePod(
 	resource any,
 	credentials coreconfig.Credentials,
 	logger *slog.Logger,
-) (dataplane.Endpoint, bool, error) {
-	var zero dataplane.Endpoint
+) (Candidate, bool, error) {
+	var zero Candidate
 
 	pod := resourceToPod(resource)
 	if pod == nil {
@@ -343,14 +241,6 @@ func (d *Discovery) evaluatePod(
 		return zero, false, nil
 	}
 
-	podIP, err := extractPodIP(pod, logger)
-	if err != nil {
-		return zero, false, err
-	}
-	if podIP == "" {
-		return zero, false, nil
-	}
-
 	phase, err := extractPodPhase(pod, logger)
 	if err != nil {
 		return zero, false, err
@@ -359,37 +249,40 @@ func (d *Discovery) evaluatePod(
 		return zero, false, nil
 	}
 
-	ready, err := d.isDataplaneContainerReady(pod, logger)
+	podIP, err := extractPodIP(pod, logger)
 	if err != nil {
-		return zero, false, fmt.Errorf("checking dataplane container readiness for %s: %w",
-			pod.GetName(), err)
+		return zero, false, err
 	}
-	if !ready {
-		traceIf(logger, "Skipping pod - dataplane container not ready",
-			"pod", pod.GetName(),
-			"pod_ip", podIP,
-			"phase", phase)
+	// A Running pod without an IP is the kubelet mid-flight, like a Pending
+	// pod: skipped silently, never counted as a rejection.
+	if podIP == "" {
 		return zero, false, nil
 	}
+
 	podRuntimeID, err := extractPodRuntimeID(pod)
 	if err != nil {
 		return zero, false, fmt.Errorf("identifying pod runtime for %s: %w", pod.GetName(), err)
 	}
-
-	traceIf(logger, "Including pod - dataplane container is ready",
-		"pod", pod.GetName(),
-		"pod_ip", podIP,
-		"phase", phase)
-
-	return dataplane.Endpoint{
-		URL:          "http://" + net.JoinHostPort(podIP, strconv.Itoa(d.dataplanePort)) + "/v3",
+	candidate := Candidate{Endpoint: dataplane.Endpoint{
+		URL:          "http://" + net.JoinHostPort(podIP, strconv.Itoa(d.dataplanePort)),
 		Username:     credentials.DataplaneUsername,
 		Password:     credentials.DataplanePassword,
 		PodName:      pod.GetName(),
 		PodNamespace: pod.GetNamespace(),
 		PodUID:       string(pod.GetUID()),
 		PodRuntimeID: podRuntimeID,
-	}, true, nil
+	}}
+
+	if !agentContainerRunning(pod, logger) {
+		candidate.Reason = RejectionAgentNotRunning
+		return candidate, true, nil
+	}
+
+	traceIf(logger, "Pod is a candidate - agent container is running",
+		"pod", pod.GetName(),
+		"pod_ip", podIP,
+		"phase", phase)
+	return candidate, true, nil
 }
 
 func extractPodRuntimeID(pod *unstructured.Unstructured) (string, error) {

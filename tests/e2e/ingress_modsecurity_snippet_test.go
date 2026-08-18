@@ -123,7 +123,7 @@ func TestIngressModSecuritySnippetEnforced(t *testing.T) {
 
 // TestIngressModSecuritySnippetHotReload covers the dynamic side of the
 // path: an Ingress's modsecurity-snippet annotation is updated, the
-// controller re-renders, the dataplane API pushes, the hub reloads, and
+// controller re-renders, the agent applies, the hub reloads, and
 // the new rule is enforced on subsequent requests — without restarting
 // any pod.
 //
@@ -180,7 +180,7 @@ func TestIngressModSecuritySnippetHotReload(t *testing.T) {
 // pod contains every supplied marker string. Used by setup blocks that
 // need to defer HTTP probes until the hub has reloaded with the new
 // rules. Polls a single arbitrarily-chosen pod (every replica gets the
-// same dataplane API push, so checking one is representative).
+// same apply, so checking one is representative).
 func waitForSnippetOnPod(ctx context.Context, t *testing.T, markers []string) {
 	t.Helper()
 	pod := firstHAProxyPodName(ctx, t)

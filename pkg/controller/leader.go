@@ -240,6 +240,28 @@ func superviseElection(ctx context.Context, start func(context.Context) error, l
 	return err
 }
 
+// leaderIdentity resolves who this replica is to leader election, and in which
+// namespace its Lease lives. The deployer's fencing epoch is claimed on that
+// same Lease, so both sites must derive it identically.
+func leaderIdentity(k8sClient *client.Client, logger *slog.Logger) (podName, podNamespace string) {
+	podName = os.Getenv("POD_NAME")
+	podNamespace = os.Getenv("POD_NAMESPACE")
+
+	if podName == "" {
+		logger.Warn("POD_NAME environment variable not set, using hostname as identity")
+		hostname, err := os.Hostname()
+		if err != nil {
+			logger.Error("Failed to get hostname for leader election identity", "error", err)
+		}
+		podName = hostname
+	}
+	if podNamespace == "" {
+		podNamespace = k8sClient.Namespace()
+		logger.Debug("POD_NAMESPACE not set, using client namespace", "namespace", podNamespace)
+	}
+	return podName, podNamespace
+}
+
 // setupLeaderElection initializes leader election or starts leader-only components immediately.
 //
 // Returns leader callback state for lifecycle management. The state contains a mutex-protected
@@ -251,23 +273,7 @@ func setupLeaderElection(
 	logger *slog.Logger,
 ) (*leaderCallbackState, error) {
 	if cfg.Controller.LeaderElection.Enabled {
-		// Read pod identity from environment
-		podName := os.Getenv("POD_NAME")
-		podNamespace := os.Getenv("POD_NAMESPACE")
-
-		if podName == "" {
-			logger.Warn("POD_NAME environment variable not set, using hostname as identity")
-			hostname, err := os.Hostname()
-			if err != nil {
-				logger.Error("Failed to get hostname for leader election identity", "error", err)
-			}
-			podName = hostname
-		}
-
-		if podNamespace == "" {
-			podNamespace = k8sClient.Namespace()
-			logger.Debug("POD_NAMESPACE not set, using client namespace", "namespace", podNamespace)
-		}
+		podName, podNamespace := leaderIdentity(k8sClient, logger)
 
 		// Create pure leader election config
 		leConfig := &k8sleaderelection.Config{
@@ -291,8 +297,9 @@ func setupLeaderElection(
 			errGroup:    setup.ErrGroup,
 		})
 
-		// Create leader election component (event adapter)
-		elector, err := leaderelectionctrl.New(leConfig, k8sClient.Clientset(), setup.Bus, callbacks, logger)
+		// Create leader election component (event adapter). It claims the
+		// fencing epoch the deployer stamps on every apply.
+		elector, err := leaderelectionctrl.New(leConfig, k8sClient.Clientset(), setup.Bus, callbacks, setup.LeaderEpoch, logger)
 		if err != nil {
 			return nil, fmt.Errorf("creating leader elector: %w", err)
 		}

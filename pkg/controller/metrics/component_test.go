@@ -118,9 +118,8 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 	// Verify metrics updated
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.DeploymentTotal))
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeploymentErrors))
-	// Reload + API-operation counters are sourced from the event payload.
+	// The reload counter is sourced from the event payload.
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.HAProxyReloadsTotal))
-	assert.Equal(t, 9.0, testutil.ToFloat64(metrics.DataplaneAPIOperationsTotal))
 
 	// Publish deployment with partial failure
 	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
@@ -574,9 +573,4 @@ func TestMetrics_RuntimeMapDivergence(t *testing.T) {
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeMapDivergence.WithLabelValues("pod-names.map")))
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeMapDivergence.WithLabelValues("host.map")))
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.RuntimeMapDivergence.WithLabelValues("never-seen.map")))
-
-	// The structural-divergence counter measures a different defect (issue
-	// #84, a concurrent writer clobbering an activated config) and must not
-	// move — conflating them is what sent me looking at the wrong metric.
-	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeployRuntimeDivergence))
 }

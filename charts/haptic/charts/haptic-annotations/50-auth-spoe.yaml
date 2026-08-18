@@ -477,7 +477,7 @@ templateSnippets:
           {%- end %}
           {%- var caBundle = secret.Data["ca.crt"] | b64decode() | tostring() %}
           {#- Register the CA bundle as a "file" (general/) not "cert" (ssl/):
-              the Dataplane API validates ssl/ uploads as cert+key bundles, but a
+              HAProxy's runtime cert API takes ssl/ entries as cert+key bundles, but a
               CA bundle has no private key. HAProxy's crt-list `[ca-file <path>]`
               accepts any path. -#}
           {%- var caFilename = secretNs + "-" + secretName + "-client-ca.pem" %}

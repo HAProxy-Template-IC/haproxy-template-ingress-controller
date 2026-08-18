@@ -10,7 +10,7 @@
 # computed at render time (per-Ingress CA bundles, per-listener crt-lists).
 #
 # Delivery path, identical to the spoa-hub's config (ADR-0007):
-#   render -> dataplane API general-storage -> <GeneralStorageDir>/vector.yaml
+#   render -> agent general-storage -> <GeneralStorageDir>/vector.yaml
 #   -> vector's --watch-config sees the write -> graceful reload, no restart.
 #
 # The rendered config adds the metrics exporters omitted from the bootstrap

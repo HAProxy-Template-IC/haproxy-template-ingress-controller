@@ -18,32 +18,25 @@ package integration
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/rekby/fixenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
 )
 
-// TestConfigSyncIdempotencyWithComments tests that syncing a config with inline comments
-// twice using the high-level Sync API results in zero operations on the second sync.
+// TestConfigSyncIdempotency applies the same render twice and asserts the
+// second apply is a noop: no reload, no write, and the configuration on disk
+// still byte-identical to what the renderer produced.
 //
-// This is a regression test for the false positive updates bug where metadata format
-// mismatch (flat vs nested) caused spurious updates on every reconciliation.
-//
-// Root cause: When template renders config with plain comments (e.g., "# Pod: echo-server"),
-// the parser creates flat metadata: {"comment": "Pod: echo-server"}. After sync,
-// the API stores it as JSON: {"comment":{"value":"Pod: echo-server"}}. On next sync,
-// parsing the API config returns nested metadata, while the desired config has flat
-// metadata - causing false positive updates.
-//
-// IMPORTANT: This test uses the high-level Sync API for BOTH syncs to reproduce the bug.
-// Using PushRawConfiguration for the initial sync would not trigger the metadata
-// transformation that causes the format mismatch.
-func TestConfigSyncIdempotencyWithComments(t *testing.T) {
+// The configurations carry inline comments, which is where the Data Plane API
+// lost idempotency: it re-encoded comments as model metadata, so the next
+// reconciliation saw a difference that was not there. The agent stores the
+// renderer's bytes, so the comparison is on the bytes themselves.
+func TestConfigSyncIdempotency(t *testing.T) {
 	testCases := []struct {
 		name       string
 		configFile string
@@ -71,98 +64,30 @@ func TestConfigSyncIdempotencyWithComments(t *testing.T) {
 	}
 }
 
-// runIdempotencyTest runs a sync idempotency test using the high-level Sync API for both syncs.
-// This properly reproduces the metadata format mismatch bug.
 func runIdempotencyTest(t *testing.T, configFile string) {
 	env := fixenv.New(t)
 	ctx := context.Background()
+	session := NewSession(t, env)
 
-	// Skip on DataPlane API v3.0/v3.1 - Metadata field on config models (ACL, Server, etc.)
-	// is only available in v3.2+. On earlier versions, comments are lost during API round-trip,
-	// causing false positive updates that are expected behavior for those versions.
-	skipIfConfigMetadataNotSupported(t, env)
+	config := LoadTestConfig(t, configFile)
+	session.SetConfig(config)
+	require.Equal(t, deployplan.VerdictReload, session.MustApply(ctx).Verdict,
+		"a pod with no baseline gets full state and a reload")
 
-	// Request fixtures
-	client := TestDataplaneClient(env)            // Low-level client for verification
-	dpClient := TestDataplaneHighLevelClient(env) // High-level client for Sync API
+	onDisk, err := session.haproxy.ReadFile(ctx, ConfigPath)
+	require.NoError(t, err, "reading the applied configuration")
+	require.Equal(t, config, onDisk, "the pod must hold the renderer's exact bytes")
 
-	configContent := LoadTestConfig(t, configFile)
-	t.Logf("Loaded config: %s", configFile)
+	before, err := session.haproxy.WorkerPID(ctx)
+	require.NoError(t, err)
 
-	// Step 1: First sync - pushes config via high-level Sync API
-	// This triggers TransformClientMetadataInJSON which converts flat→nested metadata
-	result1, err := dpClient.Sync(ctx, configContent, nil, nil)
-	require.NoError(t, err, "first sync should succeed")
-	t.Logf("First sync completed: %d operations, reload=%v",
-		len(result1.AppliedOperations), result1.ReloadTriggered)
-	t.Logf("First sync details: creates=%d, updates=%d, deletes=%d",
-		result1.Details.Creates, result1.Details.Updates, result1.Details.Deletes)
-	for _, op := range result1.AppliedOperations {
-		t.Logf("  First sync op: %s", op.Description)
-	}
+	decision, result := session.ApplyDesired(ctx)
+	require.True(t, result.OK, "the repeated apply was rejected: %s", applyError(result))
+	assert.Equal(t, deployplan.VerdictFileOnly, decision.Verdict, "an unchanged render must not reload")
+	assert.Empty(t, decision.Ops, "an unchanged render must compose no runtime commands")
+	assert.Equal(t, api.ResultNoop, result.Mode, "an unchanged render must write nothing")
 
-	// Step 2: Wait for config to be applied
-	// After first sync, HAProxy config has JSON metadata comments like:
-	// # {"comment":{"value":"Pod: echo-server"}}
-	err = testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(ctx context.Context) (bool, error) {
-		currentConfig, err := client.GetRawConfiguration(ctx)
-		if err != nil {
-			return false, nil
-		}
-		// Check that the config was applied (default "frontend status" is gone)
-		return !strings.Contains(currentConfig, "frontend status"), nil
-	})
-	require.NoError(t, err, "config should be applied within timeout")
-	t.Logf("Config applied successfully")
-
-	// Optional: Log the actual config to verify comments are stored as JSON
-	currentConfig, err := client.GetRawConfiguration(ctx)
-	require.NoError(t, err, "should be able to read current config")
-	// Look for evidence of JSON metadata in comments
-	if strings.Contains(currentConfig, `{"comment":{"value":`) {
-		t.Logf("Verified: Config contains JSON metadata comments")
-	}
-	// Log if config contains http-response rules for debugging
-	if strings.Contains(currentConfig, "http-response") {
-		t.Logf("Config contains http-response rules")
-		// Extract and log the backend section
-		if idx := strings.Index(currentConfig, "backend "); idx != -1 {
-			end := idx + 500
-			if end > len(currentConfig) {
-				end = len(currentConfig)
-			}
-			t.Logf("Backend section (first 500 chars):\n%s", currentConfig[idx:end])
-		}
-	}
-
-	// Step 3: Second sync - syncs SAME config again via high-level Sync API
-	// This is where the bug manifests: current config has nested metadata,
-	// desired config has flat metadata → false positive updates
-	result2, err := dpClient.Sync(ctx, configContent, nil, nil)
-	require.NoError(t, err, "second sync should succeed")
-	t.Logf("Second sync completed: %d operations (creates=%d, updates=%d, deletes=%d)",
-		len(result2.AppliedOperations),
-		result2.Details.Creates,
-		result2.Details.Updates,
-		result2.Details.Deletes)
-
-	// Step 4: Assert zero operations on second sync (idempotency check)
-	// If metadata format mismatch exists, this will fail with false positive updates
-	assert.Equal(t, 0, result2.Details.Creates,
-		"idempotent sync should have 0 creates")
-	assert.Equal(t, 0, result2.Details.Updates,
-		"idempotent sync should have 0 updates (metadata format mismatch bug?)")
-	assert.Equal(t, 0, result2.Details.Deletes,
-		"idempotent sync should have 0 deletes")
-
-	if result2.Details.Creates > 0 || result2.Details.Updates > 0 || result2.Details.Deletes > 0 {
-		t.Logf("⚠️  False positive operations detected! Operations:")
-		for _, op := range result2.AppliedOperations {
-			t.Logf("  - %s", op.Description)
-		}
-	}
-
-	if result2.Details.Creates == 0 && result2.Details.Updates == 0 && result2.Details.Deletes == 0 {
-		t.Logf("✓ Idempotency check passed: second sync had zero operations")
-	}
+	after, err := session.haproxy.WorkerPID(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "an unchanged render must not replace the worker")
 }

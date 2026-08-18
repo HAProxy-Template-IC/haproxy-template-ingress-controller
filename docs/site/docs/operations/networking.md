@@ -12,7 +12,7 @@ By default, the NetworkPolicy allows egress to four targets:
 
 - **DNS** (kube-system namespace): lets the controller resolve hostnames, for example `http.Fetch()` targets in templates.
 - **Kubernetes API** (`0.0.0.0/0` and `::/0`, adjust for production): Required for watching Ingress, Gateway, Secret, and other configured resources. The default ships both an IPv4 and an IPv6 catch-all so the controller can reach an apiserver dialed over either family.
-- **HAProxy pods** (release namespace, label-matched): The controller reaches the Dataplane API and stats ports on every pod whose labels match `controller.networkPolicy.egress.haproxyPods.podSelector`. With the default empty `controller.networkPolicy.egress.haproxyPods.namespaceSelector: {}`, no namespace selector is emitted, which in NetworkPolicy semantics restricts the rule to the policy's own namespace — set a non-empty selector to reach HAProxy pods in other namespaces.
+- **HAProxy pods** (release namespace, label-matched): The controller reaches the agent and stats ports on every pod whose labels match `controller.networkPolicy.egress.haproxyPods.podSelector`. With the default empty `controller.networkPolicy.egress.haproxyPods.namespaceSelector: {}`, no namespace selector is emitted, which in NetworkPolicy semantics restricts the rule to the policy's own namespace — set a non-empty selector to reach HAProxy pods in other namespaces.
 - **All in-cluster pods**: `controller.networkPolicy.egress.additionalRules` ships a default rule allowing egress to every pod in every namespace on any port, so template helpers like `http.Fetch()` reach cluster services out of the box.
 
 Helm replaces list values wholesale rather than merging them. When you override `kubernetesApi`, you restate the entire list — every `cidr` entry and its `ports` array — because your value fully replaces the default. The examples below are complete on purpose.
@@ -102,7 +102,7 @@ controller:
 
 ## Replacing the shipped policies
 
-Set `controller.networkPolicy.enabled: false` (controller), `haproxy.networkPolicy.enabled: false` (HAProxy), `cache.varnish.networkPolicy.enabled: false` (Varnish), or `rateLimit.shared.managedStore.networkPolicy.enabled: false` (managed Valkey/Sentinel) only for the policies you replace yourself. The example below is a narrowed, controller-only variant — the shipped policy's selector matches **every** release pod (name + instance labels, no component discriminator) and therefore also carries the Dataplane port 5555 ingress allowance for the HAProxy pods; if you replace it, cover the HAProxy pods separately:
+Set `controller.networkPolicy.enabled: false` (controller), `haproxy.networkPolicy.enabled: false` (HAProxy), `cache.varnish.networkPolicy.enabled: false` (Varnish), or `rateLimit.shared.managedStore.networkPolicy.enabled: false` (managed Valkey/Sentinel) only for the policies you replace yourself. The example below is a narrowed, controller-only variant — the shipped policy's selector matches **every** release pod (name + instance labels, no component discriminator) and therefore also carries the agent port 5555 ingress allowance for the HAProxy pods; if you replace it, cover the HAProxy pods separately:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -130,7 +130,7 @@ spec:
             matchLabels:
               app.kubernetes.io/component: loadbalancer
       ports:
-        - port: 5555   # Dataplane API
+        - port: 5555   # HAPTIC agent
 ```
 
 ## Allowing Prometheus scraping

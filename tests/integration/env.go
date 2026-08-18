@@ -1,24 +1,34 @@
 //go:build integration
 
+// Copyright 2025 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package integration
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rekby/fixenv"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/enterprise"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
+	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
 const (
@@ -98,6 +108,24 @@ func SharedCluster(env fixenv.Env) *KindCluster {
 	}, fixenv.CacheOptions{Scope: fixenv.ScopePackage})
 }
 
+// AgentImage builds the pod image once per run and loads it into the cluster.
+// Package-scoped: every test's pod runs the same binary, and the build is the
+// slowest step of the suite.
+func AgentImage(env fixenv.Env) string {
+	cluster := SharedCluster(env)
+
+	return fixenv.CacheResult(env, func() (*fixenv.GenericResult[string], error) {
+		tag, err := buildAndLoadAgentImage(cluster)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Printf("✓ Agent image '%s' loaded into Kind cluster\n", tag)
+		return fixenv.NewGenericResultWithCleanup(tag, func() {
+			kindutil.RemoveImage(tag)
+		}), nil
+	}, fixenv.CacheOptions{Scope: fixenv.ScopePackage})
+}
+
 // TestNamespace provides a test-scoped namespace (fresh for each test)
 // Automatically depends on SharedCluster fixture
 // Namespaces are kept by default for faster test iterations
@@ -129,16 +157,18 @@ func TestNamespace(env fixenv.Env) *Namespace {
 	})
 }
 
-// TestHAProxy provides a test-scoped HAProxy deployment
+// TestHAProxy provides a test-scoped HAProxy pod: the HAProxy container plus
+// its agent, the topology the chart deploys.
 // Automatically depends on TestNamespace fixture (which depends on SharedCluster)
 // HAProxy instances are kept by default for faster test iterations
 // Set KEEP_CLUSTER=false to force cleanup after tests
 func TestHAProxy(env fixenv.Env) *HAProxyInstance {
 	// Automatic dependency chain: TestNamespace -> SharedCluster
 	ns := TestNamespace(env)
+	image := AgentImage(env)
 
 	return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*HAProxyInstance], error) {
-		haproxy, err := DeployHAProxy(ns, DefaultHAProxyConfig())
+		haproxy, err := DeployHAProxy(ns, DefaultHAProxyConfig(image))
 		if err != nil {
 			return nil, fmt.Errorf("failed to deploy haproxy: %w", err)
 		}
@@ -164,236 +194,62 @@ func TestHAProxy(env fixenv.Env) *HAProxyInstance {
 	})
 }
 
-// TestDataplaneClient provides a configured Dataplane API client
+// TestAgentClient provides the controller's end of the wire contract, pointed
+// at the test pod's agent through the forwarded port.
 // Automatically depends on TestHAProxy fixture
-func TestDataplaneClient(env fixenv.Env) *client.DataplaneClient {
+func TestAgentClient(env fixenv.Env) *client.Client {
 	// Automatic dependency chain: TestHAProxy -> TestNamespace -> SharedCluster
 	haproxy := TestHAProxy(env)
 
-	return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*client.DataplaneClient], error) {
-		endpoint := haproxy.GetDataplaneEndpoint()
-
-		var dataplaneClient *client.DataplaneClient
-		var lastErr error
-
-		// Retry client creation up to 3 times with exponential backoff
-		// This handles transient API failures during version detection
-		for attempt := 1; attempt <= 3; attempt++ {
-			dataplaneClient, lastErr = client.New(context.Background(), &client.Config{
-				BaseURL:  endpoint.URL,
-				Username: endpoint.Username,
-				Password: endpoint.Password,
-			})
-			if lastErr == nil {
-				return fixenv.NewGenericResult(dataplaneClient), nil
-			}
-
-			if attempt < 3 {
-				backoff := time.Duration(attempt) * time.Second
-				fmt.Printf("Dataplane client creation attempt %d failed: %v (retrying in %v)\n", attempt, lastErr, backoff)
-				time.Sleep(backoff)
-			}
+	return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*client.Client], error) {
+		agentClient, err := client.New(&client.Config{
+			BaseURL:            haproxy.AgentURL(),
+			Username:           haproxy.AgentUser,
+			Password:           haproxy.AgentPass,
+			Timeout:            30 * time.Second,
+			PerPodApplyTimeout: 2 * time.Minute,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create agent client: %w", err)
 		}
-
-		return nil, fmt.Errorf("failed to create dataplane client after 3 attempts: %w", lastErr)
+		return fixenv.NewGenericResultWithCleanup(agentClient, agentClient.Close), nil
 	})
 }
 
-// ConfigParser defines the interface for HAProxy configuration parsing.
-// Both CE (parser.Parser) and EE (enterprise.Parser) parsers implement this interface.
-type ConfigParser interface {
-	ParseFromString(config string) (*parserconfig.StructuredConfig, error)
+// skipBelowHAProxy skips a test whose subject needs a later HAProxy release
+// than the one under test. The version comes from HAPROXY_VERSION, which also
+// selects the image, so the gate and the pod can never disagree.
+func skipBelowHAProxy(t *testing.T, bound string) {
+	t.Helper()
+	if !haproxyAtLeast(bound) {
+		t.Skipf("HAProxy %s is under test; this needs %s or later", HAProxyVersion(), bound)
+	}
 }
 
-// TestParser provides a configuration parser instance.
-// It automatically selects the appropriate parser based on whether the test HAProxy
-// is Enterprise or Community edition.
-func TestParser(env fixenv.Env) ConfigParser {
-	// Depend on client to check for EE status
-	dpClient := TestDataplaneClient(env)
+// haproxyAtLeast compares the version under test with a "major.minor" bound.
+func haproxyAtLeast(bound string) bool {
+	haveMajor, haveMinor := majorMinor(HAProxyVersion())
+	wantMajor, wantMinor := majorMinor(bound)
+	if haveMajor != wantMajor {
+		return haveMajor > wantMajor
+	}
+	return haveMinor >= wantMinor
+}
 
-	return fixenv.CacheResult(env, func() (*fixenv.GenericResult[ConfigParser], error) {
-		var p ConfigParser
-		var err error
+func majorMinor(version string) (major, minor int) {
+	fields := strings.SplitN(strings.TrimPrefix(version, "v"), ".", 3)
+	major, _ = strconv.Atoi(leadingDigits(fields[0]))
+	if len(fields) > 1 {
+		minor, _ = strconv.Atoi(leadingDigits(fields[1]))
+	}
+	return major, minor
+}
 
-		// Use EE parser when connected to HAProxy Enterprise
-		if dpClient.Clientset().IsEnterprise() {
-			fmt.Println("Using Enterprise Edition parser for test HAProxy")
-			p, err = enterprise.NewParser()
-			if err != nil {
-				return nil, fmt.Errorf("failed to create EE parser: %w", err)
-			}
-		} else {
-			p, err = parser.New()
-			if err != nil {
-				return nil, fmt.Errorf("failed to create parser: %w", err)
-			}
+func leadingDigits(s string) string {
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return s[:i]
 		}
-		return fixenv.NewGenericResult(p), nil
-	})
-}
-
-// TestComparator provides a comparator instance
-func TestComparator(env fixenv.Env) *comparator.Comparator {
-	return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*comparator.Comparator], error) {
-		return fixenv.NewGenericResult(comparator.New()), nil
-	})
-}
-
-// TestDataplaneHighLevelClient provides a high-level dataplane.Client
-// This uses the public Sync API that other components will use
-// Automatically depends on TestHAProxy fixture
-func TestDataplaneHighLevelClient(env fixenv.Env) *dataplane.Client {
-	// Automatic dependency chain: TestHAProxy -> TestNamespace -> SharedCluster
-	haproxy := TestHAProxy(env)
-
-	return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*dataplane.Client], error) {
-		endpoint := haproxy.GetDataplaneEndpoint()
-
-		dpEndpoint := dataplane.Endpoint{
-			URL:      endpoint.URL,
-			Username: endpoint.Username,
-			Password: endpoint.Password,
-		}
-
-		var dpClient *dataplane.Client
-		var lastErr error
-
-		// Retry client creation up to 3 times with exponential backoff
-		// This handles transient API failures during version detection
-		for attempt := 1; attempt <= 3; attempt++ {
-			dpClient, lastErr = dataplane.NewClient(context.Background(), &dpEndpoint)
-			if lastErr == nil {
-				return fixenv.NewGenericResult(dpClient), nil
-			}
-
-			if attempt < 3 {
-				backoff := time.Duration(attempt) * time.Second
-				fmt.Printf("High-level dataplane client creation attempt %d failed: %v (retrying in %v)\n", attempt, lastErr, backoff)
-				time.Sleep(backoff)
-			}
-		}
-
-		return nil, fmt.Errorf("failed to create dataplane client after 3 attempts: %w", lastErr)
-	})
-}
-
-// =============================================================================
-// Enterprise Feature Skip Helpers
-// =============================================================================
-//
-// These helpers skip tests when HAProxy Enterprise features are not available.
-// Tests using these helpers will gracefully skip on community edition.
-
-// skipIfWAFGlobalNotSupported skips the test if WAF global config is not available.
-// WAF global configuration requires HAProxy Enterprise v3.2+.
-func skipIfWAFGlobalNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsWAFGlobal {
-		t.Skipf("Skipping test: WAF global config requires HAProxy Enterprise v3.2+ (detected version: %s)",
-			dataplaneClient.DetectedVersion())
 	}
-}
-
-// skipIfWAFProfilesNotSupported skips the test if WAF profiles are not available.
-// WAF profiles require HAProxy Enterprise v3.2+.
-func skipIfWAFProfilesNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsWAFProfiles {
-		t.Skipf("Skipping test: WAF profiles require HAProxy Enterprise v3.2+ (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfBotManagementSyncNotSupported skips sync tests if bot management data file is not available.
-// Bot management sync tests require HAPEE_KEY environment variable to download the data file
-// from haproxy.com. The data file is downloaded during HAProxy deployment when HAPEE_KEY is set.
-func skipIfBotManagementSyncNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsBotManagement {
-		t.Skipf("Skipping test: Bot management requires HAProxy Enterprise (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-	if os.Getenv("HAPEE_KEY") == "" {
-		t.Skip("Skipping test: Bot management sync tests require HAPEE_KEY environment variable " +
-			"to download the data file from haproxy.com")
-	}
-}
-
-// skipIfCaptchaNotSupported skips the test if captcha features are not available.
-// Captcha is available in all HAProxy Enterprise versions but uses a separate module
-// (hapee-lb-captcha.so) that is NOT included in standard HAPEE container images.
-// The module is installed automatically when HAPEE_KEY is set (used to authenticate
-// with HAProxy Enterprise apt repository).
-func skipIfCaptchaNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsBotManagement {
-		t.Skipf("Skipping test: Captcha requires HAProxy Enterprise (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-	if os.Getenv("HAPEE_KEY") == "" {
-		t.Skip("Skipping test: Captcha tests require HAPEE_KEY environment variable " +
-			"to install the hapee-lb-captcha.so module from HAProxy Enterprise repository")
-	}
-}
-
-// skipIfLogProfilesNotSupported skips the test if log profiles are not supported.
-// Log profiles require DataPlane API v3.1+.
-func skipIfLogProfilesNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsLogProfiles {
-		t.Skipf("Skipping test: log profiles require DataPlane API v3.1+ (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfTracesNotSupported skips the test if traces section is not supported.
-// Traces require DataPlane API v3.1+.
-func skipIfTracesNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsTraces {
-		t.Skipf("Skipping test: traces section requires DataPlane API v3.1+ (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfQUICInitialRulesNotSupported skips the test if QUIC initial rules are not supported.
-// QUIC initial rules require DataPlane API v3.1+.
-func skipIfQUICInitialRulesNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsQUICInitialRules {
-		t.Skipf("Skipping test: QUIC initial rules require DataPlane API v3.1+ (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfAcmeProvidersNotSupported skips the test if ACME providers are not supported.
-// ACME providers require DataPlane API v3.2+.
-func skipIfAcmeProvidersNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsAcmeProviders {
-		t.Skipf("Skipping test: ACME providers require DataPlane API v3.2+ (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfConfigMetadataNotSupported skips the test if config model metadata is not supported.
-// Metadata fields on configuration models (ACL, Server, etc.) require DataPlane API v3.2+.
-// On v3.0/v3.1, the Metadata field is not present in the API schema, so comments are lost
-// during round-trip through the API, causing false positive updates in idempotency tests.
-func skipIfConfigMetadataNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsConfigMetadata {
-		t.Skipf("Skipping test: config model metadata requires DataPlane API v3.2+ (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
+	return s
 }

@@ -10,7 +10,6 @@ package deployer
 
 import (
 	"context"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,135 +26,59 @@ import (
 //  2. endpointCount == 0       → skip
 //  3. happy path               → scheduleOrQueue
 //
-// The existing TestDeploymentScheduler_HandlePodsDiscovered covers (1)
-// and (3) but NOT (2). The (2) branch is load-bearing: when the
-// scheduler holds a valid config but the discovery event reports zero
-// endpoints — which happens during cluster-wide HAProxy churn (rolling
-// the entire haproxy DaemonSet, deleting all pods, network partition
-// recovery, etc.) — we must NOT call scheduleOrQueue with an empty
-// endpoint list. scheduleOrQueue would happily kick off a deployment
-// with zero targets, which:
-//
-//   - publishes a DeploymentScheduledEvent that downstream observers
-//     interpret as "we deployed", skewing metrics and dashboards;
-//   - races with the next HAProxyPodsDiscoveredEvent (the one that
-//     reports the new endpoint set) and wedges the scheduler's
-//     in-progress flag, blocking the real deployment.
-//
-// A regression that flipped the `endpointCount == 0` check (e.g. a
-// refactor that consolidated the two early-returns and accidentally
-// dropped one) would silently skew metrics on every HAProxy roll and
-// is exactly the kind of bug nobody notices in CI but the on-call
-// engineer hates.
+// The (2) branch is load-bearing: when the scheduler holds a valid config but
+// the discovery event reports zero endpoints — which happens during
+// cluster-wide HAProxy churn (rolling the whole fleet, deleting all pods,
+// network partition recovery) — we must NOT call scheduleOrQueue with an empty
+// endpoint list. That would publish a DeploymentScheduledEvent downstream
+// observers read as "we deployed", and race the next discovery event.
 func TestPerformPodsDiscovered_EmptyEndpointsWithValidConfigSkipsDeployment(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
-	var closes atomic.Int32
-	scheduler.runtimeBypass.newSyncer = func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
-		return &fakeRuntimeSyncer{
-			closes: &closes,
-			sync:   func() (*dataplane.SyncResult, error) { return &dataplane.SyncResult{Success: true}, nil },
-		}, nil
-	}
 	ctx := context.Background()
 	scheduler.ctx = ctx
 	oldEndpoints := []dataplane.Endpoint{{URL: "http://old", PodUID: "uid-old"}}
-	scheduler.runtimeBypass.applyRuntimeRaw(ctx, depFor(oldEndpoints), bypassPush{body: "config"})
 	scheduler.schedulerMutex.Lock()
 	scheduler.state.pending = depFor(oldEndpoints)
-	scheduler.lastDispatchedConfig = "old-config"
-	scheduler.lastDispatchedPodSetHash = computePodSetHash(oldEndpoints)
-	scheduler.lastActivatedConfig = "old-config"
+	scheduler.lastPodSetHash = computePodSetHash(oldEndpoints)
 	scheduler.schedulerMutex.Unlock()
 
-	// Set up state: scheduler HAS a validated config, so the first
-	// guard (`!hasValidConfig`) does NOT fire. Only the empty-endpoints
-	// guard should suppress the deployment.
+	// The scheduler HAS a validated config, so the first guard does not fire.
 	scheduler.mu.Lock()
 	scheduler.hasValidConfig = true
 	scheduler.lastValidatedConfig = "global\n  daemon\n"
 	scheduler.lastValidatedAux = &dataplane.AuxiliaryFiles{}
 	scheduler.mu.Unlock()
 
-	// Discovery event reports ZERO endpoints — this is the exact
-	// signal the empty-guard must catch.
-	event := events.NewHAProxyPodsDiscoveredEvent([]dataplane.Endpoint{}, 0)
+	scheduler.performPodsDiscovered(ctx, events.NewHAProxyPodsDiscoveredEvent([]dataplane.Endpoint{}, 0))
 
-	scheduler.performPodsDiscovered(ctx, event)
-	if got := closes.Load(); got != 1 {
-		t.Fatalf("empty fleet must close the retired runtime client, got %d closes", got)
-	}
 	scheduler.schedulerMutex.Lock()
-	if scheduler.state.pending != nil || scheduler.lastDispatchedConfig != "" || scheduler.lastActivatedConfig != "" {
-		scheduler.schedulerMutex.Unlock()
-		t.Fatal("empty fleet must retire pending work and endpoint-bound baselines")
-	}
+	assert.Nil(t, scheduler.state.pending, "an empty fleet must retire pending work")
 	scheduler.schedulerMutex.Unlock()
 
-	// Endpoint set MUST be updated even when empty — otherwise the
-	// scheduler's view of the cluster goes stale and the next valid
-	// discovery would race against the previous endpoint set.
+	// The endpoint set MUST be updated even when empty — otherwise the
+	// scheduler's view goes stale and the next discovery races the old set.
 	scheduler.mu.RLock()
-	if len(scheduler.currentEndpoints) != 0 {
-		scheduler.mu.RUnlock()
-		t.Fatalf("currentEndpoints must be updated to empty slice, got %d entries",
-			len(scheduler.currentEndpoints))
-	}
+	assert.Empty(t, scheduler.currentEndpoints)
 	scheduler.mu.RUnlock()
 
-	// And NO DeploymentScheduledEvent must be published — that would
-	// kick off a zero-target deploy that skews metrics and races the
-	// real one.
-	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](
-		t, eventChan, testutil.NoEventTimeout)
+	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
-func TestPerformPodsDiscovered_StructuralReplacementEvictsRuntimeClient(t *testing.T) {
-	bus := testutil.NewTestBus()
-	bus.Start()
-	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
-	ctx := context.Background()
-
-	var closes atomic.Int32
-	scheduler.runtimeBypass.newSyncer = func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
-		return &fakeRuntimeSyncer{
-			closes: &closes,
-			sync:   func() (*dataplane.SyncResult, error) { return &dataplane.SyncResult{Success: true}, nil },
-		}, nil
-	}
-	oldEndpoint := dataplane.Endpoint{URL: "http://same", PodName: "haproxy-0", PodNamespace: "haptic", PodUID: "uid-old"}
-	scheduler.runtimeBypass.applyRuntimeRaw(ctx, depFor([]dataplane.Endpoint{oldEndpoint}), bypassPush{body: "config"})
-
-	scheduler.mu.Lock()
-	scheduler.hasValidConfig = true
-	scheduler.lastValidatedConfig = "global\n  daemon\n"
-	scheduler.lastValidatedAux = &dataplane.AuxiliaryFiles{}
-	scheduler.mu.Unlock()
-	replacement := oldEndpoint
-	replacement.PodUID = "uid-new"
-	scheduler.performPodsDiscovered(ctx, events.NewHAProxyPodsDiscoveredEvent([]dataplane.Endpoint{replacement}, 1))
-
-	if got := closes.Load(); got != 1 {
-		t.Fatalf("structural replacement must close the predecessor runtime client, got %d closes", got)
-	}
-	scheduler.schedulerMutex.Lock()
-	defer scheduler.schedulerMutex.Unlock()
-	if scheduler.state.pending == nil || scheduler.state.pending.lane != laneStructural {
-		t.Fatal("replacement discovery must remain a structural deployment")
-	}
-}
-
+// A pod replaced under the same URL is a different authority: the deploy in
+// flight targets a pod that no longer exists, so it must be cancelled and the
+// replacement set deployed as a whole.
 func TestPerformPodsDiscovered_CancelsDeploymentForRetiredAuthority(t *testing.T) {
 	bus := testutil.NewTestBus()
 	cancelCh := bus.SubscribeTypes("authority-cancellation", 1, events.EventTypeDeploymentCancelRequest)
 	bus.Start()
 	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	oldEndpoint := dataplane.Endpoint{URL: "http://same", PodName: "haproxy-0", PodNamespace: "haptic", PodUID: "uid-old"}
-	scheduler.runtimeBypass.replaceEndpointAuthorities([]dataplane.Endpoint{oldEndpoint})
 	scheduler.schedulerMutex.Lock()
+	scheduler.lastPodSetHash = computePodSetHash([]dataplane.Endpoint{oldEndpoint})
 	scheduler.state.deployInFlight = true
 	scheduler.state.activeDeploymentID = "deployment-old"
 	scheduler.state.activeCorrelationID = "correlation-old"

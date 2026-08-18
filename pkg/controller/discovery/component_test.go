@@ -27,7 +27,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
@@ -39,8 +38,7 @@ func createTestComponent(t *testing.T, bus *busevents.EventBus) *Component {
 	t.Helper()
 
 	_, logger := testutil.NewTestBusAndLogger()
-	component, err := New(t.Context(), bus, logger)
-	require.NoError(t, err)
+	component := New(bus, logger)
 	component.mu.Lock()
 	component.lifecycleCtx = t.Context()
 	component.mu.Unlock()
@@ -686,7 +684,7 @@ func addPodToStoreWithPort(t *testing.T, podStore types.Store, name, namespace, 
 	// Set spec.containers with dataplane port
 	containers := []any{
 		map[string]any{
-			"name": "dataplane",
+			"name": agentContainerName,
 			"ports": []any{
 				map[string]any{
 					"containerPort": port,
@@ -721,7 +719,7 @@ func addPodToStoreWithPort(t *testing.T, podStore types.Store, name, namespace, 
 	// Set container status (dataplane container running)
 	containerStatuses := []any{
 		map[string]any{
-			"name": "dataplane",
+			"name": agentContainerName,
 			"state": map[string]any{
 				"running": map[string]any{
 					"startedAt": "2025-01-01T00:00:00Z",
@@ -740,181 +738,39 @@ func addPodToStoreWithPort(t *testing.T, podStore types.Store, name, namespace, 
 
 func TestComponent_CleanupRemovedPods(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	component, err := New(t.Context(), bus, logger)
-	require.NoError(t, err)
+	component := New(bus, logger)
 	bus.Start()
 
 	pod1 := testEndpointIdentity("pod-1")
 	pod2 := testEndpointIdentity("pod-2")
 	pod3 := testEndpointIdentity("pod-3")
-	pod4 := testEndpointIdentity("pod-4")
 	component.mu.Lock()
-	component.admissionProofs[pod1] = versionAdmissionProof{dataPlaneAPI: dataplane.Version{Major: 3}}
-	component.admissionProofs[pod2] = versionAdmissionProof{dataPlaneAPI: dataplane.Version{Major: 3}}
-	component.admissionProofs[pod3] = versionAdmissionProof{dataPlaneAPI: dataplane.Version{Major: 3}}
-	component.versionRejections[pod4] = "version_mismatch_newer"
-	component.pendingRetries[pod2] = &retryState{retryCount: 1, lastAttempt: time.Now()}
-	component.pendingRetries[pod4] = &retryState{retryCount: 1, lastAttempt: time.Now()}
+	component.admitted[pod1] = "3.4.3"
+	component.admitted[pod2] = "3.4.3"
+	component.admitted[pod3] = "3.4.3"
 	component.mu.Unlock()
 
-	// Current candidates only have pod-1 and pod-3
-	currentCandidates := map[endpointIdentity]struct{}{
-		pod1: {},
-		pod3: {},
-	}
+	component.cleanupRemovedPods(map[endpointIdentity]struct{}{pod1: {}, pod3: {}})
 
-	// Call cleanup
-	component.cleanupRemovedPods(currentCandidates)
-
-	// Verify removed pods are cleaned up
 	component.mu.Lock()
 	defer component.mu.Unlock()
-
-	// pod-2 should be removed from admissionProofs
-	_, exists := component.admissionProofs[pod2]
-	assert.False(t, exists, "pod-2 should be removed from admissionProofs")
-
-	// pod-2 and pod-4 should be removed from pendingRetries
-	_, exists = component.pendingRetries[pod2]
-	assert.False(t, exists, "pod-2 should be removed from pendingRetries")
-	_, exists = component.pendingRetries[pod4]
-	assert.False(t, exists, "pod-4 should be removed from pendingRetries")
-	_, exists = component.versionRejections[pod4]
-	assert.False(t, exists, "pod-4 should be removed from versionRejections")
-
-	// pod-1 and pod-3 should remain
-	assert.Len(t, component.admissionProofs, 2)
-	_, exists = component.admissionProofs[pod1]
-	assert.True(t, exists, "pod-1 should remain in admissionProofs")
-	_, exists = component.admissionProofs[pod3]
-	assert.True(t, exists, "pod-3 should remain in admissionProofs")
+	assert.NotContains(t, component.admitted, pod2, "a pod that is no longer a candidate keeps no admission")
+	assert.Contains(t, component.admitted, pod1)
+	assert.Contains(t, component.admitted, pod3)
 }
 
+// A replacement pod reuses the namespace and name but not the UID, so its
+// admission must be probed again rather than inherited.
 func TestComponent_CleanupRemovedPods_EvictsReplacedIdentity(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	component, err := New(t.Context(), bus, logger)
-	require.NoError(t, err)
+	component := New(bus, logger)
+
 	oldIdentity := testEndpointIdentity("pod-1")
 	replacement := oldIdentity
 	replacement.podUID = "replacement-uid"
 
-	component.admissionProofs[oldIdentity] = versionAdmissionProof{dataPlaneAPI: dataplane.Version{Major: 3}}
-	component.versionRejections[oldIdentity] = "version_mismatch_older"
-	component.pendingRetries[oldIdentity] = &retryState{retryCount: 1, lastAttempt: time.Now()}
+	component.admitted[oldIdentity] = "3.4.3"
 	component.cleanupRemovedPods(map[endpointIdentity]struct{}{replacement: {}})
 
-	assert.NotContains(t, component.admissionProofs, oldIdentity)
-	assert.NotContains(t, component.versionRejections, oldIdentity)
-	assert.NotContains(t, component.pendingRetries, oldIdentity)
-}
-
-func TestComponent_HandleRetryTimer_NoPendingPods(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-	component, err := New(t.Context(), bus, logger)
-	require.NoError(t, err)
-	bus.Start()
-
-	// Start component so context is set
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	done := make(chan error)
-	go func() {
-		done <- component.Start(ctx)
-	}()
-
-	// Wait for component to start
-	time.Sleep(testutil.StartupDelay)
-
-	// Ensure no pending retries
-	component.mu.Lock()
-	component.pendingRetries = make(map[endpointIdentity]*retryState)
-	component.mu.Unlock()
-
-	// Call handleRetryTimer - should return early
-	component.handleRetryTimer()
-
-	// Just verify it doesn't panic and returns
-	cancel()
-	<-done
-}
-
-func TestComponent_HandleRetryTimer_MissingRequirements(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-	component, err := New(t.Context(), bus, logger)
-	require.NoError(t, err)
-	bus.Start()
-
-	// Start component so context is set
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	done := make(chan error)
-	go func() {
-		done <- component.Start(ctx)
-	}()
-
-	// Wait for component to start
-	time.Sleep(testutil.StartupDelay)
-
-	// Add pending retries but don't set credentials/port
-	component.mu.Lock()
-	component.pendingRetries[testEndpointIdentity("pod-1")] = &retryState{retryCount: 1, lastAttempt: time.Now()}
-	component.hasCredentials = false
-	component.hasDataplanePort = false
-	component.podStore = nil
-	component.mu.Unlock()
-
-	// Call handleRetryTimer - should log warning and return
-	component.handleRetryTimer()
-
-	// Just verify it doesn't panic and returns
-	cancel()
-	<-done
-}
-
-func TestComponent_ScheduleRetryTimerLocked_NoPendingRetries(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-	component, err := New(t.Context(), bus, logger)
-	require.NoError(t, err)
-	bus.Start()
-
-	// Ensure no pending retries
-	component.mu.Lock()
-	component.pendingRetries = make(map[endpointIdentity]*retryState)
-
-	// Call scheduleRetryTimerLocked - should return early without scheduling
-	component.scheduleRetryTimerLocked()
-
-	// Verify no timer was scheduled
-	component.retryTimerMu.Lock()
-	assert.Nil(t, component.retryTimer, "no timer should be scheduled when no pending retries")
-	component.retryTimerMu.Unlock()
-
-	component.mu.Unlock()
-}
-
-func TestComponent_ScheduleRetryTimerLocked_WithPendingRetries(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-	component, err := New(t.Context(), bus, logger)
-	require.NoError(t, err)
-	bus.Start()
-
-	// Add pending retries
-	component.mu.Lock()
-	component.pendingRetries[testEndpointIdentity("pod-1")] = &retryState{
-		retryCount:  1,
-		lastAttempt: time.Now(),
-	}
-
-	// Call scheduleRetryTimerLocked
-	component.scheduleRetryTimerLocked()
-
-	// Verify timer was scheduled
-	component.retryTimerMu.Lock()
-	assert.NotNil(t, component.retryTimer, "timer should be scheduled when pending retries exist")
-	component.retryTimerMu.Unlock()
-
-	component.mu.Unlock()
-	component.stopRetryTimer()
+	assert.NotContains(t, component.admitted, oldIdentity)
 }

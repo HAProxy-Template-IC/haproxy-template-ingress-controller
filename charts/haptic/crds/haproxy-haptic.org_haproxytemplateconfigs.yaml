@@ -233,12 +233,13 @@ spec:
                     type: integer
                   reloadVerificationTimeout:
                     description: |-
-                      ReloadVerificationTimeout is the maximum time the Dataplane sync waits for
-                      HAProxy to report a graceful reload as completed before failing the sync.
-                      Set this higher than the Dataplane API's own reload-delay setting.
+                      ReloadVerificationTimeout is how long the HAPTIC agent waits for the
+                      HAProxy master to report a reload as finished before it fails the apply
+                      and restores the last known good file set. The chart passes it to the
+                      agent as --reload-timeout; at most 60s.
 
                       Format: Go duration string (e.g., "10s", "30s").
-                      Default: 10s
+                      Default: 60s (the agent's ceiling)
                     type: string
                   sslCertsDir:
                     description: |-

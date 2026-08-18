@@ -29,7 +29,7 @@ import (
 // poll exhausts its retry budget. Runs BEFORE the test's t.Cleanup
 // chain (which deletes per-test Ingresses and similar), so the
 // captured state reflects the chart's rendered config and the
-// dataplane's on-disk haproxy.cfg at the failing moment — not the
+// pod's on-disk haproxy.cfg at the failing moment — not the
 // post-cleanup empty defaults the standard DumpLogsOnFailure
 // captures.
 //
@@ -71,17 +71,17 @@ func failureSnapshotter() httpclient.PollTimeoutSnapshot {
 		dumpCommand(t, out, "reason.txt", "echo", description)
 
 		// Chart-rendered HAProxyCfg at the failing moment — what
-		// the controller PRODUCED, before the dataplane sync
+		// the controller PRODUCED, before the apply
 		// translated it into incremental ops.
 		dumpCommand(t, out, "haproxycfg.yaml",
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
 			"get", "haproxycfg", "-o", "yaml")
 
 		// The haproxy pod's /etc/haproxy directory tree — what
-		// the dataplane API actually wrote to disk. Comparing
+		// the agent actually wrote to disk. Comparing
 		// against the rendered HAProxyCfg above pins whether a
 		// failing routing rule was the chart's fault (missing in
-		// the rendered spec) or the dataplane sync's fault
+		// the rendered spec) or the apply's fault
 		// (rendered correctly but the on-disk tree diverged).
 		// Caught the same-name-ACL bug in MR !970 — rendered
 		// config had two ACL lines, on-disk had one.

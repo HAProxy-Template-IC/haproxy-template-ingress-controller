@@ -16,7 +16,7 @@ The controller supports running multiple replicas for high availability using le
 **How it works:**
 
 1. All replicas watch Kubernetes resources, run the admission webhook, and discover HAProxy pods. Only the elected leader runs the render-validate-deploy pipeline. See [Leader Election](../development/design/leader-election.md) for the full all-replica vs leader-only component split.
-2. Leader election determines which replica drives the pipeline and pushes configs via the Dataplane API.
+2. Leader election determines which replica drives the pipeline and applies configs to the fleet.
 3. When the leader fails, followers automatically elect a new one. Cached state from all-replica components (validated config, discovered HAProxy pods) is replayed on `BecameLeaderEvent` so the new leader starts with current state; the reconciler also fires immediately so the new leader produces a fresh render.
 4. Leadership transitions are logged and tracked via Prometheus metrics.
 

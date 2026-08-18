@@ -14,18 +14,18 @@ graph TB
             end
 
             HTPLCFG[HAProxyTemplateConfig CRD<br/>Templates, watched resources, settings]
-            CREDS[Secret<br/>dataplane credentials]
+            CREDS[Secret<br/>agent credentials]
 
             CTRL_SVC[Controller Service<br/>ClusterIP<br/>:8080 healthz + /debug<br/>:9090 metrics<br/>:9443 webhook]
 
             subgraph "HAProxy Deployment (2+ replicas)"
                 subgraph "haproxy pod A"
                     HAP1[HAProxy<br/>:80, :443, :8404]
-                    DP1[Dataplane API<br/>:5555]
+                    AG1[HAPTIC agent<br/>:5555]
                 end
                 subgraph "haproxy pod B"
                     HAP2[HAProxy<br/>:80, :443, :8404]
-                    DP2[Dataplane API<br/>:5555]
+                    AG2[HAPTIC agent<br/>:5555]
                 end
             end
 
@@ -50,9 +50,9 @@ graph TB
     ING -.Watch.-> CTRL1 & CTRL2
     APPSVC -.Watch.-> CTRL1 & CTRL2
 
-    CTRL1 --> DP1 & DP2
-    DP1 --> HAP1
-    DP2 --> HAP2
+    CTRL1 --> AG1 & AG2
+    AG1 --> HAP1
+    AG2 --> HAP2
 
     HAP1 --> PODS
     HAP2 --> PODS
@@ -63,7 +63,7 @@ graph TB
 
 1. **Controller Deployment** — defaults to 2 replicas with leader election
     - All replicas watch Kubernetes resources, run admission webhooks, and discover HAProxy pods (hot standby — keeps caches warm so failover is instant)
-    - Only the elected leader runs the render-validate Pipeline and pushes configuration to HAProxy via Dataplane API
+    - Only the elected leader runs the render Pipeline and applies configuration through each pod's HAPTIC agent
     - See [High Availability](../../operations/high-availability.md) for tuning failover and [Leader Election](./leader-election.md) for the full all-replica vs leader-only component split
 
 2. **Controller Service** (ClusterIP) — operational endpoints only
@@ -72,8 +72,8 @@ graph TB
     - `:9443` → validating webhook
 
 3. **HAProxy Deployment** (not StatefulSet) — scales horizontally
-    - Each pod runs HAProxy + the Dataplane API as a sidecar, sharing the config volume
-    - Ready pods are auto-discovered via `controller.config.podSelector`
+    - Each pod runs HAProxy plus the HAPTIC agent, sharing the config volume
+    - Pods are auto-discovered via `controller.config.podSelector`; a pod is admitted once it has an IP, its `agent` container is running, and its `GET /v1/state` answers
 
 4. **HAProxy Service** — NodePort by default; set `haproxy.service.type: LoadBalancer` for cloud providers
     - Service port 80 maps to HAProxy container port 80, service port 443 maps to 443 (the chart binds HAProxy on the literal 80/443; set `haproxy.ports.http`/`https` to override)
@@ -81,10 +81,10 @@ graph TB
 5. **HAProxyTemplateConfig CRD** — holds every piece of configuration the controller needs
     - Template bodies (`haproxyConfig`, `templateSnippets`, `maps`, `files`, `sslCertificates`)
     - `watchedResources` (what to subscribe to and how to index it)
-    - Dataplane tuning (`minDeploymentInterval`, `driftPreventionInterval`, storage paths)
+    - Apply tuning (`minDeploymentInterval`, `driftPreventionInterval`, storage paths)
     - Validation tests shipped alongside the templates
 
-6. **Credentials Secret** referenced by `spec.credentialsSecretRef` — holds Dataplane API usernames/passwords. Watched live, so rotations don't require a restart.
+6. **Credentials Secret** referenced by `spec.credentialsSecretRef` — holds the agent's username and password. The controller watches it live; the HAProxy pods read it through their environment, so a rotation needs a pod roll on their side.
 
 ## Container Architecture
 
@@ -97,7 +97,7 @@ graph TB
 
     subgraph "HAProxy Pod (Deployment member)"
         HAP_PROC[HAProxy Process<br/>:80 HTTP<br/>:443 HTTPS<br/>:8404 Stats]
-        DP_PROC[Dataplane API<br/>:5555 API<br/>Unix master socket]
+        AGENT_PROC[HAPTIC agent<br/>:5555 API<br/>Unix master + worker sockets]
         HAP_VOL[Shared config emptyDir<br/>/etc/haproxy<br/>maps/, ssl/, general/]
     end
 
@@ -105,9 +105,9 @@ graph TB
     CREDS_SECRET[Credentials Secret] -. watch .-> CTRL_MAIN
     CTRL_TMP --> CTRL_MAIN
 
-    DP_PROC <-. master socket .-> HAP_PROC
+    AGENT_PROC <-. master + worker sockets .-> HAP_PROC
     HAP_VOL --> HAP_PROC
-    HAP_VOL --> DP_PROC
+    HAP_VOL --> AGENT_PROC
 
 ```
 
@@ -133,12 +133,12 @@ graph LR
             subgraph "HAProxy Instances"
                 subgraph "haproxy pod A<br/>10.0.1.10"
                     HAP1[HAProxy Process<br/>:80, :443, :8404]
-                    DP1[Dataplane API<br/>:5555]
+                    AG1[HAPTIC agent<br/>:5555]
                 end
 
                 subgraph "haproxy pod B<br/>10.0.1.11"
                     HAP2[HAProxy Process<br/>:80, :443, :8404]
-                    DP2[Dataplane API<br/>:5555]
+                    AG2[HAPTIC agent<br/>:5555]
                 end
             end
 
@@ -160,16 +160,16 @@ graph LR
     PROM_NET --> CTRL_SVC_NET
 
     CTRL --> KUBE_API
-    CTRL --> DP1
-    CTRL --> DP2
+    CTRL --> AG1
+    CTRL --> AG2
 
     HAP1 --> APP1
     HAP1 --> APP2
     HAP2 --> APP1
     HAP2 --> APP2
 
-    DP1 -.API.-> HAP1
-    DP2 -.API.-> HAP2
+    AG1 -.sockets.-> HAP1
+    AG2 -.sockets.-> HAP2
 
 ```
 
@@ -177,12 +177,12 @@ graph LR
 
 1. **Ingress Traffic**: Internet → HAProxy Service → HAProxy Pods → Application Pods (the diagram shows the `haproxy.service.type: LoadBalancer` variant; the chart default is NodePort)
 2. **Control Plane**: Controller → Kubernetes API (resource watching)
-3. **Configuration Deployment**: Controller → Dataplane API endpoints (HTTP)
+3. **Configuration apply**: Controller → each pod's agent (HTTP)
 4. **Service Discovery**: Controller watches HAProxy pods via Kubernetes API
 5. **Monitoring**: Prometheus → Controller Service (ClusterIP) → Controller Pod (metrics endpoint)
 6. **Health Checks**: Kubernetes → Controller Service → Controller Pod (healthz endpoint)
 
-**Scaling Considerations**: HAProxy scales horizontally via `haproxy.replicaCount` (pods are auto-discovered through `controller.config.podSelector`); the controller scales for availability, not throughput — see [Performance — Scaling Strategies](../../operations/performance.md#scaling-strategies) and [High Availability](../../operations/high-availability.md). NetworkPolicy must allow the controller to reach Dataplane API port 5555 on each HAProxy pod ([Networking](../../operations/networking.md)).
+**Scaling Considerations**: HAProxy scales horizontally via `haproxy.replicaCount` (pods are auto-discovered through `controller.config.podSelector`); the controller scales for availability, not throughput — see [Performance — Scaling Strategies](../../operations/performance.md#scaling-strategies) and [High Availability](../../operations/high-availability.md). NetworkPolicy must allow the controller to reach the agent on port 5555 on each HAProxy pod ([Networking](../../operations/networking.md)).
 
 ## Build optimizations (contributors)
 

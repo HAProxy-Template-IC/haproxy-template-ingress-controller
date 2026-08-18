@@ -205,7 +205,7 @@ templateSnippets:
           {%- end %}
           {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
           {#- Register the CA bundle as a "file" (general/) not "cert" (ssl/).
-              The Dataplane API's SSL cert endpoint validates ssl/ uploads as
+              HAProxy's runtime cert API takes ssl/ entries as
               cert+key bundles ("file should contain both certificate and
               private key" / 500), but a CA bundle has no private key. -#}
           {%- var caFilename = secretNs + "-" + secretName + "-client-ca.pem" %}

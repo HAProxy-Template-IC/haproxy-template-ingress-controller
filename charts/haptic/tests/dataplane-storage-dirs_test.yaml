@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
-suite: bundled HAProxy dataplane storage dirs
+suite: bundled HAProxy auxiliary storage dirs
 # The bundled pod spec resolves every auxiliary path against /etc/haproxy, and
 # mounts general-storage as a SEPARATE emptyDir at the fixed /etc/haproxy/general
 # so the spoa-hub sidecar can read rendered files without reaching SSL private
-# keys. Point a dataplane dir outside those limits and nothing errors: the files
+# keys. Point one of those dirs outside those limits and nothing errors: the files
 # land in the haproxy-runtime volume, and the sidecar mounting only
 # general-storage reads an empty directory.
 #
@@ -18,7 +18,7 @@ tests:
       - hasDocuments:
           count: 1
 
-  # Both the dataplane API (workingDir) and HAProxy (default-path origin) resolve
+  # Both the agent (--base-dir) and HAProxy (default-path origin) resolve
   # against /etc/haproxy, so any basename under it genuinely works. The guard must
   # not over-reach into rejecting that.
   - it: accepts a renamed ssl dir under the base dir
@@ -42,7 +42,17 @@ tests:
       - failedTemplate:
           errorMessage: 'controller.config.dataplane.mapsDir is "/opt/haproxy/maps", but the bundled HAProxy pod mounts its config volume at /etc/haproxy and resolves every auxiliary path against it. Files written outside that tree are invisible to HAProxy and to the sidecars. Put mapsDir directly under /etc/haproxy, or set haproxy.enabled=false to manage the fleet yourself.'
 
-  # With the bundled fleet off, HAPTIC drives an external dataplane whose layout
+  # The agent's --config is the basename of configFile, and the HAProxy
+  # container execs /etc/haproxy/haproxy.cfg, so a config file elsewhere is a
+  # silent mismatch between the two.
+  - it: rejects a config file outside the base dir
+    set:
+      controller.config.dataplane.configFile: /opt/haproxy/haproxy.cfg
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.dataplane.configFile is "/opt/haproxy/haproxy.cfg", but the bundled HAProxy pod mounts its config volume at /etc/haproxy and resolves every auxiliary path against it. Files written outside that tree are invisible to HAProxy and to the sidecars. Put configFile directly under /etc/haproxy, or set haproxy.enabled=false to manage the fleet yourself.'
+
+  # With the bundled fleet off, HAPTIC drives an external fleet whose layout
   # this chart neither renders nor constrains.
   - it: leaves an externally managed fleet alone
     set:

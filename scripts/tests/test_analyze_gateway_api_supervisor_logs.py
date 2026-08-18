@@ -181,9 +181,9 @@ class AnalyzeGatewayAPISupervisorLogsTest(unittest.TestCase):
 
     def test_empty_completed_logs_for_every_authoritative_task_pass(self):
         sources = [
-            source("haptic-haproxy-a", "pod-uid-a", "containerd://dataplane-a", "dataplane"),
             source("haptic-haproxy-a", "pod-uid-a", "containerd://spoa-a"),
             source("haptic-haproxy-a", "pod-uid-a", "containerd://vector-a", "vector"),
+            source("haptic-haproxy-b", "pod-uid-b", "containerd://spoa-b"),
         ]
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)

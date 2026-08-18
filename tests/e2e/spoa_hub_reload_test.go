@@ -24,7 +24,7 @@ import (
 
 // TestSPOAHubReloadOnConfigPush exercises the end-to-end runtime config
 // delivery path introduced by ADR-0007: HAPTIC's chart-library snippet
-// renders /etc/haproxy/general/spoa-hub-config.toml, the dataplane API
+// renders /etc/haproxy/general/spoa-hub-config.toml, the agent
 // pushes it to each haproxy pod, and the spoa-hub sidecar's file-watch
 // (haproxy-spoa-hub MR1) gracefully reloads on the change.
 //
@@ -36,7 +36,7 @@ import (
 //
 //  1. The on-disk file at /etc/haproxy/general/spoa-hub-config.toml on
 //     the haproxy pod contains the snippet's distinctive rule-id (proves
-//     the controller re-rendered + dataplane pushed).
+//     the controller re-rendered + the agent applied).
 //  2. The spoa-hub container's recent log output contains a successful
 //     reload event (proves the hub's file-watch + arc_swap-based reload
 //     fired and didn't bail on parse/plugin-init failure).

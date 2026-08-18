@@ -18,6 +18,7 @@ import (
 	"os"
 	"testing"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
 )
 
@@ -34,4 +35,23 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	restore()
 	os.Exit(code)
+}
+
+// newTestComponent builds a Component on its own test bus, for the handler
+// tests that drive the struct directly.
+func newTestComponent(t *testing.T) *Component {
+	t.Helper()
+	bus, logger := testutil.NewTestBusAndLogger()
+	return New(bus, logger)
+}
+
+// testEndpointIdentity is the identity of a pod named podName, as
+// endpointIdentityOf would derive it.
+func testEndpointIdentity(podName string) endpointIdentity {
+	return endpointIdentity{
+		podNamespace: "default",
+		podName:      podName,
+		podUID:       podName + "-uid",
+		url:          "http://127.0.0.1:5555",
+	}
 }

@@ -2,18 +2,21 @@
 suite: haproxy service
 templates:
   - haproxy-service.yaml
-# templates/haproxy-service.yaml renders the chart-internal dataplane
-# Service only. The user-facing HAProxy LoadBalancer Service is no
+# templates/haproxy-service.yaml renders the chart-internal Service that
+# reaches the HAPTIC agent only. The user-facing HAProxy LoadBalancer Service is no
 # longer chart-static — it is declared in libraries/base.yaml as a
 # `k8sResources.haproxy-service` template, rendered by the controller
 # from listener state, and applied via Server-Side Apply with an
 # OwnerReference to the HAProxyTemplateConfig CR. This test suite
-# therefore covers ONLY the dataplane Service; the user-facing
+# therefore covers ONLY that Service; the user-facing
 # Service's port set, type, annotations, and load-balancer fields are
 # pinned by chart-validation tests under
 # charts/haptic/libraries/base.yaml (k8sResources.haproxy-service).
 tests:
-  - it: should render dataplane service
+  # The name, the component label and the port name predate the agent and are
+  # deliberately unchanged: the Deployment selector is immutable, and scripts
+  # and docs address the Service by name.
+  - it: should render the agent service under its established name
     documentIndex: 0
     asserts:
       - isKind:
@@ -42,10 +45,10 @@ tests:
           path: spec.selector["app.kubernetes.io/component"]
           value: loadbalancer
 
-  - it: should honour haproxy.dataplane.service.type override
+  - it: should honour haproxy.agent.service.type override
     documentIndex: 0
     set:
-      haproxy.dataplane.service.type: NodePort
+      haproxy.agent.service.type: NodePort
     asserts:
       - equal:
           path: spec.type

@@ -91,7 +91,7 @@ func TestIngressHaproxyIngressWafDeny(t *testing.T) {
 			// Wait for the rendered haproxy-ingress-waf.map to land on
 			// a haproxy pod containing both entries before running any
 			// HTTP probe. Without this wait the requests can race the
-			// dataplane API push and arrive while the map is still
+			// apply and arrive while the map is still
 			// empty (skip-WAF) — the test would silently see 200s for
 			// the deny-mode probe and pass for the wrong reason.
 			//

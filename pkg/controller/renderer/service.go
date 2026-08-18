@@ -111,7 +111,10 @@ type RenderService struct {
 	// renderTimeout is the maximum time allowed for rendering a single template.
 	renderTimeout time.Duration
 
-	// capabilities defines which features are available for the local HAProxy version.
+	// capsMu guards capabilities: what the fleet's HAProxy supports. The local
+	// probe seeds it, discovery replaces it with the fleet minimum, and
+	// admission renders read it off the reconcile goroutine.
+	capsMu       sync.RWMutex
 	capabilities dataplane.Capabilities
 
 	// planMu guards both plans below. ackedPlan — the newest plan the fleet
@@ -415,7 +418,7 @@ func (s *RenderService) buildRenderingContextWithHTTPSourceMode(
 	opts := []rendercontext.Option{
 		rendercontext.WithStores(resourceStores),
 		rendercontext.WithHAProxyPodStore(haproxyPodStore),
-		rendercontext.WithCapabilities(s.capabilities),
+		rendercontext.WithCapabilities(s.currentCapabilities()),
 		rendercontext.WithTypedResources(s.typedResourceTypes),
 		rendercontext.WithRenderMode(mode),
 	}

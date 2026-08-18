@@ -38,13 +38,11 @@ type Metrics struct {
 	DeploymentTotal    prometheus.Counter
 	DeploymentErrors   prometheus.Counter
 
-	// HAProxy reload + DataPlane API operation counters, populated from
-	// DeploymentCompletedEvent. Reloads are the canonical capacity/SLO signal: a
-	// reload momentarily forks the HAProxy process, so a high reload rate (vs
-	// runtime-API updates) is what to capacity-plan and alert on. The data is
-	// already carried on the event; these surface it as cumulative counters.
-	HAProxyReloadsTotal         prometheus.Counter
-	DataplaneAPIOperationsTotal prometheus.Counter
+	// HAProxyReloadsTotal is populated from DeploymentCompletedEvent. Reloads
+	// are the canonical capacity/SLO signal: a reload momentarily forks the
+	// HAProxy process, so a high reload rate (vs runtime ops) is what to
+	// capacity-plan and alert on.
+	HAProxyReloadsTotal prometheus.Counter
 
 	// Fleet-convergence + config-staleness gauges. Populated LEADER-ONLY from
 	// DeploymentCompletedEvent (only the leader deploys), so followers hold the
@@ -66,22 +64,23 @@ type Metrics struct {
 	// (SetFleetConvergence / ResetFleetConvergence), so it needs no lock.
 	consecutiveFailures int
 
-	// Runtime-eligible fast-path metrics. Fires counts every fast-path attempt
-	// (one per pod per reconcile); Applies counts the subset that actually
-	// applied >=1 runtime-eligible server update. Applies stuck at 0 while
-	// Fires climbs means the fast path runs but the render diff never carries a
-	// runtime-eligible change.
-	RuntimeFastPathFires         prometheus.Counter
-	RuntimeFastPathApplies       prometheus.Counter
-	RuntimeFastPathFailures      prometheus.Counter
-	RuntimeFastPathServerUpdates prometheus.Counter
+	// Per-pod apply counters. AgentApplyTotal is labelled by the mode the agent
+	// reported, so the reload-free share of a deployment is a query away;
+	// ApplyRejectedTotal counts NACKs, each of which costs that pod a
+	// full-state reload on the next apply.
+	AgentApplyTotal    *prometheus.CounterVec
+	ApplyRejectedTotal *prometheus.CounterVec
 
-	// DeployRuntimeDivergence counts endpoints whose post-reload read-back
-	// found the on-disk config structurally diverged from the pushed body
-	// (issue #84) — a concurrent writer clobbered a just-activated config.
-	// The fast deploy retry self-heals each occurrence, but steady growth
-	// means runtime-bypass pushes are racing structural deploys.
-	DeployRuntimeDivergence prometheus.Counter
+	// AgentVersionSkewTotal counts pods whose agent reported a contract this
+	// controller does not fully speak. Never a refusal — the pod gets the
+	// complete file set and a reload — but sustained growth means a rollout is
+	// stuck half-upgraded.
+	AgentVersionSkewTotal prometheus.Counter
+
+	// Runtime op counters, recorded from what the pods ACKed. Labelled by op
+	// kind: which lifecycle operation dominates is the actionable part.
+	RuntimeBackendOpsTotal *prometheus.CounterVec
+	RuntimeServerOpsTotal  *prometheus.CounterVec
 
 	// RuntimeMapDivergence counts runtime maps whose post-apply read-back
 	// still disagreed with the desired content, each costing that sync its
@@ -197,11 +196,6 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"haptic_haproxy_reloads_total",
 			"Total HAProxy reloads triggered by config deployments. A reload forks the HAProxy process; a high reload rate (vs runtime-API server updates) is the key capacity/SLO signal.",
 		),
-		DataplaneAPIOperationsTotal: pkgmetrics.NewCounter(
-			registry,
-			"haptic_dataplane_api_operations_total",
-			"Total DataPlane API operations issued across config deployments (structural changes applied to HAProxy pods).",
-		),
 
 		// Fleet-convergence + config-staleness gauges (leader-only; see struct docs).
 		HAProxyFleetSize: pkgmetrics.NewGauge(
@@ -225,31 +219,35 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"Count of consecutive deployments that did not fully converge the fleet; resets to 0 on the first full sync. The noise-free replacement for alerting on rate(haptic_deployment_errors_total) now that transient deploy failures self-heal (leader-only; 0 on followers).",
 		),
 
-		// Runtime-eligible fast-path metrics
-		RuntimeFastPathFires: pkgmetrics.NewCounter(
+		// Per-pod apply metrics
+		AgentApplyTotal: pkgmetrics.NewCounterVec(
 			registry,
-			"haptic_runtime_fast_path_fires_total",
-			"Total runtime-eligible fast-path apply attempts (one per pod per reconcile)",
+			"haptic_deploy_apply_total",
+			"Applies the HAPTIC agent accepted, by pod and by the mode it reported (runtime, file_only, reload, scheduled, noop). The reload-free share of a rollout is the runtime+file_only+noop fraction.",
+			[]string{"pod", "mode"},
 		),
-		RuntimeFastPathApplies: pkgmetrics.NewCounter(
+		ApplyRejectedTotal: pkgmetrics.NewCounterVec(
 			registry,
-			"haptic_runtime_fast_path_applies_total",
-			"Fast-path attempts that applied at least one runtime-eligible server update",
+			"haptic_apply_rejected_total",
+			"Applies the HAPTIC agent refused (NACK), by pod. The pod keeps serving its previous config and its next apply carries the complete file set plus a reload; sustained growth means a render HAProxy will not accept.",
+			[]string{"pod"},
 		),
-		RuntimeFastPathFailures: pkgmetrics.NewCounter(
+		AgentVersionSkewTotal: pkgmetrics.NewCounter(
 			registry,
-			"haptic_runtime_fast_path_failures_total",
-			"Fast-path attempts that errored (best-effort; the scheduled deploy converges)",
+			"haptic_agent_version_skew_total",
+			"Applies sent to a pod whose agent reported a different API major or a missing op kind. Never a refusal: the pod gets the complete file set and a reload. Sustained growth means a controller/agent rollout is stuck half-upgraded.",
 		),
-		RuntimeFastPathServerUpdates: pkgmetrics.NewCounter(
+		RuntimeBackendOpsTotal: pkgmetrics.NewCounterVec(
 			registry,
-			"haptic_runtime_fast_path_server_updates_total",
-			"Total runtime-eligible server updates applied via the fast path",
+			"haptic_runtime_backend_ops_total",
+			"Backend lifecycle operations the fleet applied at runtime, by op kind.",
+			[]string{"op"},
 		),
-		DeployRuntimeDivergence: pkgmetrics.NewCounter(
+		RuntimeServerOpsTotal: pkgmetrics.NewCounterVec(
 			registry,
-			"haptic_deploy_runtime_divergence_total",
-			"Endpoints whose post-reload read-back found the on-disk config structurally diverged from the pushed body (a concurrent writer clobbered a just-activated config; the fast deploy retry self-heals it).",
+			"haptic_runtime_server_ops_total",
+			"Server lifecycle operations the fleet applied at runtime, by op kind.",
+			[]string{"op"},
 		),
 
 		RuntimeMapDivergence: pkgmetrics.NewCounterVec(
@@ -415,16 +413,12 @@ func (m *Metrics) RecordDeployment(durationSeconds float64, success bool) {
 	}
 }
 
-// RecordDeploymentOperations records the HAProxy reload count and DataPlane API
-// operation count from a completed deployment. Both are cumulative; reloads is
-// the headline capacity/SLO signal (see the metric help text). Zero values are
-// skipped so a no-op deployment doesn't perturb the counters.
-func (m *Metrics) RecordDeploymentOperations(reloads, apiOperations int) {
+// RecordDeploymentReloads records how many pods a completed deployment
+// reloaded — the headline capacity/SLO signal (see the metric help text). Zero
+// is skipped so a reload-free deployment doesn't perturb the counter.
+func (m *Metrics) RecordDeploymentReloads(reloads int) {
 	if reloads > 0 {
 		m.HAProxyReloadsTotal.Add(float64(reloads))
-	}
-	if apiOperations > 0 {
-		m.DataplaneAPIOperationsTotal.Add(float64(apiOperations))
 	}
 }
 
@@ -469,26 +463,31 @@ func (m *Metrics) ResetFleetConvergence() {
 	m.LastFullSyncTimestamp.Set(float64(time.Now().Unix()))
 }
 
-// RecordRuntimeFastPath records one runtime-eligible fast-path apply attempt:
-// serverUpdates is how many server updates it applied (0 = fired but nothing to
-// do), failed reports whether it errored.
-func (m *Metrics) RecordRuntimeFastPath(serverUpdates int, failed bool) {
-	m.RuntimeFastPathFires.Inc()
-	if failed {
-		m.RuntimeFastPathFailures.Inc()
-		return
-	}
-	if serverUpdates > 0 {
-		m.RuntimeFastPathApplies.Inc()
-		m.RuntimeFastPathServerUpdates.Add(float64(serverUpdates))
-	}
+// RecordAgentApply records one apply a pod's agent accepted, by the mode it
+// reported.
+func (m *Metrics) RecordAgentApply(pod, mode string) {
+	m.AgentApplyTotal.WithLabelValues(pod, mode).Inc()
 }
 
-// RecordDeployRuntimeDivergence counts one endpoint whose post-reload
-// read-back found the on-disk config structurally diverged from the pushed
-// body (issue #84).
-func (m *Metrics) RecordDeployRuntimeDivergence() {
-	m.DeployRuntimeDivergence.Inc()
+// RecordApplyRejected records one apply a pod's agent refused.
+func (m *Metrics) RecordApplyRejected(pod string) {
+	m.ApplyRejectedTotal.WithLabelValues(pod).Inc()
+}
+
+// RecordAgentVersionSkew records one pod whose agent speaks a contract this
+// controller does not fully share.
+func (m *Metrics) RecordAgentVersionSkew() {
+	m.AgentVersionSkewTotal.Inc()
+}
+
+// RecordRuntimeBackendOp records one backend lifecycle op a pod executed.
+func (m *Metrics) RecordRuntimeBackendOp(op string) {
+	m.RuntimeBackendOpsTotal.WithLabelValues(op).Inc()
+}
+
+// RecordRuntimeServerOp records one server lifecycle op a pod executed.
+func (m *Metrics) RecordRuntimeServerOp(op string) {
+	m.RuntimeServerOpsTotal.WithLabelValues(op).Inc()
 }
 
 // RecordRuntimeMapDivergence records one runtime map that failed its

@@ -145,6 +145,10 @@ func (a *Agent) apply(req *applyRequest) outcome {
 // a 409. The worker-ops baseline is not one of them: it guards the in-place
 // batch, which is answered after the files have landed.
 func (a *Agent) fence(m *api.Manifest) *api.Conflict {
+	if reason := a.conflictOnce; reason != "" {
+		a.conflictOnce = ""
+		return a.conflict(reason)
+	}
 	switch {
 	case m.Token.LeaderEpoch < a.state.AppliedToken.LeaderEpoch:
 		return a.conflict("stale_epoch")
@@ -176,6 +180,10 @@ func (a *Agent) conflict(reason string) *api.Conflict {
 // per-path question, not a content-addressed one: a new path whose bytes match
 // an existing file is still missing, because the agent stores files by path.
 func (a *Agent) missingParts(req *applyRequest) []string {
+	if forced := a.missingOnce; len(forced) > 0 {
+		a.missingOnce = nil
+		return forced
+	}
 	var missing []string
 	for _, f := range req.manifest.Files {
 		if _, sent := req.parts[f.Path]; sent {

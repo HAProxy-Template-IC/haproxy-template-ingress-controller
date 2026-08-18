@@ -57,11 +57,13 @@ type Config struct {
 	StateFile         string
 	Listen            string
 	ReloadIntervalMin time.Duration
-	Username          string
-	Password          string
-	AgentVersion      string
-	Logger            *slog.Logger
-	Registry          *prometheus.Registry
+	// ReloadTimeout bounds one reload. Zero means DefaultReloadTimeout.
+	ReloadTimeout time.Duration
+	Username      string
+	Password      string
+	AgentVersion  string
+	Logger        *slog.Logger
+	Registry      *prometheus.Registry
 }
 
 // Server owns the tree, the runtime plumbing and the apply state machine.
@@ -115,6 +117,12 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 	maxInterval := api.MaxReloadIntervalMs * time.Millisecond
 	if cfg.ReloadIntervalMin < 0 || cfg.ReloadIntervalMin > maxInterval {
 		return nil, fmt.Errorf("--reload-interval-min %s is outside 0..%s", cfg.ReloadIntervalMin, maxInterval)
+	}
+	if cfg.ReloadTimeout == 0 {
+		cfg.ReloadTimeout = DefaultReloadTimeout
+	}
+	if cfg.ReloadTimeout < 0 || cfg.ReloadTimeout > DefaultReloadTimeout {
+		return nil, fmt.Errorf("--reload-timeout must be between 0 and %s, got %s", DefaultReloadTimeout, cfg.ReloadTimeout)
 	}
 	store, err := files.NewStore(cfg.BaseDir, cfg.Logger, cfg.MasterSocket, cfg.WorkerSocket)
 	if err != nil {

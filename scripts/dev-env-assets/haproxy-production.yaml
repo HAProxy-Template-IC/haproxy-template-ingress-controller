@@ -8,6 +8,10 @@ data:
   haproxy.cfg: |
     global
         log stdout len 4096 local0 info
+        # The agent runs every runtime command on this socket; the master
+        # socket (-S below) serves reload and show proc only.
+        stats socket /etc/haproxy/haproxy-worker.sock mode 600 level admin
+        default-path origin /etc/haproxy
 
     defaults
         mode http
@@ -61,7 +65,7 @@ spec:
           args:
             - |
               # Create required directories
-              mkdir -p /etc/haproxy/maps /etc/haproxy/certs /etc/haproxy/errors /etc/haproxy/general
+              mkdir -p /etc/haproxy/maps /etc/haproxy/ssl /etc/haproxy/general
               chown -R haproxy:haproxy /etc/haproxy
 
               # Copy initial config
@@ -104,89 +108,59 @@ spec:
               cpu: 100m
               memory: 128Mi
 
-        # Dataplane API sidecar
-        - name: dataplane
-          image: haproxytech/haproxy-debian:3.2.22
+        # HAPTIC agent: owns this pod's file tree and HAProxy's sockets.
+        # It runs the controller's own image — one binary, two roles — so the
+        # image tag must match the controller's.
+        - name: agent
+          image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.2
           imagePullPolicy: IfNotPresent
-          command: ["/bin/sh", "-c"]
           args:
-            - |
-              # Wait for HAProxy to create the socket
-              while [ ! -S /etc/haproxy/haproxy-master.sock ]; do
-                echo "Waiting for HAProxy master socket..."
-                sleep 1
-              done
-
-              # Create required directories
-              mkdir -p /var/lib/dataplaneapi/transactions /var/lib/dataplaneapi/backups
-              mkdir -p /etc/haproxy/maps /etc/haproxy/certs /etc/haproxy/general
-              chown -R haproxy:haproxy /var/lib/dataplaneapi /etc/haproxy
-
-              # Create Dataplane API config
-              cat > /etc/haproxy/dataplaneapi.yaml <<'EOF'
-              config_version: 2
-              name: haproxy-dataplaneapi
-              dataplaneapi:
-                host: 0.0.0.0
-                port: 5555
-                disable_inotify: true
-                user:
-                  - name: admin
-                    password: adminpass
-                    insecure: true
-                transaction:
-                  transaction_dir: /var/lib/dataplaneapi/transactions
-                  backups_number: 10
-                  backups_dir: /var/lib/dataplaneapi/backups
-                resources:
-                  maps_dir: /etc/haproxy/maps
-                  ssl_certs_dir: /etc/haproxy/certs
-                  general_storage_dir: /etc/haproxy/general
-              haproxy:
-                config_file: /etc/haproxy/haproxy.cfg
-                haproxy_bin: /usr/local/sbin/haproxy
-                master_worker_mode: true
-                master_runtime: /etc/haproxy/haproxy-master.sock
-                reload:
-                  reload_delay: 1
-                  reload_cmd: /bin/sh -c "echo 'reload' | socat stdio unix-connect:/etc/haproxy/haproxy-master.sock"
-                  restart_cmd: /bin/sh -c "echo 'reload' | socat stdio unix-connect:/etc/haproxy/haproxy-master.sock"
-                  reload_strategy: custom
-              log_targets:
-                - log_to: stdout
-                  log_level: trace
-                  log_types:
-                  - access
-                  - app
-              EOF
-
-              # Start Dataplane API
-              exec dataplaneapi -f /etc/haproxy/dataplaneapi.yaml
+            - agent
+            - --base-dir=/etc/haproxy
+            - --config=haproxy.cfg
+            - --listen=:5555
+          env:
+            # The same Secret the controller reads, so both ends of the wire
+            # agree without a second credential to rotate.
+            - name: DATAPLANE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: haptic-dataplane-credentials
+                  key: username
+            - name: DATAPLANE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: haptic-dataplane-credentials
+                  key: password
           ports:
             - name: dataplane
               containerPort: 5555
               protocol: TCP
+            - name: agent-metrics
+              containerPort: 9101
+              protocol: TCP
           volumeMounts:
             - name: haproxy-runtime
               mountPath: /etc/haproxy
+          # /readyz means "the agent can accept applies": the sockets answer,
+          # the tree is hashed and the inventory is built. It stays true after a
+          # rejected apply, because draining the pod would fence off the repair.
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: 5555
+            periodSeconds: 2
+            failureThreshold: 60
           livenessProbe:
             httpGet:
-              path: /v3/info
+              path: /healthz
               port: 5555
-              httpHeaders:
-                - name: Authorization
-                  value: "Basic YWRtaW46YWRtaW5wYXNz"  # admin:adminpass
-            initialDelaySeconds: 15
             periodSeconds: 10
-          readinessProbe:
-            httpGet:
-              path: /v3/info
-              port: 5555
-              httpHeaders:
-                - name: Authorization
-                  value: "Basic YWRtaW46YWRtaW5wYXNz"  # admin:adminpass
-            initialDelaySeconds: 10
-            periodSeconds: 5
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           resources:
             limits:
               cpu: 200m

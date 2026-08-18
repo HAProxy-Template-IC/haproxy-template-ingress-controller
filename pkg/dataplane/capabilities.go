@@ -16,12 +16,19 @@ package dataplane
 
 import "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 
-// Capabilities defines which features are available for a given HAProxy/DataPlane API version.
-// This type is re-exported from pkg/dataplane/client for convenience.
+// Capabilities defines which features are available for a given HAProxy
+// version. This type is re-exported from pkg/dataplane/client for convenience.
+//
+// The field names still read as Dataplane API endpoints because they are the
+// chart's contract (templates read `capabilities.supports_crt_list` and
+// friends). What they now answer is what the FLEET's HAProxy supports: the
+// controller derives them from the lowest version its pods report, so a render
+// never uses a feature the oldest pod would reject.
 type Capabilities = client.Capabilities
 
 // CapabilitiesFromVersion computes capabilities based on a HAProxy version.
-// This is used for local HAProxy binary detection (haproxy -v).
+// The controller's own binary seeds the value at startup; discovery replaces it
+// with the fleet minimum once the pods have reported.
 //
 // Capability thresholds (verified against OpenAPI specs):
 //   - SupportsCrtList: v3.2+ (CRT-list storage endpoint)

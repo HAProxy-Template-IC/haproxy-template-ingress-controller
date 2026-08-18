@@ -22,7 +22,7 @@ import (
 // firstHAProxyPodName returns the name of an arbitrary HAProxy pod via the
 // chart's standard component label. The chart deploys multiple replicas so
 // we just pick one — for the spoa-hub config delivery tests, every replica
-// receives the same dataplane API push, so any pod is representative.
+// receives the same apply, so any pod is representative.
 func firstHAProxyPodName(ctx context.Context, t *testing.T) string {
 	t.Helper()
 	cmd := exec.CommandContext(ctx, "kubectl",
@@ -47,7 +47,7 @@ func firstHAProxyPodName(ctx context.Context, t *testing.T) string {
 
 // readFileFromHAProxyPod runs `kubectl exec` against the haproxy container
 // of a HAProxy pod and returns the file content. Used to verify the
-// dataplane API push of /etc/haproxy/general/spoa-hub-config.toml.
+// apply of /etc/haproxy/general/spoa-hub-config.toml.
 //
 // The haproxy container's image has busybox `cat`, so we don't need any
 // debug-image trickery.

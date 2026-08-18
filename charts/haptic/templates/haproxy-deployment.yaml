@@ -11,24 +11,24 @@
 {{- $podSpec := $haproxy.podSpec }}
 {{- $ports := $haproxy.ports }}
 {{- $proxyProtocol := include "haptic.proxyProtocol" . | fromYaml }}
-{{- $dataplane := $haproxy.dataplane }}
+{{- $agent := $haproxy.agent }}
 
 {{/*
   The pod spec below hardcodes /etc/haproxy: haproxy-runtime mounts there, the
-  dataplane sidecar's workingDir is the maps dir's parent, and general-storage
-  is a SEPARATE emptyDir mounted at /etc/haproxy/general so the spoa-hub sidecar
-  can read rendered files without reaching SSL private keys.
+  agent's --base-dir is the maps dir's parent, and general-storage is a SEPARATE
+  emptyDir mounted at /etc/haproxy/general so the spoa-hub sidecar can read
+  rendered files without reaching SSL private keys.
 
-  So the dataplane dirs are only configurable within those limits. Point them
+  So the auxiliary dirs are only configurable within those limits. Point them
   elsewhere and nothing errors -- the files land in the haproxy-runtime volume
   instead of general-storage, and the sidecar that mounts only general-storage
   reads an empty directory. Fail here instead, while the operator can still see
   why.
 
   Scoped to haproxy.enabled: with the bundled fleet off, HAPTIC drives an
-  external dataplane whose layout is none of this chart's business.
+  external fleet whose layout is none of this chart's business.
 */}}
-{{- range $key, $path := dict "mapsDir" $dataplaneConfig.mapsDir "sslCertsDir" $dataplaneConfig.sslCertsDir "generalStorageDir" $dataplaneConfig.generalStorageDir }}
+{{- range $key, $path := dict "mapsDir" $dataplaneConfig.mapsDir "sslCertsDir" $dataplaneConfig.sslCertsDir "generalStorageDir" $dataplaneConfig.generalStorageDir "configFile" $dataplaneConfig.configFile }}
   {{- if ne (dir $path) "/etc/haproxy" }}
     {{- fail (printf "controller.config.dataplane.%s is %q, but the bundled HAProxy pod mounts its config volume at /etc/haproxy and resolves every auxiliary path against it. Files written outside that tree are invisible to HAProxy and to the sidecars. Put %s directly under /etc/haproxy, or set haproxy.enabled=false to manage the fleet yourself." $key $path $key) }}
   {{- end }}
@@ -75,7 +75,15 @@ spec:
         {{- $selectorLabels | nindent 8 }}
         app.kubernetes.io/component: loadbalancer
     spec:
-      {{- include "haptic.podSpec" $podSpec | nindent 6 }}
+      {{- /* The pod pulls the HAPTIC image for its agent container, so an
+             unset haproxy.podSpec.imagePullSecrets follows the controller's
+             rather than leaving a private-registry install half-pullable.
+             deepCopy: .Values must survive this render unchanged. */}}
+      {{- $haproxyPodSpec := deepCopy $podSpec }}
+      {{- if not $haproxyPodSpec.imagePullSecrets }}
+      {{- $_ := set $haproxyPodSpec "imagePullSecrets" .Values.controller.podSpec.imagePullSecrets }}
+      {{- end }}
+      {{- include "haptic.podSpec" $haproxyPodSpec | nindent 6 }}
       {{- if $podSpec.shareProcessNamespace }}
       shareProcessNamespace: true
       {{- end }}
@@ -121,7 +129,7 @@ spec:
           volumeMounts:
             # general-storage (not haproxy-runtime) so the bootstrap
             # placeholder lands in the same volume the spoa-hub
-            # sidecar mounts and the dataplane API later overwrites.
+            # sidecar mounts and the agent later overwrites.
             # See volumes section below for why general/ is split off.
             - name: general-storage
               mountPath: /etc/haproxy/general
@@ -166,33 +174,13 @@ spec:
           args:
             - |
               mkdir -p /etc/haproxy/maps /etc/haproxy/certs /etc/haproxy/errors /etc/haproxy/general
-              cp /config/haproxy.cfg /etc/haproxy/haproxy.cfg
-              # Reload wrapper invoked by dataplaneapi reload_cmd/restart_cmd
-              # (master_worker_mode:false routes reloads here). Plain
-              # master-socket reload — NO server-state dump. HAProxy does not
-              # restore an IP-literal server's address from a state file (it
-              # only stashes it in lastaddr, applied to FQDN/DNS-SRV servers),
-              # so the dump never preserved pod addresses and its port restore
-              # minted a stale-slot hybrid. Reloads are config-driven; the
-              # deploy pipeline renders current endpoints. See
-              # docs/adr/0011-no-haproxy-server-state-file.md. This reload_cmd
-              # is now functionally identical to dataplaneapi's internal
-              # master-socket reload and is a candidate to drop (with
-              # master_worker_mode:true) in a follow-up.
-              cat > /etc/haproxy/reload.sh <<'EOF'
-              #!/bin/sh
-              echo reload|socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock
-              EOF
-              chmod +x /etc/haproxy/reload.sh
-              # dataplaneapi validate_cmd wrapper. The dataplane hands the
-              # transaction file over in DATAPLANEAPI_TRANSACTION_FILE (no
-              # argument substitution, no shell), so the command must be a
-              # script that reads it. -dr: a DNS failure is not a config error.
-              cat > /etc/haproxy/validate.sh <<'EOF'
-              #!/bin/sh
-              exec {{ $haproxyBin }} -dr -c -f "$DATAPLANEAPI_TRANSACTION_FILE"
-              EOF
-              chmod +x /etc/haproxy/validate.sh
+              # Resume on the config already on disk when it still parses, so a
+              # container restart inside a live pod needs no controller round
+              # trip. The pod's own binary checks it — right version, right
+              # edition. -dr: a DNS failure is not a config error.
+              if [ ! -s /etc/haproxy/haproxy.cfg ] || ! {{ $haproxyBin }} -dr -c -f /etc/haproxy/haproxy.cfg >/dev/null 2>&1; then
+                cp /config/haproxy.cfg /etc/haproxy/haproxy.cfg
+              fi
               {{- $memReq := dig "requests" "memory" "" $haproxy.resources }}
               exec {{ $haproxyBin }} -dr -W -db{{ if $memReq }} -m {{ include "haptic.memoryToMB" $memReq }}{{ end }} -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
           env:
@@ -230,7 +218,7 @@ spec:
               mountPath: /config
             - name: haproxy-runtime
               mountPath: /etc/haproxy
-            # Overlay the dataplane API's general-storage dir on top of
+            # Overlay the general-storage dir on top of
             # haproxy-runtime/general/ with a SEPARATE emptyDir. The
             # spoa-hub sidecar (when enabled) mounts only this narrower
             # volume so it can't read SSL private keys or other
@@ -277,27 +265,35 @@ spec:
           resources:
             {{- toYaml $haproxy.resources | nindent 12 }}
 
-        # Dataplane API sidecar
-        - name: dataplane
-          # Resolve the relative storage dirs (maps/, ssl/, general/) in the
-          # dataplaneapi.yaml against the HAProxy base dir, so storage files land
-          # in the absolute production dirs while runtime map/cert identifiers
-          # stay relative (matching the config's default-path-origin paths).
-          workingDir: {{ dir $dataplaneConfig.mapsDir }}
+        # HAPTIC agent sidecar — owns this pod's file tree and its HAProxy
+        # runtime socket. It runs from the controller image, so the two always
+        # speak the same wire contract.
+        - name: agent
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
-              {{- if $haproxy.enterprise.enabled }}
-              # Enterprise: dataplaneapi calls HAProxy binary which has file capabilities
-              # PSS Restricted profile allows this capability
-              add: [NET_BIND_SERVICE]
-              {{- end }}
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            # Shares the volume group with HAProxy; the agent writes the tree
+            # HAProxy reads.
             runAsUser: {{ $haproxyUid }}
-          image: {{ $haproxyImage }}
-          imagePullPolicy: {{ $haproxy.image.pullPolicy }}
+          image: {{ include "haptic.controller.image" . }}
+          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+          args:
+            - agent
+            - --base-dir={{ dir $dataplaneConfig.mapsDir }}
+            - --config={{ base $dataplaneConfig.configFile }}
+            - --master-socket=haproxy-master.sock
+            - --worker-socket=haproxy-worker.sock
+            - --listen=:{{ $ports.dataplane }}
+            - --metrics-listen=:{{ $ports.agentMetrics }}
+            {{- with $dataplaneConfig.minDeploymentInterval }}
+            - --reload-interval-min={{ . }}
+            {{- end }}
+            {{- with $dataplaneConfig.reloadVerificationTimeout }}
+            - --reload-timeout={{ . }}
+            {{- end }}
           env:
             {{- range $env := list (dict "name" "DATAPLANE_USERNAME" "key" "dataplane_username") (dict "name" "DATAPLANE_PASSWORD" "key" "dataplane_password") }}
             - name: {{ $env.name }}
@@ -306,169 +302,44 @@ spec:
                   name: {{ $credentialsSecretName }}
                   key: {{ $env.key }}
             {{- end }}
-            {{- include "haptic.dataplane.autoGomaxprocs" $dataplane | nindent 12 }}
-            {{- with $dataplane.extraEnv }}
+            - name: LOG_LEVEL
+              value: {{ $agent.logLevel | default "info" | quote }}
+            {{- include "haptic.agent.autoGomaxprocs" $agent | nindent 12 }}
+            {{- with $agent.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              # Wait for HAProxy master socket file to exist
-              echo "Waiting for HAProxy master socket file..."
-              while [ ! -S /etc/haproxy/haproxy-master.sock ]; do
-                sleep 0.5
-              done
-
-              # Wait for HAProxy to accept connections on the socket
-              echo "Waiting for HAProxy master socket to accept connections..."
-              MAX_RETRIES=30
-              RETRY_COUNT=0
-              while ! echo "show info" | socat -T2 stdio unix-connect:/etc/haproxy/haproxy-master.sock >/dev/null 2>&1; do
-                RETRY_COUNT=$((RETRY_COUNT + 1))
-                if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-                  echo "Warning: HAProxy master socket not responding after ${MAX_RETRIES} retries, proceeding anyway"
-                  break
-                fi
-                sleep 0.5
-              done
-              echo "HAProxy master socket is ready"
-
-              # Create required directories
-              # Note: Directories owned by user 99 via pod fsGroup, no chown needed
-              mkdir -p /var/lib/dataplaneapi/transactions /var/lib/dataplaneapi/backups
-              mkdir -p /etc/haproxy/maps /etc/haproxy/certs /etc/haproxy/general
-
-              # Create Dataplane API config using credentials from Secret
-              cat > /etc/haproxy/dataplaneapi.yaml <<EOF
-              config_version: 2
-              name: haproxy-dataplaneapi
-              dataplaneapi:
-                host: 0.0.0.0
-                port: {{ $ports.dataplane }}
-                disable_inotify: true
-                {{- with $dataplane.debugSocketPath }}
-                debug_socket_path: {{ . }}
-                {{- end }}
-                user:
-                  - name: ${DATAPLANE_USERNAME}
-                    password: ${DATAPLANE_PASSWORD}
-                    insecure: true
-                userlist:
-                  userlist: ""
-                  userlist_file: ""
-                transaction:
-                  transaction_dir: /var/lib/dataplaneapi/transactions
-                  backups_number: 10
-                  backups_dir: /var/lib/dataplaneapi/backups
-                resources:
-                  # Relative storage dirs (basenames), resolved against the
-                  # container workingDir below (= parent of mapsDir). This makes
-                  # the dataplane address runtime maps/certs by the same relative
-                  # identifier HAProxy uses in the config (e.g. "maps/host.map",
-                  # from default-path origin), so runtime map/cert updates apply
-                  # without a reload. Storage files still land in the absolute
-                  # dirs because workingDir = dir(mapsDir). The absolute values in
-                  # values.yaml stay authoritative for the controller's
-                  # validation path derivation (extractValidationDirConfig).
-                  maps_dir: {{ base $dataplaneConfig.mapsDir }}
-                  ssl_certs_dir: {{ base $dataplaneConfig.sslCertsDir }}
-                  general_storage_dir: {{ base $dataplaneConfig.generalStorageDir }}
-              haproxy:
-                config_file: {{ $dataplaneConfig.configFile }}
-                haproxy_bin: {{ $haproxyBin }}
-                # false (not the actual HAProxy process model — HAProxy IS
-                # started with -W above): this only tells dataplaneapi to reload
-                # via reload_cmd (reload.sh, which dumps server state first)
-                # instead of its internal master-socket reload, which bypasses
-                # reload_cmd on HAProxy >= 2.7 (canUseMasterSocketReload). The
-                # runtime client still uses master_runtime for set-server.
-                master_worker_mode: false
-                master_runtime: /etc/haproxy/haproxy-master.sock
-                reload:
-                  reload_delay: 1
-                  reload_cmd: /etc/haproxy/reload.sh
-                  restart_cmd: /etc/haproxy/reload.sh
-                  reload_strategy: custom
-                  # The dataplane API reads validate_cmd from haproxy.reload, NOT
-                  # from haproxy directly. Placing it at the top-level haproxy
-                  # block parses into an unused struct field with omitempty and
-                  # silently drops on re-serialize — making
-                  # haproxy.dataplane.validateConfig=false a no-op and leaving
-                  # the default haproxy -c running on every endpoint push.
-                  {{- if $dataplane.validateConfig }}
-                  validate_cmd: /etc/haproxy/validate.sh
-                  {{- else }}
-                  validate_cmd: /bin/true
-                  {{- end }}
-              log_targets:
-                - log_to: stdout
-                  log_level: {{ $dataplane.logLevel | default "info" }}
-                  log_format: text
-                  {{- with $dataplane.aclFormat }}
-                  acl_format: {{ . | quote }}
-                  {{- end }}
-                  log_types:
-                  - access
-                  - app
-              EOF
-
-              _child_name='Dataplane API'
-              _child_impact='config updates are unavailable'
-              _child_health() {
-                if timeout "$_watch_timeout_seconds" /usr/bin/bash -c '
-                  exec 3<>"/dev/tcp/127.0.0.1/$1" || exit 1
-                  printf "GET /v2/info HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3
-                  IFS= read -r _status <&3 || exit 1
-                  case "$_status" in HTTP/*) exit 0;; *) exit 1;; esac
-                ' child-health {{ $ports.dataplane }}; then
-                  return 0
-                fi
-                return 1
-              }
-              {{ include "haptic.childSupervisor.shellFunctions" . | nindent 14 }}
-
-              _backoff=1
-              while true; do
-                _child_started_epoch_seconds=$(date +%s)
-                {{ include "haptic.haproxy.dataplanebin" . }} -f /etc/haproxy/dataplaneapi.yaml &
-                _child_pid=$!
-                _start_watchdog
-                wait "$_child_pid"
-                _status=$?
-                _stop_watchdog
-                _child_pid=
-                _child_runtime_seconds=$(( $(date +%s) - _child_started_epoch_seconds ))
-                if [ "$_child_runtime_seconds" -ge 60 ]; then
-                  _backoff=1
-                fi
-                echo "WARNING: Dataplane API exited with status ${_status}; config updates are unavailable; restarting in ${_backoff}s"
-                sleep "$_backoff"
-                if [ "$_backoff" -lt 30 ]; then
-                  _backoff=$((_backoff * 2))
-                  if [ "$_backoff" -gt 30 ]; then _backoff=30; fi
-                fi
-              done
           ports:
             - name: dataplane
               containerPort: {{ $ports.dataplane }}
               protocol: TCP
+            - name: agent-metrics
+              containerPort: {{ $ports.agentMetrics }}
+              protocol: TCP
+          # /readyz reports that both HAProxy sockets answer and the tree is
+          # hashed; /healthz only that the process serves. No readinessProbe:
+          # pod readiness belongs to HAProxy's own /ready, and tying it to the
+          # agent would drain traffic off a pod that is still serving.
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: dataplane
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: dataplane
+            periodSeconds: 10
           volumeMounts:
             - name: haproxy-runtime
               mountPath: /etc/haproxy
-            # general-storage overlay — same shape as the haproxy
-            # container's mount. The dataplane API's
-            # general_storage_dir resolves through this overlay so
-            # writes to /etc/haproxy/general/<file> land in the
-            # narrow general-storage volume that the spoa-hub
-            # sidecar can also read.
+            # general-storage overlay — same shape as the haproxy container's
+            # mount, so files the agent writes under general/ land in the narrow
+            # volume the spoa-hub and vector sidecars read.
             - name: general-storage
               mountPath: /etc/haproxy/general
-            - name: dataplane-data
-              mountPath: /var/lib/dataplaneapi
-            - name: dataplane-tmp
-              mountPath: /tmp
           resources:
-            {{- toYaml $dataplane.resources | nindent 12 }}
+            {{- toYaml $agent.resources | nindent 12 }}
 
         {{- if $spoaHubEnabled }}
         {{- $spoaHub := .Values.spoaHub }}
@@ -540,7 +411,7 @@ spec:
           volumeMounts:
             # ONLY the narrow general-storage volume — NOT
             # haproxy-runtime. The hub needs to see the rendered
-            # spoa-hub-config.toml that the dataplane API writes
+            # spoa-hub-config.toml that the agent writes
             # (and the bootstrap initContainer seeded), but it has
             # no business reading SSL private keys or backend maps
             # from haproxy-runtime/{ssl,maps,errors,…}. By splitting
@@ -557,7 +428,7 @@ spec:
             # watch never fires and the hub stays on the bootstrap
             # config forever, silently breaking per-Ingress
             # modsecurity-snippet enforcement. A separate-volume
-            # overlay (mounted on haproxy + dataplane at the same
+            # overlay (mounted on haproxy + agent at the same
             # path) gives both narrow scope AND working inotify.
             - name: general-storage
               mountPath: /etc/haproxy/general
@@ -721,9 +592,9 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 64Mi
-        # Narrow overlay volume scoped to the dataplane API's
-        # general-storage dir. Mounted at /etc/haproxy/general/ on
-        # the haproxy + dataplane containers (overlaying the same
+        # Narrow overlay volume scoped to the general-storage dir.
+        # Mounted at /etc/haproxy/general/ on the haproxy + agent
+        # containers (overlaying the same
         # subdirectory of haproxy-runtime), AND on the spoa-hub
         # sidecar (its only volume from the haproxy-runtime tree).
         # The split exists so the hub container can read its
@@ -742,10 +613,6 @@ spec:
             medium: Memory
             sizeLimit: {{ include "haptic.haproxy.shmSizeLimit" . }}
         {{- end }}
-        - name: dataplane-data
-          emptyDir: {}
-        - name: dataplane-tmp
-          emptyDir: {}
         {{- if $spoaHubEnabled }}
         # Memory-backed scratch directory for the spoa-hub container's
         # /tmp. Some plugins (notably coraza) write probe files here to
@@ -761,7 +628,7 @@ spec:
         # /etc/haproxy/general/spoa-hub-config.toml during init so the
         # spoa-hub sidecar finds a valid config at its --config path
         # on first start. HAPTIC's controller overwrites the
-        # destination via the dataplane API on first reconcile.
+        # destination via the agent on first reconcile.
         - name: spoa-hub-bootstrap
           configMap:
             name: {{ include "haptic.spoaHub.configMapName" . }}

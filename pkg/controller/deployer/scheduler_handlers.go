@@ -148,6 +148,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	configChecksum := s.lastContentChecksum
 	plan := s.lastRenderedPlan
 	planID := s.lastRenderedPlanID
+	reason := deployReason(event.TriggerReason)
 	// Cache validated config immediately to prevent race condition.
 	// `lastValidatedContentChecksum` must be captured AT THE SAME POINT as
 	// `lastValidatedConfig` — otherwise pod-discovery reads (which fall
@@ -159,11 +160,9 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	s.lastValidatedContentChecksum = configChecksum
 	s.lastValidatedPlan = plan
 	s.lastValidatedPlanID = planID
-	s.lastParsedConfig = event.ParsedConfig // Cache pre-parsed config for sync optimization
 	s.lastCorrelationID = correlationID
 	s.lastCoalescible = event.Coalescible()
 	s.hasValidConfig = true
-	parsedConfig := s.lastParsedConfig
 	s.mu.Unlock()
 
 	if config == "" {
@@ -186,7 +185,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	podSetHash := computePodSetHash(endpoints)
 
 	// Drift prevention deployments must ALWAYS execute (bypass cache)
-	isDriftPrevention := event.TriggerReason == events.TriggerReasonDriftPrevention
+	isDriftPrevention := reason == events.TriggerReasonDriftPrevention
 
 	// Check if deployment can be skipped (config unchanged for same pod set)
 	s.mu.RLock()
@@ -228,7 +227,17 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	// so the eventual deploy records THIS hash, not whatever
 	// `s.lastContentChecksum` holds at deploy-time (which a later reconcile
 	// will have overwritten under sustained parallel-test load).
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "config_validation", correlationID, statusPatches, event.Coalescible(), configHash, plan, planID)
+	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, reason, correlationID, statusPatches, event.Coalescible(), configHash, plan, planID)
+}
+
+// deployReason names why the deploy runs. The drift pass must stay
+// distinguishable all the way to the deployer: it verifies each pod's tree
+// instead of trusting the digests the agent last recorded.
+func deployReason(triggerReason string) string {
+	if triggerReason == events.TriggerReasonDriftPrevention {
+		return events.TriggerReasonDriftPrevention
+	}
+	return "config_validation"
 }
 
 // handlePodsDiscovered handles HAProxy pod discovery/changes with coalescing.
@@ -261,20 +270,22 @@ func (s *DeploymentScheduler) handlePodsDiscovered(ctx context.Context, event *e
 
 // performPodsDiscovered executes the actual pod discovery handling logic.
 func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *events.HAProxyPodsDiscoveredEvent) {
-	// Endpoint authority changes retire persistent runtime clients and cached
-	// deployment observations even when no deployment is schedulable.
+	// An endpoint-authority change retires the in-flight deploy: its pods are
+	// not the fleet any more, and the replacement set must be deployed to as a
+	// whole.
 	var cancelledDeploymentID, cancelledCorrelationID string
-	if s.runtimeBypass.replaceEndpointAuthorities(event.Endpoints) {
-		s.schedulerMutex.Lock()
+	podSetHash := computePodSetHash(event.Endpoints)
+	s.schedulerMutex.Lock()
+	if s.lastPodSetHash != "" && s.lastPodSetHash != podSetHash {
 		if s.state.deployInFlight {
 			cancelledDeploymentID = s.state.activeDeploymentID
 			cancelledCorrelationID = s.state.activeCorrelationID
 		}
 		s.workRevision++
 		s.state.pending = nil
-		s.invalidateDispatchBaselineLocked()
-		s.schedulerMutex.Unlock()
 	}
+	s.schedulerMutex.Unlock()
+	s.publishFleetCapabilities(event.Endpoints)
 	if cancelledDeploymentID != "" {
 		s.eventBus.Publish(events.NewDeploymentCancelRequestEvent(
 			cancelledDeploymentID,
@@ -288,7 +299,6 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 	endpointCount := len(event.Endpoints)
 	config := s.lastValidatedConfig
 	auxFiles := s.lastValidatedAux
-	parsedConfig := s.lastParsedConfig
 	statusPatches := s.lastValidatedStatusPatches
 	contentChecksum := s.lastValidatedContentChecksum
 	plan := s.lastValidatedPlan
@@ -317,7 +327,7 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 	// handleValidationCompleted — so the deploy records the hash that
 	// matches the config it actually carries, not whatever
 	// `lastContentChecksum` holds now (later renders' values).
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, event.Endpoints, "pod_discovery", correlationID, statusPatches, coalescible, contentChecksum, plan, planID)
+	s.scheduleOrQueue(ctx, config, auxFiles, event.Endpoints, "pod_discovery", correlationID, statusPatches, coalescible, contentChecksum, plan, planID)
 }
 
 // handleValidationFailed handles validation failure events.
@@ -335,7 +345,6 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 	s.mu.RLock()
 	config := s.lastValidatedConfig
 	auxFiles := s.lastValidatedAux
-	parsedConfig := s.lastParsedConfig
 	statusPatches := s.lastValidatedStatusPatches
 	contentChecksum := s.lastValidatedContentChecksum
 	plan := s.lastValidatedPlan
@@ -366,7 +375,7 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 	// consistency. The contentChecksum threaded here is the hash of the
 	// last-validated config (NOT the failed-validation render), so the
 	// deploy records the correct hash for what's actually being applied.
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "validation_fallback", correlationID, statusPatches, false, contentChecksum, plan, planID)
+	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "validation_fallback", correlationID, statusPatches, false, contentChecksum, plan, planID)
 }
 
 // handleDeploymentCompleted handles deployment completion events.
@@ -405,7 +414,6 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	s.state.deploymentStartTime = time.Time{}
 	s.state.activeDeploymentID = ""
 	s.state.activeCorrelationID = ""
-	s.state.lastDeploymentEndTime = time.Now()
 
 	if timedOut {
 		s.schedulerMutex.Unlock()
@@ -416,14 +424,6 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 		return
 	}
 
-	// A deploy that reported failures did not land on every pod. A successful
-	// deploy is the point where the dispatched render becomes the running one.
-	switch {
-	case event.Total > 0 && event.Failed > 0:
-		s.invalidateDispatchBaselineLocked()
-	case event.Total > 0:
-		s.lastActivatedConfig = s.lastDispatchedConfig
-	}
 	s.schedulerMutex.Unlock()
 
 	// Cache the deployed content checksum for future comparison (skip unchanged deployments).
@@ -596,7 +596,6 @@ func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision u
 	s.mu.Lock()
 	config := s.lastValidatedConfig
 	auxFiles := s.lastValidatedAux
-	parsedConfig := s.lastParsedConfig
 	statusPatches := s.lastValidatedStatusPatches
 	contentChecksum := s.lastValidatedContentChecksum
 	plan := s.lastValidatedPlan
@@ -616,7 +615,6 @@ func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision u
 		retryGeneration: generation,
 		config:          config,
 		auxFiles:        auxFiles,
-		parsedConfig:    parsedConfig,
 		plan:            plan,
 		planID:          planID,
 		endpoints:       endpoints,
@@ -691,17 +689,7 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	s.deployFailureRetries = 0
 	s.lastFailedRetryChecksum = ""
 
-	// Drop the dispatch diff baseline (the new leader hasn't dispatched, so its
-	// first render must be classified structural — nil baseline — and deploy the
-	// whole config) and close the bypass's persistent clients.
-	s.lastDispatchedParsed = nil
-	s.lastDispatchedConfig = ""
-	s.lastDispatchedPodSetHash = ""
-	s.lastActivatedConfig = ""
-	s.runtimeBypass.Close()
-
-	// Note: state.lastDeploymentEndTime is NOT cleared - this historical data is safe to keep
-	// and helps prevent rapid deployments if leadership is quickly reacquired
+	s.lastPodSetHash = ""
 
 	// Clear deployment cache - new leader should verify config state
 	s.mu.Lock()

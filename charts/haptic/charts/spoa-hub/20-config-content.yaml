@@ -11,7 +11,7 @@
 templateSnippets:
   # Renders the SPOA hub's runtime config.toml. Called from features-spoa-hub
   # via fileRegistry.Register("file", "spoa-hub-config.toml", ...). The
-  # dataplane API delivers the rendered file to the haproxy pod, where the
+  # agent delivers the rendered file to the haproxy pod, where the
   # spoa-hub sidecar's file-watch + graceful-reload (haproxy-spoa-hub MR1)
   # picks it up without a restart.
   #

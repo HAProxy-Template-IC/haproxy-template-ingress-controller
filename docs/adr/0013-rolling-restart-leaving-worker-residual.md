@@ -5,7 +5,15 @@
 Accepted. No code behaviour change. Documents why the two candidate fixes for
 issue #70 are **not** pursued and records `TestIngressRollingRestartZeroDowntime`
 as the standing sentinel. Builds on ADR-0011 (config-driven server addresses, no
-server-state-file) and the deployer's runtime fast-path (`pkg/controller/deployer/runtime_bypass.go`).
+server-state-file).
+
+Option 1's reasoning was rewritten by [ADR-0022](0022-haptic-agent.md): the
+controller's reach into a pod is no longer the Data Plane API's endpoint set but
+an agent that holds both HAProxy sockets, so worker routing is a question about
+HAProxy's master CLI alone. The measurement that decided it is in ADR-0022's
+alternatives — `@1 c1; c2` relays only the first command, and `@@` does not
+exist below 3.2. The conclusion is unchanged; the reason is now HAProxy's, not
+an API's.
 
 ## Context
 
