@@ -148,7 +148,7 @@ func (r *applyRun) activate() error {
 		return r.inPlace()
 	}
 	if r.manifest.Mode == api.ModeReload {
-		return r.reload("mode")
+		return r.reload(reloadReasonMode)
 	}
 	if r.server.baselineUnknown() {
 		return r.reload("unknown_baseline")
@@ -245,14 +245,20 @@ func (r *applyRun) settle() error {
 	return nil
 }
 
-// inPlace runs the ops the controller composed against the running worker
-// while a reload is already scheduled. A rejected one invalidates the pod's
-// baseline instead of triggering a second reload.
+// inPlace coalesces the apply into the reload already scheduled and runs the
+// in-place ops against the worker that keeps serving until it fires.
 func (r *applyRun) inPlace() error {
 	r.result.Mode = api.ResultScheduled
 	r.server.coalesceIntoPendingReload(r.manifest.PlanID)
 	_, due := r.server.pendingReload()
 	r.result.Reload = &api.ReloadInfo{ScheduledAt: due.UTC().Format(time.RFC3339Nano)}
+	return r.runInPlace()
+}
+
+// runInPlace runs the ops the controller composed against the running worker
+// while its reload waits. A rejected one invalidates the pod's baseline
+// instead of triggering a second reload.
+func (r *applyRun) runInPlace() error {
 	if len(r.manifest.InPlaceOps) == 0 {
 		return nil
 	}

@@ -40,14 +40,15 @@ var inPlaceKinds = map[string]bool{
 }
 
 // inPlaceOps composes the subset that runs while this pod waits for its
-// reload, against the plan the worker actually has, and returns the plan the
-// worker holds once the subset ran. A change it cannot express is dropped
-// rather than reported: the pending reload applies all of it. Without a
-// worker-ops baseline nothing is composed: the agent fences in-place ops on
-// that id, and Running or Applied is not what the worker holds once one
-// in-place batch ran.
+// reload — one already pending, or the one this render asks for, which the
+// pod paces if its window is closed — against the plan the worker actually
+// has, and returns the plan the worker holds once the subset ran. A change it
+// cannot express is dropped rather than reported: the reload applies all of
+// it. Without a worker-ops baseline nothing is composed: the agent fences
+// in-place ops on that id, and Running or Applied is not what the worker
+// holds once one in-place batch ran.
 func (b *builder) inPlaceOps() ([]api.Op, *renderplan.Plan) {
-	if !b.baseline.ReloadPending {
+	if !b.baseline.ReloadPending && !b.reload {
 		return nil, nil
 	}
 	worker := b.baseline.WorkerOps

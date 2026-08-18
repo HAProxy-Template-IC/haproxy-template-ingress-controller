@@ -273,7 +273,10 @@ inside the window is scheduled, never dropped and never cancelled by a later
 apply. While one is pending the files of a newer apply still land, its `ops` are
 skipped, and its `in_place_ops` run against the running worker — guarded by
 `expected_worker_ops_plan_id`, because those ops were composed against the
-worker's state, not the file set's. Once they ran the pod records the manifest's
+worker's state, not the file set's. An apply that asks for a reload inside the
+window is scheduled the same way and its `in_place_ops` run at once, so the
+worker that keeps serving until the reload fires gets the endpoint changes
+immediately. Once they ran the pod records the manifest's
 `worker_ops_plan_id`: the worker's plan with exactly those ops applied, which
 the controller derives and keeps. It's never the render's own id, because an
 in-place batch carries only part of the change — a new map key waits for the

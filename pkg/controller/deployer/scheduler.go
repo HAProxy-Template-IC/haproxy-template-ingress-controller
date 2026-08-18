@@ -74,11 +74,6 @@ type schedulerState struct {
 	activeCorrelationID string
 	deploymentStartTime time.Time
 	pending             *scheduledDeployment
-	// holdUntil is when the fleet's paced reloads have fired. A render that
-	// arrives before then is held (latest wins) so that the deployment which
-	// runs after the window converges everywhere; dispatching each render as
-	// it comes would leave the fleet one reload behind under sustained churn.
-	holdUntil time.Time
 }
 
 // scheduledDeployment represents a deployment that was triggered while another

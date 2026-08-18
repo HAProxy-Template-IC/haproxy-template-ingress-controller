@@ -673,6 +673,36 @@ func TestAScheduledReloadCoalescesAndRunsInPlaceOps(t *testing.T) {
 	assert.Equal(t, "global\n  maxconn 600\n", h.read(configPath), "the files land even while a reload waits")
 }
 
+// A structural apply that arrives with the window closed but no reload
+// pending is paced like any other, and its in-place ops run at once: the
+// worker keeps serving until the reload fires and must not serve stale
+// endpoints meanwhile.
+func TestAPacedReloadRunsTheInPlaceOpsAtOnce(t *testing.T) {
+	h := newHarness(t, withReloadInterval(time.Minute))
+	first := firstApply(t, h)
+	require.Empty(t, h.state(false).ReloadPendingAt)
+
+	next := baseFiles("global\n  maxconn 600\n")
+	next[1].Content = "example.com be-a\nnew.example.com be-b\n"
+	second := buildManifest("plan-2", next)
+	second.Mode = api.ModeReload
+	second.ExpectedPrevPlanID = first.AppliedPlanID
+	second.ExpectedPrevToken = first.AppliedToken
+	second.ExpectedWorkerOpsPlanID = "plan-1"
+	second.WorkerOpsPlanID = "plan-1-after"
+	second.InPlaceOps = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "new.example.com", Value: "be-b"}}
+	result := h.apply(&second, next)
+
+	require.True(t, result.OK, "%+v", result.Error)
+	assert.Equal(t, api.ResultScheduled, result.Mode)
+	require.NotNil(t, result.Reload)
+	assert.NotEmpty(t, result.Reload.ScheduledAt)
+	require.Len(t, result.OpResults, 1, "the in-place op ran while the reload waits")
+	assert.True(t, result.OpResults[0].OK)
+	assert.Equal(t, "plan-1-after", result.WorkerOpsPlanID)
+	assert.Contains(t, h.model.MapEntries("maps/host.map"), haproxytest.MapEntry{Key: "new.example.com", Value: "be-b"})
+}
+
 func TestAnInPlaceOpOnAStaleWorkerBaselineInvalidatesThePod(t *testing.T) {
 	h := newHarness(t, withReloadInterval(time.Minute))
 	files := baseFiles("global\n")

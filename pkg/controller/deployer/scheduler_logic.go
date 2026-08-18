@@ -105,8 +105,9 @@ func contextCancelled(ctx context.Context) bool {
 // one that goes out. Runs for the whole leadership term; exits on ctx.Done().
 //
 // Reload pacing belongs to the agent (--reload-interval-min), which coalesces
-// reloads without holding back the applies that need none; the only interval
-// this loop waits out is the one the fleet reported its pending reloads for.
+// reloads without holding back the applies that need none; this loop never
+// waits for a window, so an endpoint change reaches the running workers as
+// soon as it is rendered.
 func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 	defer func() {
 		s.schedulerMutex.Lock()
@@ -121,14 +122,6 @@ func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 			return
 		}
 		s.schedulerMutex.Lock()
-		hold := time.Until(s.state.holdUntil)
-		if hold > 0 && s.state.pending != nil {
-			s.schedulerMutex.Unlock()
-			if !s.waitHold(ctx, hold) {
-				return
-			}
-			continue
-		}
 		dep := s.state.pending
 		s.state.pending = nil
 		s.schedulerMutex.Unlock()
@@ -145,21 +138,6 @@ func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 			return // ctx cancelled
 		}
 	}
-}
-
-// waitHold sleeps until the fleet's pending reloads have fired; a render that
-// arrives meanwhile replaces the pending slot and is what gets dispatched.
-// Returns false only on ctx cancellation.
-func (s *DeploymentScheduler) waitHold(ctx context.Context, hold time.Duration) bool {
-	timer := time.NewTimer(hold)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-	case <-s.pendingSignal:
-	case <-ctx.Done():
-		return false
-	}
-	return true
 }
 
 // dispatchPending publishes one DeploymentScheduledEvent and blocks until its

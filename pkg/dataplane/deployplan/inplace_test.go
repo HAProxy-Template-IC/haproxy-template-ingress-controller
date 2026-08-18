@@ -37,6 +37,26 @@ func TestInPlaceOnlyWhileAReloadIsPending(t *testing.T) {
 	assert.Empty(t, got.InPlace)
 }
 
+// TestInPlaceRidesAReloadTheirPodMayPace: a render that reloads carries the
+// in-place subset too, because the pod paces the reload when its window is
+// closed and the worker keeps serving until it fires — an endpoint change in
+// the same render must not wait for that.
+func TestInPlaceRidesAReloadThePodMayPace(t *testing.T) {
+	prev := basePlan(withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080))))
+	next := basePlan(withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.2", 8080))))
+	next.Sections = append(next.Sections, renderplan.Section{Kind: renderplan.SectionKindCore, Name: "core#9", TextDigest: "new"})
+	base := on34(prev)
+	base.WorkerOps = prev
+
+	got := deployplan.Diff(next, base)
+
+	require.Equal(t, deployplan.VerdictReload, got.Verdict)
+	assert.Empty(t, got.Ops, "a reload carries no runtime ops")
+	require.Equal(t, []string{api.OpServerSetAddr}, kinds(got.InPlace))
+	assert.Equal(t, "10.0.0.2", got.InPlace[0].Address)
+	require.NotNil(t, got.WorkerPlan)
+}
+
 func TestInPlaceIsComputedAgainstTheWorkerPlan(t *testing.T) {
 	applied := basePlan(withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080))))
 	worker := basePlan(withBackend(dynBackend("be-a", weighted(10))))
