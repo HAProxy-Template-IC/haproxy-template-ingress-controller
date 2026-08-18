@@ -27,9 +27,9 @@ import (
 // A scheduled reload is never cancelled, so the tick only decides its latency.
 const pacerTick = 100 * time.Millisecond
 
-// workerSettleTimeout bounds the wait for the new worker to answer after a
+// DefaultReloadTimeout bounds the wait for the new worker to answer after a
 // reload. Past it the apply reports what it knows rather than blocking.
-const workerSettleTimeout = api.MaxReloadMs * time.Millisecond
+const DefaultReloadTimeout = api.MaxReloadMs * time.Millisecond
 
 // reload either reloads now or schedules one, depending on the pacing window.
 func (r *applyRun) reload(reason string) error {
@@ -84,7 +84,7 @@ func (r *applyRun) performReload(planID string) error {
 // from the one the agent recorded before the reload.
 func (s *Server) awaitNewWorker() (api.HAProxyInfo, error) {
 	previous := s.workerIdentity()
-	deadline := time.Now().Add(workerSettleTimeout)
+	deadline := time.Now().Add(s.cfg.ReloadTimeout)
 	for {
 		info, err := s.runtime.Info()
 		if err == nil && info.WorkerPID != previous.WorkerPID {

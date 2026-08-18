@@ -15,16 +15,19 @@
 package server_test
 
 import (
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/server"
 )
 
 func TestARestartBetweenAppliesKeepsTheBaseline(t *testing.T) {
@@ -163,4 +166,18 @@ func insertJSON(t *testing.T, raw []byte, fields string) []byte {
 	t.Helper()
 	require.Greater(t, len(raw), 1)
 	return append([]byte("{"+fields), raw[1:]...)
+}
+
+func TestAReloadTimeoutOverTheAPILimitIsRefused(t *testing.T) {
+	_, err := server.New(t.Context(), &server.Config{
+		BaseDir:       t.TempDir(),
+		ConfigFile:    configPath,
+		StateFile:     ".haptic-agent.json",
+		Listen:        "127.0.0.1:0",
+		ReloadTimeout: server.DefaultReloadTimeout + time.Second,
+		Username:      testUser,
+		Password:      testPassword,
+		Logger:        slog.New(slog.DiscardHandler),
+	})
+	require.ErrorContains(t, err, "--reload-timeout must be between 0 and 1m0s")
 }

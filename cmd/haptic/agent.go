@@ -49,6 +49,7 @@ var (
 	agentMetricsListen     string
 	agentStateFile         string
 	agentReloadIntervalMin time.Duration
+	agentReloadTimeout     time.Duration
 )
 
 var agentCmd = &cobra.Command{
@@ -91,6 +92,8 @@ func init() {
 		"Name of the agent's state file inside --base-dir")
 	agentCmd.Flags().DurationVar(&agentReloadIntervalMin, "reload-interval-min", 5*time.Second,
 		"Shortest interval between two reloads; a reload inside the window is scheduled, never dropped")
+	agentCmd.Flags().DurationVar(&agentReloadTimeout, "reload-timeout", server.DefaultReloadTimeout,
+		"How long a reload may take before the apply reports what it knows; capped at the API's reload limit")
 }
 
 func runAgent(_ *cobra.Command, _ []string) error {
@@ -114,6 +117,7 @@ func runAgent(_ *cobra.Command, _ []string) error {
 		StateFile:         agentStateFile,
 		Listen:            agentListen,
 		ReloadIntervalMin: agentReloadIntervalMin,
+		ReloadTimeout:     agentReloadTimeout,
 		Username:          username,
 		Password:          password,
 		AgentVersion:      version,
