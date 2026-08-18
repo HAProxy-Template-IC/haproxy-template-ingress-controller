@@ -1520,8 +1520,7 @@ coverage-combined:
     # it merges their coverage artifacts, so it must run exactly when they do.
     # That lockstep is why the bare default-branch rule had to go from here at
     # the same time as from those two: keeping it would have left this job
-    # running on a prose-only main push with `test` skipped, and its `needs:
-    # test` is hard.
+    # running on a prose-only main push with nothing to merge.
     - !reference [.rules-go, rules]
   tags:
     - saas-linux-medium-amd64
@@ -1550,9 +1549,9 @@ coverage-combined:
       optional: true
   script:
     # Every producer is optional, so this job reports on what it was given and
-    # says what was missing. A skipped or failed producer must not turn a green
-    # pipeline red here — the coverage number degrades, the pipeline does not
-    # break.
+    # says what was missing. A producer absent from this pipeline (the interior
+    # versions on an MR) must not turn it red — the coverage number degrades,
+    # the pipeline does not break.
     - mkdir -p coverage
     - |
       if [ -f coverage.out ]; then
