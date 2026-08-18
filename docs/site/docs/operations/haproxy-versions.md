@@ -21,14 +21,18 @@ The controller image uses major.minor only (`-haproxy3.2`, not `-haproxy3.2.x`) 
 
 HAProxy's even-numbered series (3.0, 3.2, 3.4) are LTS with about five years of support; odd-numbered series (3.1, 3.3) get a shorter maintenance window. The chart's default is always the latest LTS — currently 3.4.
 
-!!! note "HAProxy version vs DataPlane API version"
-    The series above is the **HAProxy binary** version. HAPTIC talks to each pod's
-    DataPlane API, which has its own release cadence: the HAProxy 3.3 and 3.4 images
-    both ship **DataPlane API v3.3**. HAPTIC bundles clients and validators for
-    DataPlane API v3.0–v3.3 and picks one from the version the pod reports at
-    `/v3/info`, so a 3.4 pod is served by the v3.3 client. Config syntax is still
-    validated against the matching HAProxy binary via `haproxy -c`, which is why a
-    per-series controller image exists.
+!!! note "One version, both images"
+    The series above is the **HAProxy binary** version, and it's the only version
+    that matters: `haproxyVersion` picks the HAProxy image and the matching
+    controller image together, and the agent runs the controller's binary inside
+    the HAProxy pod. Which runtime commands a pod accepts follows that pod's own
+    HAProxy release, which the agent reports. Config syntax is validated against
+    the matching HAProxy binary via `haproxy -c`, which is why a per-series
+    controller image exists.
+
+    During a rolling upgrade the fleet can briefly run two series. HAPTIC renders
+    for the lowest version it sees, and a pod whose agent it cannot compose ops
+    for gets the complete file set plus a reload — never a refusal.
 
 ## Feature version requirements
 
@@ -38,10 +42,11 @@ Most chart features work on every supported series. A few require a minimum HAPr
 |---------|----------------|----------------------------|
 | SSL/TLS termination, [CRT-list management](../libraries/ssl.md#crt-list-certificate-management), [OCSP stapling](../libraries/ssl.md#ocsp-stapling) | 3.0 | Not applicable — 3.0 is the minimum supported series |
 | [SPOA hub](spoa-hub.md) native transport (`mode spop`) | 3.1 | Auto-falls back to `mode tcp`; the hub still works |
-| Reload-free TLS certificate rotation (`set ssl cert`) | 3.2 | Certificate rotation still works, but each renewal triggers a full reload instead of a runtime update |
+| Reload-free server adds (`add server ... init-state`) | 3.1 | A new server still joins, but the pod reloads to pick it up |
+| Reload-free route adds and removals (`add backend` / `del backend`) | 3.4 | Routes still work, but adding or removing one reloads the pod |
 | [Shared-memory stats persistence](../libraries/base.md#shared-memory-stats-haproxy-33) (`shm-stats-file`) | 3.3 | Silently omitted; stats counters reset on every reload |
 
-Only `mode spop` (3.1) and shm-stats (3.3) gate chart behavior you can't otherwise get. 3.2 unlocks no chart feature you couldn't use below it — it only enables the reload-free lane for certificate rotation; on 3.0 and 3.1 the same rotation triggers a reload. That lane depends on DataPlane API v3.2+, which ships with the 3.2+ images (see the note above).
+Only `mode spop` (3.1) and shm-stats (3.3) gate chart behavior you can't otherwise get. The rest is about what a change costs: 3.1 adds `add server ... init-state`, so a new server joins without a reload, and 3.4 adds dynamic backends, so adding or removing a route stops reloading altogether.
 
 ## Selecting a version
 

@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted.
+Obsoleted by [ADR-0022](0022-haptic-agent.md) on 2026-08-18. The Data Plane API
+this decision worked around is gone: the agent writes every file of an apply in
+one transaction and reloads once, when the controller tells it to, so there is
+no per-file auto-reload left to skip. The context below records why the problem
+existed.
 
 ## Context
 

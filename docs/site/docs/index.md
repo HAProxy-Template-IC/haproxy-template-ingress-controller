@@ -1,12 +1,12 @@
 ---
-description: "HAPTIC (HAProxy Template Ingress Controller) is a template-driven HAProxy ingress controller for Kubernetes. Watch any resource, render templates, and deploy to HAProxy via Dataplane API."
+description: "HAPTIC (HAProxy Template Ingress Controller) is a template-driven HAProxy ingress controller for Kubernetes. Watch any resource, render templates, and apply them to your HAProxy fleet."
 hide:
   - navigation
 ---
 
 # HAPTIC
 
-**HAPTIC** (HAProxy Template Ingress Controller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
+**HAPTIC** (HAProxy Template Ingress Controller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and applies them to your HAProxy fleet — reloading only when the change needs one.
 
 <div class="hx-pipeline" role="img" aria-label="How HAPTIC works: cluster resources feed your templates, the rendered config is validated, then deployed to the HAProxy fleet">
   <div class="hx-group">
@@ -47,7 +47,7 @@ HAPTIC is an event-driven Kubernetes controller that:
 - **Watches any Kubernetes resource** - Ingresses, Services, Secrets, Gateway API resources, or any custom resource type you configure
 - **Renders Scriggo templates** - A Go-native template engine
 - **Validates before deployment** - Every rendered config passes syntax, schema, and `haproxy -c` checks before it reaches your load balancers
-- **Deploys configurations** to HAProxy pods via the Dataplane API
+- **Applies configurations** to HAProxy pods through the HAPTIC agent, which runs map, certificate and server changes on the live worker instead of reloading
 
 Unlike traditional ingress controllers with hardcoded configuration logic, HAPTIC uses a template-driven approach that gives you full control over the generated HAProxy configuration. This means you can:
 
@@ -82,7 +82,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 
 The controller follows an event-driven architecture where changes to Kubernetes resources trigger a pipeline that renders templates, validates the output, and syncs configurations to HAProxy pods.
 
-<div class="hx-pipeline hx-arch" role="img" aria-label="Runtime architecture: the controller pod watches the Kubernetes API, renders and validates the config, and pushes it to each HAProxy pod's Dataplane API">
+<div class="hx-pipeline hx-arch" role="img" aria-label="Runtime architecture: the controller pod watches the Kubernetes API, renders and validates the config, and applies it through the agent in each HAProxy pod">
   <div class="hx-group">
     <span class="hx-cap">Kubernetes API</span>
     <span class="hx-chip">🗂️ Any resource</span>
@@ -100,7 +100,7 @@ The controller follows an event-driven architecture where changes to Kubernetes 
   <div class="hx-link" aria-hidden="true"><i></i></div>
   <div class="hx-group hx-pod">
     <span class="hx-cap">HAProxy pod</span>
-    <span class="hx-chip">🔌 Dataplane API</span>
+    <span class="hx-chip">🔌 HAPTIC agent</span>
     <span class="hx-vlink" aria-hidden="true"></span>
     <span class="hx-chip">⚡ HAProxy</span>
   </div>
@@ -111,7 +111,7 @@ Key components:
 - **Watcher** - Subscribes to Kubernetes API for configured resource types
 - **Template Engine** - Renders Scriggo templates with resource data as context
 - **Validator** - Runs syntax, schema, and `haproxy -c` checks on the rendered config so broken configs never deploy
-- **Dataplane Syncer** - Applies configuration changes to HAProxy pods via the Dataplane API
+- **Deployer** - Decides per pod whether a change can run on the live worker or needs a reload, and sends it to that pod's agent
 
 ## Quick start
 
