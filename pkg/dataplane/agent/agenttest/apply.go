@@ -277,6 +277,8 @@ func (a *Agent) transact(req *applyRequest) outcome {
 		mode = api.ResultFileOnly
 	}
 	a.advance(m)
+	// Every op ran on the worker, so it holds the applied plan.
+	a.state.WorkerOpsPlanID = m.PlanID
 	return a.ack(m, mode, m.Ops, nil)
 }
 

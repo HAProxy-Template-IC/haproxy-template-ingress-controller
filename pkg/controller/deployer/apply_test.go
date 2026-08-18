@@ -915,3 +915,33 @@ func opKinds(ops []api.Op) []string {
 	}
 	return kinds
 }
+
+// A runtime apply moves the worker to the applied plan. When a reload is
+// scheduled afterwards, the in-place batch is composed against that plan —
+// not against the plan of the last reload — so nothing the runtime apply
+// already did is repeated or undone.
+func TestApply_InPlaceBatchFollowsARuntimeApply(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	require.Equal(t, 1, completed.Succeeded)
+	require.Equal(t, plan2.ID, agent.State().WorkerOpsPlanID, "the runtime apply moved the worker")
+
+	agent.SetReloadPending(true)
+	plan3, config3, aux3 := renderFor("plan-3", "10.0.0.3", mapEntry)
+	completed = deployTo(t, component, bus, plan3, config3, aux3, "config_validation", endpoint)
+	require.Equal(t, 0, completed.Failed)
+	applies := agent.Applies()
+	require.Len(t, applies, 3)
+	third := applies[2].Manifest
+	require.Equal(t, []string{api.OpServerSetAddr}, opKinds(third.InPlaceOps))
+	assert.Equal(t, "10.0.0.3", third.InPlaceOps[0].Address)
+	assert.Equal(t, plan2.ID, third.ExpectedWorkerOpsPlanID)
+	assert.True(t, applies[2].Result.OK, "%+v", applies[2].Result.Error)
+}

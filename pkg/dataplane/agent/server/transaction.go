@@ -382,6 +382,12 @@ func (s *Server) commitLocked(run *applyRun) {
 		return
 	}
 	s.state.AppliedPlanID, s.state.AppliedToken = applied, run.manifest.Token
+	// With no reload pending, every op of the apply ran on the worker the
+	// controller composed against, so the worker holds the applied plan. While
+	// one is pending only the in-place batch advances the worker.
+	if s.state.ReloadPendingAt.IsZero() {
+		s.state.WorkerOpsPlanID = applied
+	}
 }
 
 // applyResultLocked fills the fields every response reports from the state.

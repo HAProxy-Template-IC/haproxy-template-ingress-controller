@@ -189,20 +189,29 @@ func pendingReloadScenario(t *testing.T, p *parityAgent) {
 	t.Helper()
 	first, parts := build("plan-1", api.ModeReload, api.Token{LeaderEpoch: 1, RenderSeq: 1}, seedFiles)
 	p.apply(t, "first apply", first, parts)
+
+	// A runtime apply moves the worker to the applied plan; the in-place batch
+	// after the reload is scheduled must be composed against it.
+	routed := map[string]string{"haproxy.cfg": "global\n", "maps/host.map": "example.com be-1\nrouted.example.com be-9\n"}
+	runtime, parts := build("plan-0", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 1}, routed)
+	runtime.ExpectedPrevPlanID = "plan-1"
+	runtime.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
+	runtime.Ops = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "routed.example.com", Value: "be-9"}}
+	p.apply(t, "a runtime apply before the reload is scheduled", runtime, parts)
 	p.pendReload()
 
 	tuned := map[string]string{"haproxy.cfg": "global\n  nbthread 4\n", "maps/host.map": "example.com be-1\n"}
 	paced, parts := build("plan-2", api.ModeReload, api.Token{LeaderEpoch: 1, RenderSeq: 2}, tuned)
-	paced.ExpectedPrevPlanID = "plan-1"
+	paced.ExpectedPrevPlanID = "plan-0"
 	paced.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
 	p.apply(t, "a second reload is paced", paced, parts)
 
 	inPlace, parts := build("plan-3", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 3}, tuned)
 	inPlace.ExpectedPrevPlanID = "plan-2"
 	inPlace.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 2}
-	inPlace.ExpectedWorkerOpsPlanID = "plan-1"
-	inPlace.WorkerOpsPlanID = "plan-1-after"
-	inPlace.InPlaceOps = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "new.example.com", Value: "be-2"}}
+	inPlace.ExpectedWorkerOpsPlanID = "plan-0"
+	inPlace.WorkerOpsPlanID = "plan-0-after"
+	inPlace.InPlaceOps = []api.Op{{Kind: api.OpMapDel, Path: "maps/host.map", Key: "routed.example.com"}}
 	p.apply(t, "in-place ops while the reload waits", inPlace, parts)
 
 	stale, parts := build("plan-4", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 4}, tuned)

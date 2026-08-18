@@ -701,6 +701,48 @@ func TestAnInPlaceOpOnAStaleWorkerBaselineInvalidatesThePod(t *testing.T) {
 	assert.Empty(t, h.state(false).AppliedPlanID, "the pod's baseline is invalidated, not silently reused")
 }
 
+// A runtime apply moves the worker to the applied plan, so an in-place batch
+// composed against that plan — not against the plan of the last reload — is
+// the one the pod accepts once a reload is pending.
+func TestARuntimeApplyMovesTheWorkerOpsBaseline(t *testing.T) {
+	h := newHarness(t, withReloadInterval(time.Minute))
+	first := firstApply(t, h)
+	assert.Equal(t, "plan-1", h.state(false).WorkerOpsPlanID)
+
+	routed := baseFiles("global\n")
+	routed[1].Content = "example.com be-a\nnew.example.com be-b\n"
+	runtime := buildManifest("plan-2", routed)
+	runtime.ExpectedPrevPlanID = first.AppliedPlanID
+	runtime.ExpectedPrevToken = first.AppliedToken
+	runtime.Ops = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "new.example.com", Value: "be-b"}}
+	applied := h.apply(&runtime, routed)
+	require.True(t, applied.OK, "%+v", applied.Error)
+	require.Equal(t, api.ResultRuntime, applied.Mode)
+	assert.Equal(t, "plan-2", applied.WorkerOpsPlanID, "every op ran on the worker, so it holds plan-2")
+	assert.Equal(t, "plan-1", applied.RunningPlanID)
+
+	structural := baseFiles("global\n  maxconn 600\n")
+	structural[1].Content = routed[1].Content
+	third := buildManifest("plan-3", structural)
+	third.Mode = api.ModeReload
+	third.ExpectedPrevPlanID = applied.AppliedPlanID
+	third.ExpectedPrevToken = applied.AppliedToken
+	scheduled := h.apply(&third, structural)
+	require.Equal(t, api.ResultScheduled, scheduled.Mode)
+	assert.Equal(t, "plan-2", scheduled.WorkerOpsPlanID, "a scheduled apply changes no worker state")
+
+	fourth := buildManifest("plan-4", structural)
+	fourth.ExpectedPrevPlanID = scheduled.AppliedPlanID
+	fourth.ExpectedPrevToken = scheduled.AppliedToken
+	fourth.ExpectedWorkerOpsPlanID = "plan-2"
+	fourth.WorkerOpsPlanID = "plan-2-after"
+	fourth.InPlaceOps = []api.Op{{Kind: api.OpMapDel, Path: "maps/host.map", Key: "new.example.com"}}
+	inPlace := h.apply(&fourth, structural)
+	require.True(t, inPlace.OK, "%+v", inPlace.Error)
+	assert.Nil(t, inPlace.Error)
+	assert.Equal(t, "plan-2-after", inPlace.WorkerOpsPlanID)
+}
+
 func TestTheScheduledReloadFiresWhenTheWindowPasses(t *testing.T) {
 	h := newHarness(t, withReloadInterval(300*time.Millisecond))
 	files := baseFiles("global\n")
