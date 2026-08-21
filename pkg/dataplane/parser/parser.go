@@ -1,3 +1,5 @@
+//go:build playground
+
 // Package parser provides HAProxy configuration parsing using client-native library.
 //
 // This package wraps the haproxytech/client-native parser to parse HAProxy
@@ -148,9 +150,8 @@ func (p *Parser) parse(config string) (*StructuredConfig, error) {
 func (p *Parser) extractConfiguration() (*StructuredConfig, error) {
 	conf := parserconfig.NewStructuredConfig()
 
-	// Section extraction is shared with the Enterprise parser via the
-	// sectionextract package: both operate on the same config-parser
-	// interface, so the standard (CE) section pass is identical.
+	// Section extraction lives in the sectionextract package, operating on the
+	// config-parser interface.
 	if err := sectionextract.All(p.parser, conf); err != nil {
 		return nil, err
 	}

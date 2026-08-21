@@ -55,3 +55,11 @@ type HAProxyTemplateConfigListerExpansion interface{}
 // HAProxyTemplateConfigNamespaceListerExpansion allows custom methods to be added to
 // HAProxyTemplateConfigNamespaceLister.
 type HAProxyTemplateConfigNamespaceListerExpansion interface{}
+
+// HAProxyTemplateLibraryListerExpansion allows custom methods to be added to
+// HAProxyTemplateLibraryLister.
+type HAProxyTemplateLibraryListerExpansion interface{}
+
+// HAProxyTemplateLibraryNamespaceListerExpansion allows custom methods to be added to
+// HAProxyTemplateLibraryNamespaceLister.
+type HAProxyTemplateLibraryNamespaceListerExpansion interface{}

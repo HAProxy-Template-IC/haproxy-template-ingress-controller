@@ -109,7 +109,8 @@ func testRenderStageCancellation(t *testing.T, test renderCancellationCase) {
 	defer releaseRender()
 
 	runner := New(cfg, probe, &dataplane.ValidationPaths{ConfigFile: filepath.Join(t.TempDir(), "haproxy.cfg")}, &Options{
-		Workers: 1, ProfileIncludes: test.profileIncludes, SkipBinaryValidation: true,
+		Workers: 1, ProfileIncludes: test.profileIncludes,
+		CheckWithoutBinary: func(string) error { return nil },
 	})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build playground
+
 // Package validators provides zero-allocation OpenAPI validation for HAProxy models.
 //
 // This package contains generated validators that work directly on client-native
 // structs, avoiding the ~25GB allocation overhead of JSON marshal/unmarshal cycles
 // that occurs when using the generic kin-openapi validator.
 //
-// The validators are generated from OpenAPI specs in pkg/generated/dataplaneapi/
-// and support HAProxy versions 3.0, 3.1, 3.2, 3.3 (and enterprise variants).
+// The validators are generated from the pinned OpenAPI specs under
+// cmd/gen-validators/spec/ and cover HAProxy versions 3.0 to 3.3.
 // The generated code itself lives in pkg/generated/validators; this package
 // wraps it with a version-dispatching ValidatorSet and a caching layer.
 //

@@ -26,7 +26,7 @@ Implementation: `pkg/dataplane/validator.go` (plus `validate_syntax.go` /
 `validate_schema.go` / `validate_haproxy.go`), wrapped by
 `pkg/controller/validation.ValidationService`. Two operational facts worth
 knowing: the validation paths under the CRD's `spec.dataplane` must match
-the Dataplane API server's resource configuration, and `haproxy -c`
+the paths the agent writes on the pod, and `haproxy -c`
 invocations are serialized process-wide because concurrent runs interfere
 with each other even when their temp directories are isolated.
 

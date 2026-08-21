@@ -50,7 +50,9 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
@@ -71,7 +73,7 @@ type renderResult struct {
 	Trace         []any         // per-snippet render stats (JS-ready): {name, count, totalMs, avgMs, maxMs}
 	Migration     any           // migration report for pasted Ingresses (nil when no coverage/ingresses)
 	SchemaCheck   string        // per-field schema violation in the rendered config (empty = passed)
-	ReloadImpact  any           // comparator verdict vs the baseline (nil on first render / parse failure)
+	ReloadImpact  any           // reload verdict from deployplan.Diff vs the baseline (nil on the first render)
 	Provenance    any           // output tab -> per-line config-editor line that produced it (0 = none)
 	ProvBase      any           // aux file id -> config line of its template block (for the "# name" header)
 	ProvBlocks    any           // template name -> config line of its block scalar (trace tab jump targets)
@@ -96,21 +98,21 @@ var (
 	warm      *warmEngine
 	loadCount int // number of engine compiles — the compile-count probe reads this
 
-	// Reload-impact baseline: the parsed config AND auxiliary files a new render
-	// is diffed against, via dataplane.ComputeReloadImpact, to show whether
-	// deploying it would reload HAProxy or apply over the runtime socket (map/cert
-	// content updates live in aux files, not the config, so both are needed).
-	// prevBaseline tracks the last render (the default baseline); pinnedBaseline
-	// freezes a baseline the user chose.
+	// Reload-impact baseline: the plan a new render is diffed against with
+	// deployplan.Diff — the controller's own decision layer — to show whether
+	// deploying it would reload HAProxy or apply over the runtime socket. The
+	// auxiliary files ride along because the next render reads them back as
+	// `currentFiles`. prevBaseline tracks the last render (the default
+	// baseline); pinnedBaseline freezes a baseline the user chose.
 	prevBaseline   *renderBaseline
 	pinnedBaseline *renderBaseline
 )
 
-// renderBaseline is a rendered config + its auxiliary files, the unit a later
+// renderBaseline is a render's plan and its auxiliary files, the unit a later
 // render is diffed against for the reload-impact verdict.
 type renderBaseline struct {
-	cfg *parser.StructuredConfig
-	aux *dataplane.AuxiliaryFiles
+	plan *renderplan.Plan
+	aux  *dataplane.AuxiliaryFiles
 }
 
 func main() {
@@ -207,9 +209,9 @@ func runnableTestCount(tests map[string]config.ValidationTest) int {
 // engine and returns per-test / per-assertion results for the Tests tab.
 // Signature: hapticRunTests(). hapticLoadConfig must have succeeded first.
 //
-// The runner is constructed with SkipBinaryValidation (no filesystem / haproxy
-// binary in the browser), so `haproxy_valid` assertions run the pure-Go
-// syntax+schema check — the UI labels them as such.
+// The runner has no filesystem and no haproxy binary in the browser, so
+// `haproxy_valid` assertions run the pure-Go syntax+schema check — the UI
+// labels them as such.
 func hapticRunTestsJS(_ js.Value, _ []js.Value) any {
 	if warm == nil {
 		return jsError("no config loaded: call hapticLoadConfig first")
@@ -423,10 +425,13 @@ func loadConfig(configYAML, schemasJSON []byte, haproxyVersion string, migration
 		HAProxyVersion:     ver,
 		TypedResourceTypes: typed.Types,
 		// Browser: no filesystem, no haproxy binary. Run tests single-threaded
-		// (js/wasm has no OS threads) and let haproxy_valid fall back to the
-		// pure-Go syntax+schema check. The Tests tab labels it accordingly.
-		Workers:              1,
-		SkipBinaryValidation: true,
+		// (js/wasm has no OS threads) and answer haproxy_valid with the pure-Go
+		// syntax+schema check. The Tests tab labels it accordingly.
+		Workers: 1,
+		CheckWithoutBinary: func(haproxyConfig string) error {
+			_, err := dataplane.ValidateSyntaxAndSchema(haproxyConfig, ver)
+			return err
+		},
 	})
 	// The production render service. This is the whole point: identical output
 	// to the controller at this release.
@@ -539,94 +544,85 @@ func renderWarm(resourcesYAML []byte) (*renderResult, error) {
 	return rr, nil
 }
 
-// reloadImpact parses the freshly-rendered config and diffs it against the
-// baseline (the pinned render if set, otherwise the previous render) using the
-// PRODUCTION comparator — the same code the deployer uses to choose a runtime
-// push vs a reload. It returns a JS-ready verdict, or nil on the first render
-// (no baseline) or if parsing fails. It also advances prevCfg to this render.
+// reloadImpact diffs the fresh render's plan against the baseline (the pinned
+// render if set, otherwise the previous one) with deployplan.Diff — the same
+// decision layer the deployer runs per pod. It returns a JS-ready verdict, or
+// nil on the first render (no baseline). It also advances prevBaseline.
 func reloadImpact(out *renderer.RenderResult, ver *dataplane.Version) any {
-	p, err := parser.New()
-	if err != nil {
-		return nil
-	}
-	cur, err := p.ParseFromString(out.HAProxyConfig)
-	if err != nil {
-		return nil // unparseable output — no meaningful diff
-	}
-	current := &renderBaseline{cfg: cur, aux: out.AuxiliaryFiles}
 	baseline := pinnedBaseline
 	if baseline == nil {
 		baseline = prevBaseline
 	}
 	var res any
-	if baseline != nil {
-		if imp, ierr := dataplane.ComputeReloadImpact(baseline.cfg, current.cfg, baseline.aux, current.aux, out.HAProxyConfig, dataplane.CapabilitiesFromVersion(ver)); ierr == nil {
-			res = reloadImpactToJS(imp, pinnedBaseline != nil)
-		}
+	if baseline != nil && baseline.plan != nil && out.Plan != nil {
+		decision := deployplan.Diff(out.Plan, &deployplan.Baseline{
+			Applied:   baseline.plan,
+			Running:   baseline.plan,
+			WorkerOps: baseline.plan,
+			Inventory: loadedInventory(baseline.plan),
+			Caps:      deployplan.CapsFor(ver.Full, nil),
+		})
+		res = decisionToJS(&decision, out.Plan.ID != baseline.plan.ID, pinnedBaseline != nil)
 	}
-	prevBaseline = current
+	prevBaseline = &renderBaseline{plan: out.Plan, aux: out.AuxiliaryFiles}
 	return res
 }
 
-// reloadImpactToJS flattens a dataplane.ReloadImpact into the JS verdict shape,
-// covering both config-diff changes and auxiliary-file (map / cert) content
-// updates — the latter live outside the haproxy.cfg but are runtime-eligible.
-func reloadImpactToJS(imp *dataplane.ReloadImpact, pinned bool) map[string]any {
-	s := imp.Summary
-	details := make([]any, 0)
-	add := func(text string, reload bool) {
-		if text != "" {
-			details = append(details, map[string]any{"text": text, "reload": reload})
+// loadedInventory is what a pod running plan would have loaded at runtime. The
+// playground has no pod, so the plan's own files stand in: everything the
+// baseline render declared is what the imagined worker holds.
+func loadedInventory(plan *renderplan.Plan) api.Inventory {
+	inv := api.Inventory{}
+	for i := range plan.Files {
+		file := &plan.Files[i]
+		switch file.Kind {
+		case renderplan.FileKindMap:
+			inv.Maps = append(inv.Maps, file.Path)
+		case renderplan.FileKindCert:
+			inv.Certs = append(inv.Certs, file.Path)
+		case renderplan.FileKindCA:
+			inv.CAFiles = append(inv.CAFiles, file.Path)
+		case renderplan.FileKindCRTList:
+			inv.CRTLists = append(inv.CRTLists, file.Path)
 		}
 	}
-	if s.GlobalChanged {
-		add("global section changed", true)
-	}
-	if s.DefaultsChanged {
-		add("defaults section changed", true)
-	}
-	for _, f := range s.FrontendsAdded {
-		add("frontend "+f+" added", true)
-	}
-	for _, f := range s.FrontendsModified {
-		add("frontend "+f+" changed", true)
-	}
-	for _, f := range s.FrontendsDeleted {
-		add("frontend "+f+" removed", true)
-	}
-	for _, b := range s.BackendsAdded {
-		add("backend "+b+" added", true)
-	}
-	for _, b := range s.BackendsDeleted {
-		add("backend "+b+" removed", true)
-	}
-	for b, srv := range s.ServersAdded {
-		add(fmt.Sprintf("backend %s: %d server(s) added", b, len(srv)), true)
-	}
-	for b, srv := range s.ServersDeleted {
-		add(fmt.Sprintf("backend %s: %d server(s) removed", b, len(srv)), true)
-	}
-	for b, srv := range s.ServersModified {
-		add(fmt.Sprintf("backend %s: %d server field update(s) — address/port/state", b, len(srv)), false)
-	}
-	for _, m := range imp.MapUpdates {
-		add("map "+m+": content updated", false)
-	}
-	for _, c := range imp.CertUpdates {
-		add("certificate "+c+": content updated", false)
-	}
-	for _, f := range imp.ReloadFreeFileUpdates {
-		add("file "+f+": content updated — sidecar-owned, HAProxy not reloaded", false)
-	}
+	return inv
+}
 
-	runtimeEligible := imp.ServerFieldUpdates + len(imp.MapUpdates) + len(imp.CertUpdates) + len(imp.ReloadFreeFileUpdates)
-	changed := imp.ConfigChanged || runtimeEligible > 0 || imp.AuxForcesReload
+// decisionToJS flattens a deployplan.Decision into the JS verdict shape: the
+// reasons are the changes that cost more than a runtime op, the ops are what
+// applies over the socket.
+func decisionToJS(d *deployplan.Decision, changed, pinned bool) map[string]any {
+	reload := d.Verdict == deployplan.VerdictReload
+	details := make([]any, 0, len(d.Reasons)+len(d.Ops))
+	for _, reason := range d.Reasons {
+		details = append(details, map[string]any{"text": reason, "reload": reload})
+	}
+	counts := map[string]int{}
+	kinds := make([]string, 0, len(d.Ops))
+	for i := range d.Ops {
+		kind := d.Ops[i].Kind
+		if counts[kind] == 0 {
+			kinds = append(kinds, kind)
+		}
+		counts[kind]++
+	}
+	for _, kind := range kinds {
+		details = append(details, map[string]any{
+			"text":   fmt.Sprintf("%s × %d", kind, counts[kind]),
+			"reload": false,
+		})
+	}
+	structural := 0
+	if reload {
+		structural = len(d.Reasons)
+	}
 	return map[string]any{
 		"pinned":          pinned,
 		"changed":         changed,
-		"wouldReload":     imp.WouldReload,
-		"runtimeEligible": float64(runtimeEligible),
-		"structural":      float64(imp.StructuralOps),
+		"wouldReload":     reload,
+		"runtimeEligible": float64(len(d.Ops)),
+		"structural":      float64(structural),
 		"details":         details,
 	}
 }

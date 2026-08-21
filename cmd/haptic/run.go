@@ -56,7 +56,7 @@ var runCmd = &cobra.Command{
 
 The controller watches a HAProxyTemplateConfig CRD and Kubernetes resources,
 renders HAProxy configurations from templates, and synchronizes them to HAProxy
-instances via the Dataplane API.
+pods via the HAPTIC agent.
 
 Configuration is loaded from:
 1. Command-line flags (highest priority)
@@ -83,7 +83,7 @@ func init() {
 		"Name of the HAProxyTemplateConfig holding controller configuration (env: CRD_NAME). Template library "+
 			"content is pulled in through its spec.libraryRefs.")
 	runCmd.Flags().StringVar(&runSecretName, "secret-name", "",
-		"Name of the Secret containing HAProxy Dataplane API credentials (env: SECRET_NAME)")
+		"Name of the Secret containing the HAPTIC agent credentials (env: SECRET_NAME)")
 	runCmd.Flags().StringVar(&runWebhookCertDir, "webhook-cert-dir", "",
 		"Directory holding the webhook TLS cert (tls.crt/tls.key); read per-handshake so a rotated cert is served without restart. Empty disables the webhook (env: WEBHOOK_CERT_DIR)")
 	runCmd.Flags().DurationVar(&runWebhookResourceAdmissionTimeout, "webhook-resource-admission-timeout", 0,

@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -365,11 +364,6 @@ type DeploymentScheduledEvent struct {
 	// AuxiliaryFiles contains all rendered auxiliary files.
 	AuxiliaryFiles *dataplane.AuxiliaryFiles
 
-	// ParsedConfig is the pre-parsed desired configuration from validation.
-	// May be nil if validation cache was used.
-	// When non-nil, passed to sync operations to skip redundant parsing.
-	ParsedConfig *parser.StructuredConfig
-
 	// Endpoints is the list of HAProxy endpoints to deploy to.
 	Endpoints []dataplane.Endpoint
 
@@ -384,7 +378,7 @@ type DeploymentScheduledEvent struct {
 	// ContentChecksum is the pre-computed content checksum covering config + aux files.
 	// Propagated from TemplateRenderedEvent to enable aux file comparison caching
 	// in the deployer — when the checksum matches the last-deployed checksum for
-	// an endpoint, the expensive aux file comparison (Dataplane API downloads) is skipped.
+	// an endpoint, the expensive aux file comparison is skipped.
 	ContentChecksum string
 
 	// Reason describes why this deployment was scheduled.
@@ -436,13 +430,12 @@ type DeploymentScheduledEvent struct {
 //
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewDeploymentScheduledEvent(config, auxFiles, parsedConfig, endpoints, name, ns, reason, contentChecksum, plan, planID, statusPatches, coalescible,
+//	event := events.NewDeploymentScheduledEvent(config, auxFiles, endpoints, name, ns, reason, contentChecksum, plan, planID, statusPatches, coalescible,
 //	    events.PropagateCorrelation(validationEvent))
-func NewDeploymentScheduledEvent(config string, auxFiles *dataplane.AuxiliaryFiles, parsedConfig *parser.StructuredConfig, endpoints []dataplane.Endpoint, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum string, plan *renderplan.Plan, planID string, statusPatches []templating.StatusPatch, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
+func NewDeploymentScheduledEvent(config string, auxFiles *dataplane.AuxiliaryFiles, endpoints []dataplane.Endpoint, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum string, plan *renderplan.Plan, planID string, statusPatches []templating.StatusPatch, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
 	return &DeploymentScheduledEvent{
 		Config:                 config,
 		AuxiliaryFiles:         auxFiles,
-		ParsedConfig:           parsedConfig,
 		Endpoints:              copySlice(endpoints),
 		RuntimeConfigName:      runtimeConfigName,
 		RuntimeConfigNamespace: runtimeConfigNamespace,

@@ -88,7 +88,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 
 	// Convert dataplane config
 	// Note: Scheme, InsecureSkipVerify, and Version are not in CRD spec.
-	// These are internal Dataplane API client configuration fields set by defaults.
+	// These are internal agent-client configuration fields set by defaults.
 	dataplaneConfig := config.DataplaneConfig{
 		Port:                      spec.Dataplane.Port,
 		MinDeploymentInterval:     spec.Dataplane.MinDeploymentInterval,
@@ -272,7 +272,6 @@ func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[st
 			Fixtures:          convertFixtures(crdTest.Fixtures),
 			HTTPFixtures:      convertHTTPFixtures(crdTest.HTTPResources),
 			CurrentServers:    convertCurrentServers(crdTest.CurrentServers),
-			CurrentConfig:     crdTest.CurrentConfig,
 			CurrentFiles:      crdTest.CurrentFiles,
 			MinHAProxyVersion: crdTest.MinHAProxyVersion,
 			Requires:          crdTest.Requires,

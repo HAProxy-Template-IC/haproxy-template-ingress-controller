@@ -1725,9 +1725,8 @@ templateSnippets:
           }
 
           // ── 6b. Build slot assignment map from current config ─────────────
-          // Servers come from currentConfig.ServerIndex[bkName] — the upstream
-          // value map `backend.Servers` is deliberately left nil by haptic's
-          // parserconfig (see pkg/dataplane/parser/parserconfig/config.go).
+          // Servers come from currentConfig.ServerIndex[bkName], which the
+          // controller projects out of the plan the fleet last ACKed.
           // highestUsedSlot is used by step 7's second pass to allocate new
           // endpoints AFTER all currently-used slots — never reusing a slot
           // freshly vacated in the same render. Required for option redispatch

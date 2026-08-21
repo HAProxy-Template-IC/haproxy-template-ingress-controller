@@ -37,13 +37,11 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -85,18 +83,18 @@ func New(
 	traceTemplates := engine.IsTracingEnabled()
 
 	return &Runner{
-		engineTemplate:       engine,
-		validationPaths:      validationPaths,
-		config:               cfg,
-		logger:               logger.With("component", "test-runner"),
-		workers:              workers,
-		debugFilters:         options.DebugFilters,
-		traceTemplates:       traceTemplates,
-		profileIncludes:      options.ProfileIncludes,
-		capabilities:         options.Capabilities,
-		haproxyVersion:       options.HAProxyVersion,
-		typedResourceTypes:   options.TypedResourceTypes,
-		skipBinaryValidation: options.SkipBinaryValidation,
+		engineTemplate:     engine,
+		validationPaths:    validationPaths,
+		config:             cfg,
+		logger:             logger.With("component", "test-runner"),
+		workers:            workers,
+		debugFilters:       options.DebugFilters,
+		traceTemplates:     traceTemplates,
+		profileIncludes:    options.ProfileIncludes,
+		capabilities:       options.Capabilities,
+		haproxyVersion:     options.HAProxyVersion,
+		typedResourceTypes: options.TypedResourceTypes,
+		checkWithoutBinary: options.CheckWithoutBinary,
 	}
 }
 
@@ -474,11 +472,6 @@ func (r *Runner) renderInputs(testName string, test *config.ValidationTest) (inp
 	// fixture is missing.
 	httpStore := NewFixtureHTTPStoreWrapper(CreateHTTPStoreFromFixtures(httpFixtures, r.logger), r.logger)
 
-	currentConfig, parseErr := r.currentServers(testName, test)
-	if parseErr != "" {
-		return renderInput{}, parseErr
-	}
-
 	r.logger.Log(context.Background(), logging.LevelTrace, "Assembled render inputs",
 		"test", testName,
 		"fixture_types", len(fixtures),
@@ -487,7 +480,7 @@ func (r *Runner) renderInputs(testName string, test *config.ValidationTest) (inp
 	return renderInput{
 		Stores:        fixtureStores,
 		HTTPStore:     httpStore,
-		CurrentConfig: currentConfig,
+		CurrentConfig: r.currentServers(test),
 		ExtraContext:  foldGlobalExtraContext(r.config, test.ExtraContext),
 	}, ""
 }
@@ -521,33 +514,13 @@ func (r *Runner) RenderWithoutFixtures(ctx context.Context) (RenderOutput, error
 }
 
 // currentServers resolves what a test declares about the previous deployment
-// into the shape templates read as `currentConfig`. The structured
-// `currentServers` fixture is taken as-is; the deprecated `currentConfig` text
-// still goes through the HAProxy config parser. Returns nil when the test
-// declares neither, and a non-empty error message when the declaration is
-// unusable — the message lands in TestResult.RenderError.
-func (r *Runner) currentServers(testName string, test *config.ValidationTest) (current *renderplan.CurrentConfig, failure string) {
-	if len(test.CurrentServers) > 0 {
-		if test.CurrentConfig != "" {
-			return nil, fmt.Sprintf("test %q sets both currentServers and the deprecated currentConfig; keep currentServers", testName)
-		}
-		return currentConfigFromFixture(test.CurrentServers), ""
+// into the shape templates read as `currentConfig`. Returns nil when the test
+// declares nothing.
+func (r *Runner) currentServers(test *config.ValidationTest) *renderplan.CurrentConfig {
+	if len(test.CurrentServers) == 0 {
+		return nil
 	}
-	if test.CurrentConfig == "" {
-		return nil, ""
-	}
-	p, err := parser.New()
-	if err != nil {
-		return nil, fmt.Sprintf("creating parser for currentConfig: %v", err)
-	}
-	parsed, err := p.ParseFromString(test.CurrentConfig)
-	if err != nil {
-		return nil, fmt.Sprintf("parsing currentConfig: %v", err)
-	}
-	r.logger.Log(context.Background(), logging.LevelTrace, "Parsed currentConfig for test",
-		"test", testName,
-		"backends", len(parsed.Backends))
-	return currentconfigstore.CurrentConfigFrom(parsed), ""
+	return currentConfigFromFixture(test.CurrentServers)
 }
 
 // currentConfigFromFixture projects the `currentServers` fixture into the

@@ -362,9 +362,7 @@ templateSnippets:
           {%- lines = append(lines, podPort + " " + podPort) %}
         {%- end %}
       {%- end %}
-      {#- The DataPlane API rejects empty file uploads with 422
-          "data in body is required" (cannot register a 0-byte body),
-          but the companion `frontend-routing-listener-port-100-gateway`
+      {#- This map must exist on the pod: the companion `frontend-routing-listener-port-100-gateway`
           snippet below references this map unconditionally whenever
           the gateway library is loaded — so we always need a
           registered file. Emit a single comment line when there are

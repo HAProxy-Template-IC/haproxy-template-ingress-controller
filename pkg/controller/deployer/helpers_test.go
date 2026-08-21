@@ -52,7 +52,7 @@ func depFor(endpoints []dataplane.Endpoint) *scheduledDeployment {
 // target identity, checksum and correlation from.
 func scheduledEvent(runtimeConfigName, runtimeConfigNamespace, correlationID string) *events.DeploymentScheduledEvent {
 	return events.NewDeploymentScheduledEvent(
-		"config", nil, nil, oneEndpoint(),
+		"config", nil, oneEndpoint(),
 		runtimeConfigName, runtimeConfigNamespace, "config_validation", "checksum-abc",
 		nil, "", nil, true,
 		events.WithCorrelation(correlationID, correlationID))

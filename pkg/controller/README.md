@@ -45,7 +45,7 @@ This is why the docs consistently say "no pod restart on config change" — the 
 | Deployment orchestration (scheduler, executor, drift prevention) | `deployer/`, `discovery/`, `configpublisher/`, `statusapplier/` |
 | Webhook & validation bridges | `webhook/`, `dryrunvalidator/`, `proposalvalidator/`, `testrunner/` |
 | Leader election + leader-only gating | `leaderelection/`, `leadership/` |
-| Store management and overlay handling | `resourcestore/`, `resourcewatcher/`, `indextracker/`, `currentconfigstore/` |
+| Store management and overlay handling | `resourcestore/`, `resourcewatcher/`, `indextracker/` |
 | Event catalogue (≈50 domain events) | `events/` |
 
 `component/` is the biggest reusable abstraction: new components embed `*component.Base`, implement `HandleEvent(event)`, and get subscribe-on-construction, single-flight dispatch, panic recovery, and ready/done signalling for free. See `component/base.go` and the existing consumers for examples.

@@ -120,10 +120,8 @@ func TestValidationCacheDoesNotCommitAfterCancellationWhileWaiting(t *testing.T)
 	validationCache.mu.Lock()
 	previousConfig := validationCache.lastConfigHash
 	previousAux := validationCache.lastAuxHash
-	previousVersion := validationCache.lastVersionHash
 	validationCache.lastConfigHash = "baseline"
 	validationCache.lastAuxHash = "baseline"
-	validationCache.lastVersionHash = "baseline"
 
 	cause := errors.New("validation retired while caching")
 	ctx, cancel := context.WithCancelCause(t.Context())
@@ -131,7 +129,7 @@ func TestValidationCacheDoesNotCommitAfterCancellationWhileWaiting(t *testing.T)
 	done := make(chan error, 1)
 	go func() {
 		close(started)
-		done <- cacheValidationResult(ctx, "new", "new", "new")
+		done <- cacheValidationResult(ctx, "new", "new")
 	}()
 	<-started
 	cancel(cause)
@@ -141,9 +139,7 @@ func TestValidationCacheDoesNotCommitAfterCancellationWhileWaiting(t *testing.T)
 	validationCache.mu.Lock()
 	assert.Equal(t, "baseline", validationCache.lastConfigHash)
 	assert.Equal(t, "baseline", validationCache.lastAuxHash)
-	assert.Equal(t, "baseline", validationCache.lastVersionHash)
 	validationCache.lastConfigHash = previousConfig
 	validationCache.lastAuxHash = previousAux
-	validationCache.lastVersionHash = previousVersion
 	validationCache.mu.Unlock()
 }

@@ -8,7 +8,7 @@ const (
 	// Empty string means use LOG_LEVEL env var or default to INFO.
 	DefaultLevel = ""
 
-	// DefaultDataplanePort is the default Dataplane API port for production HAProxy pods.
+	// DefaultDataplanePort is the default agent port on each HAProxy pod.
 	DefaultDataplanePort = 5555
 
 	// DefaultEnableValidationWebhook is the default webhook setting for resources.

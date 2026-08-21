@@ -177,6 +177,10 @@ spec:
                   description: PodDeploymentStatus tracks deployment to a specific
                     pod.
                   properties:
+                    appliedPlanID:
+                      description: AppliedPlanID is the render plan this pod last
+                        accepted.
+                      type: string
                     checksum:
                       description: Checksum of the configuration deployed to this
                         pod.
@@ -196,6 +200,16 @@ spec:
                         This field is cleared when a sync succeeds. Combined with ConsecutiveErrors,
                         this helps identify persistent vs transient issues.
                       type: string
+                    mode:
+                      description: Mode is how the plan was applied to this pod.
+                      enum:
+                      - runtime
+                      - file_only
+                      - reload
+                      - scheduled
+                      - noop
+                      - rejected
+                      type: string
                     podName:
                       description: PodName is the name of the HAProxy pod.
                       minLength: 1
@@ -207,6 +221,17 @@ spec:
                     podUID:
                       description: PodUID binds the deployment proof to the Kubernetes
                         pod incarnation.
+                      type: string
+                    reasons:
+                      description: Reasons explain the apply mode, most significant
+                        first.
+                      items:
+                        type: string
+                      maxItems: 8
+                      type: array
+                    runningPlanID:
+                      description: RunningPlanID is the render plan this pod's running
+                        HAProxy serves.
                       type: string
                   required:
                   - podName

@@ -19,17 +19,14 @@ import (
 	"log/slog"
 
 	"golang.org/x/sync/errgroup"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/indextracker"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
 )
@@ -210,75 +207,6 @@ func setupConfigWatchers(
 	// Initial config already passed via bootstrap event. Watchers handle subsequent changes only.
 
 	return nil
-}
-
-// setupCurrentConfigStore creates and initializes the CurrentConfigStore for slot-aware
-// server assignment during rolling deployments.
-//
-// This function:
-//  1. Creates a CurrentConfigStore to cache parsed HAProxy config
-//  2. Sync fetches existing HAProxyCfg (if any) to populate the store BEFORE first render
-//  3. Creates an async watcher for silent updates (no events published)
-//
-// The sync fetch is critical: if first render happens before HAProxyCfg is loaded,
-// currentConfig would be nil and we'd scramble existing server slots.
-//
-// The async watcher only updates the store - it does NOT trigger reconciliation.
-// HAProxyCfg changes are passive state used only when rendering for other reasons.
-func setupCurrentConfigStore(
-	setup *componentSetup,
-	k8sClient *client.Client,
-	crdName string,
-	haproxyCfgGVR schema.GroupVersionResource,
-	logger *slog.Logger,
-) (*currentconfigstore.Store, error) {
-	// Create CurrentConfigStore to cache parsed HAProxy config
-	store, err := currentconfigstore.New(logger)
-	if err != nil {
-		return nil, fmt.Errorf("creating current config store: %w", err)
-	}
-
-	// Sync fetch existing HAProxyCfg (if any)
-	// This is critical for slot preservation on controller restart
-	haproxyCfgName := configpublisher.GenerateRuntimeConfigName(crdName)
-	haproxyCfgResource, err := k8sClient.GetResource(setup.IterCtx, haproxyCfgGVR, haproxyCfgName)
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("fetching HAProxyCfg: %w", err)
-		}
-		logger.Info("No existing HAProxyCfg found (first deployment)")
-	} else {
-		// Populate store with existing config BEFORE first render
-		store.Update(haproxyCfgResource)
-		logger.Info("Loaded existing HAProxyCfg into current config store")
-	}
-
-	// Create async watcher for HAProxyCfg updates (silent updates, NO events)
-	haproxyCfgWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
-		GVR:       haproxyCfgGVR,
-		Namespace: k8sClient.Namespace(),
-		Name:      haproxyCfgName,
-		OnSyncComplete: func(obj any) error {
-			// Silent update - NO events published
-			store.Update(obj)
-			return nil
-		},
-		OnChange: func(obj any) error {
-			// Silent update - NO events published
-			// This does NOT trigger reconciliation
-			store.Update(obj)
-			return nil
-		},
-	}, k8sClient)
-	if err != nil {
-		return nil, fmt.Errorf("creating HAProxyCfg watcher: %w", err)
-	}
-
-	// Start HAProxyCfg watcher (tracked by errgroup for graceful shutdown)
-	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "HAProxyCfg watcher", haproxyCfgWatcher.Start)
-	logger.Debug("HAProxyCfg watcher started for current config updates")
-
-	return store, nil
 }
 
 // libraryWatcherConfig describes the HAProxyTemplateLibrary watch.

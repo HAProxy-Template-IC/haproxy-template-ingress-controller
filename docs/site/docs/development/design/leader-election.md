@@ -4,9 +4,9 @@ HAPTIC runs multiple controller replicas for high availability. This page explai
 
 ## Why only the leader deploys
 
-The controller pushes configuration to HAProxy via the Dataplane API. Multiple replicas doing that in parallel without coordination would cause:
+The controller pushes configuration to each HAProxy pod's HAPTIC agent. Multiple replicas doing that in parallel without coordination would cause:
 
-1. **Resource waste**: multiple replicas performing identical Dataplane API calls
+1. **Resource waste**: multiple replicas sending identical applies
 2. **Potential conflicts**: race conditions when multiple controllers push updates simultaneously
 3. **Unnecessary HAProxy reloads**: multiple deployments of the same configuration
 
@@ -74,9 +74,9 @@ The renderer **isn't** a registered component. It lives in `pkg/controller/rende
 
 - **Coordinator** (`pkg/controller/reconciler`) — Drives the render pipeline (calls `Pipeline.Execute` which in turn calls `RenderService.Render`)
 - **RenderGate** (`pkg/controller/rendergate`) — Runs `haproxy -c -dr` on each render off the reconcile path, reverts the pods that took a refused plan without loading it, and holds later renders until one passes
-- **Deployer** (`pkg/controller/deployer`) — Pushes the validated config to every HAProxy endpoint in parallel via `pkg/dataplane.Client`
+- **Deployer** (`pkg/controller/deployer`) — Sends every HAProxy pod its apply in parallel via `pkg/dataplane/agent/client`
 - **DeploymentScheduler** (`pkg/controller/deployer`) — Rate-limits and queues deployments; coalesces back-to-back deployment requests via `pkg/controller/coalesce`
-- **DriftPreventionMonitor** (`pkg/controller/deployer`) — Periodic redeploy when nothing has changed for `driftPreventionInterval`, so out-of-band Dataplane API edits get overwritten by the controller's last-known-good config
+- **DriftPreventionMonitor** (`pkg/controller/deployer`) — Periodic redeploy when nothing has changed for `driftPreventionInterval`, so a pod whose file tree drifted gets the controller's last-known-good set back
 - **ConfigPublisher** (`pkg/controller/configpublisher`) — Publishes rendered config + per-pod status as `HAProxyCfg` / `HAProxyMapFile` / `HAProxyGeneralFile` / `HAProxyCRTListFile` CRDs
 - **StatusUpdater** (`pkg/controller/configchange`) — Writes validation results back onto the `HAProxyTemplateConfig` CRD's status subresource
 

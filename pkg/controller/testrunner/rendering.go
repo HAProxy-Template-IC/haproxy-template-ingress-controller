@@ -72,9 +72,9 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 	resolvedPaths := dataplane.ResolvePaths(basePaths)
 
 	// Browser/WASM: no writable filesystem. Nothing writes to these paths when
-	// binary validation is skipped (render is in-memory; haproxy_valid uses the
-	// pure-Go check), so return the resolved path strings without MkdirAll.
-	if r.skipBinaryValidation {
+	// the binary is replaced (render is in-memory; haproxy_valid uses the
+	// caller's check), so return the resolved path strings without MkdirAll.
+	if r.checkWithoutBinary != nil {
 		return resolvedPaths.ToValidationPaths(), nil
 	}
 

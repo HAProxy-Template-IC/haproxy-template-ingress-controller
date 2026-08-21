@@ -21,6 +21,10 @@ spec:
     - jsonPath: .status.validationStatus
       name: Status
       type: string
+    - description: Spec generation the controller last processed
+      jsonPath: .status.observedGeneration
+      name: Observed
+      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -51,7 +55,19 @@ spec:
           metadata:
             type: object
           spec:
-            description: HAProxyTemplateConfigSpec defines the desired state of HAProxyTemplateConfig.
+            description: |-
+              HAProxyTemplateConfigSpec defines the desired state of HAProxyTemplateConfig.
+
+              One object per controller. Bulk template content lives in
+              HAProxyTemplateLibrary objects pulled in through LibraryRefs, so this object
+              stays small enough to read, diff and `kubectl edit`.
+
+              The CEL rule below runs in the apiserver at apply time, where it cannot be
+              unreachable the way a webhook can. PodSelector and WatchedResources are
+              required unconditionally, because no referenced library can supply them.
+              HAProxyConfig may come from a library, so it is required only when nothing is
+              referenced. Everything else the controller needs is enforced after the merge
+              by config.ValidateStructure.
             properties:
               controller:
                 description: Controller contains controller-level settings (ports,
@@ -70,7 +86,7 @@ spec:
                           Compression uses zstd+base64 encoding.
 
                           Default: 1048576 (1 MiB)
-                          Set to 0 to disable compression.
+                          A value of 0 is treated as unset and the default applies.
                         format: int64
                         minimum: 0
                         type: integer
@@ -92,7 +108,7 @@ spec:
                           to force acquire leadership (measured against time of last observed ack).
 
                           Format: Go duration string (e.g., "15s", "30s")
-                          Default: 15s (DefaultLeaderElectionLeaseDuration in pkg/core/config/defaults.go;
+                          Default: 30s (DefaultLeaderElectionLeaseDuration in pkg/core/config/defaults.go;
                           the Helm chart's values.yaml sets the same value at controller.config.controller.leaderElection.leaseDuration)
                         type: string
                       leaseName:
@@ -107,8 +123,8 @@ spec:
                           RenewDeadline is the duration that the acting leader will retry
                           refreshing leadership before giving up.
 
-                          Format: Go duration string (e.g., "10s")
-                          Default: 10s (DefaultLeaderElectionRenewDeadline)
+                          Format: Go duration string (e.g., "20s")
+                          Default: 20s (DefaultLeaderElectionRenewDeadline)
                           Must be less than LeaseDuration
                         type: string
                       retryPeriod:
@@ -116,19 +132,31 @@ spec:
                           RetryPeriod is the duration the LeaderElector clients should wait
                           between tries of actions.
 
-                          Format: Go duration string (e.g., "2s")
-                          Default: 2s (DefaultLeaderElectionRetryPeriod)
+                          Format: Go duration string (e.g., "5s")
+                          Default: 5s (DefaultLeaderElectionRetryPeriod)
                           Must be less than RenewDeadline
                         type: string
                     type: object
+                  renderGateInterval:
+                    description: |-
+                      RenderGateInterval is the shortest start-to-start spacing of the render
+                      gate's `haproxy -c` runs.
+
+                      The gate validates each render off the reconcile wall clock, on its own
+                      semaphore slot. This caps its duty cycle so a render storm cannot keep a
+                      core busy back-to-back and slow the admission webhook.
+                      Format: Go duration string (e.g., "1s", "500ms")
+                      Default: 1s
+                    type: string
                 type: object
               credentialsSecretRef:
                 description: |-
-                  CredentialsSecretRef references the Secret containing HAProxy Dataplane API credentials.
+                  CredentialsSecretRef references the Secret containing the HAPTIC agent credentials.
 
-                  The Secret must contain the following keys:
-                    - dataplane_username: Username for HAProxy Dataplane API
-                    - dataplane_password: Password for HAProxy Dataplane API
+                  The Secret must contain the following keys, which keep their historical
+                  names so a rotation set up against them keeps working:
+                    - dataplane_username: agent username
+                    - dataplane_password: agent password
 
                   If the namespace is omitted, it defaults to the same namespace as this config resource.
                 properties:
@@ -146,8 +174,9 @@ spec:
                 - name
                 type: object
               dataplane:
-                description: Dataplane configures the Dataplane API for production
-                  HAProxy instances.
+                description: |-
+                  Dataplane configures how the controller reaches the HAProxy pods and where
+                  their files live. The block keeps its name across the agent cutover.
                 properties:
                   configFile:
                     description: |-
@@ -181,7 +210,7 @@ spec:
                       DriftPreventionInterval triggers periodic deployments to prevent configuration drift.
 
                       A deployment is automatically triggered if no deployment has occurred within this interval.
-                      This detects and corrects drift caused by external Dataplane API clients.
+                      This detects and corrects a pod whose file tree drifted from the render.
                       Format: Go duration string (e.g., "60s", "5m")
                       Default: 60s
                     type: string
@@ -201,15 +230,18 @@ spec:
                     type: string
                   minDeploymentInterval:
                     description: |-
-                      MinDeploymentInterval enforces minimum time between consecutive deployments.
+                      MinDeploymentInterval is the shortest interval between two HAProxy
+                      reloads of one pod. The chart passes it to the HAPTIC agent as
+                      --reload-interval-min: a reload inside the window is scheduled, never
+                      dropped, and the controller holds further renders until it fires. Runtime
+                      applies are never paced by it. At most 60s.
 
-                      This prevents rapid-fire deployments from hammering HAProxy instances.
-                      Format: Go duration string (e.g., "2s", "500ms")
-                      Default: 2s
+                      Format: Go duration string (e.g., "5s", "500ms")
+                      Default: 5s
                     type: string
                   port:
                     description: |-
-                      Port is the Dataplane API port for production HAProxy pods.
+                      Port is the agent's apply/state API port on each HAProxy pod.
 
                       Default: 5555
                     maximum: 65535
@@ -217,19 +249,20 @@ spec:
                     type: integer
                   reloadVerificationTimeout:
                     description: |-
-                      ReloadVerificationTimeout is the maximum time the Dataplane sync waits for
-                      HAProxy to report a graceful reload as completed before failing the sync.
-                      Set this higher than the Dataplane API's own reload-delay setting.
+                      ReloadVerificationTimeout is how long the HAPTIC agent waits for the
+                      HAProxy master to report a reload as finished before it fails the apply
+                      and restores the last known good file set. The chart passes it to the
+                      agent as --reload-timeout; at most 60s.
 
                       Format: Go duration string (e.g., "10s", "30s").
-                      Default: 10s
+                      Default: 60s (the agent's ceiling)
                     type: string
                   sslCertsDir:
                     description: |-
                       SSLCertsDir is the directory for SSL certificates.
 
                       Used for both validation and deployment.
-                      Default: /etc/haproxy/ssl
+                      Default: /etc/haproxy/certs (the Helm chart sets /etc/haproxy/ssl)
                     type: string
                   syncTimeout:
                     description: |-
@@ -286,6 +319,21 @@ spec:
                         - type
                         type: object
                       type: array
+                    reloadOnPush:
+                      default: true
+                      description: |-
+                        ReloadOnPush controls whether a content change to this file reloads HAProxy.
+
+                        Keep it true for anything HAProxy itself reads — error pages, ca-files,
+                        host-match lists — since only a reload makes the new content take effect.
+                        Set it to false for a file a sidecar owns and watches on its own (the
+                        spoa-hub TOML, the Vector config): HAProxy never opens those, so the
+                        reload buys nothing and only costs a worker respawn.
+
+                        This governs writes. Removing a file reloads only when the rendered
+                        configuration (or a crt-list) still names it, which no sidecar-owned file
+                        ever does.
+                      type: boolean
                     template:
                       description: Template is the template for generating the file
                         content.
@@ -300,8 +348,11 @@ spec:
                   These generate auxiliary files like custom error pages.
                 type: object
               haproxyConfig:
-                description: HAProxyConfig contains the main HAProxy configuration
-                  template.
+                description: |-
+                  HAProxyConfig contains the main HAProxy configuration template.
+
+                  Exactly one object in a merged set supplies it (the base library);
+                  config.ValidateStructure rejects a merged config whose template is empty.
                 properties:
                   postProcessing:
                     description: |-
@@ -418,6 +469,50 @@ spec:
                   template can render extension points (`render_glob` patterns)
                   and consume cached state (`shared.ComputeIfAbsent`).
                 type: object
+              libraryRefs:
+                description: |-
+                  LibraryRefs pulls in HAProxyTemplateLibrary objects, in merge order.
+
+                  Earlier entries are overridden by later ones, and this object's own
+                  inline content wins last — so the object an operator edits is always the
+                  override point, with no dependence on ordering.
+
+                  The controller renders only when every reference resolves to an object
+                  whose spec.revision equals the revision named here. Otherwise it keeps
+                  serving the last-good configuration, because a partially applied set is
+                  not safe to render: libraries deliberately override one another, so a
+                  missing member silently changes behaviour rather than removing it.
+                items:
+                  description: |-
+                    LibraryRef names one HAProxyTemplateLibrary object and the revision of it
+                    this configuration expects.
+                  properties:
+                    name:
+                      description: Name of the HAProxyTemplateLibrary object, in this
+                        config's namespace.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    revision:
+                      description: |-
+                        Revision the referenced object must report in spec.revision.
+
+                        The controller compares the two strings and never recomputes either from
+                        the content. A writer that applies both objects together stamps the same
+                        value on each, so a half-applied set is visible as a mismatch — while an
+                        in-place edit to a snippet's content leaves the revision alone and takes
+                        effect immediately.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  - revision
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               logging:
                 description: Logging configures logging behavior.
                 properties:
@@ -500,7 +595,11 @@ spec:
                   These generate HAProxy map files for backend routing and other features.
                 type: object
               podSelector:
-                description: PodSelector identifies which HAProxy pods to configure.
+                description: |-
+                  PodSelector identifies which HAProxy pods to configure.
+
+                  Required in the merged config (config.ValidateStructure rejects an empty
+                  matchLabels); optional here only because the merged result is what is checked.
                 properties:
                   matchLabels:
                     additionalProperties:
@@ -576,6 +675,15 @@ spec:
                 additionalProperties:
                   description: TemplateSnippet defines a reusable template fragment.
                   properties:
+                    requires:
+                      description: |-
+                        Requires lists watched-resource names this snippet depends on. When an
+                        optional watched resource has no served candidate version, every
+                        snippet requiring it is stripped from the effective config at load
+                        time. Each entry must name a key of watchedResources.
+                      items:
+                        type: string
+                      type: array
                     template:
                       description: |-
                         Template is the template content.
@@ -633,7 +741,16 @@ spec:
                     The test name is provided by the map key in ValidationTests.
                   properties:
                     assertions:
-                      description: Assertions defines the validation checks to perform.
+                      description: |-
+                        Assertions defines the validation checks to perform.
+
+                        Optional in the schema, required in practice: config.ValidateStructure
+                        rejects a merged config whose test declares none. The schema cannot
+                        express it because the reserved `_global` entry is a shared baseline
+                        rather than a test — the runner never executes its assertions — and
+                        several template libraries each contribute part of it, so each of their
+                        objects carries an incomplete `_global` that only becomes whole after
+                        the merge.
                       items:
                         description: ValidationAssertion defines a single validation
                           check.
@@ -696,22 +813,49 @@ spec:
                         required:
                         - type
                         type: object
-                      minItems: 1
                       type: array
-                    currentConfig:
+                    currentFiles:
+                      additionalProperties:
+                        type: string
                       description: |-
-                        CurrentConfig contains the raw HAProxy configuration from a previous deployment.
-
-                        This is used for testing slot-aware server assignment during rolling deployments.
-                        When provided, templates can access currentConfig to preserve server slot ordering.
-                        The content is parsed using the HAProxy config parser before being passed to templates.
+                        CurrentFiles are the currently-deployed general auxiliary files
+                        (filename → content), exposed to templates under `currentFiles`. Used to
+                        test templates that read their own prior output — e.g. self-rotating TLS
+                        session-ticket keys inspecting the current key file's embedded date marker.
+                      type: object
+                    currentServers:
+                      additionalProperties:
+                        additionalProperties:
+                          description: |-
+                            ServerAddr is one server of a previously deployed backend, as templates see
+                            it in currentConfig.ServerIndex.
+                          properties:
+                            address:
+                              description: Address is the server's address — an IP
+                                or a hostname.
+                              minLength: 1
+                              type: string
+                            port:
+                              description: Port is the server's port. Omit it for
+                                a server line that carries none.
+                              format: int64
+                              type: integer
+                          required:
+                          - address
+                          type: object
+                        type: object
+                      description: |-
+                        CurrentServers are the servers of a previous deployment, keyed by backend
+                        name and then by server name, exposed to templates as
+                        `currentConfig.ServerIndex`. Use it to test slot-aware server assignment
+                        during rolling deployments.
 
                         Example:
-                          currentConfig: |
-                            backend my-backend
-                                server srv1 10.0.0.1:8080
-                                server srv2 10.0.0.2:8080
-                      type: string
+                          currentServers:
+                            my-backend:
+                              srv1: {address: 10.0.0.1, port: 8080}
+                              srv2: {address: 10.0.0.2, port: 8080}
+                      type: object
                     description:
                       description: Description explains what this test validates.
                       type: string
@@ -746,6 +890,9 @@ spec:
                               kind: Ingress
                               metadata:
                                 name: test-ingress
+
+                        Optional per object so several libraries can each contribute part of the
+                        shared `_global` baseline; see Assertions.
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
                     httpResources:
@@ -798,35 +945,58 @@ spec:
 
                         Format: "major.minor" (e.g., "3.3")
                       type: string
-                  required:
-                  - assertions
-                  - fixtures
+                    requires:
+                      description: |-
+                        Requires lists watched-resource names this test depends on. When an
+                        optional watched resource has no served candidate version, every test
+                        requiring it is stripped from the effective config at load time.
+                        Each entry must name a key of watchedResources.
+                      items:
+                        type: string
+                      type: array
+                    requiresFields:
+                      description: |-
+                        RequiresFields lists schema field paths this test depends on, each in
+                        the form "<watchedResourceKey>.<field.path>" (e.g.
+                        "httproutes.spec.rules.filters.cors"). When any referenced field is
+                        absent from the resolved schema generation of its watched resource,
+                        the test is stripped from the effective config at load time. This
+                        covers clusters that serve the resource at the same API version as
+                        newer releases but with an older schema generation lacking the field.
+                        The first dot-segment of each entry must name a key of
+                        watchedResources.
+                      items:
+                        type: string
+                      type: array
                   type: object
                 description: |-
                   ValidationTests contains embedded validation test definitions.
 
-                  The map key is the test name, which must be unique.
+                  The map key is the test name, which must be unique across the whole
+                  merged set: the controller unions tests per source and rejects a name
+                  two objects both define, because a silent override would leave one
+                  author believing an assertion runs that does not. The reserved
+                  `_global` entry is the exception — it is a shared baseline several
+                  objects each contribute part of, and its fixtures accumulate.
 
-                  These tests are executed:
-                    - During admission webhook validation (before resource is saved)
-                    - Via the "controller validate" CLI command (pre-apply validation)
-
-                  Tests ensure templates generate valid HAProxy configurations before deployment.
+                  These tests are executed at startup (the load gate), on every live
+                  config change, and via the "controller validate" / "preflight" CLI
+                  commands before deployment.
                 type: object
               validators:
                 description: |-
                   Validators declares pluggable validator sidecars consulted by the
-                  admission webhook before admitting changes that affect plugin
-                  configuration. See `docs/site/docs/operations/pluggable-validators.md`
+                  controller before publishing rendered configuration. See
+                  `docs/site/docs/operations/pluggable-validators.md`
                   for setup; the wire protocol is at
                   `docs/development/validator-protocol.md`.
 
                   An empty list (the default) disables pluggable validation — the
-                  webhook keeps performing template + HAProxy syntax dry-run only.
+                  controller keeps performing its built-in validation only.
                 items:
                   description: |-
                     ValidatorConfig declares one pluggable validator sidecar that the
-                    controller will consult during admission webhook processing.
+                    controller consults before rendered configuration is published.
 
                     The wire protocol between the controller and a validator sidecar is
                     documented in `docs/development/validator-protocol.md` and is owned
@@ -848,6 +1018,26 @@ spec:
                     globs are not validated by any sidecar (they still flow through the
                     existing template + HAProxy syntax dry-run).
                   properties:
+                    dataFiles:
+                      description: |-
+                        DataFiles lists glob patterns for files this validator needs in order
+                        to check the files it validates, but must not validate on their own.
+
+                        Every matching file is attached to every request sent to this
+                        validator, marked as data. The validator does not parse them; it
+                        resolves references from the validated file into them.
+
+                        A WAF ruleset is the motivating case: the validator sidecar runs in
+                        the controller pod and cannot read the HAProxy pod's filesystem, so a
+                        hub config that `Include`s a ruleset by path can only be checked if
+                        the ruleset's content travels with the request.
+
+                        A file matching both `files` and `dataFiles` is treated as data —
+                        validating a reference target standalone reports on the wrong thing.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: set
                     files:
                       description: |-
                         Files is a list of glob patterns matched against rendered file
@@ -860,11 +1050,8 @@ spec:
                           - `**` is NOT supported; use multiple entries to cover
                             directory hierarchies.
 
-                        At least one glob MUST be specified. Each glob MUST be an
-                        absolute path (start with `/`) so it matches the rendered file
-                        paths that the controller produces (e.g. `/etc/haproxy/maps/host.map`,
-                        `/etc/haproxy-spoa-hub/config.toml`). Operators get the matching
-                        behaviour they expect from a path-style glob.
+                        At least one glob MUST be specified. Paths use the same relative or
+                        absolute form emitted by the corresponding file template.
                       items:
                         type: string
                       minItems: 1
@@ -939,10 +1126,24 @@ spec:
                     Kubernetes resource type.
                   properties:
                     apiVersion:
-                      description: APIVersion is the Kubernetes API version (e.g.,
-                        "networking.k8s.io/v1").
-                      minLength: 1
+                      description: |-
+                        APIVersion is the Kubernetes API version (e.g., "networking.k8s.io/v1").
+
+                        Mutually exclusive with apiVersions (exactly one must be set; the
+                        controller's config validation enforces this). Equivalent to a
+                        one-element apiVersions list.
                       type: string
+                    apiVersions:
+                      description: |-
+                        APIVersions is an ordered candidate list of API versions. The
+                        controller resolves the entry to the FIRST candidate the apiserver
+                        serves and watches that version. Mutually exclusive with apiVersion.
+
+                        Example: ["gateway.networking.k8s.io/v1", "gateway.networking.k8s.io/v1beta1"]
+                      items:
+                        type: string
+                      minItems: 1
+                      type: array
                     debounceInterval:
                       description: |-
                         DebounceInterval overrides the watcher's refractory window.
@@ -982,9 +1183,20 @@ spec:
 
                         Equality-only: comma-separated "key=value" pairs.
                         Example: "app=nginx,environment=production"
-                        Set-based syntax (e.g. "tier in (frontend,api)", "!disabled") is NOT supported —
-                        the controller's parseLabelSelector splits on ',' and '=' and silently drops the rest.
+                        Parsed with the Kubernetes label-selector grammar. Set-based syntax
+                        (e.g. "tier in (frontend,api)", "!disabled", "app!=nginx") is NOT supported
+                        and is rejected: the configuration fails to load rather than the selector
+                        being dropped, which would silently widen the watch to every object of
+                        this kind cluster-wide.
                       type: string
+                    optional:
+                      description: |-
+                        Optional marks this resource as non-essential: when NO candidate
+                        version is served by the cluster, the watch is dropped and every
+                        templateSnippet / validationTest whose requires list names this
+                        resource is stripped from the effective config at load time, instead
+                        of failing startup.
+                      type: boolean
                     resources:
                       description: |-
                         Resources is the plural form of the Kubernetes resource type (e.g., "ingresses", "services").
@@ -1009,7 +1221,6 @@ spec:
                       - on-demand
                       type: string
                   required:
-                  - apiVersion
                   - resources
                   type: object
                 description: |-
@@ -1017,7 +1228,9 @@ spec:
 
                   Each key is a user-defined name for the resource type (e.g., "ingresses", "services").
                   This name is used in templates to access the resources.
-                minProperties: 1
+
+                  The merged config must declare at least one (config.ValidateStructure);
+                  a single object may declare none.
                 type: object
               watchedResourcesIgnoreFields:
                 description: |-
@@ -1028,12 +1241,14 @@ spec:
                 items:
                   type: string
                 type: array
-            required:
-            - credentialsSecretRef
-            - haproxyConfig
-            - podSelector
-            - watchedResources
             type: object
+            x-kubernetes-validations:
+            - message: a HAProxyTemplateConfig needs podSelector, at least one watchedResources
+                entry, and haproxyConfig — either inline or supplied by a spec.libraryRefs
+                entry
+              rule: has(self.podSelector) && has(self.watchedResources) && size(self.watchedResources)
+                > 0 && (has(self.haproxyConfig) || (has(self.libraryRefs) && size(self.libraryRefs)
+                > 0))
           status:
             description: HAProxyTemplateConfigStatus defines the observed state of
               HAProxyTemplateConfig.

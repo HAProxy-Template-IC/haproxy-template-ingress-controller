@@ -47,27 +47,21 @@ func (r *Runner) assertHAProxyValid(
 		result.Description = "HAProxy configuration must be syntactically valid"
 	}
 
-	// Browser/WASM: no haproxy binary. Fall back to the pure-Go syntax + schema
-	// check (the same subset the render path runs). It catches malformed
-	// directives, bad enums, and out-of-range/missing fields, but NOT the
-	// binary-only checks (cross-references, unknown keywords, global/defaults).
-	// Callers set SkipBinaryValidation must label these results accordingly.
-	if r.skipBinaryValidation {
-		_, err := dataplane.ValidateSyntaxAndSchema(haproxyConfig, r.haproxyVersion)
-		if err != nil {
+	// Browser/WASM: no haproxy binary. The caller's stand-in check answers
+	// instead, and labels its own results — it is weaker than `haproxy -c`.
+	if r.checkWithoutBinary != nil {
+		if err := r.checkWithoutBinary(haproxyConfig); err != nil {
 			result.Passed = false
-			result.Error = fmt.Sprintf("HAProxy syntax/schema validation failed (config size: %d bytes): %s",
+			result.Error = fmt.Sprintf("HAProxy validation failed (config size: %d bytes): %s",
 				len(haproxyConfig), dataplane.SimplifyValidationError(err))
 		}
 		r.populateTargetMetadata(&result, haproxyConfig, names.MainTemplateName, !result.Passed)
 		return result
 	}
 
-	// Use dataplane.ValidateConfiguration to validate HAProxy config with worker-specific paths
-	// Pass nil version to use default v3.0 schema (safest for validation)
-	// Use strict validation (skipDNSValidation=false) for CLI to catch DNS issues during local validation
-	// Ignore returned parsedConfig - CLI validation doesn't need it for sync optimization
-	_, err := dataplane.ValidateConfigurationContext(ctx, haproxyConfig, auxiliaryFiles, validationPaths, nil, false)
+	// Strict validation (skipDNSValidation=false): a validation test runs on
+	// operator input, where a name that does not resolve is worth reporting.
+	err := dataplane.ValidateConfigurationContext(ctx, haproxyConfig, auxiliaryFiles, validationPaths, false)
 	if cause := context.Cause(ctx); cause != nil && errors.Is(err, cause) {
 		result.incomplete = true
 		return result

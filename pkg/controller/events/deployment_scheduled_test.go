@@ -30,7 +30,7 @@ func TestNewDeploymentScheduledEvent_StatusPatchesDefensiveCopy(t *testing.T) {
 		{Name: "second", Kind: "HTTPRoute"},
 	}
 	event := NewDeploymentScheduledEvent(
-		"haproxy config", nil, nil, nil, "name", "ns", "reason", "checksum",
+		"haproxy config", nil, nil, "name", "ns", "reason", "checksum",
 		nil, "", original, true,
 	)
 
@@ -47,7 +47,7 @@ func TestNewDeploymentScheduledEvent_StatusPatchesDefensiveCopy(t *testing.T) {
 // == 0` without false positives from an accidental empty-but-non-nil slice.
 func TestNewDeploymentScheduledEvent_NilStatusPatchesStaysNil(t *testing.T) {
 	event := NewDeploymentScheduledEvent(
-		"", nil, nil, nil, "", "", "", "", nil, "", nil, false,
+		"", nil, nil, "", "", "", "", nil, "", nil, false,
 	)
 	require.Nil(t, event.StatusPatches,
 		"nil patches should round-trip as nil (slices.Clone(nil) == nil)")

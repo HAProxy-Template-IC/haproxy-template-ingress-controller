@@ -14,9 +14,11 @@
 
 // gen-validators generates zero-allocation OpenAPI validators for HAProxy models.
 //
-// This generator reads OpenAPI specs from pkg/generated/dataplaneapi/v{30,31,32}/spec.json
-// and produces Go validation functions that work directly on client-native structs,
-// avoiding the ~25GB allocation overhead of JSON marshal/unmarshal cycles.
+// It reads the pinned Data Plane API OpenAPI specs under cmd/gen-validators/spec
+// and produces Go validation functions that work directly on client-native
+// structs. The output is the browser playground's schema check: the playground
+// has no haproxy binary, so `haproxy_valid` falls back to a syntax + schema
+// parse there. Nothing in a production binary uses it.
 //
 // Usage:
 //
@@ -24,7 +26,7 @@
 //
 // Or via make:
 //
-//	make generate-validators
+//	make generate-playground-validators
 package main
 
 import (
@@ -69,12 +71,12 @@ var targetSchemas = []string{
 	"capture",
 }
 
-// versionDirs maps version strings to their spec directories.
-var versionDirs = map[string]string{
-	"v30": "pkg/generated/dataplaneapi/v30",
-	"v31": "pkg/generated/dataplaneapi/v31",
-	"v32": "pkg/generated/dataplaneapi/v32",
-	"v33": "pkg/generated/dataplaneapi/v33",
+// specFiles maps version strings to their pinned OpenAPI spec.
+var specFiles = map[string]string{
+	"v30": "cmd/gen-validators/spec/v30.json",
+	"v31": "cmd/gen-validators/spec/v31.json",
+	"v32": "cmd/gen-validators/spec/v32.json",
+	"v33": "cmd/gen-validators/spec/v33.json",
 }
 
 func main() {
@@ -91,8 +93,8 @@ func main() {
 	allPatterns := make(map[string]bool)
 	versionSchemas := make(map[string]map[string]*ResolvedSchema)
 
-	for version, dir := range versionDirs {
-		specPath := filepath.Join(projectRoot, dir, "spec.json")
+	for version, file := range specFiles {
+		specPath := filepath.Join(projectRoot, file)
 		spec, err := loadSpec(specPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading spec %s: %v\n", specPath, err)
@@ -128,7 +130,7 @@ func main() {
 	// separate from pkg/dataplane/validators which holds the hand-written ValidatorSet
 	// and Cache. This keeps the generated code out of the coverage denominator
 	// (pkg/generated/... is excluded from COVERAGE_PACKAGES) and mirrors the layout
-	// of the other generated packages (pkg/generated/clientset, pkg/generated/dataplaneapi).
+	// of the other generated packages (pkg/generated/clientset).
 	outputDir := filepath.Join(projectRoot, "pkg", "generated", "validators")
 
 	// Generate patterns.go with pre-compiled regexes

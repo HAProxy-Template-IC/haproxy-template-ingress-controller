@@ -1,16 +1,20 @@
-// Package auxiliaryfiles provides functionality for synchronizing auxiliary files
-// (general files, SSL certificates, map files, crt-lists) with the HAProxy Dataplane API.
-//
-// Auxiliary files are supplementary files that HAProxy needs but are not part of the
-// main configuration file, such as:
-//   - General files: Error pages, custom response files, ACL files
-//   - SSL certificates: TLS/SSL certificate and key files
-//   - Map files: Dynamic key-value mappings
-//   - CRT-list files: SSL certificate lists with per-certificate options
+// Package auxiliaryfiles holds the file types a render produces next to
+// haproxy.cfg: general files (error pages, ACL files), SSL certificates, map
+// files, crt-lists and CA files. The renderer builds them, the plan describes
+// them and the agent writes them.
 package auxiliaryfiles
 
+// FileItem is one auxiliary file, whatever its kind.
+type FileItem interface {
+	// GetIdentifier returns the path or filename the file is stored under.
+	GetIdentifier() string
+
+	// GetContent returns the file content.
+	GetContent() string
+}
+
 // GeneralFile represents a general-purpose file (error files, custom response files, etc.).
-// These files are uploaded to the Dataplane API storage and can be referenced in the
+// The agent writes these files onto the pod and the configuration references them in the
 // HAProxy configuration (e.g., in http-errors sections).
 type GeneralFile struct {
 	// Filename is the base file name (used as API 'id').
@@ -23,7 +27,7 @@ type GeneralFile struct {
 	Path string
 
 	// Content is the file contents as a string. This maps to the 'file' field in
-	// multipart form uploads to the Dataplane API.
+	// multipart parts of an apply.
 	// json:"-" on every aux Content keeps key material out of /debug/vars; the
 	// tls-ticket-keys STEK file is a general file, so this is not SSL-only.
 	Content string `json:"-"`
@@ -32,10 +36,10 @@ type GeneralFile struct {
 	// the config as `ca-file <path>` (frontend client-cert verify or backend mTLS
 	// server verify). When set, a CONTENT-only update can be applied to the live
 	// worker via the runtime API (`add ssl ca-file` + commit, which replaces the
-	// file with the payload) without a reload on DataPlane API v3.2+ — the
-	// orchestrator's runtime fast path keys off this flag. It is metadata only:
-	// GetContent (used for diffing) ignores it, so it never causes a spurious diff
-	// against the content-keyed current state.
+	// file with the payload) without a reload — it is what makes the plan file
+	// kind `ca` rather than `general`. Metadata only: GetContent (used for
+	// diffing) ignores it, so it never causes a spurious diff against the
+	// content-keyed current state.
 	IsCaFile bool
 
 	// ReloadOnPush carries the CRD's files[].reloadOnPush (or the 4th argument
@@ -127,26 +131,9 @@ func (c CRTListFile) GetContent() string {
 	return c.Content
 }
 
-// FileDiff is the diff produced for general files. It is an alias of
-// FileDiffGeneric[GeneralFile]; HasChanges and the underlying field set come
-// from the generic type.
-type FileDiff = FileDiffGeneric[GeneralFile]
-
-// SSLCertificateDiff is the diff produced for SSL certificates. Alias of
-// FileDiffGeneric[SSLCertificate].
-type SSLCertificateDiff = FileDiffGeneric[SSLCertificate]
-
-// MapFileDiff is the diff produced for map files. Alias of
-// FileDiffGeneric[MapFile].
-type MapFileDiff = FileDiffGeneric[MapFile]
-
-// CRTListDiff is the diff produced for crt-list files. Alias of
-// FileDiffGeneric[CRTListFile].
-type CRTListDiff = FileDiffGeneric[CRTListFile]
-
 // SSLCaFile represents an SSL CA certificate file containing trusted CA certificates.
 // These files are used for client certificate verification and SSL chain validation.
-// SSL CA file storage is only available in HAProxy DataPlane API v3.2+.
+// A content-only update reaches the running worker over the runtime API.
 type SSLCaFile struct {
 	// Path is the file path or name of the CA file.
 	// Example: "ca-bundle.pem" or "/etc/haproxy/ssl/ca/trusted-cas.pem"
@@ -166,7 +153,3 @@ func (s SSLCaFile) GetIdentifier() string {
 func (s SSLCaFile) GetContent() string {
 	return s.Content
 }
-
-// SSLCaFileDiff is the diff produced for SSL CA files. Alias of
-// FileDiffGeneric[SSLCaFile].
-type SSLCaFileDiff = FileDiffGeneric[SSLCaFile]

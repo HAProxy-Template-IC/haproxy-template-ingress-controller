@@ -1,10 +1,10 @@
 {{/*
-Dataplane API credentials helpers: Secret name, username, password
+Agent credentials helpers: Secret name, username, password
 (with upgrade-stable lookup fallback), and the rolling-update checksum.
 */}}
 
 {{/*
-Name of the Secret that holds the Dataplane API credentials. Referenced
+Name of the Secret that holds the agent credentials. Referenced
 by templates/secret.yaml (the resource itself), templates/deployment.yaml
 and templates/haproxy-deployment.yaml (env vars on the controller and
 HAProxy pods), templates/haproxytemplateconfig.yaml (the
@@ -16,7 +16,7 @@ haptic.dataplane.password below (lookup for upgrade-stable passwords).
 {{- end -}}
 
 {{/*
-Dataplane API username
+Agent username
 Uses provided value or defaults to "admin"
 */}}
 {{- define "haptic.dataplane.username" -}}
@@ -24,12 +24,12 @@ Uses provided value or defaults to "admin"
 {{- end -}}
 
 {{/*
-Dataplane API password
+Agent password
 Priority: 1) User-provided value, 2) Existing Secret value (preserved across
 upgrades via lookup), 3) A freshly generated random password.
 
-The DataPlane API is HAProxy's full runtime control plane and is served over
-plain HTTP on the cluster network, so the password must not be guessable. The
+The agent applies whatever it is sent to HAProxy and is served over plain HTTP
+on the cluster network, so the password must not be guessable. The
 previous deterministic fallback (sha256 of release name + namespace) derived the
 credential entirely from public, guessable inputs — anyone who knew the release
 and namespace could reconstruct it. We now generate a random password instead.

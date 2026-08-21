@@ -42,9 +42,10 @@ Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative
 Endpoint discovery (probing HAProxy pods, picking up credentials) is the
 controller's job in `pkg/controller/discovery`, not this package's.
 
-The Data Plane API client, its generated per-version clients, the comparator,
-the orchestrator and the config parser are still in the tree at this commit but
-nothing references them; the next MR deletes them.
+`parser/`, `validators/` and `validate_syntax.go` / `validate_schema.go` build
+only under the `playground` build tag: they are the syntax + schema check the
+browser playground answers `haproxy_valid` with, because a browser has no
+HAProxy binary. No production binary may link them.
 
 ## Deciding what a change costs
 

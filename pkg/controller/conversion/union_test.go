@@ -199,23 +199,23 @@ func TestUnionValidationTests_GlobalBaseline(t *testing.T) {
 		{
 			name: "_global identical scalar from two sources is not a conflict",
 			sources: []ValidationTestSource{
-				src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {CurrentConfig: "global\n"}}),
-				src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {CurrentConfig: "global\n"}}),
+				src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {MinHAProxyVersion: "3.0"}}),
+				src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {MinHAProxyVersion: "3.0"}}),
 			},
 			check: func(t *testing.T, got map[string]v1alpha1.ValidationTest) {
 				t.Helper()
-				if got[globalValidationTestName].CurrentConfig != "global\n" {
+				if got[globalValidationTestName].MinHAProxyVersion != "3.0" {
 					t.Fatal("identical values should merge silently")
 				}
 			},
 		},
 		{
-			name: "_global currentConfig conflict is an error",
+			name: "_global minHAProxyVersion conflict is an error",
 			sources: []ValidationTestSource{
-				src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {CurrentConfig: "one"}}),
-				src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {CurrentConfig: "two"}}),
+				src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {MinHAProxyVersion: "3.0"}}),
+				src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {MinHAProxyVersion: "3.1"}}),
 			},
-			wantErr: "currentConfig is set to different values",
+			wantErr: "minHAProxyVersion is set to different values",
 		},
 		{
 			name: "_global currentFiles conflict on the same filename is an error",

@@ -166,7 +166,7 @@ tests:
       - notExists:
           path: spec.templateSnippets["frontend-routing-logic-regex-last"]
 
-  - it: should inject the Dataplane API connection port from the HAProxy port owner
+  - it: should inject the agent connection port from the HAProxy port owner
     documentSelector:
       path: metadata.name
       value: haptic-config

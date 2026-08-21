@@ -82,10 +82,10 @@ func TestCanonicalizeAuxiliaryFiles_RejectsConflictingStorageIdentities(t *testi
 			want: `General file "bundle.pem" has conflicting definitions`,
 		},
 		{
-			name: "normalized certificate name",
+			name: "certificate basename",
 			files: &AuxiliaryFiles{SSLCertificates: []auxiliaryfiles.SSLCertificate{
-				{Path: "example.com.pem", Content: "certificate"},
-				{Path: "example_com.pem", Content: "certificate"},
+				{Path: "ssl/example_com.pem", Content: "one"},
+				{Path: "other/example_com.pem", Content: "two"},
 			}},
 			want: `SSL certificate "example_com.pem" has conflicting definitions`,
 		},
@@ -98,10 +98,10 @@ func TestCanonicalizeAuxiliaryFiles_RejectsConflictingStorageIdentities(t *testi
 			want: `SSL CA file "bundle.pem" has conflicting definitions`,
 		},
 		{
-			name: "normalized crt-list name",
+			name: "crt-list basename",
 			files: &AuxiliaryFiles{CRTListFiles: []auxiliaryfiles.CRTListFile{
-				{Path: "example.com.txt", Content: "one"},
-				{Path: "example_com.txt", Content: "two"},
+				{Path: "general/example_com.txt", Content: "one"},
+				{Path: "other/example_com.txt", Content: "two"},
 			}},
 			want: `CRT-list file "example_com.txt" has conflicting definitions`,
 		},
@@ -109,7 +109,7 @@ func TestCanonicalizeAuxiliaryFiles_RejectsConflictingStorageIdentities(t *testi
 			name: "general file and crt-list storage",
 			files: &AuxiliaryFiles{
 				GeneralFiles: []auxiliaryfiles.GeneralFile{{Filename: "certificate_list.txt", Content: "one"}},
-				CRTListFiles: []auxiliaryfiles.CRTListFile{{Path: "certificate.list.txt", Content: "two"}},
+				CRTListFiles: []auxiliaryfiles.CRTListFile{{Path: "general/certificate_list.txt", Content: "two"}},
 			},
 			want: `general file and CRT-list "certificate_list.txt" use the same storage name`,
 		},

@@ -25,3 +25,5 @@ type HAProxyGeneralFileExpansion interface{}
 type HAProxyMapFileExpansion interface{}
 
 type HAProxyTemplateConfigExpansion interface{}
+
+type HAProxyTemplateLibraryExpansion interface{}

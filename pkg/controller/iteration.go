@@ -183,12 +183,6 @@ func runIteration(
 		return err
 	}
 
-	// 4.5. Setup CurrentConfigStore for slot-aware server assignment
-	currentConfigStore, err := setupCurrentConfigStore(setup, k8sClient, crdName, haproxyCfgGVR, logger)
-	if err != nil {
-		return err
-	}
-
 	// 5. Initialize debug state and the leader-term `currentFiles` authority.
 	stateCache, currentFiles, err := initRenderState(setup, resourceWatcher, k8sClient, crdName, logger)
 	if err != nil {
@@ -204,7 +198,7 @@ func runIteration(
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
 	logger.Info("Stage 5: Creating reconciliation components")
-	wiring, err := setupReconciliation(setup, cfg, crd, bundle.Sources, creds, k8sClient, resourceWatcher, currentConfigStore, currentFiles, storeProvider, pluggableMgr, logger)
+	wiring, err := setupReconciliation(setup, cfg, crd, bundle.Sources, creds, k8sClient, resourceWatcher, currentFiles, storeProvider, pluggableMgr, logger)
 	if err != nil {
 		return err
 	}

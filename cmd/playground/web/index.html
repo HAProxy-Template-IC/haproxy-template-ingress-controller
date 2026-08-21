@@ -1510,9 +1510,10 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     function clearError() { $('banner').className = 'banner'; $('stale').classList.remove('show'); errLoc = null; }
 
     /* ---------- reload-impact analyzer ----------
-       Runs the production comparator (in wasm) against a baseline render — the
-       last render by default, or a pinned one — to show whether deploying the
-       current render would reload HAProxy or apply over the runtime socket. */
+       Runs the production decision layer (deployplan.Diff, in wasm) against a
+       baseline render — the last render by default, or a pinned one — to show
+       whether deploying the current render would reload HAProxy or apply over
+       the runtime socket. */
     let baselinePinned = false;
     function setReloadImpact(impact) {
       const strip = $('reload');

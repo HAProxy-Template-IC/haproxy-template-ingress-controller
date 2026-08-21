@@ -2,12 +2,12 @@
 
 ## Status
 
-Accepted 2026-08-18. Obsoletes ADR-0009. Supersedes ADR-0020 §Decision steps
-1–3 (syntax parse, schema validation, `haproxy -c` before the deploy) for the
-reconcile path; the webhook and the config-load gate keep all of it.
-ADR-0013's Option 1 reasoning is restated in HAProxy's terms rather than the
-API's. ADR-0013's `spec.json` reference is historical: the generated validators
-survive only for the WASM playground.
+Accepted 2026-08-18. Obsoletes ADR-0009. Supersedes ADR-0020 §Decision steps 1
+and 2 (the syntax parse and the schema check) everywhere, and step 3 (`haproxy
+-c` before the deploy) on the reconcile path; the webhook and the config-load
+gate keep step 3. ADR-0013's Option 1 reasoning is restated in HAProxy's terms
+rather than the API's. ADR-0013's `spec.json` reference is historical: the
+generated validators survive only for the WASM playground.
 
 ## Context
 

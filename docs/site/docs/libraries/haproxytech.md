@@ -2005,7 +2005,7 @@ haproxy.org/auth-realm: "API Access"
 
 **Dependencies**: Requires `auth-type: basic-auth` and `auth-secret`
 
-**Note**: The HAProxy Data Plane API forbids spaces in the realm (regex: `^[^\s]+$`). Like the upstream controller, the library automatically replaces spaces with dashes, so `"API Access"` renders as `realm "API-Access"` — you don't need to hyphenate the value yourself.
+**Note**: Like the upstream controller, the library automatically replaces spaces with dashes, so `"API Access"` renders as `realm "API-Access"` — you don't need to hyphenate the value yourself.
 
 ---
 

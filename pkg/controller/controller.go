@@ -532,7 +532,7 @@ func (p *persistentInfra) graceTime() time.Time {
 //   - k8sClient: Kubernetes client for API access
 //   - crdName: Name of the HAProxyTemplateConfig this controller serves
 //     (later wins); the last one is the primary, see primaryConfigName
-//   - secretName: Name of the Secret containing HAProxy Dataplane API credentials
+//   - secretName: Name of the Secret containing the HAPTIC agent credentials
 //   - webhookCertDir: Directory holding the webhook TLS cert (tls.crt/tls.key); empty disables the webhook
 //   - webhookAdmissionTimeouts: Controller-side admission deadlines. Zero
 //     values use the webhook component defaults.

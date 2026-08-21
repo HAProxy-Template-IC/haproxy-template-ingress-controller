@@ -42,13 +42,18 @@ pkg/dataplane/
 ├── validate_haproxy.go         # `haproxy -c`
 ├── haproxy_exec.go             #   its process runner
 ├── validator.go                # ValidateConfiguration entry point
-├── errors.go                   # ParseError / ValidationError / ...
+├── errors.go                   # ValidationError / SimplifyValidationError / ...
+├── parser/                     # playground-only: the client-native syntax parse
+├── validators/                 # playground-only: the OpenAPI schema check
+├── validate_syntax.go          #   both are `//go:build playground`
+├── validate_schema.go          #
 └── dataplanetest/              # Fake haproxy binary for unit tests (see below)
 ```
 
-The Data Plane API client, its generated per-version clients, the comparator,
-the orchestrator and the config parser are still in this tree but nothing
-references them; the next MR deletes them. Do not add a caller.
+The `playground` build tag is the whole of the exception below: those files
+build for the browser playground, which has no HAProxy binary, and for nothing
+else. `scripts/check-client-native-free.sh` fails the build if a production
+binary starts linking them; `make test-playground` is what runs their tests.
 
 ## The one rule this package exists to keep
 

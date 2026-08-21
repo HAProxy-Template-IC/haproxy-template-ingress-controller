@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build playground
+
 // Package sectionextract extracts standard (Community Edition) HAProxy sections
 // from a client-native config-parser into a parserconfig.StructuredConfig.
 //
-// The logic here is edition- and version-agnostic: it operates purely on the
-// config-parser.Parser interface, so both the CE parser (pkg/dataplane/parser)
-// and the Enterprise parser (pkg/dataplane/parser/enterprise) share it verbatim
-// for their CE-section pass. Enterprise-specific sections and directives layer
-// on top in the enterprise package; nothing in this package knows about them.
+// The logic here is version-agnostic: it operates purely on the
+// config-parser.Parser interface, so it extracts the standard sections from any
+// parsed HAProxy configuration.
 package sectionextract
 
 import (

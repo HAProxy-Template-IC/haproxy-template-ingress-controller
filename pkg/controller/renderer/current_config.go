@@ -61,16 +61,10 @@ func (s *RenderService) rememberPlan(mode rendercontext.RenderMode, plan *render
 }
 
 // currentConfig is what templates read as `currentConfig`: the servers of the
-// last reconcile plan, filled in from the deployed HAProxyCfg for every backend
-// the plan does not describe. Until the chart macros declare their backends
-// (they do not yet), the plan contributes nothing and the store is the only
-// source.
+// plan the fleet ACKed, or of the last reconcile render until one does. Nil
+// before the first render of a fresh install, which is what a template that
+// preserves server slots must treat as "nothing to preserve".
 func (s *RenderService) currentConfig() *renderplan.CurrentConfig {
-	var fromStore *renderplan.CurrentConfig
-	if s.currentConfigStore != nil {
-		fromStore = s.currentConfigStore.CurrentConfig()
-	}
-
 	s.planMu.Lock()
 	plan := s.ackedPlan
 	if plan == nil {
@@ -78,17 +72,8 @@ func (s *RenderService) currentConfig() *renderplan.CurrentConfig {
 	}
 	s.planMu.Unlock()
 	if plan == nil {
-		return fromStore
+		return nil
 	}
-
 	current := plan.CurrentConfig()
-	if fromStore == nil {
-		return &current
-	}
-	for backend, servers := range fromStore.ServerIndex {
-		if _, described := current.ServerIndex[backend]; !described {
-			current.ServerIndex[backend] = servers
-		}
-	}
 	return &current
 }

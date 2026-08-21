@@ -60,7 +60,7 @@ const (
 )
 
 // Credentials the agent reads from its environment, mirroring the chart's
-// Dataplane API Secret.
+// agent Secret.
 const (
 	agentUsername = "admin"
 	agentPassword = "adminpwd"

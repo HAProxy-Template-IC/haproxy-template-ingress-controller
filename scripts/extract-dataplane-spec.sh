@@ -1,20 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
-# Extract HAProxy DataPlane API OpenAPI specification from a running container
+# Extract HAProxy Data Plane API OpenAPI specification from a running container
 #
-# This script starts a DataPlane API server in a Docker container and downloads
+# This script starts a Data Plane API server in a Docker container and downloads
 # the OpenAPI v3 specification from the /v3/specification_openapiv3 endpoint.
+#
+# HAPTIC does not speak the Data Plane API. The specs it writes are the input of
+# cmd/gen-validators, whose output is the browser playground's schema check —
+# run it only when refreshing that (see cmd/gen-validators/spec/).
 #
 # Usage:
 #   ./extract-dataplane-spec.sh [--enterprise] <haproxy-version> [output-file]
 #
 # Examples:
-#   ./extract-dataplane-spec.sh 3.2                                              # Community
-#   ./extract-dataplane-spec.sh 3.1 /tmp/spec.json                               # Community
-#   ./extract-dataplane-spec.sh 3.0 pkg/generated/dataplaneapi/v30/spec.json     # Community
-#   ./extract-dataplane-spec.sh --enterprise 3.0r1                               # Enterprise
-#   ./extract-dataplane-spec.sh -e 3.1r1 pkg/generated/dataplaneapi/v31ee/spec.json
+#   ./extract-dataplane-spec.sh 3.2                                     # Community
+#   ./extract-dataplane-spec.sh 3.1 /tmp/spec.json                      # Community
+#   ./extract-dataplane-spec.sh 3.0 cmd/gen-validators/spec/v30.json    # Community
+#   ./extract-dataplane-spec.sh --enterprise 3.0r1                      # Enterprise
 #
 # Options:
 #   --enterprise, -e  Use HAProxy Enterprise registry (hapee-registry.haproxy.com)
@@ -73,11 +76,10 @@ Arguments:
   output-file        Optional output file path (default: spec.json)
 
 Examples:
-  $0 3.2                                              # Community edition
-  $0 3.1 /tmp/spec-v31.json                           # Community edition
-  $0 3.0 pkg/generated/dataplaneapi/v30/spec.json     # Community edition
-  $0 --enterprise 3.0r1                               # Enterprise edition
-  $0 -e 3.1r1 pkg/generated/dataplaneapi/v31ee/spec.json
+  $0 3.2                                     # Community edition
+  $0 3.1 /tmp/spec-v31.json                  # Community edition
+  $0 3.0 cmd/gen-validators/spec/v30.json    # Community edition
+  $0 --enterprise 3.0r1                      # Enterprise edition
 
 Requirements:
   - Docker

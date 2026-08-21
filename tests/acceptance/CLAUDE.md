@@ -33,7 +33,7 @@ Provides end-to-end acceptance testing infrastructure using the kubernetes-sigs/
 
 Key differences from integration tests:
 
-- **Integration tests**: Component-level with fixtures (dataplane, parser, etc.)
+- **Integration tests**: Component-level with fixtures (agent, deployplan, etc.)
 - **Acceptance tests**: Full controller deployment, user-facing features
 
 ## Architecture
@@ -172,7 +172,7 @@ Factory functions for creating test resources:
 // and similar, NOT the controller's own configuration — that lives on a CRD).
 func NewConfigMap(namespace, name, configYAML string) *corev1.ConfigMap
 
-// NewSecret creates a Secret with HAProxy Dataplane API credentials.
+// NewSecret creates a Secret with the HAPTIC agent credentials.
 func NewSecret(namespace, name string) *corev1.Secret
 
 // NewHAProxyTemplateConfigBuilder constructs the controller's primary CRD with

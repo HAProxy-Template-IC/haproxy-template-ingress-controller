@@ -152,7 +152,7 @@ func TestDeployToEndpoints_UnreachablePodAcksNothing(t *testing.T) {
 
 	// Port 1 refuses connections, so every pod's state read fails.
 	plan := &renderplan.Plan{ID: "plan-abc"}
-	event := events.NewDeploymentScheduledEvent("global\n  daemon\n", nil, nil,
+	event := events.NewDeploymentScheduledEvent("global\n  daemon\n", nil,
 		[]dataplane.Endpoint{{URL: "http://127.0.0.1:1", PodName: "haproxy-1"}},
 		"", "", "test", "checksum", plan, plan.ID, nil, true)
 	component.deployToEndpoints(context.Background(), func() {}, event, "deployment-1")

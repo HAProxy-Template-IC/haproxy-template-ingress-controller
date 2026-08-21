@@ -242,10 +242,8 @@ func (s *DeploymentScheduler) resolveRuntimeConfigName() (name, namespace string
 // correctly regardless of newer reconciles.
 func (s *DeploymentScheduler) newScheduledEvent(dep *scheduledDeployment) *events.DeploymentScheduledEvent {
 	runtimeConfigName, runtimeConfigNamespace := s.resolveRuntimeConfigName()
-	// ParsedConfig is the Dataplane API's desired-state input; the agent path
-	// reads the render plan instead.
 	return events.NewDeploymentScheduledEvent(
-		dep.config, dep.auxFiles, nil, dep.endpoints, runtimeConfigName, runtimeConfigNamespace,
+		dep.config, dep.auxFiles, dep.endpoints, runtimeConfigName, runtimeConfigNamespace,
 		dep.reason, dep.contentChecksum, dep.plan, dep.planID, dep.statusPatches, dep.coalescible,
 		events.WithCorrelation(dep.correlationID, dep.correlationID),
 	)

@@ -37,7 +37,7 @@ func TestTemplateRenderedEvent_CarriesThePlan(t *testing.T) {
 func TestDeploymentScheduledEvent_CarriesThePlan(t *testing.T) {
 	plan := &renderplan.Plan{ID: "plan-abc"}
 
-	event := NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "checksum",
+	event := NewDeploymentScheduledEvent("cfg", nil, nil, "n", "ns", "r", "checksum",
 		plan, plan.ID, nil, true)
 
 	assert.Same(t, plan, event.Plan)
@@ -46,7 +46,7 @@ func TestDeploymentScheduledEvent_CarriesThePlan(t *testing.T) {
 
 func TestPlanlessRendersStayNil(t *testing.T) {
 	rendered := NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", nil, "", true)
-	scheduled := NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "", nil, "", nil, true)
+	scheduled := NewDeploymentScheduledEvent("cfg", nil, nil, "n", "ns", "r", "", nil, "", nil, true)
 
 	// Admission and proposal renders carry no plan; nothing may dereference it.
 	assert.Nil(t, rendered.Plan)

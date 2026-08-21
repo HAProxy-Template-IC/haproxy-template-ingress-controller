@@ -124,9 +124,8 @@ type WatchedResource struct {
 
 // Auxiliary file definitions — every "file template" type carries the same
 // two fields. There is no Path field, no embedded cert/key block, and no
-// per-type variant; the shape is uniform on purpose so the auxiliary-file
-// pipeline in pkg/dataplane/auxiliaryfiles can dispatch on a single FileItem
-// generic.
+// per-type variant; the shape is uniform on purpose so the renderer can treat
+// every kind through pkg/dataplane/auxiliaryfiles.FileItem.
 type (
     MapFile        struct{ Template string; PostProcessing []PostProcessorConfig }
     GeneralFile    struct{ Template string; PostProcessing []PostProcessorConfig }
@@ -403,7 +402,7 @@ func TestConfig_GetReconciliationInterval(t *testing.T) {
 
 - Load credentials from Kubernetes Secret
 - Validate all required fields are present
-- Use TLS for Dataplane API connections
+- Use TLS for agent connections
 - Rotate credentials regularly
 
 **DON'T:**

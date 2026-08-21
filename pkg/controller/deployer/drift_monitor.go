@@ -38,7 +38,7 @@ const (
 //
 // When no deployment has occurred within the configured interval, it publishes
 // a DriftPreventionTriggeredEvent to trigger reconciliation. This helps detect
-// and correct configuration drift caused by other Dataplane API clients or
+// and correct configuration drift caused by anything writing to the pod's file tree or
 // manual changes.
 //
 // This is a leader-only component that starts when leadership is acquired.

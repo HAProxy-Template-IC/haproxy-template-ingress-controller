@@ -71,11 +71,12 @@ type HAProxyTemplateConfigSpec struct {
 	// +listMapKey=name
 	LibraryRefs []LibraryRef `json:"libraryRefs,omitempty"`
 
-	// CredentialsSecretRef references the Secret containing HAProxy Dataplane API credentials.
+	// CredentialsSecretRef references the Secret containing the HAPTIC agent credentials.
 	//
-	// The Secret must contain the following keys:
-	//   - dataplane_username: Username for HAProxy Dataplane API
-	//   - dataplane_password: Password for HAProxy Dataplane API
+	// The Secret must contain the following keys, which keep their historical
+	// names so a rotation set up against them keeps working:
+	//   - dataplane_username: agent username
+	//   - dataplane_password: agent password
 	//
 	// If the namespace is omitted, it defaults to the same namespace as this config resource.
 	// +optional
@@ -96,7 +97,8 @@ type HAProxyTemplateConfigSpec struct {
 	// +optional
 	Logging LoggingConfig `json:"logging,omitempty"`
 
-	// Dataplane configures the Dataplane API for production HAProxy instances.
+	// Dataplane configures how the controller reaches the HAProxy pods and where
+	// their files live. The block keeps its name across the agent cutover.
 	// +optional
 	Dataplane DataplaneConfig `json:"dataplane,omitempty"`
 
@@ -322,9 +324,10 @@ type LoggingConfig struct {
 	Level string `json:"level,omitempty"`
 }
 
-// DataplaneConfig configures the Dataplane API for production HAProxy instances.
+// DataplaneConfig configures how the controller reaches the HAProxy pods and
+// where their files live. The block keeps its name across the agent cutover.
 type DataplaneConfig struct {
-	// Port is the Dataplane API port for production HAProxy pods.
+	// Port is the agent's apply/state API port on each HAProxy pod.
 	//
 	// Default: 5555
 	// +kubebuilder:validation:Minimum=1
@@ -346,7 +349,7 @@ type DataplaneConfig struct {
 	// DriftPreventionInterval triggers periodic deployments to prevent configuration drift.
 	//
 	// A deployment is automatically triggered if no deployment has occurred within this interval.
-	// This detects and corrects drift caused by external Dataplane API clients.
+	// This detects and corrects a pod whose file tree drifted from the render.
 	// Format: Go duration string (e.g., "60s", "5m")
 	// Default: 60s
 	// +optional
@@ -754,20 +757,6 @@ type ValidationTest struct {
 	//       srv2: {address: 10.0.0.2, port: 8080}
 	// +optional
 	CurrentServers map[string]map[string]ServerAddr `json:"currentServers,omitempty"`
-
-	// CurrentConfig contains the raw HAProxy configuration from a previous deployment.
-	//
-	// This field is deprecated: use CurrentServers. The text is parsed with the
-	// HAProxy config parser, which reads far more than the servers templates can
-	// see; a later release drops the parser and with it this field.
-	//
-	// Example:
-	//   currentConfig: |
-	//     backend my-backend
-	//         server srv1 10.0.0.1:8080
-	//         server srv2 10.0.0.2:8080
-	// +optional
-	CurrentConfig string `json:"currentConfig,omitempty"`
 
 	// CurrentFiles are the currently-deployed general auxiliary files
 	// (filename → content), exposed to templates under `currentFiles`. Used to

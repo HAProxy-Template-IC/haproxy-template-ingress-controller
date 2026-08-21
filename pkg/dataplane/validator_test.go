@@ -94,7 +94,7 @@ backend servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	_, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() failed on valid config: %v", err)
 	}
@@ -137,7 +137,7 @@ backend api-servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	_, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() failed on valid complex config: %v", err)
 	}
@@ -164,7 +164,7 @@ backend
 
 	auxFiles := &AuxiliaryFiles{}
 
-	_, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
 	if err == nil {
 		t.Fatal("ValidateConfiguration() should fail on malformed config")
 	}
@@ -189,23 +189,22 @@ backend
 }
 
 func TestValidateConfiguration_EmptyConfig(t *testing.T) {
-	config := ""
-	auxFiles := &AuxiliaryFiles{}
+	// An empty config is HAProxy's verdict to give, not the controller's:
+	// nothing short-circuits it before the binary sees it. Simulated here
+	// (unit tests never shell out) with HAProxy's own message.
+	installRejectingHAProxy(t, "no <listen|frontend|backend> line. Nothing to do !")
 
-	_, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
+	err := ValidateConfiguration("", &AuxiliaryFiles{}, testValidationPaths(t), false)
 	if err == nil {
-		t.Fatal("ValidateConfiguration() should fail on empty config")
+		t.Fatal("ValidateConfiguration() should surface HAProxy's refusal of an empty config")
 	}
 
-	// Verify it's a validation error
 	valErr, ok := err.(*ValidationError)
 	if !ok {
 		t.Fatalf("Expected *ValidationError, got %T", err)
 	}
-
-	// Verify it's a syntax phase error (parser should reject empty config)
-	if valErr.Phase != "syntax" {
-		t.Errorf("Expected phase='syntax', got: %q", valErr.Phase)
+	if valErr.Phase != "semantic" {
+		t.Errorf("Expected phase='semantic', got: %q", valErr.Phase)
 	}
 }
 
@@ -236,7 +235,7 @@ backend servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	_, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
 	if err == nil {
 		t.Fatal("ValidateConfiguration() should fail on semantic error")
 	}
@@ -292,7 +291,7 @@ backend servers
 		},
 	}
 
-	if _, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false); err != nil {
+	if err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false); err != nil {
 		t.Fatalf("ValidateConfiguration() failed with SSL certificate: %v", err)
 	}
 }
@@ -329,7 +328,7 @@ backend servers
 		},
 	}
 
-	_, err := ValidateConfiguration(config, auxFiles, paths, nil, false)
+	err := ValidateConfiguration(config, auxFiles, paths, false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() failed with absolute path map files: %v", err)
 	}
@@ -373,7 +372,7 @@ Content-Type: text/html
 		},
 	}
 
-	_, err := ValidateConfiguration(config, auxFiles, paths, nil, false)
+	err := ValidateConfiguration(config, auxFiles, paths, false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() failed with absolute path general files: %v", err)
 	}
@@ -398,7 +397,7 @@ backend servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	_, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
 	// This may or may not fail depending on HAProxy version and parser strictness
 	// Just verify the function doesn't panic
 	_ = err
@@ -423,62 +422,6 @@ func TestValidationError_Unwrap(t *testing.T) {
 	}
 }
 
-// backend HTTP request rules with invalid auth_realm patterns (e.g., containing spaces).
-// This test demonstrates the bug where backend rules are not validated against the OpenAPI schema.
-func TestValidateConfiguration_BackendHTTPRequestRuleInvalidAuthRealm(t *testing.T) {
-	// Config with backend http-request auth rule having auth_realm with spaces
-	// OpenAPI spec pattern for auth_realm is: ^[^\s]+" (no spaces allowed)
-	config := `
-global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5000ms
-    timeout client 50000ms
-    timeout server 50000ms
-
-userlist auth_users
-    user admin password $5$rounds=10000$saltysalt$hashedpassword
-
-frontend http-in
-    bind :80
-    default_backend protected
-
-backend protected
-    http-request auth realm "Echo-Server Protected" unless { http_auth(auth_users) }
-    server s1 127.0.0.1:8080
-`
-
-	auxFiles := &AuxiliaryFiles{}
-
-	_, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
-	if err == nil {
-		t.Fatal("ValidateConfiguration() should fail on backend http-request rule with invalid auth_realm (contains spaces)")
-	}
-
-	// Verify it's a validation error
-	valErr, ok := err.(*ValidationError)
-	if !ok {
-		t.Fatalf("Expected *ValidationError, got %T", err)
-	}
-
-	// Verify it's a schema phase error
-	if valErr.Phase != "schema" {
-		t.Errorf("Expected phase='schema', got: %q", valErr.Phase)
-	}
-
-	// Verify error message mentions auth_realm and the backend
-	errMsg := err.Error()
-	if !strings.Contains(errMsg, "auth_realm") {
-		t.Errorf("Expected error message to contain 'auth_realm', got: %s", errMsg)
-	}
-	if !strings.Contains(errMsg, "backend") && !strings.Contains(errMsg, "protected") {
-		t.Errorf("Expected error message to mention backend 'protected', got: %s", errMsg)
-	}
-}
-
-// of frontend TCP request rules to ensure all rule types are validated.
 func TestValidateConfiguration_FrontendTCPRequestRuleValidation(t *testing.T) {
 	// Valid config with TCP request rule - should pass
 	config := `
@@ -504,7 +447,7 @@ backend mysql-servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	_, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() should pass on valid TCP request rules: %v", err)
 	}
@@ -536,7 +479,7 @@ backend dynamic-servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	_, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() should pass on valid server templates: %v", err)
 	}
@@ -636,23 +579,6 @@ func TestValidationCacheHelpers(t *testing.T) {
 			t.Error("hashAuxFiles() should produce different hash for different input")
 		}
 	})
-
-	t.Run("hashVersion", func(t *testing.T) {
-		if hashVersion(nil) != "nil" {
-			t.Error("hashVersion(nil) should return 'nil'")
-		}
-
-		v30 := &Version{Major: 3, Minor: 0}
-		v31 := &Version{Major: 3, Minor: 1}
-
-		if hashVersion(v30) != "3.0" {
-			t.Errorf("hashVersion(3.0) = %s, want '3.0'", hashVersion(v30))
-		}
-
-		if hashVersion(v31) != "3.1" {
-			t.Errorf("hashVersion(3.1) = %s, want '3.1'", hashVersion(v31))
-		}
-	})
 }
 
 func TestValidationCacheMechanism(t *testing.T) {
@@ -660,38 +586,31 @@ func TestValidationCacheMechanism(t *testing.T) {
 	validationCache.mu.Lock()
 	validationCache.lastConfigHash = ""
 	validationCache.lastAuxHash = ""
-	validationCache.lastVersionHash = ""
 	validationCache.mu.Unlock()
 
 	configHash := "config123"
 	auxHash := "aux456"
-	versionHash := "3.2"
 
 	// Initially should not be cached
-	if isValidationCached(configHash, auxHash, versionHash) {
+	if isValidationCached(configHash, auxHash) {
 		t.Error("isValidationCached() should return false for uncached config")
 	}
 
-	if err := cacheValidationResult(t.Context(), configHash, auxHash, versionHash); err != nil {
+	if err := cacheValidationResult(t.Context(), configHash, auxHash); err != nil {
 		t.Fatalf("cacheValidationResult: %v", err)
 	}
 
-	if !isValidationCached(configHash, auxHash, versionHash) {
+	if !isValidationCached(configHash, auxHash) {
 		t.Error("isValidationCached() should return true for cached config")
 	}
 
 	// Different config should not hit cache
-	if isValidationCached("different", auxHash, versionHash) {
+	if isValidationCached("different", auxHash) {
 		t.Error("isValidationCached() should return false for different config")
 	}
 
 	// Different aux should not hit cache
-	if isValidationCached(configHash, "different", versionHash) {
+	if isValidationCached(configHash, "different") {
 		t.Error("isValidationCached() should return false for different aux")
-	}
-
-	// Different version should not hit cache
-	if isValidationCached(configHash, auxHash, "different") {
-		t.Error("isValidationCached() should return false for different version")
 	}
 }
