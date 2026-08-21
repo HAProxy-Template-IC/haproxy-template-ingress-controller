@@ -3614,7 +3614,10 @@ pages-preview:
   script:
     - |
       # Clone pages repo to get deployment script
-      git clone --depth 1 https://gitlab.com/haproxy-haptic/haproxy-haptic.gitlab.io.git pages-repo
+      # Authenticated clone — GitLab.com rate-limits unauthenticated git
+      # requests from shared runners; the repo is public so CI_JOB_TOKEN
+      # needs no allowlist.
+      git clone --depth 1 https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/haproxy-haptic/haproxy-haptic.gitlab.io.git pages-repo
       chmod +x pages-repo/scripts/deploy-docs.sh
     - |
       # The preview is built ON TOP of the published site so a reviewer sees the
