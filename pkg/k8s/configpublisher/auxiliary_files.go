@@ -119,6 +119,14 @@ type auxResourceOps[T interface{ GetName() string }] struct {
 	// update mutates the freshly fetched object with the desired state and
 	// writes it back.
 	update func(ctx context.Context, existing T) (T, error)
+	// onCreate, if set, runs with the created object's name after a fresh
+	// Create succeeds. Aux-file kinds use it to evict the stamp cache: a fresh
+	// CR has an empty status.deployedToPods, so any cached stamp for that name
+	// is stale and would elide the re-stamp. This covers every delete cause —
+	// the prune path, an apiserver owner-GC cascade (kubectl delete haproxycfg /
+	// the parent HAProxyTemplateConfig), or a foreign delete — since all of them
+	// end in a fresh Create here.
+	onCreate func(name string)
 }
 
 type auxiliaryResourceOwnershipError struct {
@@ -128,6 +136,24 @@ type auxiliaryResourceOwnershipError struct {
 
 func (e *auxiliaryResourceOwnershipError) Error() string {
 	return fmt.Sprintf("%s %q is managed by another HAProxyCfg", e.kind, e.name)
+}
+
+// createAbsentAuxResource creates the resource when the get returned NotFound,
+// running ops.onCreate on success. A returned AlreadyExists is left unwrapped so
+// retriableWrite re-drives the loop into the update branch.
+func createAbsentAuxResource[T interface{ GetName() string }](ctx context.Context, ops auxResourceOps[T]) (string, error) {
+	created, err := ops.create(ctx)
+	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return "", err
+		}
+		return "", fmt.Errorf("creating %s: %w", ops.kind, err)
+	}
+	name := created.GetName()
+	if ops.onCreate != nil {
+		ops.onCreate(name)
+	}
+	return name, nil
 }
 
 // createOrUpdateAuxResource runs the shared create-or-update workflow for an
@@ -142,18 +168,9 @@ func createOrUpdateAuxResource[T interface{ GetName() string }](ctx context.Cont
 			if !apierrors.IsNotFound(err) {
 				return fmt.Errorf("getting existing %s: %w", ops.kind, err)
 			}
-
-			created, createErr := ops.create(ctx)
-			if createErr != nil {
-				// If AlreadyExists, another reconciler created it - retry to update
-				if apierrors.IsAlreadyExists(createErr) {
-					return createErr
-				}
-				return fmt.Errorf("creating %s: %w", ops.kind, createErr)
-			}
-
-			resultName = created.GetName()
-			return nil
+			name, createErr := createAbsentAuxResource(ctx, ops)
+			resultName = name
+			return createErr
 		}
 		if !ops.managedByOwner(existing) {
 			return &auxiliaryResourceOwnershipError{kind: ops.kind, name: existing.GetName()}
@@ -233,6 +250,9 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 			existing.Annotations = annotations
 			existing.OwnerReferences = ownerReferences
 			return client.Update(ctx, existing, metav1.UpdateOptions{})
+		},
+		onCreate: func(createdName string) {
+			p.auxStamps.forgetAuxFile(kindMapFile, req.TemplateConfigNamespace, createdName)
 		},
 	})
 }
@@ -343,6 +363,9 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 			existing.OwnerReferences = ownerReferences
 			return client.Update(ctx, existing, metav1.UpdateOptions{})
 		},
+		onCreate: func(createdName string) {
+			p.auxStamps.forgetAuxFile(kindGeneralFile, req.TemplateConfigNamespace, createdName)
+		},
 	})
 }
 
@@ -395,6 +418,9 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 			existing.Annotations = annotations
 			existing.OwnerReferences = ownerReferences
 			return client.Update(ctx, existing, metav1.UpdateOptions{})
+		},
+		onCreate: func(createdName string) {
+			p.auxStamps.forgetAuxFile(kindCRTListFile, req.TemplateConfigNamespace, createdName)
 		},
 	})
 }

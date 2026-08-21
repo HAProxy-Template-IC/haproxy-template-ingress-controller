@@ -40,6 +40,12 @@ var ErrRuntimeConfigNotPublished = errors.New("HAProxyCfg not published yet")
 const (
 	statusSubresource = "status"
 	runtimeConfigKind = "HAProxyCfg"
+
+	// Auxiliary-file CRD kinds, used in SSA payloads, ownership references, and
+	// cleanup/error messages across this package.
+	kindMapFile     = "HAProxyMapFile"
+	kindGeneralFile = "HAProxyGeneralFile"
+	kindCRTListFile = "HAProxyCRTListFile"
 )
 
 // apiVersionV1Alpha1 is the CRD API version used in SSA payloads. Hard-coded
@@ -139,7 +145,7 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 	// SSA-apply this pod's entry to every auxiliary file's
 	// status.deployedToPods. Same per-pod field manager, same merge
 	// semantics — independent of each other and of the HAProxyCfg apply.
-	p.applyPodStatusToAuxiliaryFiles(ctx, auxFiles, update.PodName, update.PodUID, update.PodRuntimeID)
+	p.applyPodStatusToAuxiliaryFiles(ctx, auxFiles, update.PodName, update.PodUID, update.PodRuntimeID, update.IsDriftCheck)
 
 	return nil
 }
@@ -241,21 +247,36 @@ func (p *Publisher) applyPodStatusToRuntimeConfig(ctx context.Context, update *D
 //
 // Errors are logged but don't fail the whole status update — the next
 // reconcile retries any failures.
-func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, podName, podUID, podRuntimeID string) {
+//
+// Precondition — single-writer-per-pod: the caller must serialize all
+// UpdateDeploymentStatus calls for a given pod, so this never runs twice
+// concurrently for the same podName. The controller guarantees this — its
+// processAllPendingStatusWork coalesces onto one goroutine per pod key. The
+// final auxStamps.retainLivePodKeys deliberately does NOT bump the cache
+// generation, which is only safe under this invariant (see its comment). A
+// future caller that violates single-writer-per-pod (an independent
+// drift-check path, a second worker pool) must add per-pod locking or make
+// retainLivePodKeys bump the generation, or it silently reintroduces the
+// stale-cache race the generation counter closes elsewhere.
+func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, podName, podUID, podRuntimeID string, driftCheck bool) {
 	if auxFiles == nil {
 		return
 	}
 	fieldManager := podStatusFieldManager(podName)
 
+	// live is the set of keys for this pod's currently-referenced aux files.
+	// After stamping, entries for keys no longer live are evicted so the
+	// content-hashed names of a superseded set don't accumulate.
+	live := make(map[stampKey]struct{}, len(auxFiles.MapFiles)+len(auxFiles.GeneralFiles)+len(auxFiles.CRTListFiles))
+
 	for _, ref := range auxFiles.MapFiles {
+		key := stampKey{kind: kindMapFile, namespace: ref.Namespace, name: ref.Name, podName: podName}
+		live[key] = struct{}{}
 		checksum, ok := p.lookupMapFileChecksum(ctx, ref.Namespace, ref.Name)
 		if !ok {
 			continue
 		}
-		entry := haproxyv1alpha1.PodDeploymentStatus{
-			PodName: podName, PodUID: podUID, PodRuntimeID: podRuntimeID, Checksum: checksum,
-		}
-		p.applyAuxiliaryFilePodStatus("HAProxyMapFile", ref.Namespace, ref.Name, &entry, fieldManager,
+		p.stampAuxiliaryFilePodStatus(key, podUID, podRuntimeID, checksum, fieldManager, driftCheck,
 			func(name string, data []byte, opts metav1.PatchOptions) error {
 				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(ref.Namespace).
 					Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
@@ -263,14 +284,13 @@ func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles
 			})
 	}
 	for _, ref := range auxFiles.GeneralFiles {
+		key := stampKey{kind: kindGeneralFile, namespace: ref.Namespace, name: ref.Name, podName: podName}
+		live[key] = struct{}{}
 		checksum, ok := p.lookupGeneralFileChecksum(ctx, ref.Namespace, ref.Name)
 		if !ok {
 			continue
 		}
-		entry := haproxyv1alpha1.PodDeploymentStatus{
-			PodName: podName, PodUID: podUID, PodRuntimeID: podRuntimeID, Checksum: checksum,
-		}
-		p.applyAuxiliaryFilePodStatus("HAProxyGeneralFile", ref.Namespace, ref.Name, &entry, fieldManager,
+		p.stampAuxiliaryFilePodStatus(key, podUID, podRuntimeID, checksum, fieldManager, driftCheck,
 			func(name string, data []byte, opts metav1.PatchOptions) error {
 				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(ref.Namespace).
 					Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
@@ -278,35 +298,66 @@ func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles
 			})
 	}
 	for _, ref := range auxFiles.CRTListFiles {
+		key := stampKey{kind: kindCRTListFile, namespace: ref.Namespace, name: ref.Name, podName: podName}
+		live[key] = struct{}{}
 		checksum, ok := p.lookupCRTListFileChecksum(ctx, ref.Namespace, ref.Name)
 		if !ok {
 			continue
 		}
-		entry := haproxyv1alpha1.PodDeploymentStatus{
-			PodName: podName, PodUID: podUID, PodRuntimeID: podRuntimeID, Checksum: checksum,
-		}
-		p.applyAuxiliaryFilePodStatus("HAProxyCRTListFile", ref.Namespace, ref.Name, &entry, fieldManager,
+		p.stampAuxiliaryFilePodStatus(key, podUID, podRuntimeID, checksum, fieldManager, driftCheck,
 			func(name string, data []byte, opts metav1.PatchOptions) error {
 				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(ref.Namespace).
 					Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
 				return err
 			})
 	}
+
+	p.auxStamps.retainLivePodKeys(podName, live)
+}
+
+// stampAuxiliaryFilePodStatus SSA-applies this pod's entry to one auxiliary
+// file, unless the exact entry is already the last one applied for that key —
+// in which case the Patch would write a byte-identical value and is elided
+// (issue #163: content-hashed aux-file names make every re-stamp a no-op, and
+// under churn they saturate the client rate limiter). driftCheck forces the
+// Patch through the elision: a drift-prevention re-sync re-stamps every live
+// (pod, file) once per interval, the authoritative periodic write that self-heals
+// an out-of-band strip — the high-frequency inter-drift re-stamps are what get
+// elided. Records the entry only on a successful apply and only if no
+// invalidation raced the Patch (commitStamp), so a failed/NotFound Patch or a
+// concurrent cleanup retries next time.
+func (p *Publisher) stampAuxiliaryFilePodStatus(key stampKey, podUID, podRuntimeID, checksum, fieldManager string, driftCheck bool, patcher func(name string, data []byte, opts metav1.PatchOptions) error) {
+	value := stampedEntry{podUID: podUID, podRuntimeID: podRuntimeID, checksum: checksum}
+	skip, gen := p.auxStamps.beginStamp(key, value, driftCheck)
+	if skip {
+		return
+	}
+	entry := haproxyv1alpha1.PodDeploymentStatus{
+		PodName: key.podName, PodUID: podUID, PodRuntimeID: podRuntimeID, Checksum: checksum,
+	}
+	if err := p.applyAuxiliaryFilePodStatus(key.kind, key.namespace, key.name, &entry, fieldManager, patcher); err == nil {
+		p.auxStamps.commitStamp(key, value, gen)
+	}
 }
 
 // applyAuxiliaryFilePodStatus builds and applies a per-pod SSA patch to a
 // single auxiliary file's status. Common shape extracted because every
 // CRD-type-specific patch above does the same thing modulo the typed
-// client call.
-func (p *Publisher) applyAuxiliaryFilePodStatus(kind, namespace, name string, entry *haproxyv1alpha1.PodDeploymentStatus, fieldManager string, patcher func(name string, data []byte, opts metav1.PatchOptions) error) {
+// client call. Returns the patch error (NotFound included, silently) so the
+// caller knows whether the apply landed before caching the value.
+func (p *Publisher) applyAuxiliaryFilePodStatus(kind, namespace, name string, entry *haproxyv1alpha1.PodDeploymentStatus, fieldManager string, patcher func(name string, data []byte, opts metav1.PatchOptions) error) error {
 	ssaBytes, err := buildPodStatusSSAPayload(kind, name, namespace, entry)
 	if err != nil {
 		p.logger.Debug("Ssa payload build failed", "kind", kind, "name", name, "error", err)
-		return
+		return err
 	}
-	if err := patcher(name, ssaBytes, metav1.PatchOptions{FieldManager: fieldManager, Force: new(true)}); err != nil && !apierrors.IsNotFound(err) {
-		p.logger.Debug("Ssa pod status on auxiliary file failed", "kind", kind, "name", name, "error", err)
+	if err := patcher(name, ssaBytes, metav1.PatchOptions{FieldManager: fieldManager, Force: new(true)}); err != nil {
+		if !apierrors.IsNotFound(err) {
+			p.logger.Debug("Ssa pod status on auxiliary file failed", "kind", kind, "name", name, "error", err)
+		}
+		return err
 	}
+	return nil
 }
 
 // lookupMapFileChecksum returns the aux file's spec.checksum (cache first,

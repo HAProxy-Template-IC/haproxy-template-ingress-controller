@@ -148,6 +148,13 @@ type DeploymentStatusUpdate struct {
 	// Error contains the error message if sync failed.
 	// Empty string indicates success.
 	Error string
+
+	// IsDriftCheck marks a periodic drift-prevention re-sync. On such an update
+	// the auxiliary-file per-pod stamp bypasses the write-elision cache and
+	// re-applies unconditionally, so an out-of-band strip of a pod's entry
+	// self-heals within one drift interval (the high-frequency inter-drift
+	// re-stamps are still elided).
+	IsDriftCheck bool
 }
 
 // PodCleanupRequest contains information about a terminated pod to clean up.

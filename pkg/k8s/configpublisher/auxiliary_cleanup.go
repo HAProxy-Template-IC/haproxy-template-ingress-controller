@@ -146,14 +146,16 @@ func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *hapr
 	mapFiles, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(namespace).
 		List(ctx, listOptions)
 	if err != nil {
-		return cleanupError(runtimeConfig, "HAProxyMapFile", ownerName, fmt.Errorf("listing map files: %w", err))
+		return cleanupError(runtimeConfig, kindMapFile, ownerName, fmt.Errorf("listing map files: %w", err))
 	}
-	if err := pruneOwnedResources(ctx, runtimeConfig, "HAProxyMapFile", "map file", result.MapFileNames, mapFiles.Items,
+	if err := pruneOwnedResources(ctx, runtimeConfig, kindMapFile, "map file", result.MapFileNames, mapFiles.Items,
 		func(file *haproxyv1alpha1.HAProxyMapFile) metav1.Object { return file },
 		publicationCurrent,
 		func(ctx context.Context, name string, options metav1.DeleteOptions) error {
-			return p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(namespace).
+			err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(namespace).
 				Delete(ctx, name, options)
+			p.forgetAuxFileStampOnDelete(err, kindMapFile, namespace, name)
+			return err
 		}); err != nil {
 		return err
 	}
@@ -174,14 +176,16 @@ func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *hapr
 	generalFiles, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(namespace).
 		List(ctx, listOptions)
 	if err != nil {
-		return cleanupError(runtimeConfig, "HAProxyGeneralFile", ownerName, fmt.Errorf("listing general files: %w", err))
+		return cleanupError(runtimeConfig, kindGeneralFile, ownerName, fmt.Errorf("listing general files: %w", err))
 	}
-	if err := pruneOwnedResources(ctx, runtimeConfig, "HAProxyGeneralFile", "general file", result.GeneralFileNames, generalFiles.Items,
+	if err := pruneOwnedResources(ctx, runtimeConfig, kindGeneralFile, "general file", result.GeneralFileNames, generalFiles.Items,
 		func(file *haproxyv1alpha1.HAProxyGeneralFile) metav1.Object { return file },
 		publicationCurrent,
 		func(ctx context.Context, name string, options metav1.DeleteOptions) error {
-			return p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(namespace).
+			err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(namespace).
 				Delete(ctx, name, options)
+			p.forgetAuxFileStampOnDelete(err, kindGeneralFile, namespace, name)
+			return err
 		}); err != nil {
 		return err
 	}
@@ -189,14 +193,16 @@ func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *hapr
 	crtListFiles, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).
 		List(ctx, listOptions)
 	if err != nil {
-		return cleanupError(runtimeConfig, "HAProxyCRTListFile", ownerName, fmt.Errorf("listing crt-list files: %w", err))
+		return cleanupError(runtimeConfig, kindCRTListFile, ownerName, fmt.Errorf("listing crt-list files: %w", err))
 	}
-	if err := pruneOwnedResources(ctx, runtimeConfig, "HAProxyCRTListFile", "crt-list file", result.CRTListFileNames, crtListFiles.Items,
+	if err := pruneOwnedResources(ctx, runtimeConfig, kindCRTListFile, "crt-list file", result.CRTListFileNames, crtListFiles.Items,
 		func(file *haproxyv1alpha1.HAProxyCRTListFile) metav1.Object { return file },
 		publicationCurrent,
 		func(ctx context.Context, name string, options metav1.DeleteOptions) error {
-			return p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).
+			err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).
 				Delete(ctx, name, options)
+			p.forgetAuxFileStampOnDelete(err, kindCRTListFile, namespace, name)
+			return err
 		}); err != nil {
 		return err
 	}

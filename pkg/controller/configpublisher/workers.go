@@ -565,6 +565,7 @@ func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem)
 		PodUID:                 event.PodUID,
 		PodRuntimeID:           event.PodRuntimeID,
 		Checksum:               event.Checksum,
+		IsDriftCheck:           event.IsDriftCheck,
 	}
 
 	// Extract error information from sync metadata if available
