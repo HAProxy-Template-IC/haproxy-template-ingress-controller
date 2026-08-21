@@ -56,7 +56,7 @@ templateSnippets:
           {%- if suffix == "/" && hasSuffix(frPath_val, "/") %}
             {%- pathSuffix = "" %}
           {%- end %}
-          {%- if suffix == "" && len(frPath_val) > 1 && hasSuffix(frPath_val, "/") %}
+          {%- if suffix == "" && pathType != "RegularExpression" && len(frPath_val) > 1 && hasSuffix(frPath_val, "/") %}
             {%- frPath_val = frPath_val[:len(frPath_val)-1] %}
           {%- end %}
       {{ "\n" }}{{ MapKeyForHost(frHostname) }}{{ frPath_val }}{{ pathSuffix }} GW_ROUTE_ID:{{ routeTypeShort }}:{{ routeIds_str }}
@@ -92,91 +92,6 @@ templateSnippets:
       {%- end -%}
       {%- end macro %}
 
-  util-generate-path-regex-map-gateway:
-    requires: [httproutes, referencegrants]
-    template: |
-      {# Generate regex path map entries for HTTPRoute.
-
-          HTTPRoute-only: GRPCRoute has no path-regex matchType, so this
-          macro takes typed `[]*resources.httproutes.T` directly. No
-          GRPCRoute sibling. #}
-      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
-      {%- import "util-backend-ref-valid" for BackendRefValid -%}
-      {%- import "util-host-key" for MapKeyForHost -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- macro GeneratePathRegexMap(routes []*resources.httproutes.T) -%}
-      {%- for _, route := range routes %}
-      {%- var routeNs = route.Metadata.Namespace %}
-      {%- var routeName = route.Metadata.Name %}
-      {#- Coerce to []any: the per-rule loop body assigns hostnames
-          into the polymorphic regexEntries map, and the downstream
-          MapKeyForHost macro takes `any`. The fallback `[""]` covers
-          the "route has no hostnames" case. -#}
-      {%- var hostnames = route.Spec.Hostnames | toSlice() | coalesce([]any{""}) %}
-      {%- var regexEntries = []any{} %}
-      {%- for _, hostname := range hostnames %}
-      {%- for _, rule := range route.Spec.Rules %}
-      {%- if len(rule.BackendRefs) > 0 %}
-      {%- var firstBackend = rule.BackendRefs[0] %}
-      {%- var firstBackendPort = toint(firstBackend.Port) %}
-      {%- if firstBackendPort == 0 %}{%- firstBackendPort = 80 %}{%- end %}
-      {%- var backend = map[string]any{"name": firstBackend.Name, "port": firstBackendPort} %}
-      {%- var backendValid = BackendRefValid("HTTPRoute", routeNs, firstBackend) == "true" %}
-      {#- The empty-matches case synthesises the chart's "no matches
-          → PathPrefix /" default. With typed rule.Matches we iterate
-          the slice directly; if empty, we still need one synthetic
-          entry so the inner regex check has something to skip past. -#}
-      {%- var matches []any = rule.Matches | toSlice() %}
-      {%- if len(matches) == 0 %}
-        {%- matches = []any{map[string]any{}} %}
-      {%- end %}
-      {%- for _, match := range matches %}
-      {%- var matchPath_type = match | dig("path", "type") | fallback("") %}
-      {%- var matchPathValue = match | dig("path", "value") | fallback("/") %}
-      {%- if matchPath_type == "RegularExpression" %}
-      {#- Map keys are whitespace-delimited: a space/tab/newline in the regex value
-          splits the line and smuggles a second entry (#153). Reject the match. -#}
-      {%- if regex_search(tostring(matchPathValue), "[[:cntrl:]]") || strings_contains(tostring(matchPathValue), " ") %}
-      {{- WebhookRejectOrWarn(route, "InvalidPath", "HTTPRoute '" + routeNs + "/" + routeName + "' has a RegularExpression path containing whitespace or control characters, which cannot be written to the routing map; the route is not applied. Remove spaces, tabs and newlines from the path value.") -}}
-      {%- continue %}
-      {%- end %}
-      {%- regexEntries = append(regexEntries, map[string]any{
-        "hostname": hostname,
-        "pathValue": matchPathValue,
-        "backend": backend,
-        "valid": backendValid,
-      }) %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- if len(regexEntries) > 0 %}
-      # HTTPRoute: {{ routeNs }}/{{ routeName }} ({{ len(regexEntries) }} regex paths)
-      {% for _, entry := range regexEntries -%}
-      {{ MapKeyForHost(entry["hostname"]) }}{{ entry["pathValue"] }} {% if entry["valid"] == true %}{{ BackendNameGateway(route, entry["backend"]) }}{% else %}gw-invalid-backend{% end %}
-      {% end -%}
-      {%- end %}
-      {%- end %}
-      {%- end macro -%}
-
-  util-sharded-path-regex-map-gateway:
-    requires: [httproutes, referencegrants]
-    template: |
-      {# Sharded regex path map generator for HTTPRoute. #}
-      {%- import "util-generate-path-regex-map-gateway" for GeneratePathRegexMap -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-      {%- macro ShardedPathRegexMap(routes []*resources.httproutes.T) -%}
-      {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-      {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GeneratePathRegexMap(routes) }}
-      {%- else -%}
-      {%- for i := 0; i < n; i++ -%}
-      {{ go GeneratePathRegexMap(shard_slice(routes, i, n)) }}
-      {%- end -%}
-      {%- end -%}
-      {%- end macro -%}
-
   map-path-exact-500-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
@@ -202,9 +117,12 @@ templateSnippets:
       {{ GeneratePathMapEntries("PathPrefix", "/") }}
 
   map-path-regex-500-gateway:
-    requires: [httproutes, referencegrants]
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {# Generate regex path map entries for HTTPRoute with RegularExpression type #}
-      {%- import "util-sharded-path-regex-map-gateway" for ShardedPathRegexMap %}
+      {# Generate regex path map entries for HTTPRoute with RegularExpression type.
+         Emits the same GW_ROUTE_ID qualifier as the exact and prefix maps: pointing
+         straight at a backend left txn.gw_rule_id unset, so a regex route got no
+         filters, no timeouts and no resource fields in the access log. #}
+      {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
       # gateway/map-path-regex-gateway
-      {{ ShardedPathRegexMap(resources.httproutes.List()) }}
+      {{ GeneratePathMapEntries("RegularExpression", "") }}

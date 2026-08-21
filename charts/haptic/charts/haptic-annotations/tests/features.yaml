@@ -124,10 +124,10 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: map:redirect-loc-301.map
-        pattern: "old\\.example\\.com https://new\\.example\\.com"
+        pattern: "old\\.example\\.com https%3a%2f%2fnew\\.example\\.com"
       - type: contains
         target: map:redirect-loc-302.map
-        pattern: "promo\\.example\\.com https://sale\\.example\\.com"
+        pattern: "promo\\.example\\.com https%3a%2f%2fsale\\.example\\.com"
 
   test-haptic-hsts:
     description: haproxy-haptic.org/hsts registers the full Strict-Transport-Security value in hsts.map
@@ -152,7 +152,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: map:hsts.map
-        pattern: "hsts.example.com max-age=31536000; includeSubDomains; preload"
+        pattern: "hsts.example.com max-age%3d31536000%3b%20includeSubDomains%3b%20preload"
 
   test-haptic-default-backend:
     description: haproxy-haptic.org/default-backend emits a backend pool plus a per-host catch-all path entry routing unmatched requests to that Service

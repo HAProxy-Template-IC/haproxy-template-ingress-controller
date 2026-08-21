@@ -30,6 +30,9 @@ test-gateway-infrastructure-propagation-annotations-only
 test-gateway-infrastructure-propagation-labels-only
 test-gateway-infrastructure-propagation-marker-name-fits-rfc1123-label
 test-gateway-infrastructure-propagation-with-static-addresses
+test-gateway-mirror-mixed-percent-fallback
+test-gateway-timeout-map
+test-gateway-timeout-rejected
 test-httproute-cors-filter
 test-httproute-cors-no-hostname
 test-httproute-cors-wildcard-methods-echo

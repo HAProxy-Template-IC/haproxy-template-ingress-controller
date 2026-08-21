@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -518,7 +519,7 @@ func TestRunner_FindGeneralFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := runner.findGeneralFile(tt.fileName, tt.files)
+			got, _ := runner.findGeneralFile(tt.fileName, tt.files)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -573,7 +574,7 @@ func TestRunner_FindCertificate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := runner.findCertificate(tt.certName, tt.files)
+			got, _ := runner.findCertificate(tt.certName, tt.files)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -618,7 +619,7 @@ func TestRunner_FindCRTListFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := runner.findCRTListFile(tt.crtListName, tt.files)
+			got, _ := runner.findCRTListFile(tt.crtListName, tt.files)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -694,11 +695,6 @@ func TestRunner_ResolveTarget(t *testing.T) {
 			want:   "kind: Service\nmetadata:\n  name: haptic-haproxy\n",
 		},
 		{
-			name:   "k8s target unknown name returns empty",
-			target: "k8s:does-not-exist",
-			want:   "",
-		},
-		{
 			name:   "unknown target defaults to haproxy.cfg",
 			target: "unknown:something",
 			want:   haproxyConfig,
@@ -707,10 +703,53 @@ func TestRunner_ResolveTarget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := runner.resolveTarget(tt.target, haproxyConfig, auxFiles, k8sResources, nil, "", renderError)
+			got, err := runner.resolveTarget(tt.target, haproxyConfig, auxFiles, k8sResources, nil, "", renderError)
+			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// A prefixed target the render did not produce must be an error, never a silent
+// fallback to haproxy.cfg: an absence assertion would otherwise be re-evaluated
+// against a file that never held the string and pass with its property gone.
+func TestRunner_ResolveTarget_MissingArtefactIsAnError(t *testing.T) {
+	runner := createTestRunner(t)
+
+	haproxyConfig := "global\n  maxconn 1000"
+	auxFiles := &dataplane.AuxiliaryFiles{
+		MapFiles: []auxiliaryfiles.MapFile{{Path: "backends.map", Content: "example.com backend1"}},
+	}
+
+	for _, target := range []string{
+		"map:does-not-exist.map",
+		"file:does-not-exist.http",
+		"cert:does-not-exist.pem",
+		"crt-list:does-not-exist.txt",
+		"k8s:does-not-exist",
+		"status:default/nope:rendered",
+	} {
+		t.Run(target, func(t *testing.T) {
+			got, err := runner.resolveTarget(target, haproxyConfig, auxFiles, map[string]string{}, map[string]string{}, "", "")
+			require.Error(t, err)
+			assert.Empty(t, got)
+			assert.Contains(t, err.Error(), target)
+		})
+	}
+}
+
+// A registered map with no entries is found; only its content is empty. The
+// previous "content != \"\"" test resolved it to haproxy.cfg instead.
+func TestRunner_ResolveTarget_EmptyRegisteredMapIsFound(t *testing.T) {
+	runner := createTestRunner(t)
+
+	auxFiles := &dataplane.AuxiliaryFiles{
+		MapFiles: []auxiliaryfiles.MapFile{{Path: "empty.map", Content: ""}},
+	}
+
+	got, err := runner.resolveTarget("map:empty.map", "global", auxFiles, nil, nil, "", "")
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 
 func TestRunner_ResolveAuxiliaryFile_NilFiles(t *testing.T) {
@@ -721,8 +760,9 @@ func TestRunner_ResolveAuxiliaryFile_NilFiles(t *testing.T) {
 
 	for _, target := range targets {
 		t.Run(target, func(t *testing.T) {
-			got := runner.resolveAuxiliaryFile(target, nil)
+			got, found := runner.resolveAuxiliaryFile(target, nil)
 			assert.Equal(t, "", got)
+			assert.False(t, found)
 		})
 	}
 }

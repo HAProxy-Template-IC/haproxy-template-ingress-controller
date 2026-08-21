@@ -232,10 +232,10 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: map:hsts.map
-        pattern: "hsts.example.com max-age=31536000; includeSubDomains; preload"
+        pattern: "hsts.example.com max-age%3d31536000%3b%20includeSubDomains%3b%20preload"
       - type: contains
         target: haproxy.cfg
-        pattern: "http-response set-header Strict-Transport-Security %\\[var\\(txn.host\\),map\\([^)]*hsts\\.map\\)\\] if \\{ ssl_fc \\}"
+        pattern: "http-response set-header Strict-Transport-Security %\\[var\\(txn.host\\),map\\([^)]*hsts\\.map\\),url_dec\\(1\\)\\] if \\{ ssl_fc \\}"
 
   test-nginx-ingress-backend-protocol-https:
     description: Nginx Ingress backend-protocol HTTPS adds ssl to server options
@@ -1110,10 +1110,10 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:app-root.map, pattern: "approot.example.com /dashboard"}
+      - {type: contains, target: map:app-root.map, pattern: "approot.example.com %2fdashboard"}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request redirect location %\\[var\\(txn.host\\),map\\([^)]*app-root\\.map\\)\\] code 302 if \\{ path / \\}"
+        pattern: "http-request redirect location %\\[var\\(txn.host\\),map\\([^)]*app-root\\.map\\),url_dec\\(1\\)\\] code 302 if \\{ path / \\}"
 
   test-nginx-ingress-proxy-body-size:
     description: Nginx Ingress proxy-body-size limits request body via body-size.map (relocated from the backend)

@@ -1165,7 +1165,7 @@ func TestFindMapFile(t *testing.T) {
 			},
 		}
 
-		result := runner.findMapFile("hosts.map", auxFiles)
+		result, _ := runner.findMapFile("hosts.map", auxFiles)
 		assert.Equal(t, "host1 backend1", result)
 	})
 
@@ -1176,12 +1176,12 @@ func TestFindMapFile(t *testing.T) {
 			},
 		}
 
-		result := runner.findMapFile("missing.map", auxFiles)
+		result, _ := runner.findMapFile("missing.map", auxFiles)
 		assert.Equal(t, "", result)
 	})
 
 	t.Run("returns empty for nil auxiliary files", func(t *testing.T) {
-		result := runner.findMapFile("hosts.map", nil)
+		result, _ := runner.findMapFile("hosts.map", nil)
 		assert.Equal(t, "", result)
 	})
 
@@ -1190,7 +1190,7 @@ func TestFindMapFile(t *testing.T) {
 			MapFiles: []auxiliaryfiles.MapFile{},
 		}
 
-		result := runner.findMapFile("hosts.map", auxFiles)
+		result, _ := runner.findMapFile("hosts.map", auxFiles)
 		assert.Equal(t, "", result)
 	})
 }

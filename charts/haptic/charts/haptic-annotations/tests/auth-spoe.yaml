@@ -180,7 +180,7 @@ validationTests:
         pattern: "ca-file [^ ]*general/default-client-ca-client-ca\\.pem verify required\\] api\\.example\\.com"
       - type: contains
         target: map:mtls-error.map
-        pattern: "api.example.com https://login.example.com/cert-required"
+        pattern: "api.example.com https%3a%2f%2flogin.example.com%2fcert-required"
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-SSL-Client-Cert %\\[ssl_c_der,base64\\] if \\{ ssl_fc_has_crt \\}"

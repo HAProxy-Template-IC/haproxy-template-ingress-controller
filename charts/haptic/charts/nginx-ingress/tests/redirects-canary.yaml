@@ -29,7 +29,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: map:redirect-loc-301.map
-        pattern: "permredir.example.com https://new.example.com"
+        pattern: "permredir.example.com https%3a%2f%2fnew.example.com"
 
   test-nginx-ingress-temporal-redirect:
     description: Nginx Ingress temporal-redirect generates 302 redirect
@@ -51,7 +51,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: map:redirect-loc-302.map
-        pattern: "tempredir.example.com https://temp.example.com"
+        pattern: "tempredir.example.com https%3a%2f%2ftemp.example.com"
 
   test-nginx-ingress-permanent-redirect-code:
     description: permanent-redirect-code overrides the default 301 redirect status
@@ -85,8 +85,10 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: map:redirect-loc-308.map
-        pattern: "permcode.example.com https://new.example.com"
-      - {type: not_contains, target: haproxy.cfg, pattern: "code 301"}
+        pattern: "permcode.example.com https%3a%2f%2fnew.example.com"
+      # Scoped to this feature's own map: the Gateway redirect block emits a
+      # static `code 301` line on every install, 308 or no 308.
+      - {type: not_contains, target: haproxy.cfg, pattern: "redirect-loc-301\\.map"}
 
   test-nginx-ingress-temporal-redirect-code:
     description: temporal-redirect-code overrides the default 302 redirect status
@@ -120,7 +122,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: map:redirect-loc-307.map
-        pattern: "tempcode.example.com https://temp.example.com"
+        pattern: "tempcode.example.com https%3a%2f%2ftemp.example.com"
 
   test-nginx-ingress-redirect-loc-map-sorted:
     description: redirect-loc map lines are sorted by host (deterministic output, no reload churn)
@@ -426,7 +428,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: map:redirect-loc-302.map
-        pattern: "redir.example.com https://flake-repro.example.com/temp"
+        pattern: "redir.example.com https%3a%2f%2fflake-repro.example.com%2ftemp"
 
   test-nginx-ingress-upstream-hash-header:
     description: Nginx Ingress upstream-hash-by translates $http_ variables

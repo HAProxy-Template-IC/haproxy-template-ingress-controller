@@ -1,0 +1,448 @@
+# The map-driven half of the Gateway filters: what makes adding a route a map
+# update instead of a config change. 40-filters.yaml covers each filter's
+# behaviour; this file covers the property that pays for the design — the static
+# line count does not grow with the number of routes — plus the render-time
+# validators that replace the `haproxy -c` parse a value loses by moving into a
+# map, and the two shapes a single map value cannot describe.
+validationTests:
+  test-gateway-route-maps-always-present:
+    requires: [httproutes]
+    description: A route with no filters at all still gets every filter map and every static line that reads one. Creating a map on the first route that needs it, and deleting it with the last, are both changes to haproxy.cfg — the reload these maps exist to avoid.
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: plain, namespace: default}
+          spec:
+            hostnames: [plain.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'URL-encoded value'}
+      - {type: contains, target: map:gw-reshdr.map, pattern: 'URL-encoded value'}
+      - {type: contains, target: map:gw-redirect.map, pattern: 'code\|scheme\|host'}
+      - {type: contains, target: map:gw-urlrewrite.map, pattern: 'host\|pathmode'}
+      - {type: contains, target: map:gw-timeout.map, pattern: 'timeout in ms'}
+      - {type: contains, target: map:gw-mirror.map, pattern: 'timeout_ms'}
+      - {type: contains, target: map:gw-mirror-pct.map, pattern: 'sampling percentage'}
+      - {type: contains, target: map:route-winner.map, pattern: 'Candidate group'}
+      - {type: contains, target: map:route-backend.map, pattern: 'path_match qualifier'}
+
+      # The blocks that read them are static too, so the first redirect, rewrite,
+      # mirror or timeout in the cluster is a map entry and nothing else.
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_redir\) var\(txn\.gw_rule_id\),map\([^)]*gw-redirect\.map\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_rw\) var\(txn\.gw_rule_id\),map\([^)]*gw-urlrewrite\.map\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_mirror_targets\) var\(txn\.gw_rule_id\),map\([^)]*gw-mirror\.map\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-timeout server var\(txn\.gw_rule_id\),map_str_int\([^)]*gw-timeout\.map\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'redirect location "%\[var\(txn\.gw_redir_scheme\)\]'}
+
+      # A header modifier is the one filter whose line set depends on the header
+      # names in use, so an unused name has no line — see
+      # test-gateway-header-name-shared-across-routes for what a second route costs.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'concat\(\|set\|'}
+
+  test-gateway-header-name-shared-across-routes:
+    requires: [httproutes]
+    description: Two routes setting the same header name share one static line, spelled the lexicographically smallest of the two spellings — which here is the SECOND route's, so the choice is a real rule and not route order.
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: hdr-a, namespace: default}
+          spec:
+            hostnames: [a.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /a}}]
+                filters:
+                  - type: RequestHeaderModifier
+                    requestHeaderModifier: {set: [{name: x-shared, value: from-a}]}
+                backendRefs: [{name: echo, port: 80}]
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: hdr-b, namespace: default}
+          spec:
+            hostnames: [b.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /b}}]
+                filters:
+                  - type: RequestHeaderModifier
+                    requestHeaderModifier: {set: [{name: X-Shared, value: from-b}]}
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_hdr-a_0\|set\|x-shared from-a'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_hdr-b_0\|set\|x-shared from-b'}
+      # One line per rendered frontend — not one line per route per frontend.
+      - {type: match_count, target: haproxy.cfg, pattern: 'set-header X-Shared %\[var\(txn\.gw_rule_id\),concat\(\|set\|x-shared\)', expected: "2"}
+      # Negative control: the lowercase spelling loses even though the route
+      # spelling it comes first, so the line's spelling is a rule, not an order.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-header x-shared %'}
+
+  test-gateway-timeout-map:
+    requires: [httproutes]
+    requiresFields: [httproutes.spec.rules.timeouts]
+    description: A rule timeout becomes milliseconds in gw-timeout.map, read by one set-timeout line per backend. `request` wins over `backendRequest` — HAProxy has one server timeout and the wider bound is the one the client sees.
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: to-route, namespace: default}
+          spec:
+            hostnames: [to.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /slow}}]
+                timeouts: {request: 1m30s, backendRequest: 5s}
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:gw-timeout.map, pattern: 'default_to-route_0 90000'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-timeout server var\(txn\.gw_rule_id\),map_str_int\([^)]*gw-timeout\.map\) if \{ var\(txn\.gw_rule_id\),map_str_int\([^)]*gw-timeout\.map\) -m found \}'}
+      # One line per backend, and its value never appears in the config.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-timeout server 1m30s'}
+
+  test-gateway-redirect-multi-prefix-fallback:
+    requires: [httproutes]
+    description: A rule matching two path prefixes has two prefix lengths and one map value carries one, so the rule sets the length from the request instead — shortest first, so the longest prefix wins as Gateway API precedence requires.
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: multi-pfx, namespace: default}
+          spec:
+            hostnames: [mp.example.com]
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /a}
+                  - path: {type: PathPrefix, value: /abc}
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: new.example.com
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: /z}
+                      statusCode: 302
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      # "M" defers the length to the per-match lines below.
+      - {type: contains, target: map:gw-redirect.map, pattern: 'default_multi-pfx_0 302\|https\|new\.example\.com\|\|P\|M\|%2fz'}
+      - {type: match_count, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\(2\) if \{ var\(txn\.gw_rule_id\) -m str "default_multi-pfx_0" \}', expected: "2"}
+      - {type: match_count, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\(4\) if \{ var\(txn\.gw_rule_id\) -m str "default_multi-pfx_0" \}', expected: "2"}
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - 'set-var\(txn\.gw_pfxlen\) int\(2\) if \{ var\(txn\.gw_rule_id\) -m str "default_multi-pfx_0" \}'
+          - 'set-var\(txn\.gw_pfxlen\) int\(4\) if \{ var\(txn\.gw_rule_id\) -m str "default_multi-pfx_0" \}'
+
+  test-gateway-redirect-single-prefix-has-no-fallback:
+    requires: [httproutes]
+    description: Negative control for the multi-prefix fallback — one prefix per rule means the length is a map field and no per-match line is emitted.
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: one-pfx, namespace: default}
+          spec:
+            hostnames: [op.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /abc}}]
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: new.example.com
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: /z}
+                      statusCode: 302
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:gw-redirect.map, pattern: 'default_one-pfx_0 302\|https\|new\.example\.com\|\|P\|4\|%2fz'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\('}
+
+  test-gateway-mirror-mixed-percent-fallback:
+    requires: [httproutes]
+    requiresFields: [httproutes.spec.rules.filters.requestMirror.percent]
+    description: Two mirrors on one rule sampling at different rates cannot share one percentage, so that rule keeps a per-target line with its own rand() draw and contributes no gw-mirror.map entry.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: mix-a, namespace: default}
+          spec: {ports: [{port: 8081}]}
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: mix-b, namespace: default}
+          spec: {ports: [{port: 8082}]}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: mix-route, namespace: default}
+          spec:
+            hostnames: [mix.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /mix}}]
+                filters:
+                  - type: RequestMirror
+                    requestMirror:
+                      backendRef: {name: mix-a, namespace: default, port: 8081}
+                      percent: 10
+                  - type: RequestMirror
+                    requestMirror:
+                      backendRef: {name: mix-b, namespace: default, port: 8082}
+                      percent: 90
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_mirror_targets\) str\(http\|mix-a\.default\.svc\.cluster\.local:8081\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.gw_rule_id\) -m str "default_mix-route_0" \} \{ rand\(100\) -m int lt 10 \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_mirror_targets\) str\(http\|mix-b\.default\.svc\.cluster\.local:8082\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.gw_rule_id\) -m str "default_mix-route_0" \} \{ rand\(100\) -m int lt 90 \}'}
+      - {type: not_contains, target: map:gw-mirror.map, pattern: 'default_mix-route_0'}
+      # Buffering still has to fire for the fallback rule, so every mirroring
+      # rule lands in the percentage map even when its targets do not.
+      - {type: contains, target: map:gw-mirror-pct.map, pattern: 'default_mix-route_0 90'}
+
+  test-gateway-redirect-status-code-rejected:
+    requires: [httproutes]
+    description: RequestRedirect carries one of five codes (301, 302, 303, 307, 308), each with its own static line. The code is a map value now, so nothing downstream would reject a 418 — this validator does, at render time.
+    extraContext: {renderMode: admission}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: bad-code, namespace: default}
+          spec:
+            hostnames: [bc.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect: {hostname: new.example.com, statusCode: 418}
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "statusCode is 418"}
+
+  test-gateway-redirect-hostname-rejected:
+    requires: [httproutes]
+    description: A redirect hostname that is not a DNS name is rejected at render time; it would otherwise reach the Location header through the map.
+    extraContext: {renderMode: admission}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: bad-host, namespace: default}
+          spec:
+            hostnames: [bh.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect: {hostname: "new.example.com/evil", statusCode: 302}
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "is not a DNS name"}
+
+  test-gateway-header-name-rejected:
+    requires: [httproutes]
+    description: A header name outside the HTTP token charset is rejected — it would otherwise become part of a map key, where '|' is the delimiter.
+    extraContext: {renderMode: admission}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: bad-name, namespace: default}
+          spec:
+            hostnames: [bn.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: RequestHeaderModifier
+                    requestHeaderModifier: {set: [{name: "X-Bad|Name", value: v}]}
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "is not an HTTP token"}
+
+  test-gateway-timeout-rejected:
+    requires: [httproutes]
+    requiresFields: [httproutes.spec.rules.timeouts]
+    description: A rule timeout that is not a duration is rejected at render time; the map value feeds set-timeout, which cannot report a parse error of its own.
+    extraContext: {renderMode: admission}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: bad-timeout, namespace: default}
+          spec:
+            hostnames: [bt.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                timeouts: {request: "soon"}
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "which is not a duration"}
+
+  test-gateway-multi-prefix-without-rewrite-has-no-fallback:
+    requires: [httproutes]
+    description: A rule matching two path prefixes with no path modifier needs no runtime prefix length. Emitting one anyway would put a per-route line back into the frontend, so creating or deleting such a route would reload HAProxy — and, with a quote in the path, would take the whole fleet's configuration down with it.
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: plain-multi, namespace: default}
+          spec:
+            hostnames: [pm.example.com]
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /a}
+                  - path: {type: PathPrefix, value: '/bb"x'}
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\('}
+
+  test-gateway-multi-prefix-path-quote-rejected:
+    requires: [httproutes]
+    description: A double quote in a path match of a multi-prefix ReplacePrefixMatch rule is refused. The prefix goes into a double-quoted ACL, where sanitize_regex escapes the regex metacharacters but not a quote, and one tenant route would otherwise make the whole fleet's config unloadable.
+    extraContext: {renderMode: admission}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: pq-route, namespace: default}
+          spec:
+            hostnames: [pq.example.com]
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /a}
+                  - path: {type: PathPrefix, value: '/bb"x'}
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: new.example.com
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: /z}
+                      statusCode: 302
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "cannot be written to the prefix-length rule"}
+
+  test-gateway-multi-prefix-path-quote-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: The same quote on the reconcile path leaves the fleet deployable — the offending match keeps the original path while the clean prefix still gets its length.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: pq-route, namespace: default}
+          spec:
+            hostnames: [pq.example.com]
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /aa}
+                  - path: {type: PathPrefix, value: '/bb"PFXPWNED'}
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: new.example.com
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: /z}
+                      statusCode: 302
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\(3\) if \{ var\(txn\.gw_rule_id\) -m str "default_pq-route_0" \}'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PFXPWNED"}
+
+  test-gateway-multi-prefix-path-control-char-reconcile-warns-and-skips:
+    requires: [httproutes]
+    description: A control character in a path match of a multi-prefix rule is skipped rather than splitting the prefix-length line into a fabricated directive.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: pc-route, namespace: default}
+          spec:
+            hostnames: [pc.example.com]
+            rules:
+              - matches:
+                  - path: {type: PathPrefix, value: /aa}
+                  - path: {type: PathPrefix, value: "/bb\nhttp-request set-header X-Pwned 1"}
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: new.example.com
+                      path: {type: ReplacePrefixMatch, replacePrefixMatch: /z}
+                      statusCode: 302
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: "X-Pwned"}
+
+  test-gateway-redirect-control-char-rejected:
+    requires: [httproutes]
+    description: A control character in a RequestRedirect path would survive url_dec(1) into the runtime Location header, so it is refused before it reaches the map.
+    extraContext: {renderMode: admission}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: rc-route, namespace: default}
+          spec:
+            hostnames: [rc.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      hostname: new.example.com
+                      path: {type: ReplaceFullPath, replaceFullPath: "/new\nSet-Cookie: pwned=1"}
+                      statusCode: 302
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would break the redirect target"}
+
+  test-gateway-header-name-quote-rejected:
+    requires: [httproutes]
+    description: A single quote is a legal HTTP token character but HAProxy's tokenizer pairs quotes, so a header name carrying one would leave the emitted directive unbalanced and the whole config unloadable.
+    extraContext: {renderMode: admission}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: quote-name, namespace: default}
+          spec:
+            hostnames: [qn.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: RequestHeaderModifier
+                    requestHeaderModifier: {set: [{name: "X-Bad'Name", value: v}]}
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "is not an HTTP token"}
+
+  test-gateway-header-modifier-marks-filters-applied:
+    requires: [httproutes]
+    description: With routing-header diagnostics on, a header modifier reports itself through txn.filters_applied like every other filter — the marker is what tells an operator the route matched and the filter ran.
+    extraContext:
+      diagnostics: {routingHeaders: {enabled: true}}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: fa-route, namespace: default}
+          spec:
+            hostnames: [fa.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /}}]
+                filters:
+                  - type: RequestHeaderModifier
+                    requestHeaderModifier: {set: [{name: X-Marked, value: v}]}
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_fa-route_0\|any 1'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.filters_applied\) str\(RequestHeaderModifier\) if \{ var\(txn\.gw_rule_id\),concat\(\|any\),map\([^)]*gw-reqhdr\.map\) -m found \}'}

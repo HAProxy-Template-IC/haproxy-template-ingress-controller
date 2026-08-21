@@ -156,9 +156,25 @@ Content updates to an **existing, already-referenced** map or certificate are ap
 | **Map file content** — entries added, changed, or removed in a map already loaded by the running config (for example host/path routing maps, a weight or body-size policy map) | per-entry `set map` / `add map` / `del map` delta | v3.0+ |
 | **TLS certificate content** — a renewed certificate that keeps the same filename (for example a cert-manager rotation) | `set ssl cert` + `commit ssl cert` | v3.2+ |
 
+#### Gateway API per-route logic
+
+Most of what an HTTPRoute or GRPCRoute rule configures is a map entry rather than a configuration line, so changing one is a map content update — the row above:
+
+| Route feature | Where the value lives | Reloads when |
+|---------------|-----------------------|--------------|
+| `RequestHeaderModifier`, `ResponseHeaderModifier` (rule- and backendRef-level) | `gw-reqhdr.map`, `gw-reshdr.map` | the first route in the cluster names a given header |
+| `RequestRedirect` | `gw-redirect.map` | a rule matching several path prefixes with `ReplacePrefixMatch` |
+| `URLRewrite` | `gw-urlrewrite.map` | a rule matching several path prefixes with `ReplacePrefixMatch` |
+| `spec.rules[].timeouts` (Gateway Enhancement Proposal 1742) | `gw-timeout.map` | never |
+| `RequestMirror` | `gw-mirror.map`, `gw-mirror-pct.map` | a rule's mirrors sample at different percentages |
+| Host and path routing, including `RegularExpression` paths | `host.map`, `path-*.map`, `route-winner.map`, `route-backend.map` | never |
+
+What stays structural, because HAProxy can't source it at request time: advanced matchers (method, header, query parameter, gRPC method), the `CORS` filter, `RegularExpression` path *rewrites*, and the backend section a new route's Service needs.
+
 The new content is also written to disk (so a later, unrelated reload re-reads it), but the reload-free property comes from the Runtime API call, not the disk write. Caveats:
 
-- The map or certificate must already exist **and be referenced by the running config** so HAProxy has it loaded. **Creating or deleting** a map/cert file, or changing one the config doesn't reference, takes the reload path.
+- The map or certificate must already exist **and be referenced by the running config** so HAProxy has it loaded. **Creating or deleting** a map/cert file, or changing one the config doesn't reference, takes the reload path. This is why the bundled libraries register their maps unconditionally, empty ones included.
+- A map read with `map_reg`, `map_sub`, `map_dom`, `map_dir` or `map_end` is evaluated as a first-match-wins list, so an entry has to land in its intended position: a change beyond a pure append is applied as one whole-file runtime replace rather than a per-entry delta — still no reload, just a larger runtime payload. Declare `ordered: false` on a map read with `map_str`, `map_beg`, `map_ip` or `map_str_int` (see [`maps`](./crd-reference.md#maps)) and every change stays a per-entry delta.
 - Other auxiliary files — general/error files, CA files, crt-lists — always reload when their content changes.
 - If a runtime apply fails for any reason, the controller falls back to a single reload, so the result always converges.
 

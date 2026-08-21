@@ -322,6 +322,16 @@ func (b *Builder) Build() *BuildResult {
 	// config they emit; RenderMain assembles the config from its tokens.
 	planRegistry := NewPlanRegistry(b.pathResolver)
 
+	// spec.maps[].ordered belongs to the plan, and the plan is built from this
+	// registry by every caller — the reconcile renderer and the validation-test
+	// runner alike. Declaring it here rather than at one call site is what keeps
+	// the two from disagreeing about which maps tolerate a runtime append.
+	for name, mapFile := range b.config.Maps {
+		if err := planRegistry.MapMeta(name, mapFile.Ordered == nil || *mapFile.Ordered); err != nil {
+			b.logger.Error("Failed to declare map entry order", "map", name, "error", err)
+		}
+	}
+
 	// Create status patch collector for template-driven status updates
 	statusPatchCollector := templating.NewStatusPatchCollector()
 

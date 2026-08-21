@@ -1804,7 +1804,7 @@ Scriggo supports both function call syntax and pipe syntax:
 | `md5(s)` | MD5 hash | `md5("test")` |
 | `sha1(s)` | SHA1 hash | `sha1("test")` |
 | `sha256(s)` | SHA256 hash | `sha256("test")` |
-| `queryEscape(s)` | URL encode | `queryEscape("a b")` → `"a+b"` |
+| `queryEscape(s)` | Percent-encode every byte outside `[0-9A-Za-z-._]`, lowercase hex | `queryEscape("a b")` → `"a%20b"` |
 | `htmlEscape(s)` | Escape HTML | `htmlEscape("<b>")` → `"&lt;b&gt;"` |
 | `marshalJSON(v)` | Convert to JSON | `marshalJSON(obj)` |
 | `unmarshalJSON(s)` | Parse JSON | `unmarshalJSON(jsonStr)` |

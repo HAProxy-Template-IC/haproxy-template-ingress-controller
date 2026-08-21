@@ -19,6 +19,8 @@ validationTests:
   test-haptic-request-validation-configmap:
     _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
     description: request-schema-configmap → schema TOML block, packed map, body-size gate, SPOE dispatch
+    extraContext:
+      requestBodyInspection: {haproxyBuffer: {sizeBytes: 65536}}
     fixtures:
       configmaps:
         - apiVersion: v1
@@ -77,7 +79,10 @@ validationTests:
       - type: contains
         target: file:spoe.conf
         pattern: "schema_id=var\\(txn\\.req_schema_id\\).*body=req\\.body.*content_type=req\\.hdr\\(Content-Type\\)"
-      - {type: contains, target: haproxy.cfg, pattern: "tune.bufsize 16384"}
+      # A size only body inspection asks for, so the assertion still binds if the
+      # buffer stops being sized for it.
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^  tune\\.bufsize 65536$"}
+      - {type: match_count, target: haproxy.cfg, pattern: "(?m)^  tune\\.bufsize ", expected: "1"}
       - type: contains
         target: haproxy.cfg
         pattern: "http-request wait-for-body time 100ms if \\{ var\\(txn\\.req_schema_id\\) -m found \\} \\{ method POST PUT PATCH \\}"

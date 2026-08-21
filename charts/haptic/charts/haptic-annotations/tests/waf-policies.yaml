@@ -161,7 +161,7 @@ validationTests:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
     description: policy authors opt into bounded complete body inspection and optional JSON media-type enforcement
     extraContext:
-      requestBodyInspection: {haproxyBuffer: {sizeBytes: 16384}}
+      requestBodyInspection: {haproxyBuffer: {sizeBytes: 65536}}
       waf:
         ingressPermissions: {allowPolicySelection: true}
         policies:
@@ -207,7 +207,10 @@ validationTests:
       - type: haproxy_valid
       - { type: contains, target: "map:coraza-body.map", pattern: "default/web buffered any 4096" }
       - { type: contains, target: "map:coraza-body.map", pattern: "default/api buffered json 2048" }
-      - { type: contains, target: haproxy.cfg, pattern: "tune.bufsize 16384" }
+      # A size only body inspection asks for, so the assertion still binds if the
+      # buffer stops being sized for it.
+      - { type: contains, target: haproxy.cfg, pattern: "(?m)^  tune\\.bufsize 65536$" }
+      - { type: match_count, target: haproxy.cfg, pattern: "(?m)^  tune\\.bufsize ", expected: "1" }
       - { type: contains, target: "file:spoa-hub-config.toml", pattern: '(?s)\[plugins\.params\.applications\."policy:form-body-inspection"\].*request_body_limit = 4096.*request_body_in_memory_limit = 4096' }
       - { type: contains, target: "file:spoa-hub-config.toml", pattern: '(?s)\[plugins\.params\.applications\."policy:json-api-inspection"\].*request_body_limit = 2048.*request_body_in_memory_limit = 2048' }
       # Body-contract rejections skip detect (shadow) mode and never fire on a

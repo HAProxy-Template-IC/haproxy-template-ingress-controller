@@ -252,32 +252,6 @@ templateSnippets:
         return result
       }) %}
 
-  util-gateway-pod-port-for:
-    requires: [gateways]
-    template: |
-      {# Emit the allocated container port for a given (Gateway, listener).
-          Renders the allocator first so callers don't need to. Falls back
-          to the listener's own port when no allocation exists (the
-          fallback is intentional — chart paths that bypass the allocator
-          for TLS-Passthrough / chart-static binds keep working).
-
-          Usage:
-            {%- import "util-gateway-pod-port-for" for PodPortFor %}
-            bind *:{{ PodPortFor(gwNs, gwName, listenerName, listenerPort) }}
-      #}
-      {%- macro PodPortFor(gwNs string, gwName string, listenerName string, listenerPort int) %}
-        {{ render "util-gateway-pod-port-allocator" -}}
-        {%%
-          var key = gwNs + "/" + gwName + ":" + listenerName + ":" + tostring(listenerPort)
-          var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any)
-          var port = listenerPort
-          if val, ok := allocations[key]; ok {
-            port = toint(val)
-          }
-        %%}
-        {{- port -}}
-      {%- end macro -%}
-
   # Debug emission gated on extraContext.dumpPodPortAllocations.
   # Production deploys NEVER set the flag, so the body emits zero
   # bytes: only the snippet's `{%- if … %}` predicate runs, which is

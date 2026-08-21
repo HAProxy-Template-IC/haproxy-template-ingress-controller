@@ -2059,6 +2059,30 @@ templateSnippets:
       {# of a ';'-joined line and holds no session state (`wait`, payload commands). #}
       stats socket {{ pathResolver.GetBaseDir() }}/haproxy-worker.sock mode 600 level admin
 
+  # The single owner of tune.bufsize. Two snippets emitting it would leave the
+  # effective value to band order, and the controller reads this number to size
+  # its runtime CLI batches — an over-large batch lands ZERO entries on the
+  # worker, so reading a value HAProxy is not running is silent map divergence.
+  #
+  # Body inspection needs the buffer to hold the whole request body, so the
+  # larger of the two knobs wins. Below 3.4 tune.cli.max-payload-size does not
+  # exist (verified: 3.0-3.3 reject the keyword) and a CLI payload is capped by
+  # tune.bufsize instead.
+  global-settings-270-cli-limits:
+    template: |
+      {%- var bufsize = toint(extraContext | dig("tune", "bufsize") | fallback(16384)) %}
+      {%- var bodyBuffer = extraContext | dig("requestBodyInspection", "haproxyBuffer", "sizeBytes") %}
+      {%- if bodyBuffer != nil %}
+        {%- if toint(bodyBuffer) < 16384 || toint(bodyBuffer) > 2097152 %}
+          {%- fail("extraContext.requestBodyInspection.haproxyBuffer.sizeBytes must be between 16384 and 2097152 bytes.") %}
+        {%- end %}
+        {%- if toint(bodyBuffer) > bufsize %}{% bufsize = toint(bodyBuffer) %}{% end %}
+      {%- end %}
+      tune.bufsize {{ bufsize }}
+      {%- if semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.4") %}
+      tune.cli.max-payload-size {{ toint(extraContext | dig("tune", "cliMaxPayloadSize") | fallback(131072)) }}
+      {%- end %}
+
   global-settings-300-paths:
     template: |
       default-path origin {{ pathResolver.GetBaseDir() }}
@@ -2341,6 +2365,92 @@ templateSnippets:
         {{- HostKeyedMapFile(byCode[code], "location", "redirect-loc-" + code + ".map") -}}
       {%- end -%}
 
+  util-header-modifier-rules:
+    template: |-
+      {#
+        HeaderModifierRules — one static set/add/del line per distinct header NAME,
+        driven by a map keyed `<key>|<op>|<lowercased name>`. Adding a route that
+        modifies an already-used header name is then a map entry, not a config line.
+
+        `keyExpr` is the sample expression that yields the key prefix; the macro
+        appends `,concat(|<op>|<name>)` to it, so a caller needing more in the key
+        ends its own expression with a concat (the Gateway backendRef form does).
+        `setNames`/`addNames`/`delNames` carry the spelling to emit, already
+        deduplicated by lowercased name — the key always uses the lowercased form,
+        because HTTP header names are case-insensitive and two routes spelling one
+        header differently must share one line.
+
+        Map values are URL-encoded (`url_dec(1)` here): the runtime CLI splits a
+        value at the first space. Encoding also stops the value being re-read as a
+        log-format string, so a `%` in it can no longer fetch request state.
+
+        A name lands unquoted in the directive and inside two `concat()` arguments,
+        so anything outside the token charset below is dropped here rather than
+        emitted — `'` and `"` unbalance HAProxy's tokenizer and take the whole
+        configuration down with them. Callers own the operator-facing message:
+        reject the name against the same charset and report it, or the tenant
+        sees a header silently not applied.
+
+        Resource-agnostic (RULE #1) — it sees an expression and header names.
+      #}
+      {% macro HeaderModifierRules(direction string, keyExpr string, mapPath string, setNames []string, addNames []string, delNames []string) %}
+      {%- var directive = "http-request" %}
+      {%- if direction == "response" %}{% directive = "http-response" %}{% end %}
+      {%- var emittable = func(n string) bool { return regex_search(n, "^[A-Za-z0-9!$&*+.^_~-]+$") } %}
+      {%- for _, name := range setNames %}
+      {%- if !emittable(name) %}{% continue %}{% end %}
+      {%- var k = keyExpr + ",concat(|set|" + toLower(name) + ")" %}
+      {{ directive }} set-header {{ name }} %[{{ k }},map({{ mapPath }}),url_dec(1)] if { {{ k }},map({{ mapPath }}) -m found }
+      {%- end %}
+      {%- for _, name := range addNames %}
+      {%- if !emittable(name) %}{% continue %}{% end %}
+      {%- var k = keyExpr + ",concat(|add|" + toLower(name) + ")" %}
+      {{ directive }} add-header {{ name }} %[{{ k }},map({{ mapPath }}),url_dec(1)] if { {{ k }},map({{ mapPath }}) -m found }
+      {%- end %}
+      {%- for _, name := range delNames %}
+      {%- if !emittable(name) %}{% continue %}{% end %}
+      {{ directive }} del-header {{ name }} if { {{ keyExpr }},concat(|del|{{ toLower(name) }}),map({{ mapPath }}) -m found }
+      {%- end %}
+      {% end macro %}
+
+  util-register-map:
+    template: |-
+      {#
+        RegisterMap — writes a map file and declares whether its entry ORDER is
+        load-bearing. Returns the path the configuration references it by.
+
+        `ordered: false` (a map_str / map_beg / map_ip / map_str_int lookup) lets
+        the controller add a new entry over the runtime API; the default `true`
+        (map_reg / map_sub / map_dom / map_dir / map_end, evaluated as a
+        first-match-wins list) makes any insertion rewrite the file and reload.
+        Declare it wrong in the unordered direction and a middle insertion is
+        appended to the end, where it never matches.
+
+        `lines` is written verbatim, order included — the caller owns the sort,
+        because only it knows whether the order is cosmetic (register a map even
+        when it has no entries: creating a map file on the first entry and
+        deleting it with the last are both reloads).
+
+        Resource-agnostic (RULE #1) — it sees strings, never a kind.
+      #}
+      {% macro RegisterMap(mapName string, lines []string, opts map[string]any) string %}
+      {%%
+        var content = ""
+        if len(lines) > 0 {
+          content = join(lines, "\n") + "\n"
+        }
+        var path, mapErr = fileRegistry.Register("map", mapName, content)
+        if mapErr != nil {
+          fail("failed to register " + mapName + ": " + tostring(mapErr))
+        }
+        var metaErr = planRegistry.MapMeta(mapName, tostring(opts | dig("ordered") | fallback(true)) == "true")
+        if metaErr != nil {
+          fail("failed to declare " + mapName + " entry order: " + tostring(metaErr))
+        }
+        show path
+      %%}
+      {% end macro %}
+
   util-host-keyed-map:
     template: |-
       {#
@@ -2352,8 +2462,13 @@ templateSnippets:
         controller, costing a spurious sync/reload. Same rationale as
         features-160-ssl-redirect-map and the ssl.yaml crt-list.
 
+        Values are URL-encoded, so every reader decodes with `url_dec(1)`: the
+        runtime CLI splits a map value at the first space and truncates it at a
+        `;`, which silently corrupted every HSTS value carrying `includeSubDomains`.
+
         Resource-agnostic (RULE #1) — it sees a list of maps, never a kind.
       #}
+      {%- import "util-register-map" for RegisterMap -%}
       {% macro HostKeyedMapFile(entries []any, valueKey string, mapName string) %}
       {%%
         // sort_by is a separate call here so its error is checked; as a pipe
@@ -2367,12 +2482,9 @@ templateSnippets:
         }
         var lines []string
         for _, e := range rows {
-          lines = append(lines, tostring(e | dig("host")) + " " + tostring(e | dig(valueKey)))
+          lines = append(lines, tostring(e | dig("host")) + " " + queryEscape(tostring(e | dig(valueKey))))
         }
-        var _, mapErr = fileRegistry.Register("map", mapName, join(lines, "\n") + "\n")
-        if mapErr != nil {
-          fail("failed to register " + mapName + ": " + tostring(mapErr))
-        }
+        var _ = RegisterMap(mapName, lines, map[string]any{"ordered": false})
       %%}
       {% end macro %}
 
@@ -2446,7 +2558,7 @@ templateSnippets:
       {%- for _, code := range keys(codes) %}
       {%- var m, _ = pathResolver.GetPath("redirect-loc-" + code + ".map", "map") %}
       # base/redirect-location (code {{ code }})
-      http-request redirect location %[var(txn.host),map({{ m }})] code {{ code }} if { var(txn.host),map({{ m }}) -m found }
+      http-request redirect location %[var(txn.host),map({{ m }}),url_dec(1)] code {{ code }} if { var(txn.host),map({{ m }}) -m found }
       {%- end %}
 
   frontend-filters-065-app-root:
@@ -2463,7 +2575,7 @@ templateSnippets:
       {%- if len(appRootHosts) > 0 %}
       {%- var m, _ = pathResolver.GetPath("app-root.map", "map") %}
       # base/app-root
-      http-request redirect location %[var(txn.host),map({{ m }})] code 302 if { path / } { var(txn.host),map({{ m }}) -m found }
+      http-request redirect location %[var(txn.host),map({{ m }}),url_dec(1)] code 302 if { path / } { var(txn.host),map({{ m }}) -m found }
       {%- end %}
 
   frontend-filters-075-mtls-error:
@@ -2480,7 +2592,7 @@ templateSnippets:
       {%- if len(mtlsErrorHosts) > 0 %}
       {%- var m, _ = pathResolver.GetPath("mtls-error.map", "map") %}
       # base/mtls-error
-      http-request redirect location %[var(txn.host),map({{ m }})] code 302 if { ssl_c_verify gt 0 } { var(txn.host),map({{ m }}) -m found }
+      http-request redirect location %[var(txn.host),map({{ m }}),url_dec(1)] code 302 if { ssl_c_verify gt 0 } { var(txn.host),map({{ m }}) -m found }
       {%- end %}
 
   frontend-filters-080-hsts:
@@ -2512,7 +2624,7 @@ templateSnippets:
       {%- if len(hstsHosts) > 0 %}
       {%- var m, _ = pathResolver.GetPath("hsts.map", "map") %}
       # base/hsts (per-Ingress values; override the global default above)
-      http-response set-header Strict-Transport-Security %[var(txn.host),map({{ m }})] if { ssl_fc } { var(txn.host),map({{ m }}) -m found }
+      http-response set-header Strict-Transport-Security %[var(txn.host),map({{ m }}),url_dec(1)] if { ssl_fc } { var(txn.host),map({{ m }}) -m found }
       {%- end %}
 
   # Status frontend directives — override or extend via status-extra-* snippets.
@@ -2732,6 +2844,7 @@ templateSnippets:
 
 maps:
   host.map:
+    ordered: false
     template: |
       # Host to normalized host mapping (strips port, wildcards)
       {{ render_glob "map-host-*" -}}
@@ -2744,6 +2857,7 @@ maps:
       {{ render_glob "map-hostregex-*" -}}
 
   pod-names.map:
+    ordered: false
     template: |
       # Backend pod IP -> pod name, for the access log and the upstream span.
       # HAProxy has no pod concept, and the chosen SERVER is a pre-allocated slot
@@ -2756,16 +2870,19 @@ maps:
       {{ render_glob "map-pod-names-*" -}}
 
   path-exact.map:
+    ordered: false
     template: |
       # Exact path matches (use with map() function)
       {{ render_glob "map-path-exact-*" -}}
 
   path-prefix-exact.map:
+    ordered: false
     template: |
       # Prefix boundary matches without trailing slash
       {{ render_glob "map-pfxexact-*" -}}
 
   path-prefix.map:
+    ordered: false
     template: |
       # Prefix matches with trailing slash (use with map_beg())
       {{ render_glob "map-path-prefix-*" -}}
@@ -2776,11 +2893,13 @@ maps:
       {{ render_glob "map-path-regex-*" -}}
 
   weighted-multi-backend.map:
+    ordered: false
     template: |
       # Weighted routing: random_weight:route_key → backend_name
       {{ render_glob "map-weighted-backend-*" }}
 
   body-size.map:
+    ordered: false
     template: |
       # Per-backend request body-size limits: backend_name → max bytes. Populated by resource
       # libraries (map-body-size-*); enforced by frontend-filters-250-request-body-size.
@@ -2788,6 +2907,7 @@ maps:
       {{ render_glob "map-body-size-*" -}}
 
   request-buffering.map:
+    ordered: false
     template: |
       # Per-backend request-buffering override: backend_name → on|off. Populated by
       # resource libraries (map-request-buffering-*); applied by
@@ -2796,24 +2916,28 @@ maps:
       {{ render_glob "map-request-buffering-*" -}}
 
   reqhdr-host.map:
+    ordered: false
     template: |
       # Per-backend upstream Host override: backend_name → host. Populated by
       # map-reqhdr-host-*; applied by frontend-filters-260-request-set-host.
       {{ render_glob "map-reqhdr-host-*" -}}
 
   reqhdr-xfwd-prefix.map:
+    ordered: false
     template: |
       # Per-backend X-Forwarded-Prefix override: backend_name → prefix. Populated via
       # map-reqhdr-xfwd-prefix-*; applied by frontend-filters-261-request-set-xfwd-prefix.
       {{ render_glob "map-reqhdr-xfwd-prefix-*" -}}
 
   reqhdr-connection.map:
+    ordered: false
     template: |
       # Per-backend Connection header override: backend_name → value. Populated via
       # map-reqhdr-connection-*; applied by frontend-filters-262-request-set-connection.
       {{ render_glob "map-reqhdr-connection-*" -}}
 
   path-rewrite.map:
+    ordered: false
     template: |
       # Per-backend literal full-path rewrite: backend_name → replacement path (capture/regex
       # rewrites stay as http-request replace-path in the backend). Populated via
@@ -3646,6 +3770,36 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "shm-stats-file /dev/shm/haproxy-stats"}
       - {type: contains, target: haproxy.cfg, pattern: "shm-stats-file-max-objects 50000"}
+
+  test-global-cli-limits-declared:
+    description: The runtime CLI's batch ceiling is declared, not inferred — the controller reads these numbers to size its batches, and an over-large batch lands zero entries on the worker.
+    minHAProxyVersion: "3.4"
+    extraContext: {haproxyVersion: "3.4.0"}
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+tune\.bufsize 16384$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+tune\.cli\.max-payload-size 131072$'}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^\s+tune\.bufsize ', expected: "1"}
+
+  test-global-cli-payload-size-absent-below-3-4:
+    description: tune.cli.max-payload-size does not exist below HAProxy 3.4 — emitting it there makes every worker refuse to start, so the version gate is pinned from both sides.
+    extraContext: {haproxyVersion: "3.0.0"}
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+tune\.bufsize 16384$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'tune\.cli\.max-payload-size'}
+
+  test-global-body-inspection-buffer-wins:
+    description: Body inspection needs the buffer to hold a whole request body, so the larger knob wins — and one snippet emits the directive, or the effective value would depend on band order.
+    extraContext:
+      requestBodyInspection: {haproxyBuffer: {sizeBytes: 262144}}
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+tune\.bufsize 262144$'}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^\s+tune\.bufsize ', expected: "1"}
 
   test-global-worker-runtime-socket:
     description: The rendered global carries the agent's worker runtime socket

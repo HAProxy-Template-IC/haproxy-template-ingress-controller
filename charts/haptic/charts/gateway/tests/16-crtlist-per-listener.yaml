@@ -122,11 +122,6 @@ validationTests:
       - type: contains
         target: 'crt-list:gw-default-gw-bare-https-crtlist.txt'
         pattern: '^default_tls-cert\.pem \[ocsp-update on\]\n$'
-      # mTLS-blocked listener: file MUST NOT be emitted. The
-      # `contains` against an absent file resolves the target to the
-      # empty string, so any non-empty pattern's `not_contains`
-      # succeeds — we use the cert filename (which every emitted
-      # crt-list line would carry) as the probe.
-      - type: not_contains
+      # mTLS-blocked listener: the file MUST NOT be emitted at all.
+      - type: not_exists
         target: 'crt-list:gw-default-gw-broken-ca-https-crtlist.txt'
-        pattern: 'default_tls-cert\.pem'

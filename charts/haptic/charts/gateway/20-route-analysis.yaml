@@ -881,57 +881,7 @@ templateSnippets:
           "$.ruleIdx",
         }) %}
 
-        {%- var hasRequestHeader = false %}
-        {%- var hasResponseHeader = false %}
-        {%- var hasRedirect = false %}
-        {%- var hasUrlrewrite = false %}
-        {%- var hasMirror = false %}
-        {%%
-          for _, route := range finalAllRoutes {
-            var rm = route.(map[string]any)
-            var ruleIdx = toint(rm["ruleIdx"])
-            switch r := rm["route"].(type) {
-            case *resources.httproutes.T:
-              if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
-                for _, filter := range r.Spec.Rules[ruleIdx].Filters {
-                  switch filter.Type {
-                  case "RequestHeaderModifier":
-                    hasRequestHeader = true
-                  case "ResponseHeaderModifier":
-                    hasResponseHeader = true
-                  case "RequestRedirect":
-                    hasRedirect = true
-                  case "URLRewrite":
-                    hasUrlrewrite = true
-                  case "RequestMirror":
-                    hasMirror = true
-                  }
-                }
-              }
-            case *resources.grpcroutes.T:
-              if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
-                for _, filter := range r.Spec.Rules[ruleIdx].Filters {
-                  switch filter.Type {
-                  case "RequestHeaderModifier":
-                    hasRequestHeader = true
-                  case "ResponseHeaderModifier":
-                    hasResponseHeader = true
-                  case "RequestMirror":
-                    hasMirror = true
-                  }
-                  // GRPCRouteFilter has no RequestRedirect/URLRewrite.
-                }
-              }
-            }
-          }
-        %%}
-
         {%- result["pathGroups"] = pathGroups %}
         {%- result["sortedRoutes"] = sortedRoutes %}
         {%- result["allRoutes"] = finalAllRoutes %}
-        {%- result["hasRequestHeader_filter"] = hasRequestHeader %}
-        {%- result["hasResponseHeader_filter"] = hasResponseHeader %}
-        {%- result["hasRedirect_filter"] = hasRedirect %}
-        {%- result["hasUrlrewrite_filter"] = hasUrlrewrite %}
-        {%- result["hasMirror_filter"] = hasMirror %}
       {%- end macro %}

@@ -602,6 +602,19 @@ type MapFile struct {
 	// Post-processors run in the order specified and can transform the rendered output.
 	// +optional
 	PostProcessing []PostProcessorConfig `json:"postProcessing,omitempty"`
+
+	// Ordered declares whether the position of an entry inside this map file
+	// changes what HAProxy does with it.
+	//
+	// Keep it true for a map read with map_reg, map_sub, map_dom, map_dir or
+	// map_end: those are evaluated as a list, first match wins, so an entry
+	// inserted in the middle must land in the middle. Set it to false for a
+	// map_str, map_beg, map_ip or map_str_int lookup, where a key is found by
+	// its own value and a new entry can simply be appended at runtime instead
+	// of rewriting the file and reloading.
+	// +optional
+	// +kubebuilder:default=true
+	Ordered *bool `json:"ordered,omitempty"`
 }
 
 // GeneralFile defines a general file generated from a template.
@@ -867,9 +880,10 @@ type ValidationAssertion struct {
 	//   - jsonpath: Evaluates JSONPath expression against target
 	//   - match_count: Counts how many times pattern matches in target (regex)
 	//   - match_order: Validates that patterns appear in specified order
+	//   - not_exists: Checks that the render produced no artefact under the target
 	//   - deterministic: Verifies that rendering twice produces identical output
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=haproxy_valid;contains;not_contains;equals;jsonpath;match_count;match_order;deterministic
+	// +kubebuilder:validation:Enum=haproxy_valid;contains;not_contains;equals;jsonpath;match_count;match_order;not_exists;deterministic
 	Type string `json:"type"`
 
 	// Description explains what this assertion validates.
