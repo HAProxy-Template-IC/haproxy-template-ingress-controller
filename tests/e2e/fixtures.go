@@ -416,32 +416,43 @@ func buildIngress(namespace string, spec IngressSpec) *networkingv1.Ingress {
 
 // NewIngress applies the Ingress described by spec. The IngressClass name
 // is "haptic" (matches the helm chart's default).
+// isTransientAdmissionDenial reports whether err is one of the admission
+// denials the webhook itself declares transient (see NewIngress). Both share
+// the short budget: a reinitialization (a config push — lost leadership no
+// longer reinitializes) re-registers validators within seconds, and a
+// genuinely missing reference should fail fast.
+func isTransientAdmissionDenial(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "was not found") ||
+		strings.Contains(err.Error(), "retry after controller initialization")
+}
+
 func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespace string, spec IngressSpec) *networkingv1.Ingress {
 	t.Helper()
 
 	ing := buildIngress(namespace, spec)
-	// Retry an admission denial that says a referenced resource "was not found".
+	// Retry the two admission denials the webhook itself declares transient.
 	//
-	// The webhook renders the proposed Ingress against the CONTROLLER's stores, and
-	// those are eventually consistent: a fixture that just created a ConfigMap or
-	// Secret the Ingress references (PreSetup does exactly this for
-	// request-schema-configmap) can win the race to the API server and still lose
-	// it to the controller's watch. The render then fails "…was not found" and the
-	// webhook denies — a fixture race, not a product defect.
+	// "was not found": the webhook renders the proposed Ingress against the
+	// CONTROLLER's stores, and those are eventually consistent — a fixture that
+	// just created a ConfigMap or Secret the Ingress references can win the race
+	// to the API server and still lose it to the controller's watch.
 	//
-	// Scoped deliberately: only this message is retried, and only for a bounded
-	// window, so a genuinely missing reference still fails with the same error
+	// "retry after controller initialization": the replica that answered is
+	// reinitializing (a config push; lost leadership no longer reinitializes)
+	// and its validators are not registered yet; the denial says to retry.
+	//
+	// Scoped deliberately: only these messages are retried, and only for a
+	// bounded window, so a genuine denial still fails with the same error
 	// instead of being masked.
 	createErr := client.Resources(namespace).Create(ctx, ing)
-	if createErr != nil && strings.Contains(createErr.Error(), "was not found") {
+	if isTransientAdmissionDenial(createErr) {
 		_ = testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
 			ing = buildIngress(namespace, spec)
 			createErr = client.Resources(namespace).Create(c, ing)
-			if createErr == nil {
-				return true, nil
-			}
-			// Keep waiting only while it is still the store-lag denial.
-			return !strings.Contains(createErr.Error(), "was not found"), nil
+			return createErr == nil || !isTransientAdmissionDenial(createErr), nil
 		})
 	}
 	if createErr != nil {

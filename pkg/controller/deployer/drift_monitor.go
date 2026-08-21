@@ -122,6 +122,7 @@ func (m *DriftPreventionMonitor) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (m *DriftPreventionMonitor) Start(ctx context.Context) error {
+	defer m.Rearm()
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
 	// Use Critical buffer: fast timer-reset operations

@@ -149,6 +149,7 @@ type Pipeline struct {
 	renderer        *renderer.RenderService
 	validator       *validation.ValidationService
 	outputValidator RenderedOutputValidator
+	commitValidator *validation.ValidationService
 	logger          *slog.Logger
 }
 
@@ -157,11 +158,22 @@ type PipelineConfig struct {
 	// Renderer is the render service for generating configuration.
 	Renderer *renderer.RenderService
 
-	// Validator is the validation service for checking configuration.
+	// Validator is the validation service for checking configuration. Nil
+	// makes the pipeline render-only: the reconcile instance leaves HAProxy's
+	// verdict to the asynchronous render gate (ADR-0022), while the proposal
+	// instance keeps the synchronous check admission answers with.
 	Validator *validation.ValidationService
 
 	// OutputValidator optionally validates rendered auxiliary formats.
 	OutputValidator RenderedOutputValidator
+
+	// CommitValidator gates accepting external content no previous render
+	// used. The reconcile pipeline has no Validator, but a render that pulls in
+	// new HTTP-store content is the moment that content becomes the store's
+	// accepted version — so it takes the full synchronous check before the
+	// commit, not the gate's later verdict. Renders that accept nothing new
+	// never reach it, which is every render in a steady state.
+	CommitValidator *validation.ValidationService
 
 	// Logger is the structured logger for logging.
 	Logger *slog.Logger
@@ -169,15 +181,12 @@ type PipelineConfig struct {
 
 // New creates a new render-validate pipeline.
 //
-// Panics if Renderer or Validator is nil. This is intentional: these are
-// required dependencies, and failing at construction time is clearer than
-// returning errors at execution time.
+// Panics if Renderer is nil. This is intentional: it is a required dependency,
+// and failing at construction time is clearer than returning errors at
+// execution time.
 func New(cfg *PipelineConfig) *Pipeline {
 	if cfg.Renderer == nil {
 		panic("pipeline: Renderer is required")
-	}
-	if cfg.Validator == nil {
-		panic("pipeline: Validator is required")
 	}
 
 	logger := cfg.Logger
@@ -189,6 +198,7 @@ func New(cfg *PipelineConfig) *Pipeline {
 		renderer:        cfg.Renderer,
 		validator:       cfg.Validator,
 		outputValidator: cfg.OutputValidator,
+		commitValidator: cfg.CommitValidator,
 		logger:          logger,
 	}
 }
@@ -281,7 +291,10 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 	contentChecksum := dataplane.ComputeContentChecksum(renderResult.HAProxyConfig, renderResult.AuxiliaryFiles)
 
 	// Phase 2: Validate configuration (pass pre-computed checksum to avoid rehashing)
-	validationResult := p.validator.ValidateWithChecksum(ctx, renderResult.HAProxyConfig, renderResult.AuxiliaryFiles, contentChecksum)
+	validationResult := &validation.ValidationResult{Valid: true}
+	if p.validator != nil {
+		validationResult = p.validator.ValidateWithChecksum(ctx, renderResult.HAProxyConfig, renderResult.AuxiliaryFiles, contentChecksum)
+	}
 	if err := pipelineCancellationError(ctx, PhaseValidation, validationResult.Phase, validationResult.Error); err != nil {
 		return nil, nil, err
 	}
@@ -332,15 +345,57 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 		return nil, nil, err
 	}
 	if validationResult.Valid && renderResult.InputTransaction != nil {
-		if err := renderResult.InputTransaction.Commit(ctx); err != nil {
-			return nil, nil, &PipelineError{
-				Phase: PhaseRender,
-				Cause: fmt.Errorf("committing validated render inputs: %w", err),
-			}
+		if err := p.commitInputs(ctx, renderResult.InputTransaction, result); err != nil {
+			return nil, nil, err
 		}
 		result.TotalDurationMs = time.Since(startTime).Milliseconds()
 	}
 	return result, validationResult, nil
+}
+
+// commitInputs accepts the external content this render used, after the check
+// that acceptance requires.
+func (p *Pipeline) commitInputs(
+	ctx context.Context, transaction renderer.RenderInputTransaction, result *PipelineResult,
+) *PipelineError {
+	if err := p.checkBeforeCommit(ctx, transaction, result); err != nil {
+		return err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return &PipelineError{
+			Phase: PhaseRender,
+			Cause: fmt.Errorf("committing validated render inputs: %w", err),
+		}
+	}
+	return nil
+}
+
+// checkBeforeCommit runs the full synchronous check on a render that is about
+// to make external content the store's accepted version.
+//
+// Accepting content is not undoable by the render gate: its later verdict
+// reverts the fleet's files, not the store's idea of what a URL returned. So
+// the acceptance takes HAProxy's verdict up front — on the rare render that
+// fetches something new, never on the steady-state ones.
+func (p *Pipeline) checkBeforeCommit(
+	ctx context.Context, transaction renderer.RenderInputTransaction, result *PipelineResult,
+) *PipelineError {
+	if p.commitValidator == nil || !transaction.HasCandidates() {
+		return nil
+	}
+	verdict := p.commitValidator.ValidateWithChecksum(
+		ctx, result.HAProxyConfig, result.AuxiliaryFiles, result.ContentChecksum)
+	if err := pipelineCancellationError(ctx, PhaseValidation, verdict.Phase, verdict.Error); err != nil {
+		return err
+	}
+	if verdict.Valid {
+		return nil
+	}
+	return &PipelineError{
+		Phase:           PhaseValidation,
+		ValidationPhase: verdict.Phase,
+		Cause:           fmt.Errorf("refusing to accept new external content: %w", verdict.Error),
+	}
 }
 
 func pipelineCancellationError(

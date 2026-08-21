@@ -82,6 +82,16 @@ spec:
             summary: "HAProxyTemplateConfig rejected by the validation gate"
             description: "Validator {{ `{{ $labels.validator }}` }} rejected a config change - the controller is serving the last-good config and the latest change is NOT live"
         {{- end }}
+        {{- if $defaults.configPinned }}
+        - alert: HAProxyControllerConfigPinned
+          expr: haptic_config_pinned > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "HAProxy refused the rendered configuration twice; renders are held"
+            description: "No new render reaches the HAProxy pods - they keep serving the last configuration HAProxy accepted. The HAProxyCfg's ConfigValidated condition carries HAProxy's own message; fix the input it names"
+        {{- end }}
         {{- if $defaults.haproxyPodsRejected }}
         - alert: HAProxyControllerHAProxyPodsRejected
           expr: increase(haptic_haproxy_pods_rejected_total[5m]) > 0
@@ -121,9 +131,18 @@ spec:
             summary: "An HAProxy pod refused a config apply"
             description: "Pod {{ `{{ $labels.pod }}` }} rejected an apply and is serving its last known good file set; HAProxy's own message is in the pod's status condition and Warning event"
         {{- end }}
+        {{- if $defaults.recoveryReloadFailed }}
+        - alert: HAProxyAgentRecoveryReloadFailed
+          expr: increase(haptic_agent_invariant_violations_total{name="recovery_reload"}[5m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "An HAProxy worker is running a configuration nobody described"
+            description: "Pod {{ `{{ $labels.pod }}` }} rolled back to its last known good file set but the recovery reload failed, so the running worker matches neither the rejected apply nor the restored files. Restart the HAProxy pod after collecting `haptic agent state` from it"
+        {{- end }}
         {{- if $defaults.agentInvariantViolated }}
         - alert: HAProxyAgentInvariantViolated
-          expr: increase(haptic_agent_invariant_violations_total[5m]) > 0
+          expr: increase(haptic_agent_invariant_violations_total{name!="recovery_reload"}[5m]) > 0
           labels:
             severity: critical
           annotations:

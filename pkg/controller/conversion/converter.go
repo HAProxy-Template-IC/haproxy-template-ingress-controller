@@ -78,6 +78,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		ConfigPublishing: config.ConfigPublishingConfig{
 			CompressionThreshold: compressionThreshold,
 		},
+		RenderGateInterval: spec.Controller.RenderGateInterval,
 	}
 
 	// Convert logging config

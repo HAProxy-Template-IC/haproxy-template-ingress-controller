@@ -20,7 +20,8 @@ One file per category. The full list as of writing, with representative types:
 | `resource.go` | Watched-resource index changes | `ResourceIndexUpdatedEvent`, `IndexSynchronizedEvent` |
 | `reconciliation.go` | Reconciliation pipeline lifecycle | `ReconciliationTriggeredEvent`, `ReconciliationCompletedEvent`, `ResourcesAppliedEvent` |
 | `template.go` | Rendering | `TemplateRenderedEvent`, `TemplateRenderFailedEvent` |
-| `validation.go` | Syntax/semantic validation | `ValidationCompletedEvent`, `ValidationFailedEvent` |
+| `validation.go` | Syntax/semantic validation | `ValidationFailedEvent` |
+| `rendergate.go` | Asynchronous `haproxy -c` verdict on a render | `RenderGateCompletedEvent` |
 | `deployment.go` | HAProxy deployment scheduler + executor | `DeploymentScheduledEvent`, `InstanceDeploymentFailedEvent` |
 | `discovery.go` | HAProxy pod discovery | `HAProxyPodsDiscoveredEvent`, `HAProxyPodRejectedEvent` |
 | `leader.go` | Leader election | `BecameLeaderEvent`, `LostLeadershipEvent` |

@@ -109,6 +109,11 @@ var subscriberInventory = map[string]mailboxDecision{
 		mailbox: false,
 		why:     "publishes a trigger and returns; the coordinator absorbs the burst",
 	},
+	"rendergate": {
+		mailbox: false,
+		why: "the handler only records the newest render and signals its worker; " +
+			"`haproxy -c` runs on that worker, off the event loop",
+	},
 	"resourceapplier": {
 		mailbox: true,
 		why:     "server-side apply of rendered resources per render",

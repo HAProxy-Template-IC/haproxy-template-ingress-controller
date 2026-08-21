@@ -57,20 +57,3 @@ func scheduledEvent(runtimeConfigName, runtimeConfigNamespace, correlationID str
 		nil, "", nil, true,
 		events.WithCorrelation(correlationID, correlationID))
 }
-
-// seedRenderIdentity stamps an identity on a render cache that a test seeded by
-// writing the scheduler's fields directly, and returns the correlation option
-// that pairs a verdict with it.
-//
-// handleValidationCompleted only promotes a cache the verdict names, so a test
-// that pokes lastRenderedConfig instead of routing a TemplateRenderedEvent must
-// say which render it is pretending to have received.
-func seedRenderIdentity(s *DeploymentScheduler) events.CorrelationOption {
-	const renderID = "seeded-render-event-id"
-
-	s.mu.Lock()
-	s.lastRenderedEventID = renderID
-	s.mu.Unlock()
-
-	return events.WithCorrelation(renderID, renderID)
-}

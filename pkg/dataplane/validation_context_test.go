@@ -57,7 +57,7 @@ func TestValidateSemanticsContextCancelsRunningCheck(t *testing.T) {
 	paths := testValidationPaths(t)
 	done := make(chan error, 1)
 	go func() {
-		done <- ValidateSemanticsContext(ctx, "global\n    daemon\n", nil, paths, false)
+		done <- ValidateSemanticsContext(ctx, "global\n    daemon\n", nil, paths, false, nil)
 	}()
 
 	<-started
@@ -73,10 +73,10 @@ func TestCanceledHAProxyCheckWaiterNeverExecutes(t *testing.T) {
 	}})
 	t.Cleanup(restore)
 
-	haproxyCheckGate <- struct{}{}
+	defaultCheckGate.slot <- struct{}{}
 	t.Cleanup(func() {
 		select {
-		case <-haproxyCheckGate:
+		case <-defaultCheckGate.slot:
 		default:
 		}
 	})
@@ -86,7 +86,7 @@ func TestCanceledHAProxyCheckWaiterNeverExecutes(t *testing.T) {
 	configPath := testValidationPaths(t).ConfigFile
 	done := make(chan error, 1)
 	go func() {
-		done <- runHAProxyCheck(ctx, configPath, "global\n", false)
+		done <- runHAProxyCheck(ctx, configPath, "global\n", false, nil)
 	}()
 	cancel(cause)
 

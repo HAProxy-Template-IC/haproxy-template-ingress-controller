@@ -29,7 +29,7 @@ func (ec *EventCommentator) determineLogLevel(event busevents.Event) slog.Level 
 		return slog.LevelWarn
 
 	// Info level - lifecycle and completion events
-	// Note: ReconciliationCompleted and ValidationCompleted are demoted to DEBUG
+	// Note: ReconciliationCompleted and RenderGateCompleted are demoted to DEBUG
 	// because DeploymentCompletedEvent now produces a consolidated summary
 	case events.EventTypeConfigValidated,
 		events.EventTypeIndexSynchronized,
@@ -112,7 +112,7 @@ func (ec *EventCommentator) computeReconciliationSummary(
 		case events.EventTypeTemplateRendered:
 			summary.RenderMs = entry.durationMs
 			renderTimestamp = entry.timestamp
-		case events.EventTypeValidationCompleted:
+		case events.EventTypeRenderGateCompleted:
 			summary.ValidateMs = entry.durationMs
 			validateTimestamp = entry.timestamp
 		}

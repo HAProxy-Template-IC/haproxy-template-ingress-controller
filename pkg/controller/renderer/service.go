@@ -43,6 +43,9 @@ import (
 
 // RenderInputTransaction finalizes external inputs used by one render.
 type RenderInputTransaction interface {
+	// HasCandidates reports whether this render is the first to accept some
+	// external content, which is what the commit gate keys on.
+	HasCandidates() bool
 	Commit(context.Context) error
 	Abort()
 }

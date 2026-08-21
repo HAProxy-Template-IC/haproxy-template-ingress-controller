@@ -104,7 +104,7 @@ func TestDeployFailureRetry_ReschedulesAfterFullFailure(t *testing.T) {
 	const interval = 20 * time.Millisecond
 	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
 
-	// Prime the render cache + endpoints so ValidationCompleted schedules a deploy.
+	// Prime the render cache + endpoints so the dispatch schedules a deploy.
 	s.mu.Lock()
 	s.lastRenderedConfig = "validated-config"
 	s.lastContentChecksum = checksum
@@ -115,9 +115,8 @@ func TestDeployFailureRetry_ReschedulesAfterFullFailure(t *testing.T) {
 	defer cancel()
 	startLoopForTest(t, s, ctx)
 
-	// One ValidationCompleted → exactly one DeploymentScheduledEvent.
-	s.handleValidationCompleted(ctx, events.NewValidationCompletedEvent(nil, 5, "config_change", nil, true,
-		seedRenderIdentity(s)))
+	// One dispatch → exactly one DeploymentScheduledEvent.
+	s.dispatchRender(ctx, "corr-retry", true, "config_validation")
 	sd1 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	require.Equal(t, "config_validation", sd1.Reason)
 	require.Equal(t, checksum, sd1.ContentChecksum)

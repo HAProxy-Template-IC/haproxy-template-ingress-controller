@@ -227,7 +227,7 @@ func TestComputeReconciliationSummary_AllPhaseEventsPopulateMs(t *testing.T) {
 	corr := ctlevents.WithCorrelation(corrID, trigger.EventID())
 
 	render := ctlevents.NewTemplateRenderedEvent("", nil, nil, nil, 0, 25, "config_change", "csum", nil, "", true, corr)
-	validate := ctlevents.NewValidationCompletedEvent(nil, 30, "config_change", nil, true, corr)
+	validate := ctlevents.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 30, corr)
 
 	// Pause generously so the deployment timestamp is reliably later
 	// than the trigger timestamp even on a heavily-loaded CI runner.
@@ -244,7 +244,7 @@ func TestComputeReconciliationSummary_AllPhaseEventsPopulateMs(t *testing.T) {
 		"RenderMs branch must populate from the correlated TemplateRenderedEvent — "+
 			"a regression that dropped this case would silently report 0ms render")
 	assert.Equal(t, int64(30), summary.ValidateMs,
-		"ValidateMs branch must populate from the correlated ValidationCompletedEvent")
+		"ValidateMs branch must populate from the correlated RenderGateCompletedEvent")
 	assert.Equal(t, int64(50), summary.DeployMs,
 		"DeployMs comes straight from the deployment event itself")
 	require.Greater(t, summary.TotalMs, int64(0),

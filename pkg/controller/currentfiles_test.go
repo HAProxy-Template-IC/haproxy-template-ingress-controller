@@ -70,7 +70,7 @@ func TestCurrentFilesAuthorityAcceptsOutputWithinTerm(t *testing.T) {
 	publishedSnapshot := currentFilesPublishedSnapshot(t, authority)
 	publishedSnapshot["ticket.keys"] = "mutated"
 	assert.Equal(t, "published", currentFilesPublishedSnapshot(t, authority)["ticket.keys"])
-	authority.Accept(generation, &dataplane.AuxiliaryFiles{
+	authority.Accept(generation, "plan-test", &dataplane.AuxiliaryFiles{
 		GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "general/ticket.keys", Content: "accepted"}},
 	})
 
@@ -78,6 +78,55 @@ func TestCurrentFilesAuthorityAcceptsOutputWithinTerm(t *testing.T) {
 	assert.Equal(t, map[string]string{"ticket.keys": "accepted"}, got)
 	got["ticket.keys"] = "mutated"
 	assert.Equal(t, "accepted", currentFilesSnapshot(t, authority, generation)["ticket.keys"])
+}
+
+// The baseline the next render reads back has to describe what the fleet runs.
+// A render HAProxy refused was taken off the pods, so its files go with it.
+func TestCurrentFilesAuthorityRollsBackARefusedRendersFiles(t *testing.T) {
+	published := newPublishedAuxFiles("haptic")
+	setPublishedFiles(published, map[string]map[string]string{
+		haproxyGeneralFileGVR.String(): {"ticket.keys": "published"},
+	})
+	authority := newCurrentFilesAuthority(published)
+	generation := authority.BeginTerm()
+
+	acceptGeneralFile := func(planID, content string) {
+		authority.Accept(generation, planID, &dataplane.AuxiliaryFiles{
+			GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "general/ticket.keys", Content: content}},
+		})
+	}
+
+	acceptGeneralFile("plan-1", "accepted")
+	authority.Confirm(generation, "plan-1")
+	assert.Equal(t, "accepted", currentFilesSnapshot(t, authority, generation)["ticket.keys"])
+
+	acceptGeneralFile("plan-2", "refused")
+	authority.Rollback(generation, "plan-2")
+	assert.Equal(t, "accepted", currentFilesSnapshot(t, authority, generation)["ticket.keys"],
+		"a refused render's files must not become what the next render reads back")
+
+	// A verdict naming a plan the baseline has moved past settles nothing.
+	acceptGeneralFile("plan-3", "provisional")
+	authority.Rollback(generation, "plan-2")
+	assert.Equal(t, "provisional", currentFilesSnapshot(t, authority, generation)["ticket.keys"])
+}
+
+// With nothing confirmed yet, a refusal falls back to the published snapshot
+// rather than keeping the files HAProxy rejected.
+func TestCurrentFilesAuthorityRollsBackToPublishedBeforeAnyConfirmation(t *testing.T) {
+	published := newPublishedAuxFiles("haptic")
+	setPublishedFiles(published, map[string]map[string]string{
+		haproxyGeneralFileGVR.String(): {"ticket.keys": "published"},
+	})
+	authority := newCurrentFilesAuthority(published)
+	generation := authority.BeginTerm()
+
+	authority.Accept(generation, "plan-1", &dataplane.AuxiliaryFiles{
+		GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "general/ticket.keys", Content: "refused"}},
+	})
+	authority.Rollback(generation, "plan-1")
+
+	assert.Equal(t, "published", currentFilesSnapshot(t, authority, generation)["ticket.keys"])
 }
 
 func TestCurrentFilesAuthorityKeepsAcceptedOutputAcrossLegacyMutationInTerm(t *testing.T) {
@@ -91,7 +140,7 @@ func TestCurrentFilesAuthorityKeepsAcceptedOutputAcrossLegacyMutationInTerm(t *t
 	}})
 	authority := newCurrentFilesAuthority(published)
 	generation := authority.BeginTerm()
-	authority.Accept(generation, &dataplane.AuxiliaryFiles{
+	authority.Accept(generation, "plan-test", &dataplane.AuxiliaryFiles{
 		MapFiles: []auxiliaryfiles.MapFile{{Path: "maps/routes.map", Content: "accepted"}},
 	})
 	assert.Equal(t, "accepted", currentFilesSnapshot(t, authority, generation)["routes.map"])
@@ -120,7 +169,7 @@ func TestCurrentFilesAuthorityRejectsRetiredTermOutput(t *testing.T) {
 	})
 	authority := newCurrentFilesAuthority(published)
 	first := authority.BeginTerm()
-	authority.Accept(first, &dataplane.AuxiliaryFiles{
+	authority.Accept(first, "plan-test", &dataplane.AuxiliaryFiles{
 		GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "general/ticket.keys", Content: "first-accepted"}},
 	})
 
@@ -128,7 +177,7 @@ func TestCurrentFilesAuthorityRejectsRetiredTermOutput(t *testing.T) {
 	setPublishedFiles(published, map[string]map[string]string{
 		haproxyGeneralFileGVR.String(): {"ticket.keys": "second-published"},
 	})
-	authority.Accept(first, &dataplane.AuxiliaryFiles{
+	authority.Accept(first, "plan-test", &dataplane.AuxiliaryFiles{
 		GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "general/ticket.keys", Content: "late-first"}},
 	})
 
@@ -145,7 +194,7 @@ func TestCurrentFilesAuthorityAcceptedEmptyOutputOverridesPublished(t *testing.T
 	authority := newCurrentFilesAuthority(published)
 	generation := authority.BeginTerm()
 
-	authority.Accept(generation, nil)
+	authority.Accept(generation, "plan-test", nil)
 	assert.Empty(t, currentFilesSnapshot(t, authority, generation))
 
 	authority.EndTerm(generation)

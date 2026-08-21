@@ -51,14 +51,13 @@ const (
 	statusWorkTriggerSize = 1
 )
 
-// renderedConfigEntry holds cached rendered config data indexed by correlation ID.
-// This ensures we match the correct TemplateRenderedEvent with its corresponding
-// ValidationCompletedEvent, preventing stale data from being published when
-// events from multiple reconciliation cycles are interleaved.
+// renderedConfigEntry holds one render's bytes on their way to the publish
+// worker, keyed by the correlation ID of the reconcile that produced them.
 type renderedConfigEntry struct {
 	config          string
 	auxFiles        *dataplane.AuxiliaryFiles
 	contentChecksum string
+	planID          string
 	renderedAt      time.Time
 }
 
@@ -113,13 +112,14 @@ type podAuthority struct {
 // Component is the event adapter for the config publisher.
 // It wraps the pure Publisher component and coordinates it with the event bus.
 //
-// This component caches information from multiple events (ConfigValidatedEvent,
-// TemplateRenderedEvent) and publishes runtime config resources only after
-// successful HAProxy validation (ValidationCompletedEvent).
+// It publishes what the fleet was given: TemplateRenderedEvent is the trigger,
+// and the render gate's later verdict lands on the same object as the
+// ConfigValidated / ConfigPinned conditions (ADR-0022).
 //
-// Rendered configs are cached by correlation ID to ensure we match the correct
-// TemplateRenderedEvent with its corresponding ValidationCompletedEvent, even when
-// events from multiple reconciliation cycles are interleaved.
+// Rendered configs are cached by correlation ID because the publish worker is
+// asynchronous and consumes the entry; a single-slot copy of the newest render
+// outlives that eviction so a validation failure for the same reconcile can
+// still publish those bytes as the invalid variant.
 //
 // The component uses async workers for K8S API operations to prevent blocking
 // the event loop. This ensures new events are processed promptly even when
@@ -139,10 +139,36 @@ type Component struct {
 	templateConfig    *v1alpha1.HAProxyTemplateConfig
 	hasTemplateConfig bool
 
-	// renderedConfigs maps correlation ID to rendered config data.
-	// This ensures we match the correct TemplateRenderedEvent with its corresponding
-	// ValidationCompletedEvent when events from multiple cycles are interleaved.
+	// renderedConfigs maps correlation ID to rendered config data. It is the
+	// hand-off to the async publish worker, which consumes and evicts each
+	// entry.
 	renderedConfigs map[string]*renderedConfigEntry
+
+	// lastRender is the newest render, kept past the worker's eviction so a
+	// validation failure for the same reconcile can publish those bytes as the
+	// invalid variant. One slot: only the newest render can still be the
+	// subject of a verdict.
+	lastRender              *renderedConfigEntry
+	lastRenderCorrelationID string
+
+	// gatePinned mirrors the render gate's latch. While it is set the fleet is
+	// not being given new renders, so publishing one would advertise a config
+	// no pod has — the object is the fleet's, not the renderer's.
+	gatePinned bool
+	// heldRender is the render withheld while pinned, published by the verdict
+	// that releases it.
+	heldRender        *renderedConfigEntry
+	heldCorrelationID string
+	// publishedPlanID is the plan of the render last queued for publishing,
+	// which is what a verdict has to name to be a statement about this object.
+	publishedPlanID string
+
+	// pendingVerdict is the render gate's verdict awaiting its status write,
+	// latest wins. The write is an apiserver round-trip and must not run on
+	// the event loop.
+	verdictMu      sync.Mutex
+	pendingVerdict *configpublisher.GateVerdict
+	verdictTrigger chan struct{}
 
 	// Work channels for async K8S API operations.
 	// Using channels with small buffers provides natural coalescing:
@@ -319,7 +345,7 @@ func (c *Component) Start(ctx context.Context) error {
 	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(ComponentName, EventBufferSize,
 		events.EventTypeConfigValidated,
 		events.EventTypeTemplateRendered,
-		events.EventTypeValidationCompleted,
+		events.EventTypeRenderGateCompleted,
 		events.EventTypeValidationFailed,
 		events.EventTypeConfigAppliedToPod,
 		events.EventTypeDeployedConfigPublishRequest,
@@ -344,6 +370,7 @@ func (c *Component) Start(ctx context.Context) error {
 	workers.Go(func() { c.publishWorker(ctx) })
 	workers.Go(func() { c.validationFailedWorker(ctx) })
 	workers.Go(func() { c.statusWorker(ctx) })
+	workers.Go(func() { c.verdictWorker(ctx) })
 	defer func() {
 		c.publishThrottle.Stop()
 		c.statusThrottle.Stop()
@@ -369,6 +396,12 @@ func (c *Component) preparePublicationTerm() {
 	c.templateConfig = nil
 	c.hasTemplateConfig = false
 	c.renderedConfigs = make(map[string]*renderedConfigEntry)
+	c.lastRender = nil
+	c.lastRenderCorrelationID = ""
+	c.gatePinned = false
+	c.heldRender = nil
+	c.heldCorrelationID = ""
+	c.publishedPlanID = ""
 	c.lastPublishedChecksum = ""
 	c.latestPublishGeneration = 0
 	c.latestInvalidGeneration = 0
@@ -393,6 +426,11 @@ func (c *Component) preparePublicationTerm() {
 	c.statusWorkTrigger = make(chan struct{}, statusWorkTriggerSize)
 	c.statusWorkPendingMu.Unlock()
 
+	c.verdictMu.Lock()
+	c.pendingVerdict = nil
+	c.verdictTrigger = make(chan struct{}, statusWorkTriggerSize)
+	c.verdictMu.Unlock()
+
 	c.statusRetrySignals = newDelayedSignals()
 	c.publishThrottle = throttle.New(c.publishInterval)
 	c.statusThrottle = throttle.New(c.publishInterval)
@@ -409,8 +447,8 @@ func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 	case *events.TemplateRenderedEvent:
 		c.handleTemplateRendered(e)
 
-	case *events.ValidationCompletedEvent:
-		c.handleValidationCompleted(e)
+	case *events.RenderGateCompletedEvent:
+		c.handleRenderGateCompleted(e)
 
 	case *events.ValidationFailedEvent:
 		c.handleValidationFailed(e)

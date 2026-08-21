@@ -19,12 +19,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 )
 
-// lookupCachedConfig is the correlation-ID-keyed lookup that BOTH
-// handleValidationCompleted and handleValidationFailed funnel
-// through before any K8s publish work is queued. It guards three
-// load-bearing preconditions; only the happy path was indirectly
-// exercised by integration tests, so the three negative branches
-// were uncovered.
+// lookupCachedConfig is the correlation-ID-keyed lookup that
+// handleValidationFailed funnels through before any K8s publish work is
+// queued. It guards three load-bearing preconditions; only the happy path
+// was indirectly exercised by integration tests, so the three negative
+// branches were uncovered.
 //
 // Contracts pinned:
 //
@@ -32,8 +31,8 @@ import (
 //     is the only key tying TemplateRenderedEvent → ValidationXEvent
 //     across the renderer→validator hop. Without this guard, an
 //     event missing its correlation ID would silently match the
-//     empty-string key in renderedConfigs (ok in Go map lookup if
-//     such a key exists) — publishing the WRONG config.
+//     empty correlation of whatever render is cached — publishing
+//     the WRONG config.
 //
 //  2. !hasTemplateConfig → returns ok=false. The template config
 //     arrives via ConfigValidatedEvent BEFORE any
@@ -42,7 +41,7 @@ import (
 //     nil-deref'ing in buildPublishRequest (which reads .Name /
 //     .Namespace).
 //
-//  3. !hasRenderedConfig (correlation ID not in renderedConfigs)
+//  3. !hasRenderedConfig (the cached render is a different one)
 //     → returns ok=false. The rendered config arrives via
 //     TemplateRenderedEvent. If the validator publishes a result
 //     for a correlation ID we've never rendered (e.g. event order
@@ -68,10 +67,11 @@ func lookupComponent() *Component {
 
 func TestLookupCachedConfig_EmptyCorrelationIDReturnsNotOk(t *testing.T) {
 	c := lookupComponent()
-	// Pre-seed with an empty-string key just to make sure a
-	// regression that did `c.renderedConfigs[""]` wouldn't
-	// accidentally find SOMETHING and pass the test.
-	c.renderedConfigs[""] = &renderedConfigEntry{config: "should-not-be-returned"}
+	// Pre-seed a render under the empty correlation ID just to make sure a
+	// regression that compared against "" wouldn't accidentally find
+	// SOMETHING and pass the test.
+	c.lastRender = &renderedConfigEntry{config: "should-not-be-returned"}
+	c.lastRenderCorrelationID = ""
 	c.templateConfig = &v1alpha1.HAProxyTemplateConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "tmpl", Namespace: "haptic"},
 	}
@@ -81,9 +81,8 @@ func TestLookupCachedConfig_EmptyCorrelationIDReturnsNotOk(t *testing.T) {
 
 	assert.False(t, ok,
 		"empty correlation ID MUST return ok=false — without this guard, "+
-			"an event missing correlation would match the empty-string "+
-			"key in renderedConfigs (Go map lookup succeeds for empty "+
-			"string keys) and silently publish the WRONG config")
+			"an event missing correlation would match the empty correlation "+
+			"of whatever render is cached and silently publish the WRONG config")
 	assert.Nil(t, tc, "wrapped TemplateConfig MUST be nil on failed lookup")
 	assert.Nil(t, entry, "wrapped renderedConfigEntry MUST be nil on failed lookup")
 }
@@ -92,7 +91,8 @@ func TestLookupCachedConfig_MissingTemplateConfigReturnsNotOk(t *testing.T) {
 	c := lookupComponent()
 	// Pre-seed the rendered config so the test isolates the
 	// hasTemplateConfig guard from the hasRenderedConfig guard.
-	c.renderedConfigs["corr-1"] = &renderedConfigEntry{config: "rendered"}
+	c.lastRender = &renderedConfigEntry{config: "rendered"}
+	c.lastRenderCorrelationID = "corr-1"
 	// hasTemplateConfig left false (default zero value).
 
 	tc, entry, ok := c.lookupCachedConfig("evt-1", "corr-1", "TestEvent", "test action")
@@ -113,7 +113,7 @@ func TestLookupCachedConfig_MissingRenderedConfigReturnsNotOk(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "tmpl", Namespace: "haptic"},
 	}
 	c.hasTemplateConfig = true
-	// renderedConfigs left empty.
+	// lastRender left nil.
 
 	tc, entry, ok := c.lookupCachedConfig("evt-1", "corr-never-rendered", "TestEvent", "test action")
 
@@ -138,7 +138,8 @@ func TestLookupCachedConfig_HappyPathReturnsCachedPointers(t *testing.T) {
 	}
 	c.templateConfig = cachedTemplate
 	c.hasTemplateConfig = true
-	c.renderedConfigs["corr-happy"] = cachedEntry
+	c.lastRender = cachedEntry
+	c.lastRenderCorrelationID = "corr-happy"
 
 	tc, entry, ok := c.lookupCachedConfig("evt-1", "corr-happy", "TestEvent", "test action")
 

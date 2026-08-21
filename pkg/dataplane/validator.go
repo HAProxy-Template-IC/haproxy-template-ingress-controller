@@ -101,12 +101,13 @@ func ValidateSyntaxAndSchema(config string, version *Version) (*parser.Structure
 // Returns:
 //   - error: ValidationError with phase "semantic" if validation fails
 func ValidateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
-	return ValidateSemanticsContext(context.Background(), mainConfig, auxFiles, paths, skipDNSValidation)
+	return ValidateSemanticsContext(context.Background(), mainConfig, auxFiles, paths, skipDNSValidation, nil)
 }
 
-// ValidateSemanticsContext is ValidateSemantics with caller cancellation.
-func ValidateSemanticsContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
-	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
+// ValidateSemanticsContext is ValidateSemantics with caller cancellation and a
+// caller-owned CheckGate; nil runs on the shared default gate.
+func ValidateSemanticsContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool, gate *CheckGate) error {
+	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate); err != nil {
 		return phaseSemantic.wrap(err)
 	}
 	return nil
@@ -193,7 +194,7 @@ func validateConfiguration(ctx context.Context, mainConfig string, auxFiles *Aux
 
 	// Phase 2: Semantic validation with haproxy binary
 	semanticStart := time.Now()
-	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
+	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation, nil); err != nil {
 		return nil, phaseSemantic.wrap(err)
 	}
 	semanticMs = time.Since(semanticStart).Milliseconds()

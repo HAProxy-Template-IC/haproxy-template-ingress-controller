@@ -348,6 +348,7 @@ For HAProxy behind a layer-4 load balancer. See [PROXY protocol](haproxy-deploym
 | `controller.config.controller.leaderElection.leaseDuration` | duration | `30s` | Failover timeout duration |
 | `controller.config.controller.leaderElection.renewDeadline` | duration | `20s` | Leader renewal timeout |
 | `controller.config.controller.leaderElection.retryPeriod` | duration | `5s` | Retry interval between attempts |
+| `controller.config.controller.renderGateInterval` | duration | `1s` | Shortest start-to-start spacing of the render gate's `haproxy -c` runs. The gate validates each render off the reconcile path, on a semaphore slot of its own, so this only caps how much CPU a render storm can take from the admission webhook |
 
 ## Agent Configuration
 
@@ -616,19 +617,21 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `controller.monitoring.prometheusRule.enabled` | bool | `false` | Create PrometheusRule with alerting rules |
 | `controller.monitoring.prometheusRule.labels` | map | `{}` | PrometheusRule labels |
 | `controller.monitoring.prometheusRule.rules` | list | `[]` | Custom alerting rules; overrides the default rule set when non-empty |
-| `controller.monitoring.prometheusRule.defaultRules.enabled` | bool | `true` | Emit the chart's default rule set — thirteen alerts, each individually toggleable below; only consulted when `rules` is empty |
+| `controller.monitoring.prometheusRule.defaultRules.enabled` | bool | `true` | Emit the chart's default rule set — fifteen alerts, each individually toggleable below; only consulted when `rules` is empty |
 | `controller.monitoring.prometheusRule.defaultRules.reconciliationErrors` | bool | `true` | Include the `HAProxyControllerReconciliationErrors` warning rule |
 | `controller.monitoring.prometheusRule.defaultRules.deploymentFailures` | bool | `true` | Include the `HAProxyControllerDeploymentFailures` critical rule |
 | `controller.monitoring.prometheusRule.defaultRules.highQueueDepth` | bool | `true` | Include the `HAProxyControllerHighQueueDepth` warning rule |
 | `controller.monitoring.prometheusRule.defaultRules.leaderElectionLost` | bool | `true` | Include the `HAProxyControllerNoLeader` critical rule |
 | `controller.monitoring.prometheusRule.defaultRules.fleetDiverged` | bool | `true` | Include the `HAProxyFleetDiverged` warning rule: some HAProxy pods haven't converged to the desired config for 5 minutes. Transient deploy failures self-heal, so sustained divergence is a real fault — this is the noise-free replacement for alerting on raw deployment errors |
 | `controller.monitoring.prometheusRule.defaultRules.configRejected` | bool | `true` | Include the `HAProxyControllerConfigRejected` warning rule: the validation gate rejected a config change — the controller keeps serving the last-good config and the latest change isn't live |
+| `controller.monitoring.prometheusRule.defaultRules.configPinned` | bool | `true` | Include the `HAProxyControllerConfigPinned` critical rule: HAProxy refused two renders in a row, so the pods keep serving the last configuration it accepted and nothing new reaches them until the input is fixed |
 | `controller.monitoring.prometheusRule.defaultRules.haproxyPodsRejected` | bool | `true` | Include the `HAProxyControllerHAProxyPodsRejected` warning rule: discovered HAProxy pods refused admission (often a HAProxy major.minor mismatch with `haproxyVersion`) |
 | `controller.monitoring.prometheusRule.defaultRules.noHAProxyPods` | bool | `true` | Include the `HAProxyControllerNoHAProxyPods` critical rule: the controller finds no HAProxy pods to manage, so no config reaches the data plane |
 | `controller.monitoring.prometheusRule.defaultRules.accessLogDropped` | bool | `true` | Include the `HAProxyAccessLogRecordsDropped` warning rule: HAProxy discarded access-log records because the Vector sidecar stopped draining the Unix datagram socket. Traffic is unaffected; the log is incomplete |
 | `controller.monitoring.prometheusRule.defaultRules.criticalEventsDropped` | bool | `true` | Include the `HAProxyControllerCriticalEventsDropped` critical rule: a critical event-bus subscriber's buffer overflowed — reconciliation work was lost and the data plane may be stale |
 | `controller.monitoring.prometheusRule.defaultRules.applyRejected` | bool | `true` | Include the `HAProxyAgentApplyRejected` warning rule: an HAProxy pod refused an apply and serves its last known good file set; HAProxy's message is in the pod's status condition |
 | `controller.monitoring.prometheusRule.defaultRules.agentInvariantViolated` | bool | `true` | Include the `HAProxyAgentInvariantViolated` critical rule: an agent observed one of its own invariants failing — a defect, not an operator error |
+| `controller.monitoring.prometheusRule.defaultRules.recoveryReloadFailed` | bool | `true` | Include the `HAProxyAgentRecoveryReloadFailed` critical rule: a pod rolled back to its last known good file set but the recovery reload failed, so its worker matches neither the rejected apply nor the restored files |
 | `controller.monitoring.prometheusRule.defaultRules.agentVersionSkew` | bool | `true` | Include the `HAProxyAgentVersionSkew` warning rule: applies degrade to full state plus a reload because a pod's agent doesn't match the controller; expected during a rolling upgrade, a defect after one |
 | `controller.monitoring.grafanaDashboard.enabled` | bool | `false` | Create a ConfigMap holding the Grafana dashboard JSON (picked up by the Grafana sidecar via the configured discovery label) |
 | `controller.monitoring.grafanaDashboard.labels` | map | `{grafana_dashboard: "1"}` | Discovery labels for the Grafana sidecar |

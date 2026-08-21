@@ -30,12 +30,14 @@ import (
 
 // deployRequest is one deployment's desired state, identical for every pod.
 type deployRequest struct {
-	plan            *renderplan.Plan
-	planID          string
-	contents        map[string]string // file content by digest, the manifest's join key
-	blob            []byte            // the plan, zstd-compressed, as the agent stores it
-	token           api.Token
-	validatedPlanID string
+	plan     *renderplan.Plan
+	planID   string
+	contents map[string]string // file content by digest, the manifest's join key
+	blob     []byte            // the plan, zstd-compressed, as the agent stores it
+	token    api.Token
+	// validatedPlanFor answers, per pod, which passed plan its manifest should
+	// name — the pod's own applied plan when that one passed.
+	validatedPlanFor func(appliedPlanID string) string
 	// verify makes each pod re-hash its tree before it reports: the drift pass
 	// asks what is on disk, not what the agent last wrote.
 	verify bool
@@ -115,6 +117,7 @@ func (c *Component) deployToEndpoints(
 	// aux bytes outside the plan still ride it.
 	podSetHash := computePodSetHash(event.Endpoints)
 	request := c.newDeployRequest(event)
+	c.recordFleet(event.Endpoints)
 
 	c.EventBus().Publish(events.NewDeploymentStartedEvent(
 		len(event.Endpoints),
@@ -181,14 +184,14 @@ func (c *Component) newDeployRequest(event *events.DeploymentScheduledEvent) *de
 			"plan", event.PlanID, "error", err)
 	}
 	return &deployRequest{
-		plan:            event.Plan,
-		planID:          event.PlanID,
-		contents:        contentsByDigest(event.Config, event.AuxiliaryFiles),
-		blob:            blob,
-		token:           api.Token{LeaderEpoch: c.leaderEpoch(), RenderSeq: c.nextRenderSeq()},
-		validatedPlanID: c.validatedPlan(),
-		verify:          event.Reason == events.TriggerReasonDriftPrevention,
-		diffs:           newDiffMemo(),
+		plan:             event.Plan,
+		planID:           event.PlanID,
+		contents:         contentsByDigest(event.Config, event.AuxiliaryFiles),
+		blob:             blob,
+		token:            api.Token{LeaderEpoch: c.leaderEpoch(), RenderSeq: c.nextRenderSeq()},
+		validatedPlanFor: c.validatedPlanFor,
+		verify:           event.Reason == events.TriggerReasonDriftPrevention,
+		diffs:            newDiffMemo(),
 	}
 }
 

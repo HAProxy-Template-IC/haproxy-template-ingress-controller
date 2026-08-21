@@ -42,11 +42,10 @@ import (
 //     don't care about diagnostic output.
 //
 //  3. The Coalescible() flag from the trigger event must propagate to
-//     BOTH downstream events (TemplateRenderedEvent and
-//     ValidationCompletedEvent). The doc on coalescible says it
-//     enables coalescing throughout the reconciliation pipeline; a
-//     regression that dropped it on either event would silently
-//     defeat coalescing for downstream consumers.
+//     TemplateRenderedEvent, which is the deploy trigger. The doc on
+//     coalescible says it enables coalescing throughout the
+//     reconciliation pipeline; a regression that dropped it would
+//     silently defeat coalescing for downstream consumers.
 
 func TestNewCoordinator_NilLoggerDefaultsToSlog(t *testing.T) {
 	bus, _ := testutil.NewTestBusAndLogger()
@@ -151,12 +150,12 @@ func TestCoordinator_HandlePipelineSuccess_PublishesTheRenderPlan(t *testing.T) 
 	assert.Equal(t, "plan-abc", rendered.PlanID)
 }
 
-func TestCoordinator_HandlePipelineSuccess_PropagatesCoalescibleFlagToBothEvents(t *testing.T) {
+func TestCoordinator_HandlePipelineSuccess_PropagatesCoalescibleFlagToRender(t *testing.T) {
 	// Coalescible propagation is a contract the coordinator MUST honor:
-	// trigger.Coalescible() flows through to both TemplateRenderedEvent
-	// AND ValidationCompletedEvent. A regression that dropped it on
-	// either would silently defeat coalescing for downstream consumers
-	// (renderer-vs-deployment fan-in, reconciler debouncer, etc.).
+	// trigger.Coalescible() flows through to TemplateRenderedEvent, which
+	// is what arms deployment. A regression that dropped it would silently
+	// defeat coalescing for downstream consumers (renderer-vs-deployment
+	// fan-in, reconciler debouncer, etc.).
 	tests := []struct {
 		name        string
 		coalescible bool
@@ -203,13 +202,6 @@ func TestCoordinator_HandlePipelineSuccess_PropagatesCoalescibleFlagToBothEvents
 					"TemplateRenderedEvent — without this, the renderer-side "+
 					"of the coalescing pipeline can't honor the trigger's "+
 					"intent and would over- or under-coalesce")
-
-			validated := testutil.WaitForEvent[*events.ValidationCompletedEvent](t, eventChan, testutil.EventTimeout)
-			assert.Equal(t, tt.coalescible, validated.Coalescible(),
-				"coalescible flag MUST propagate from trigger → "+
-					"ValidationCompletedEvent — the validator side must see "+
-					"the same coalescing intent or the deployer would receive "+
-					"inconsistent signals from the two upstream events")
 		})
 	}
 }

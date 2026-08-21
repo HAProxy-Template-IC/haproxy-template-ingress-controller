@@ -239,6 +239,13 @@ type ControllerConfig struct {
 
 	// ConfigPublishing configures how rendered configs are stored in CRDs.
 	ConfigPublishing ConfigPublishingConfig `yaml:"config_publishing"`
+
+	// RenderGateInterval is the shortest start-to-start spacing of the render
+	// gate's `haproxy -c` runs, capping its duty cycle so a render storm cannot
+	// slow the admission webhook.
+	// Format: Go duration string (e.g., "1s", "500ms")
+	// Default: 1s
+	RenderGateInterval string `yaml:"render_gate_interval"`
 }
 
 // LeaderElectionConfig configures leader election for running multiple replicas.

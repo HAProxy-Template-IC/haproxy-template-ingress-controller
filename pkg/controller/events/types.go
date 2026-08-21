@@ -49,6 +49,7 @@
 //   - reconciliation.go:      Template rendering and deployment cycle events
 //   - template.go:            Template rendering operation events
 //   - validation.go:          Configuration validation (syntax and semantics) events
+//   - rendergate.go:          Asynchronous `haproxy -c` verdict on a render
 //   - deployment.go:          HAProxy configuration deployment events
 //   - discovery.go:           HAProxy pod discovery events
 //   - credentials.go:         Credentials loading and validation events
@@ -92,8 +93,11 @@ const (
 	EventTypeTemplateRenderFailed = "template.render.failed"
 
 	// Validation event types (HAProxy dataplane API validation).
-	EventTypeValidationCompleted = "validation.completed"
-	EventTypeValidationFailed    = "validation.failed"
+	EventTypeValidationFailed = "validation.failed"
+
+	// Render gate verdict: the controller's own `haproxy -c` on a render,
+	// which runs off the reconcile wall clock (ADR-0022).
+	EventTypeRenderGateCompleted = "rendergate.completed"
 
 	// Deployment event types.
 	EventTypeDeploymentScheduled      = "deployment.scheduled"

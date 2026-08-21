@@ -27,16 +27,18 @@ import (
 )
 
 // pipeline.New has two intentional panics: nil Renderer and nil Validator.
-// The doc comment explicitly says "Panics if Renderer or Validator is nil.
-// This is intentional: these are required dependencies, and failing at
-// construction time is clearer than returning errors at execution time."
+// The doc comment explicitly says "Panics if Renderer is nil. This is
+// intentional: it is a required dependency, and failing at construction time
+// is clearer than returning errors at execution time."
 //
-// The existing TestNew only exercises the happy path. These tests pin both
-// panic branches so a future refactor that silently softened them (e.g.,
+// The existing TestNew only exercises the happy path. These tests pin the
+// panic branch so a future refactor that silently softened it (e.g.,
 // `if cfg.Renderer == nil { return nil }`) can't sneak through — that
 // regression would shift failure to runtime, blowing up inside the
-// reconciler's render/validate hot path with a nil deref instead of at
-// startup.
+// reconciler's render hot path with a nil deref instead of at startup.
+//
+// A nil Validator is NOT a panic: the reconcile instance is render-only and
+// leaves HAProxy's verdict to the asynchronous render gate (ADR-0022).
 //
 // We also pin the Logger=nil → slog.Default() fallback. That's the third
 // branch in New(), and it's load-bearing: a regression that panicked on
@@ -63,19 +65,20 @@ func TestPipelineNew_PanicsOnNilRenderer(t *testing.T) {
 			"value would defer the failure to a nil deref at render time.")
 }
 
-func TestPipelineNew_PanicsOnNilValidator(t *testing.T) {
+func TestPipelineNew_NilValidatorIsRenderOnly(t *testing.T) {
 	renderSvc := makeRenderService(t)
 
-	assert.PanicsWithValue(t, "pipeline: Validator is required",
-		func() {
-			New(&PipelineConfig{
-				Renderer:  renderSvc,
-				Validator: nil, // <-- the regression we're guarding against
-				Logger:    slog.Default(),
-			})
-		},
-		"pipeline.New MUST panic with the documented exact message when "+
-			"Validator is nil — same reasoning as the Renderer panic")
+	pipeline := New(&PipelineConfig{
+		Renderer:  renderSvc,
+		Validator: nil, // the reconcile instance: the render gate holds the check
+		Logger:    slog.Default(),
+	})
+
+	require.NotNil(t, pipeline,
+		"a nil Validator is the reconcile pipeline's shape, not missing wiring: "+
+			"HAProxy's verdict runs asynchronously in the render gate, so panicking "+
+			"here would put the check back on the reconcile wall clock")
+	assert.Nil(t, pipeline.validator)
 }
 
 func TestPipelineNew_NilLoggerFallsBackToDefault(t *testing.T) {

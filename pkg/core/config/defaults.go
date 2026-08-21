@@ -27,6 +27,13 @@ const (
 	// DefaultDataplaneMapsDir is the default directory for HAProxy map files.
 	DefaultDataplaneMapsDir = "/etc/haproxy/maps"
 
+	// DefaultRenderGateInterval is the shortest start-to-start spacing of the
+	// render gate's `haproxy -c` runs. At 3000 routes one check costs ~350 ms
+	// of CPU, so anything below that would let a render storm keep a core busy
+	// back-to-back and slow the admission webhook, whose 9 s failurePolicy:
+	// Fail budget is the deadline that matters.
+	DefaultRenderGateInterval = time.Second
+
 	// DefaultConfigPublishInterval throttles HAProxyCfg CRD updates to coalesce
 	// rapid renders during endpoint churn. Bounds the observable gap between
 	// pod status.deployedToPods[].checksum and spec.checksum.
@@ -185,6 +192,12 @@ func (d *DataplaneConfig) GetDeploymentTimeout() time.Duration {
 // or the default if not specified or invalid.
 func (d *DataplaneConfig) GetConfigPublishInterval() time.Duration {
 	return parseDurationOr(d.ConfigPublishInterval, DefaultConfigPublishInterval)
+}
+
+// GetRenderGateInterval returns the configured render-gate duty-cycle interval
+// or the default if not specified or invalid.
+func (c *ControllerConfig) GetRenderGateInterval() time.Duration {
+	return parseDurationOr(c.RenderGateInterval, DefaultRenderGateInterval)
 }
 
 // GetLeaseDuration returns the configured lease duration

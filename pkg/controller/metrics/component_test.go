@@ -84,7 +84,7 @@ func TestComponent_ReconciliationEvents(t *testing.T) {
 	eventBus.Start()
 	go component.Start(ctx)
 
-	eventBus.Publish(events.NewReconciliationCompletedEvent(1500, nil, nil))
+	eventBus.Publish(events.NewReconciliationCompletedEvent(1500, "", nil, nil))
 
 	// Give component time to process
 	time.Sleep(100 * time.Millisecond)
@@ -216,7 +216,7 @@ func TestComponent_LostLeadership_ResetsFleetConvergence(t *testing.T) {
 func TestComponent_ValidationEvents(t *testing.T) {
 	metrics, eventBus := startTestComponent(t)
 
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", nil, true))
+	eventBus.Publish(events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 100))
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -323,14 +323,14 @@ func TestComponent_AllEventTypes(t *testing.T) {
 	metrics, eventBus := startTestComponent(t)
 
 	// Publish various event types
-	eventBus.Publish(events.NewReconciliationCompletedEvent(1000, nil, nil))
+	eventBus.Publish(events.NewReconciliationCompletedEvent(1000, "", nil, nil))
 	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,
 		Failed:     0,
 		DurationMs: 2000,
 	}))
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", nil, true))
+	eventBus.Publish(events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 100))
 	eventBus.Publish(events.NewIndexSynchronizedEvent(map[string]int{
 		"services": 15,
 	}))
@@ -366,7 +366,7 @@ func TestComponent_GracefulShutdown(t *testing.T) {
 		errChan <- component.Start(ctx)
 	}()
 
-	eventBus.Publish(events.NewReconciliationCompletedEvent(500, nil, nil))
+	eventBus.Publish(events.NewReconciliationCompletedEvent(500, "", nil, nil))
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -389,9 +389,9 @@ func TestComponent_HighEventVolume(t *testing.T) {
 
 	// Publish many events rapidly
 	for i := range 100 {
-		eventBus.Publish(events.NewReconciliationCompletedEvent(int64(i), nil, nil))
+		eventBus.Publish(events.NewReconciliationCompletedEvent(int64(i), "", nil, nil))
 		if i%10 == 0 {
-			eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", nil, true))
+			eventBus.Publish(events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 100))
 		}
 	}
 

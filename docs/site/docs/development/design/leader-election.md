@@ -15,7 +15,7 @@ All replicas, however, do useful work:
 - Watch Kubernetes resources, keeping a hot cache for failover
 - Handle admission webhook requests, so the webhook stays available through a failover
 
-Rendering and config validation run only on the leader: the synchronous render-validate pipeline lives inside the leader-only Coordinator (see the component split below), and a new leader's first reconciliation produces a fresh render. Only **deployment operations** strictly need exclusivity, but co-locating rendering with deployment keeps the pipeline synchronous and simple.
+Rendering and config validation run only on the leader: the synchronous render pipeline lives inside the leader-only Coordinator and HAProxy's own check on each render in the leader-only RenderGate (see the component split below), and a new leader's first reconciliation produces a fresh render. Only **deployment operations** strictly need exclusivity, but co-locating rendering with deployment keeps the pipeline synchronous and simple. A new leader starts the gate optimistic: the agents' own last-known-good file sets already protect the fleet.
 
 ## Lease-based election
 
@@ -39,7 +39,7 @@ LeaderElectionConfig{
 }
 ```
 
-These are deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (`15s`/`10s`/`2s`). The renew deadline is the leader's budget for riding out apiserver unavailability or CPU starvation without losing the lease; multi-second stalls of 10 seconds or more have been observed on loaded nodes, and a lost lease costs a full controller reinitialization before the replica can lead again (client-go's `LeaderElector.Run` returns permanently on a lost lease). The trade-off is hard-failover latency after a leader crash that never releases the lease: up to `LeaseDuration` (+ one `RetryPeriod`) instead of ~17 seconds. Voluntary handoffs release the lease immediately and are unaffected.
+These are deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (`15s`/`10s`/`2s`). The renew deadline is the leader's budget for riding out apiserver unavailability or CPU starvation without losing the lease; multi-second stalls of 10 seconds or more have been observed on loaded nodes. A lost lease stops the leader-only components and re-enters election in place (client-go's `LeaderElector.Run` returns permanently on a lost lease, so the controller supervises it and starts a fresh election loop); the rest of the replica — its stores and admission validators — keeps serving throughout. The trade-off is hard-failover latency after a leader crash that never releases the lease: up to `LeaseDuration` (+ one `RetryPeriod`) instead of ~17 seconds. Voluntary handoffs release the lease immediately and are unaffected.
 
 **Tolerance formula**: `LeaseDuration / RenewDeadline = clock skew tolerance ratio`
 
@@ -72,7 +72,8 @@ The renderer **isn't** a registered component. It lives in `pkg/controller/rende
 
 **Leader-only components** (lifecycle registry's `LeaderOnly(...)` group; only constructed and started while leadership is held, torn down on `LostLeadershipEvent`):
 
-- **Coordinator** (`pkg/controller/reconciler`) — Drives the render-validate pipeline (calls `Pipeline.Execute` which in turn calls `RenderService.Render`)
+- **Coordinator** (`pkg/controller/reconciler`) — Drives the render pipeline (calls `Pipeline.Execute` which in turn calls `RenderService.Render`)
+- **RenderGate** (`pkg/controller/rendergate`) — Runs `haproxy -c -dr` on each render off the reconcile path, reverts the pods that took a refused plan without loading it, and holds later renders until one passes
 - **Deployer** (`pkg/controller/deployer`) — Pushes the validated config to every HAProxy endpoint in parallel via `pkg/dataplane.Client`
 - **DeploymentScheduler** (`pkg/controller/deployer`) — Rate-limits and queues deployments; coalesces back-to-back deployment requests via `pkg/controller/coalesce`
 - **DriftPreventionMonitor** (`pkg/controller/deployer`) — Periodic redeploy when nothing has changed for `driftPreventionInterval`, so out-of-band Dataplane API edits get overwritten by the controller's last-known-good config

@@ -235,7 +235,7 @@ func TestComponent_HandleEvent(t *testing.T) {
 
 	t.Run("ignores non-deployment events", func(t *testing.T) {
 		// Should not panic or error when receiving non-DeploymentScheduledEvent
-		otherEvent := events.NewReconciliationCompletedEvent(0, nil, nil)
+		otherEvent := events.NewReconciliationCompletedEvent(0, "", nil, nil)
 		deployer.HandleEvent(otherEvent)
 	})
 

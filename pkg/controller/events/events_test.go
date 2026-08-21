@@ -258,7 +258,7 @@ func TestReconciliationEvents(t *testing.T) {
 	})
 
 	t.Run("ReconciliationCompletedEvent", func(t *testing.T) {
-		event := NewReconciliationCompletedEvent(100, nil, nil)
+		event := NewReconciliationCompletedEvent(100, "", nil, nil)
 		require.NotNil(t, event)
 		assert.Equal(t, int64(100), event.DurationMs)
 		assert.Nil(t, event.RenderedResources)
@@ -374,33 +374,17 @@ func TestTemplateEvents(t *testing.T) {
 }
 
 func TestValidationEvents(t *testing.T) {
-	t.Run("ValidationCompletedEvent", func(t *testing.T) {
-		warnings := []string{"warning1", "warning2"}
-		event := NewValidationCompletedEvent(warnings, 50, "config_change", nil, true)
+	t.Run("RenderGateCompletedEvent", func(t *testing.T) {
+		event := NewRenderGateCompletedEvent("plan-1", false, true, true, "boom", true, 50)
 		require.NotNil(t, event)
-		assert.Equal(t, warnings, event.Warnings)
+		assert.Equal(t, "plan-1", event.PlanID)
+		assert.False(t, event.OK)
+		assert.True(t, event.Refused)
+		assert.True(t, event.Pinned)
+		assert.Equal(t, "boom", event.Message)
 		assert.Equal(t, int64(50), event.DurationMs)
-		assert.Equal(t, "config_change", event.TriggerReason)
-		assert.Nil(t, event.ParsedConfig)
-		assert.Equal(t, EventTypeValidationCompleted, event.EventType())
+		assert.Equal(t, EventTypeRenderGateCompleted, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("ValidationCompletedEvent_DefensiveCopy", func(t *testing.T) {
-		warnings := []string{"warning1"}
-		event := NewValidationCompletedEvent(warnings, 50, "", nil, true)
-
-		// Modify original
-		warnings[0] = "modified"
-
-		// Event should have original value
-		assert.Equal(t, "warning1", event.Warnings[0])
-	})
-
-	t.Run("ValidationCompletedEvent_EmptyWarnings", func(t *testing.T) {
-		event := NewValidationCompletedEvent(nil, 50, "", nil, true)
-		require.NotNil(t, event)
-		assert.Nil(t, event.Warnings)
 	})
 
 	t.Run("ValidationFailedEvent", func(t *testing.T) {
@@ -747,7 +731,7 @@ func TestCorrelation(t *testing.T) {
 		event2 := NewReconciliationStartedEvent("middle",
 			PropagateCorrelation(event1))
 
-		event3 := NewReconciliationCompletedEvent(100, nil, nil,
+		event3 := NewReconciliationCompletedEvent(100, "", nil, nil,
 			PropagateCorrelation(event2))
 
 		// All events should share the same correlation ID
@@ -796,7 +780,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"NewLeaderObserved", NewNewLeaderObservedEvent("id", false)},
 		{"ReconciliationTriggered", NewReconciliationTriggeredEvent("reason", true)},
 		{"ReconciliationStarted", NewReconciliationStartedEvent("trigger")},
-		{"ReconciliationCompleted", NewReconciliationCompletedEvent(0, nil, nil)},
+		{"ReconciliationCompleted", NewReconciliationCompletedEvent(0, "", nil, nil)},
 		{"ReconciliationFailed", NewReconciliationFailedEvent("error", "phase", nil)},
 		{"SecretResourceChanged", NewSecretResourceChangedEvent(nil)},
 		{"CredentialsUpdated", NewCredentialsUpdatedEvent(nil, "v1")},
@@ -804,7 +788,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"HTTPResourceAccepted", NewHTTPResourceAcceptedEvent("url", "checksum", 0)},
 		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", nil, "", true)},
 		{"TemplateRenderFailed", NewTemplateRenderFailedEvent("name", "error", "stack")},
-		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0, "", nil, true)},
+		{"RenderGateCompleted", NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 0)},
 		{"ValidationFailed", NewValidationFailedEvent(nil, 0, "")},
 		{"DeploymentStarted", NewDeploymentStartedEvent(0)},
 		{"InstanceDeploymentFailed", NewInstanceDeploymentFailedEvent(nil, "error", false)},

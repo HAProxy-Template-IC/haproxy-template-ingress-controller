@@ -106,12 +106,14 @@ type Component struct {
 	ackedPlans AckedPlanSink
 
 	// stateMu guards the per-fleet facts the apply path reads: which pods must
-	// be re-sent their complete state, which plan is proven good, and which
-	// plans each pod last reported it holds.
+	// be re-sent their complete state, which plans are proven good, which plans
+	// each pod last reported it holds, and the pods this controller last wrote
+	// to (the revert's search space).
 	stateMu         sync.Mutex
 	invalidBaseline map[string]struct{}
-	validatedPlanID string
+	validatedPlans  *validatedPlanSet
 	observedPlans   map[string][]string
+	fleet           []dataplane.Endpoint
 	// awaiting are the renders the fleet accepted behind a paced reload, in
 	// dispatch order, until a later deployment observes the fleet running one.
 	awaiting []awaitingRender
@@ -138,6 +140,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, syncTimeout time.Dur
 		plans:           newPlanCache(),
 		invalidBaseline: map[string]struct{}{},
 		observedPlans:   map[string][]string{},
+		validatedPlans:  newValidatedPlanSet(),
 		healthTracker:   lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 		metrics:         domainMetrics,
 	}
@@ -154,6 +157,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, syncTimeout time.Dur
 		Handler:    c,
 		EventTypes: []string{
 			events.EventTypeDeploymentScheduled,
+			events.EventTypeRenderGateCompleted,
 		},
 	})
 	c.cancelEventChan = eventBus.SubscribeTypes(cancellationSubscriberName, EventBufferSize,
@@ -167,6 +171,7 @@ const agentStateTimeout = 10 * time.Second
 
 // Start begins the deployer's event loop and blocks until ctx is cancelled.
 func (c *Component) Start(ctx context.Context) error {
+	defer c.Rearm()
 	// Discard events buffered before this leadership term. The construction-
 	// time subscription persists across terms, so DeploymentScheduledEvents
 	// queued when leadership was lost would otherwise replay a stale deployment
@@ -205,8 +210,11 @@ func (c *Component) Start(ctx context.Context) error {
 // HandleEvent implements component.EventHandler: it routes events to the
 // appropriate handler.
 func (c *Component) HandleEvent(event busevents.Event) {
-	if e, ok := event.(*events.DeploymentScheduledEvent); ok {
+	switch e := event.(type) {
+	case *events.DeploymentScheduledEvent:
 		c.performDeployment(c.ctx, e)
+	case *events.RenderGateCompletedEvent:
+		c.handleRenderGateCompleted(c.ctx, e)
 	}
 }
 
@@ -230,20 +238,30 @@ func (c *Component) HealthCheck() error {
 	return c.healthTracker.Check()
 }
 
-// SetValidatedPlan records the newest plan the controller proved good. The
-// agent promotes its rollback baseline to a plan it applied and this names, so
-// a pod never reverts to a set that was never validated. MR 0.3b's rendergate
-// is what calls it.
+// SetValidatedPlan records a plan the controller proved good.
+//
+// It is a set, not a single value: the gate checks superseded plans that pods
+// still run as well as the newest one, and their verdicts arrive in check
+// order, not render order. A pod promotes its rollback baseline only when the
+// manifest names the plan that pod applied (agent statemachine), so recording
+// one id and overwriting it would leave every pod on another plan unable to
+// promote — the fleet's oldest straggler deciding when the newest pod's
+// last-known-good may advance.
 func (c *Component) SetValidatedPlan(planID string) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	c.validatedPlanID = planID
+	c.validatedPlans.add(planID)
 }
 
-func (c *Component) validatedPlan() string {
+// validatedPlanFor is what a pod's manifest carries: the pod's own applied plan
+// when that passed — which is the only value that promotes its baseline — and
+// otherwise the newest passed plan, which is inert for this pod but keeps the
+// field meaningful for a pod that catches up between the state read and the
+// apply.
+func (c *Component) validatedPlanFor(appliedPlanID string) string {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	return c.validatedPlanID
+	return c.validatedPlans.resolve(appliedPlanID)
 }
 
 func (c *Component) leaderEpoch() uint64 {

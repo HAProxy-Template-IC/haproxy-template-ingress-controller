@@ -58,15 +58,46 @@ parsing": the config text is parsed only by HAProxy in production.
 3. **Validation moves, it does not shrink.** The webhook and the config-load
    gate keep the full `haproxy -c`. The reconcile pipeline is render-only; the
    same `haproxy -c -dr` runs asynchronously in `rendergate` (leader-only, own
-   semaphore slot). A failure reverts every pod that runs the failed plan to
-   the agent's durable last-known-good set (`mode: revert_lkg`) and flips the
-   gate to validate-before-dispatch until a render passes. HAProxy is the
-   synchronous gate at apply: a rejected command or reload is a NACK, the old
-   worker keeps serving, the agent restores the LKG files. The DPAPI schema
-   check is dropped; it validated conformance to the DPAPI's model, which is
-   no longer a requirement. Enterprise pods lose the per-pod DPAPI
-   `validate_cmd`; the pod's own binary rejects a bad config at reload time,
-   the journal rolls it back, the NACK carries HAProxy's message.
+   semaphore slot, duty-cycle capped so admission never waits on it). It always
+   checks the newest render, plus any superseded plan a pod still reports
+   applied, so the fleet's exposure is bounded by what the pods hold, not by
+   the render rate. A refusal reverts every pod that carries the failed plan
+   without its own HAProxy having loaded it (`mode: revert_lkg`, the agent's
+   durable last-known-good set) — a pod whose own binary reloaded it is
+   stronger evidence than the controller image's community-edition binary and
+   is left alone — and flips the gate to validate-before-dispatch until a
+   render passes. HAProxy is the synchronous gate at apply: a rejected command
+   or reload is a NACK, the old worker keeps serving, the agent restores the
+   LKG files. The DPAPI schema check is dropped; it validated conformance to
+   the DPAPI's model, which is no longer a requirement. Enterprise pods lose
+   the per-pod DPAPI `validate_cmd`; the pod's own binary rejects a bad config
+   at reload time, the journal rolls it back, the NACK carries HAProxy's
+   message. One synchronous check survives on the reconcile path: a render
+   that accepts HTTP-store content no earlier render used takes the full check
+   before that content becomes the store's accepted version, because the gate's
+   later verdict reverts the fleet's files, not the store. Every render that
+   accepts nothing new skips it, which is all of them in a steady state.
+
+   **The delta, stated.** Every render is still checked by `haproxy -c`, with
+   the same flags and the same binary. What changes is when: while the gate is
+   open, a render reaches the pods before its verdict, so the exposure window
+   is one check plus one apply. It is closed on both ends — the scoped revert
+   undoes the applies that HAProxy never loaded, and the latch means a second
+   render cannot follow a refused one until a check passes. What that window
+   costs is bounded by what an unloadable file set can do: nothing to a running
+   worker, which keeps serving what it already loaded, and one failed reload to
+   a pod that would otherwise have reloaded into it — which the agent's journal
+   rolls back regardless of this gate. Structural changes are reload-proven by
+   the pod synchronously, so the window only exists for the runtime-only class.
+
+   **What else the gate holds.** Everything that describes what the fleet runs
+   moves with the deployment, not with the render: the `spec.k8sResources` a
+   template emits, the `HAProxyCfg` the controller publishes, and the leader
+   term's auxiliary baseline (`currentFiles`). While the gate holds renders,
+   each of those keeps the last render HAProxy accepted, and the pass that
+   releases a held render releases them with it. A Service advertising routing
+   the data plane refused, or a `currentFiles` baseline the pods were reverted
+   away from, would each be a different form of the same lie.
 4. **Hard cutover.** Chart and controller upgrade together; removed values
    `fail` with their replacement; no `dpapi|agent` mode flag. Version skew
    during the roll degrades to full-state + reload, never to a refusal.

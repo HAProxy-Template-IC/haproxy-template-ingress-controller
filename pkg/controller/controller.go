@@ -692,6 +692,11 @@ type componentSetup struct {
 	// same object. Nil when leader election is disabled.
 	LeaderEpoch *leaderelectionctrl.Term
 
+	// ElectionRestart asks superviseElection to cancel the current election
+	// attempt: the Lease is released (ReleaseOnCancel) and election re-enters
+	// in place. Buffered so StandDown never blocks; created with the fence.
+	ElectionRestart chan struct{}
+
 	// SelfWrites links the status applier (writer) to the resource watchers
 	// (readers) so a status write's own echo doesn't re-render.
 	SelfWrites *k8stypes.SelfWriteRegistry

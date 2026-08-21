@@ -49,7 +49,7 @@ const (
 //   - CredentialsUpdatedEvent → updates credentials cache
 //   - TemplateRenderedEvent → updates rendered config cache
 //   - ReconciliationTriggeredEvent → updates pipeline trigger state
-//   - ValidationCompletedEvent/FailedEvent → updates validation state
+//   - RenderGateCompletedEvent/ValidationFailedEvent → updates validation state
 //   - DeploymentStartedEvent/CompletedEvent → updates deployment state
 //   - InstanceDeploymentFailedEvent → tracks failed endpoints
 type StateCache struct {
@@ -65,6 +65,7 @@ type StateCache struct {
 	currentCreds         *coreconfig.Credentials
 	currentCredsVersion  string
 	lastRendered         string
+	lastRenderedPlanID   string
 	lastRenderedTime     time.Time
 	lastAuxFiles         *dataplane.AuxiliaryFiles
 	lastAuxFilesTime     time.Time
@@ -84,6 +85,9 @@ type StateCache struct {
 	validationWarnings   []string
 	validationTime       time.Time
 	validationDurationMs int64
+	// validationPlanID names the render the verdict judged, which is not always
+	// the newest one: the gate also answers for plans pods still run.
+	validationPlanID string
 
 	// Last validated config (only updated on success)
 	lastValidatedConfig string
@@ -131,7 +135,7 @@ func NewStateCache(eventBus *busevents.EventBus, resourceWatcher *resourcewatche
 			events.EventTypeTemplateRendered,
 			events.EventTypeTemplateRenderFailed,
 			events.EventTypeReconciliationTriggered,
-			events.EventTypeValidationCompleted,
+			events.EventTypeRenderGateCompleted,
 			events.EventTypeValidationFailed,
 			events.EventTypeDeploymentStarted,
 			events.EventTypeDeploymentCompleted,
@@ -155,8 +159,8 @@ func (sc *StateCache) HandleEvent(event busevents.Event) {
 		sc.handleTemplateRenderFailed(e)
 	case *events.ReconciliationTriggeredEvent:
 		sc.handleReconciliationTriggered(e)
-	case *events.ValidationCompletedEvent:
-		sc.handleValidationCompleted(e)
+	case *events.RenderGateCompletedEvent:
+		sc.handleRenderGateCompleted(e)
 	case *events.ValidationFailedEvent:
 		sc.handleValidationFailed(e)
 	case *events.DeploymentStartedEvent:
@@ -226,6 +230,7 @@ func (sc *StateCache) handleTemplateRendered(e *events.TemplateRenderedEvent) {
 	defer sc.mu.Unlock()
 
 	sc.lastRendered = e.HAProxyConfig
+	sc.lastRenderedPlanID = e.PlanID
 	sc.lastRenderedTime = time.Now()
 	sc.renderStatus = statusSucceeded
 	sc.renderError = ""
@@ -259,16 +264,33 @@ func (sc *StateCache) handleReconciliationTriggered(e *events.ReconciliationTrig
 	sc.failedEndpoints = nil
 }
 
-func (sc *StateCache) handleValidationCompleted(e *events.ValidationCompletedEvent) {
+// handleRenderGateCompleted records the render gate's verdict. It arrives after
+// the render was dispatched (the gate runs off the wall clock), so a failure
+// describes a config the fleet may already hold and is being reverted from.
+//
+// The gate also answers for superseded plans that pods still run. Those
+// verdicts are real, but they are not statements about the current render, so
+// the debug view reports which plan each one judged and only promotes the
+// cached config when the verdict names the render this cache holds.
+func (sc *StateCache) handleRenderGateCompleted(e *events.RenderGateCompletedEvent) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	sc.validationStatus = statusSucceeded
+	describesCurrentRender := e.PlanID != "" && e.PlanID == sc.lastRenderedPlanID
 	sc.validationTime = e.Timestamp()
 	sc.validationDurationMs = e.DurationMs
-	sc.validationWarnings = e.Warnings
+	sc.validationWarnings = nil
+	sc.validationPlanID = e.PlanID
+	if !e.OK {
+		sc.validationStatus = statusFailed
+		sc.validationErrors = []string{e.Message}
+		return
+	}
+	sc.validationStatus = statusSucceeded
 	sc.validationErrors = nil
-	// Update last validated config
+	if !describesCurrentRender {
+		return
+	}
 	sc.lastValidatedConfig = sc.lastRendered
 	sc.lastValidatedTime = e.Timestamp()
 }

@@ -41,11 +41,12 @@ import (
 )
 
 // This test verifies the full event flow:
-// 1. Component receives ConfigValidatedEvent and caches template config.
-// 2. Component receives TemplateRenderedEvent and caches rendered config.
-// 3. Component receives ValidationCompletedEvent (HAProxy validation success).
-// 4. Component publishes runtime config CRs via Publisher.
-// 5. Component publishes ConfigPublishedEvent with correct metadata.
+//  1. Component receives ConfigValidatedEvent and caches template config.
+//  2. Component receives TemplateRenderedEvent, which both caches the render
+//     and queues it for publishing (the render is the trigger, ADR-0022).
+//  3. Component publishes runtime config CRs via Publisher.
+//  4. Component publishes ConfigPublishedEvent with correct metadata.
+//
 // testEnv is a config-publisher Component wired over fake clients. The SSA
 // list-map merge reactor makes per-pod status patches accumulate the way a real
 // apiserver applies them. Subscribe to bus before calling start.
@@ -192,8 +193,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 		"secret-v1",
 	))
 
-	// Step 2: Publish TemplateRenderedEvent to cache rendered config
-	// Generate a correlation ID to link TemplateRenderedEvent and ValidationCompletedEvent
+	// Step 2: Publish TemplateRenderedEvent, which queues the publish
 	correlationID := t.Name()
 	testHAProxyConfig := "global\n  daemon\n\ndefaults\n  mode http\n"
 	env.bus.Publish(events.NewTemplateRenderedEvent(
@@ -207,13 +207,6 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 		"",   // contentChecksum
 		nil,  // plan
 		"",   // planID
-		true, // coalescible
-		events.WithCorrelation(correlationID, ""),
-	))
-
-	// Step 3: Publish ValidationCompletedEvent to trigger publishing (with matching correlation ID)
-	env.bus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
-		nil,  // parsedConfig
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
@@ -284,10 +277,6 @@ func TestComponent_RetriesIncompletePublicationWithoutCompletingEarly(t *testing
 		"global\n  daemon\n", auxFiles, nil, nil, 1, 1, "", "checksum-v1", nil, "", true,
 		events.WithCorrelation(correlationID, ""),
 	))
-	bus.Publish(events.NewValidationCompletedEvent(
-		nil, 1, "", nil, true, events.WithCorrelation(correlationID, ""),
-	))
-
 	waitForTestSignal(t, ctx, failure.firstFailure, "map-file publication did not fail")
 	waitForTestSignal(t, ctx, retryGate.waiting, "publication retry was not scheduled")
 
@@ -614,8 +603,14 @@ func TestComponent_LostLeadership(t *testing.T) {
 		"secret-v1",
 	))
 
-	// Step 2: Publish TemplateRenderedEvent to cache rendered config
-	// Generate a correlation ID to link TemplateRenderedEvent and ValidationCompletedEvent
+	// Step 2: Publish LostLeadershipEvent to clear cached state
+	env.bus.Publish(events.NewLostLeadershipEvent("lost-leader-id", "test_reason"))
+
+	// Give component time to process event
+	time.Sleep(200 * time.Millisecond)
+
+	// Step 3: Now publish a render - should NOT publish config because the
+	// cached template config was cleared with leadership.
 	correlationID := t.Name()
 	testHAProxyConfig := "global\n  daemon\n"
 	env.bus.Publish(events.NewTemplateRenderedEvent(
@@ -629,23 +624,6 @@ func TestComponent_LostLeadership(t *testing.T) {
 		"",   // contentChecksum
 		nil,  // plan
 		"",   // planID
-		true, // coalescible
-		events.WithCorrelation(correlationID, ""),
-	))
-
-	// Give component time to process events
-	time.Sleep(200 * time.Millisecond)
-
-	// Step 3: Publish LostLeadershipEvent to clear cached state
-	env.bus.Publish(events.NewLostLeadershipEvent("lost-leader-id", "test_reason"))
-
-	// Give component time to process event
-	time.Sleep(200 * time.Millisecond)
-
-	// Step 4: Now publish ValidationCompletedEvent - should NOT publish config
-	// because cached state was cleared (with matching correlation ID)
-	env.bus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
-		nil,  // parsedConfig
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))

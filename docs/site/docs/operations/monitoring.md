@@ -307,7 +307,8 @@ rate(haptic_validation_total[5m])
 |--------|------|--------|-------------|
 | `haptic_resource_count` | Gauge | `type` | Current count of watched resources |
 | `haptic_haproxy_pods_rejected_total` | Counter | `reason` | HAProxy pods refused admission by the discovery component. Persistent non-zero growth typically means the controller can't talk to the deployed HAProxy pods (for example, the bundled HAProxy major.minor differs from the chart's `haproxyVersion`). |
-| `haptic_config_rejected_total` | Counter | `validator` | `HAProxyTemplateConfig` loads refused by the config-validation gate. The `validator` label names which check rejected it (`basic`, `template`, `jsonpath`, `validationtests`, or `coordinator` when a validator timed out). Non-zero growth means the leader is refusing new config and continuing on the last-good one — **alert on it**: the operator's latest change isn't live. |
+| `haptic_config_rejected_total` | Counter | `validator` | Configuration refused by a validation gate. The `validator` label names which check rejected it: `basic`, `template`, `jsonpath` or `validationtests` for a `HAProxyTemplateConfig` load, `coordinator` when a validator timed out, and `haproxy` when the render gate's own `haproxy -c` refused a rendered config. Non-zero growth means the leader is refusing new config and continuing on the last-good one — **alert on it**: the operator's latest change isn't live. |
+| `haptic_config_pinned` | Gauge | | `1` while the render gate holds renders HAProxy refused twice in a row. The pods keep serving the last configuration HAProxy accepted, and nothing new reaches them until the input the `ConfigValidated` condition names is fixed. Leader-only; `0` on followers. |
 
 **Key queries:**
 
@@ -328,6 +329,9 @@ sum by (reason) (rate(haptic_haproxy_pods_rejected_total[5m]))
 
 # Config rejected (leader refusing new config) — alert if > 0
 sum by (validator) (rate(haptic_config_rejected_total[5m]))
+
+# Renders held because HAProxy refused two in a row — alert if > 0
+haptic_config_pinned
 ```
 
 ### Event metrics
@@ -604,11 +608,11 @@ A route that receives no requests for over a minute drops out of the exposition 
 
 ## Alerting rules
 
-If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `controller.monitoring.prometheusRule.enabled`) covering the ten alerts in [Shipped alerts](#shipped-alerts) below — nine on controller `haptic_*` metrics plus one on HAProxy's own access-log drop counter. The [Recommended alerts](#recommended-alerts) further down are a separate, broader example set you copy and adapt for any Prometheus setup — they're **not** what the chart deploys, and most use distinct `HAProxyIC*` names so you can run them alongside the shipped rules (`HAProxyFleetDiverged` is the one alert both sets define).
+If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `controller.monitoring.prometheusRule.enabled`) covering the fifteen alerts in [Shipped alerts](#shipped-alerts) below — fourteen on controller and agent `haptic_*` metrics plus one on HAProxy's own access-log drop counter. The [Recommended alerts](#recommended-alerts) further down are a separate, broader example set you copy and adapt for any Prometheus setup — they're **not** what the chart deploys, and most use distinct `HAProxyIC*` names so you can run them alongside the shipped rules (`HAProxyFleetDiverged` is the one alert both sets define).
 
 ### Shipped alerts
 
-The chart's `PrometheusRule` deploys these ten alerts when `controller.monitoring.prometheusRule.enabled: true`. Each is toggled by its own `controller.monitoring.prometheusRule.defaultRules.<key>` flag (all default to `true`):
+The chart's `PrometheusRule` deploys these fifteen alerts when `controller.monitoring.prometheusRule.enabled: true`. Each is toggled by its own `controller.monitoring.prometheusRule.defaultRules.<key>` flag (all default to `true`):
 
 | Alert | Toggle key (`defaultRules.<key>`) | Fires when |
 |-------|-----------------------------------|------------|
@@ -618,9 +622,14 @@ The chart's `PrometheusRule` deploys these ten alerts when `controller.monitorin
 | `HAProxyControllerHighQueueDepth` | `highQueueDepth` | p95 `haptic_reconciliation_queue_wait_seconds` over `5s` for 5m |
 | `HAProxyControllerNoLeader` | `leaderElectionLost` | `sum(haptic_leader_election_is_leader) == 0` for 1m |
 | `HAProxyControllerConfigRejected` | `configRejected` | `increase(haptic_config_rejected_total[5m]) > 0` for 1m |
+| `HAProxyControllerConfigPinned` | `configPinned` | `haptic_config_pinned > 0` for 5m |
 | `HAProxyControllerHAProxyPodsRejected` | `haproxyPodsRejected` | `increase(haptic_haproxy_pods_rejected_total[5m]) > 0` for 5m |
 | `HAProxyControllerNoHAProxyPods` | `noHAProxyPods` | `haptic_resource_count{type="haproxy-pods"} < 1` for 5m |
 | `HAProxyControllerCriticalEventsDropped` | `criticalEventsDropped` | `increase(haptic_events_dropped_critical_total[5m]) > 0` |
+| `HAProxyAgentApplyRejected` | `applyRejected` | `increase(haptic_apply_rejected_total[5m]) > 0` for 1m |
+| `HAProxyAgentInvariantViolated` | `agentInvariantViolated` | `increase(haptic_agent_invariant_violations_total{name!="recovery_reload"}[5m]) > 0` |
+| `HAProxyAgentRecoveryReloadFailed` | `recoveryReloadFailed` | `increase(haptic_agent_invariant_violations_total{name="recovery_reload"}[5m]) > 0` |
+| `HAProxyAgentVersionSkew` | `agentVersionSkew` | `increase(haptic_agent_version_skew_total[15m]) > 0` for 30m |
 | `HAProxyAccessLogRecordsDropped` | `accessLogDropped` | `increase(haproxy_process_dropped_logs_total[5m]) > 0` |
 
 Turn one rule off, or replace the whole set with your own:
@@ -632,7 +641,7 @@ controller:
     prometheusRule:
       enabled: true
       defaultRules:
-        highQueueDepth: false   # drop a single shipped rule; the other nine stay
+        highQueueDepth: false   # drop a single shipped rule; the other fourteen stay
       # Or set `rules:` to a non-empty list to replace ALL default rules with your own:
       # rules:
       #   - alert: MyCustomAlert

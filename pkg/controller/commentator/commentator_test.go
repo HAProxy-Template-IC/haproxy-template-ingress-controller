@@ -113,7 +113,7 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 		},
 		{
 			name:  "validation completed is debug (consolidated in DeploymentCompletedEvent)",
-			event: mockEvent{eventType: events.EventTypeValidationCompleted},
+			event: mockEvent{eventType: events.EventTypeRenderGateCompleted},
 			want:  slog.LevelDebug,
 		},
 		{
@@ -279,7 +279,7 @@ func TestEventCommentator_GenerateInsight_ReconciliationEvents(t *testing.T) {
 	})
 
 	t.Run("ReconciliationCompletedEvent", func(t *testing.T) {
-		event := events.NewReconciliationCompletedEvent(123, nil, nil)
+		event := events.NewReconciliationCompletedEvent(123, "", nil, nil)
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -678,24 +678,24 @@ func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 	logger := slog.Default()
 	ec := NewEventCommentator(bus, logger, 100)
 
-	t.Run("ValidationCompletedEvent without warnings", func(t *testing.T) {
-		event := events.NewValidationCompletedEvent(nil, 150, "", nil, true)
+	t.Run("RenderGateCompletedEvent pass", func(t *testing.T) {
+		event := events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 150)
 
 		insight, attrs := ec.generateInsight(event)
 
-		assert.Contains(t, insight, "validation succeeded")
+		assert.Contains(t, insight, "HAProxy accepted render plan-1")
 		assert.Contains(t, insight, "150ms")
 		assertContainsAttr(t, attrs, "duration_ms", int64(150))
 	})
 
-	t.Run("ValidationCompletedEvent with warnings", func(t *testing.T) {
-		event := events.NewValidationCompletedEvent([]string{"warning1", "warning2"}, 200, "", nil, true)
+	t.Run("RenderGateCompletedEvent refusal", func(t *testing.T) {
+		event := events.NewRenderGateCompletedEvent("plan-2", false, true, true, "bad backend", true, 200)
 
 		insight, attrs := ec.generateInsight(event)
 
-		assert.Contains(t, insight, "validation succeeded")
-		assert.Contains(t, insight, "2 warnings")
-		assertContainsAttr(t, attrs, "warnings", 2)
+		assert.Contains(t, insight, "HAProxy refused render plan-2")
+		assert.Contains(t, insight, "bad backend")
+		assertContainsAttr(t, attrs, "pinned", true)
 	})
 
 	t.Run("ValidationFailedEvent", func(t *testing.T) {
@@ -746,7 +746,7 @@ func TestEventCommentator_ReconciliationCorrelation(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	// Pre-populate with a completed reconciliation
-	completedEvent := events.NewReconciliationCompletedEvent(100, nil, nil)
+	completedEvent := events.NewReconciliationCompletedEvent(100, "", nil, nil)
 	ec.ringBuffer.Add(completedEvent)
 
 	// Small delay

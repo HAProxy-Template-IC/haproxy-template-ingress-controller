@@ -38,11 +38,17 @@ type PipelineExecutor interface {
 }
 
 // CurrentFilesAuthority binds accepted auxiliary output to a leader term.
+//
+// Accept records a render's files provisionally; Confirm and Rollback settle
+// them once the render gate has judged that render, so the term's idea of
+// "what is deployed" never keeps files the fleet was reverted away from.
 type CurrentFilesAuthority interface {
 	BeginTerm() uint64
 	EndTerm(generation uint64)
 	Snapshot(generation uint64) (map[string]string, error)
-	Accept(generation uint64, auxiliaryFiles *dataplane.AuxiliaryFiles)
+	Accept(generation uint64, planID string, auxiliaryFiles *dataplane.AuxiliaryFiles)
+	Confirm(generation uint64, planID string)
+	Rollback(generation uint64, planID string)
 }
 
 const (
@@ -70,11 +76,12 @@ const (
 //  1. ReconciliationTriggeredEvent received
 //  2. Publish ReconciliationStartedEvent
 //  3. Call Pipeline.Execute() (renders and validates)
-//  4. If success: Publish TemplateRenderedEvent + ValidationCompletedEvent
+//  4. If success: Publish TemplateRenderedEvent
 //  5. If failure: Publish ReconciliationFailedEvent
 //
-// The DeploymentScheduler still operates event-driven, receiving TemplateRenderedEvent
-// and ValidationCompletedEvent to schedule deployments.
+// The DeploymentScheduler still operates event-driven, receiving
+// TemplateRenderedEvent and the render gate's RenderGateCompletedEvent to
+// schedule deployments.
 type Coordinator struct {
 	*component.ReadySignal
 
@@ -163,10 +170,12 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
 	// All-replica components replay their cached state on BecameLeaderEvent.
+	defer c.Rearm()
 	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(
 		CoordinatorComponentName,
 		CoordinatorEventBufferSize,
 		events.EventTypeReconciliationTriggered,
+		events.EventTypeRenderGateCompleted,
 	)
 	// Unsubscribe on loop exit: without this, every leadership
 	// re-acquisition on the same instance would stack another subscription
@@ -181,15 +190,37 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	for {
 		select {
 		case event := <-c.eventChan:
-			if triggered, ok := event.(*events.ReconciliationTriggeredEvent); ok {
-				triggered = c.coalesceQueuedTriggers(triggered)
+			switch e := event.(type) {
+			case *events.ReconciliationTriggeredEvent:
+				triggered := c.coalesceQueuedTriggers(e)
 				c.handleReconciliationTriggered(ctx, triggered, generation)
+			case *events.RenderGateCompletedEvent:
+				c.settleCurrentFiles(generation, e)
 			}
 
 		case <-ctx.Done():
 			c.logger.Info("Reconciliation coordinator shutting down", "reason", ctx.Err())
 			return nil
 		}
+	}
+}
+
+// settleCurrentFiles moves the term's auxiliary baseline with the render gate's
+// verdict: a pass makes the render's files the baseline the next render reads
+// back, a refusal restores the ones HAProxy last accepted. Verdicts for
+// superseded plans judge a render the baseline has moved past.
+func (c *Coordinator) settleCurrentFiles(generation uint64, event *events.RenderGateCompletedEvent) {
+	if c.currentFiles == nil || !event.Newest {
+		return
+	}
+	if event.OK {
+		c.currentFiles.Confirm(generation, event.PlanID)
+		return
+	}
+	// Only HAProxy's own refusal says the files are wrong; a gate that could
+	// not run leaves the baseline where it is.
+	if event.Refused {
+		c.currentFiles.Rollback(generation, event.PlanID)
 	}
 }
 
@@ -282,7 +313,7 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 		return
 	}
 	if c.currentFiles != nil {
-		c.currentFiles.Accept(generation, result.AuxiliaryFiles)
+		c.currentFiles.Accept(generation, result.PlanID, result.AuxiliaryFiles)
 	}
 
 	// Pipeline succeeded - publish events for downstream components
@@ -327,20 +358,14 @@ func (c *Coordinator) handlePipelineSuccess(
 	}
 	c.eventBus.Publish(templateEvent)
 
-	// Publish ValidationCompletedEvent to trigger deployment scheduling
-	// Pass ParsedConfig from pipeline result to enable downstream sync optimization
-	validationEvent := events.NewValidationCompletedEvent(
-		result.ValidationWarnings,
-		result.ValidateDurationMs,
-		triggerEvent.Reason,
-		result.ParsedConfig,
-		coalescible,
-		events.PropagateCorrelation(templateEvent),
-	)
-	if context.Cause(ctx) != nil {
-		return
+	// No validation event follows: TemplateRenderedEvent is the deploy trigger
+	// now, and HAProxy's verdict arrives asynchronously from the render gate
+	// (ADR-0022). Any warnings the synchronous output validators produced ride
+	// the log, not a second event nobody would pair with this render.
+	for _, warning := range result.ValidationWarnings {
+		c.logger.Warn("Rendered output validator warning",
+			"warning", warning, "correlation_id", triggerEvent.CorrelationID())
 	}
-	c.eventBus.Publish(validationEvent)
 
 	// Publish ReconciliationCompletedEvent carrying the rendered resources so
 	// ResourceApplier reads them directly from the event payload (stateless
@@ -348,6 +373,7 @@ func (c *Coordinator) handlePipelineSuccess(
 	totalDuration := time.Since(startTime).Milliseconds()
 	completed := events.NewReconciliationCompletedEvent(
 		totalDuration,
+		result.PlanID,
 		result.RenderedResources,
 		result.StatusPatches,
 		events.PropagateCorrelation(triggerEvent),
@@ -397,8 +423,8 @@ func (c *Coordinator) handlePipelineFailure(
 	}
 
 	// Publish phase-specific failure event before the general ReconciliationFailedEvent.
-	// This mirrors handlePipelineSuccess which publishes TemplateRenderedEvent and
-	// ValidationCompletedEvent before ReconciliationCompletedEvent.
+	// This mirrors handlePipelineSuccess which publishes TemplateRenderedEvent
+	// before ReconciliationCompletedEvent.
 	switch phase {
 	case string(pipeline.PhaseValidation):
 		if context.Cause(ctx) != nil {

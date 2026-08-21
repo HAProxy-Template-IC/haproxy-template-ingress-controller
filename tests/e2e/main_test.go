@@ -50,6 +50,7 @@ import (
 	devassets "gitlab.com/haproxy-haptic/haptic/scripts/dev-env-assets"
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // testEnv is the e2e-framework environment shared by all tests in the suite.
@@ -975,12 +976,25 @@ func teardownCluster(ctx context.Context, provider *kindcluster.Provider) (conte
 // kubectlApplyStdin pipes a YAML manifest through `kubectl apply -f -`.
 // Used for fixture YAMLs that don't need typed Go fixtures.
 func kubectlApplyStdin(ctx context.Context, yaml []byte) error {
-	cmd := exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", "-")
-	cmd.Stdin = bytes.NewReader(yaml)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w (output: %s)", err, out)
+	apply := func(c context.Context) error {
+		cmd := exec.CommandContext(c, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", "-")
+		cmd.Stdin = bytes.NewReader(yaml)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%w (output: %s)", err, out)
+		}
+		return nil
 	}
-	return nil
+	err := apply(ctx)
+	// The webhook denies with this message while its replica reinitializes (a
+	// config push; lost leadership no longer reinitializes); the denial says
+	// to retry. Bounded and scoped to that one message, like NewIngress.
+	if err != nil && strings.Contains(err.Error(), "retry after controller initialization") {
+		_ = testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
+			err = apply(c)
+			return err == nil || !strings.Contains(err.Error(), "retry after controller initialization"), nil
+		})
+	}
+	return err
 }
 
 // kubectlGetSecretData returns the .data map of a Secret as a map of

@@ -1,12 +1,12 @@
 # pkg/controller/configpublisher
 
-Event adapter that turns the controller's `TemplateRenderedEvent` / `ValidationCompletedEvent` / deployment lifecycle into CRD writes via `pkg/k8s/configpublisher.Publisher`.
+Event adapter that turns the controller's `TemplateRenderedEvent` / `RenderGateCompletedEvent` / deployment lifecycle into CRD writes via `pkg/k8s/configpublisher.Publisher`.
 
 ## Overview
 
 This is the **leader-only** component that publishes the rendered HAProxy configuration as observable Kubernetes CRDs (`HAProxyCfg`, `HAProxyMapFile`, `HAProxyGeneralFile`, `HAProxyCRTListFile`) plus the SSL Secrets that auxiliary files reference. It also writes per-pod deployment status back onto the published `HAProxyCfg` so operators can `kubectl get haproxycfg <name>` and see exactly which pods accepted which version.
 
-The component subscribes only on the leader, holds short-lived per-correlation-ID state to pair `TemplateRenderedEvent` with the matching `ValidationCompletedEvent`, and runs three async worker goroutines so K8s API latency doesn't block the event loop.
+The component subscribes only on the leader, publishes on `TemplateRenderedEvent` (the render is what the fleet is given), records the render gate's later verdict on the same object as conditions, and runs four async worker goroutines so K8s API latency doesn't block the event loop.
 
 ## Quick Start
 
@@ -43,7 +43,7 @@ contract drives the start, not an event handler.
 |------------------|-------------------------|
 | `ConfigValidatedEvent` | Cache the validated config (CRD + secret resourceVersions) for upcoming publishes |
 | `TemplateRenderedEvent` | Cache the rendered config + aux files, keyed by correlation ID |
-| `ValidationCompletedEvent` | Match against the cached render; queue a `publishWorkItem` for the publish worker |
+| `RenderGateCompletedEvent` | Mirror the gate's latch; queue the `ConfigValidated` / `ConfigPinned` conditions for the verdict worker, and publish a render the pass releases |
 | `ValidationFailedEvent` | Queue a `validationFailedWorkItem` so the failure shows up as an `-invalid` `HAProxyCfg` |
 | `DeployedConfigPublishRequest` | Publish, as the HAProxyCfg spec, the exact bytes the deployer just applied (deploy-driven publish path; uses a separate pending slot so a validation publish cannot coalesce it away) |
 | `ConfigAppliedToPodEvent` | Coalesce per-pod status updates (last-wins) and signal the status worker |
@@ -67,7 +67,7 @@ An incomplete publication stays on its worker and retries transient failures wit
 
 - [`pkg/k8s/configpublisher`](../../k8s/configpublisher/) — the underlying `Publisher` that does the actual CRD writes
 - [`pkg/controller/deployer`](../deployer/) — the parallel path that pushes config to HAProxy pods (this package writes the observability artefacts; the deployer writes the live HAProxy configuration)
-- [`pkg/controller/events`](../events/) — `TemplateRenderedEvent`, `ValidationCompletedEvent`, `ConfigAppliedToPodEvent`, etc.
+- [`pkg/controller/events`](../events/) — `TemplateRenderedEvent`, `RenderGateCompletedEvent`, `ConfigAppliedToPodEvent`, etc.
 
 ## License
 

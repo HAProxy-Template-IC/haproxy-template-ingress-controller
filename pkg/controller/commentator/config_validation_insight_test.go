@@ -42,14 +42,13 @@ import (
 //     as "...0 validators:" which confuses operators.
 //
 //  validationInsight:
-//   * ValidationCompletedEvent " with N warnings" — appended only when
-//     Warnings is non-empty. Operators count warnings to detect drift.
-//   * ValidationCompletedEvent " (trigger: ...)" — appended only when
+//   * RenderGateCompletedEvent names the plan and, on a refusal, HAProxy's
+//     own words — the operator's only pointer at what to fix.
+//   * ValidationFailedEvent " (trigger: ...)" — appended only when
 //     TriggerReason is non-empty; same on-call routing semantics as
-//     other trigger fragments (template_deployment_insight).
-//   * ValidationFailedEvent " (trigger: ...)" — same conditional rule
-//     as ValidationCompletedEvent. Failed validations without a trigger
-//     reason came from older callers and must NOT show "(trigger: )".
+//     other trigger fragments (template_deployment_insight). Failed
+//     validations without a trigger reason came from older callers and
+//     must NOT show "(trigger: )".
 
 func TestConfigInsight_ValidationResponse_StatusFlipAndErrorCount(t *testing.T) {
 	tests := []struct {
@@ -284,75 +283,62 @@ func TestConfigInsight_InvalidEvent_BreakdownOnlyWhenErrorsPresent(t *testing.T)
 }
 
 func TestValidationInsight_CompletedAndFailed_ConditionalFragments(t *testing.T) {
-	// ValidationCompletedEvent and ValidationFailedEvent both have
-	// optional " (trigger: ...)" suffixes governed by TriggerReason.
-	// ValidationCompletedEvent additionally appends " with N warnings"
-	// only when Warnings is non-empty. These conditional fragments are
-	// what tells operators why a validation ran and whether HAProxy
-	// flagged anything that doesn't fail the build.
-	type tcCompleted struct {
-		name          string
-		warnings      []string
-		trigger       string
-		wantContains  []string // fragments that MUST appear
-		wantNotInsigh []string // fragments that must be ABSENT
+	// The render gate's verdict reads differently on a pass and a refusal:
+	// a pass names the plan HAProxy accepted, a refusal names the plan and
+	// HAProxy's own words. Both always carry duration_ms so latency
+	// dashboards group regardless of the branch.
+	type tcGate struct {
+		name         string
+		ok           bool
+		refused      bool
+		message      string
+		pinned       bool
+		wantContains []string // fragments that MUST appear
+		notContains  []string // fragments that must be ABSENT
 	}
-	completedCases := []tcCompleted{
+	gateCases := []tcGate{
 		{
-			name:          "no warnings, no trigger → both fragments absent",
-			warnings:      nil,
-			trigger:       "",
-			wantContains:  []string{"HAProxy configuration validation succeeded"},
-			wantNotInsigh: []string{"warnings", "(trigger:"},
+			name:         "pass names the accepted plan",
+			ok:           true,
+			wantContains: []string{"HAProxy accepted render plan-1"},
+			notContains:  []string{"refused"},
 		},
 		{
-			name:          "warnings only → 'with N warnings' appended, no trigger",
-			warnings:      []string{"deprecated directive"},
-			trigger:       "",
-			wantContains:  []string{"with 1 warnings"},
-			wantNotInsigh: []string{"(trigger:"},
+			name:         "refusal carries HAProxy's own words",
+			refused:      true,
+			message:      "unknown keyword",
+			wantContains: []string{"HAProxy refused render plan-1", "unknown keyword"},
+			notContains:  []string{"accepted"},
 		},
 		{
-			name:          "trigger only → '(trigger: ...)' appended, no warnings",
-			warnings:      nil,
-			trigger:       "config_change",
-			wantContains:  []string{"(trigger: config_change)"},
-			wantNotInsigh: []string{"warnings"},
-		},
-		{
-			name:         "warnings + trigger → both fragments appended",
-			warnings:     []string{"a", "b", "c"},
-			trigger:      "debounce_timer",
-			wantContains: []string{"with 3 warnings", "(trigger: debounce_timer)"},
+			name:         "gate that could not run is still a refusal to dispatch",
+			message:      "creating temp directory: read-only file system",
+			pinned:       true,
+			wantContains: []string{"HAProxy refused render plan-1", "read-only file system"},
 		},
 	}
 
-	for _, tt := range completedCases {
-		t.Run("completed/"+tt.name, func(t *testing.T) {
+	for _, tt := range gateCases {
+		t.Run("gate/"+tt.name, func(t *testing.T) {
 			ec := cvECommentator()
-			evt := ctlevents.NewValidationCompletedEvent(tt.warnings, 42, tt.trigger, nil, false)
+			evt := ctlevents.NewRenderGateCompletedEvent("plan-1", tt.ok, tt.refused, true, tt.message, tt.pinned, 42)
 
 			insight, attrs := ec.validationInsight(evt, nil)
 
 			require.NotEmpty(t, insight)
 			for _, want := range tt.wantContains {
 				assert.Contains(t, insight, want,
-					"completed-validation insight MUST contain %q so operators "+
-						"see the warning count / trigger context", want)
+					"render-gate insight MUST contain %q so operators see the "+
+						"plan and HAProxy's verdict", want)
 			}
-			for _, notWant := range tt.wantNotInsigh {
+			for _, notWant := range tt.notContains {
 				assert.NotContains(t, insight, notWant,
-					"completed-validation insight MUST NOT contain %q when the "+
-						"corresponding field is empty — stale fragments confuse operators",
-					notWant)
+					"render-gate insight MUST NOT contain %q on this branch", notWant)
 			}
-			// duration_ms is always present so latency dashboards can group
-			// regardless of the conditional branches.
 			assert.Equal(t, int64(42), cvAttr(attrs, "duration_ms"),
 				"duration_ms attr must always be present for dashboards")
-			assert.Equal(t, tt.trigger, cvAttr(attrs, "trigger_reason"),
-				"trigger_reason attr must always be present (even empty) so "+
-					"dashboards group consistently regardless of branch")
+			assert.Equal(t, "plan-1", cvAttr(attrs, "plan"),
+				"plan attr must always be present so a verdict is traceable to a render")
 		})
 	}
 

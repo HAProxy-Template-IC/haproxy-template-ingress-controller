@@ -54,7 +54,7 @@ func newHistoryEntry(event busevents.Event) historyEntry {
 		entry.trigger = strings.Clone(typed.Reason)
 	case *events.TemplateRenderedEvent:
 		entry.durationMs = typed.DurationMs
-	case *events.ValidationCompletedEvent:
+	case *events.RenderGateCompletedEvent:
 		entry.durationMs = typed.DurationMs
 	}
 

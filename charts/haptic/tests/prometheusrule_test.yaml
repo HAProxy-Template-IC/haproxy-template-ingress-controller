@@ -166,12 +166,58 @@ tests:
           path: spec.groups[0].rules
           content:
             alert: HAProxyAgentInvariantViolated
-            expr: increase(haptic_agent_invariant_violations_total[5m]) > 0
+            expr: increase(haptic_agent_invariant_violations_total{name!="recovery_reload"}[5m]) > 0
             labels:
               severity: critical
             annotations:
               summary: "The HAPTIC agent observed one of its invariants failing"
               description: "Invariant {{ $labels.name }} failed on pod {{ $labels.pod }} - this is a defect, not an operator error; collect the agent state (haptic agent state --output json, run in the pod's agent container) and open an issue"
+
+  # The recovery reload is its own alert, not a generic invariant: the worker is
+  # running a set that matches neither the rejected apply nor the restored
+  # files, and the fix is a pod restart, not an issue report.
+  - it: should include the recovery reload failed alert
+    asserts:
+      - contains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyAgentRecoveryReloadFailed
+            expr: increase(haptic_agent_invariant_violations_total{name="recovery_reload"}[5m]) > 0
+            labels:
+              severity: critical
+            annotations:
+              summary: "An HAProxy worker is running a configuration nobody described"
+              description: "Pod {{ $labels.pod }} rolled back to its last known good file set but the recovery reload failed, so the running worker matches neither the rejected apply nor the restored files. Restart the HAProxy pod after collecting `haptic agent state` from it"
+
+  - it: should include the config pinned alert
+    asserts:
+      - contains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyControllerConfigPinned
+            expr: haptic_config_pinned > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "HAProxy refused the rendered configuration twice; renders are held"
+              description: "No new render reaches the HAProxy pods - they keep serving the last configuration HAProxy accepted. The HAProxyCfg's ConfigValidated condition carries HAProxy's own message; fix the input it names"
+
+  - it: should disable the render gate alerts when configured
+    set:
+      controller.monitoring.prometheusRule.defaultRules.configPinned: false
+      controller.monitoring.prometheusRule.defaultRules.recoveryReloadFailed: false
+    asserts:
+      - notContains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyControllerConfigPinned
+          any: true
+      - notContains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyAgentRecoveryReloadFailed
+          any: true
 
   - it: should include the agent version skew alert
     asserts:

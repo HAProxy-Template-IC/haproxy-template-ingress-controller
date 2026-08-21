@@ -11,6 +11,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -263,3 +264,61 @@ var (
 	_ Component                 = (*signalingMock)(nil)
 	_ SubscriptionReadySignaler = (*signalingMock)(nil)
 )
+
+// A gracefully ended leadership term leaves components Stopped; the next
+// acquisition restarts the same instances in place. A Failed component stays
+// terminal.
+func TestStartLeaderOnlyRestartsStoppedComponentsNextTerm(t *testing.T) {
+	registry := NewRegistry()
+	var starts atomic.Int32
+	component := &restartCountingComponent{starts: &starts}
+	registry.Register(component, true)
+
+	term1, endTerm1 := context.WithCancel(context.Background())
+	run1, err := registry.StartLeaderOnly(term1)
+	require.NoError(t, err)
+	endTerm1()
+	require.NoError(t, run1.Wait())
+	require.Equal(t, int32(1), starts.Load())
+
+	term2, endTerm2 := context.WithCancel(context.Background())
+	run2, err := registry.StartLeaderOnly(term2)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), starts.Load(), "a Stopped component restarts on the next term")
+	endTerm2()
+	require.NoError(t, run2.Wait())
+}
+
+func TestStartLeaderOnlyLeavesFailedComponentsTerminal(t *testing.T) {
+	registry := NewRegistry()
+	var starts atomic.Int32
+	component := &restartCountingComponent{starts: &starts, err: errors.New("boom")}
+	registry.Register(component, true)
+
+	run1, _ := registry.StartLeaderOnly(context.Background())
+	_ = run1.Wait()
+	require.Equal(t, int32(1), starts.Load())
+
+	run2, err := registry.StartLeaderOnly(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, run2.Wait(), "nothing to start")
+	require.Equal(t, int32(1), starts.Load(), "a Failed component never silently rejoins a term")
+}
+
+// restartCountingComponent runs until its term ends; without a
+// SubscriptionReady channel the registry treats it as instantly ready.
+type restartCountingComponent struct {
+	starts *atomic.Int32
+	err    error
+}
+
+func (*restartCountingComponent) Name() string { return "restart-counting" }
+
+func (c *restartCountingComponent) Start(ctx context.Context) error {
+	c.starts.Add(1)
+	if c.err != nil {
+		return c.err
+	}
+	<-ctx.Done()
+	return nil
+}

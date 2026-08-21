@@ -31,8 +31,8 @@ import (
 // Uses a "latest wins" pattern where pending deployments overwrite each other.
 //
 // `contentChecksum` MUST be captured by the caller at the same point `config`
-// is captured (i.e. from the same TemplateRenderedEvent / ValidationCompletedEvent
-// snapshot) and threaded through unchanged. Re-reading it from
+// is captured (i.e. from the same TemplateRenderedEvent snapshot) and threaded
+// through unchanged. Re-reading it from
 // `s.lastContentChecksum` at deploy-time creates a race window where a fresh
 // reconcile mutates the field, the wrong hash gets recorded as "deployed",
 // and the next reconcile producing that hash incorrectly skips.

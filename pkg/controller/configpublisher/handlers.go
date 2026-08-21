@@ -26,11 +26,12 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
 
-// lookupCachedConfig fetches the template config and rendered entry tied to the
-// event's correlation ID. Returns ok=false (with a warning logged) when either the
-// correlation ID is missing or the cached state isn't yet complete; callers should
-// bail out in that case. eventName labels the event in the missing-correlation-id
-// warning, action labels the intended operation in the missing-state warning.
+// lookupCachedConfig fetches the template config and the newest render when it
+// is the one this event's correlation ID describes. Returns ok=false (with a
+// warning logged) when the correlation ID is missing or the state isn't yet
+// complete; callers should bail out in that case. eventName labels the event in
+// the missing-correlation-id warning, action labels the intended operation in
+// the missing-state warning.
 func (c *Component) lookupCachedConfig(eventID, correlationID, eventName, action string) (*v1alpha1.HAProxyTemplateConfig, *renderedConfigEntry, bool) {
 	if correlationID == "" {
 		c.logger.Warn(eventName+" missing correlation ID, cannot match rendered config",
@@ -41,7 +42,7 @@ func (c *Component) lookupCachedConfig(eventID, correlationID, eventName, action
 	c.mu.RLock()
 	hasTemplateConfig := c.hasTemplateConfig
 	templateConfig := c.templateConfig
-	entry, hasRenderedConfig := c.renderedConfigs[correlationID]
+	entry, hasRenderedConfig := c.lastRender, c.lastRenderCorrelationID == correlationID && c.lastRender != nil
 	c.mu.RUnlock()
 
 	if !hasTemplateConfig || !hasRenderedConfig {
@@ -89,9 +90,15 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 	c.mu.Unlock()
 }
 
-// handleTemplateRendered caches the rendered config for later publishing.
-// The config is indexed by correlation ID to ensure we match it with the
-// corresponding ValidationCompletedEvent.
+// handleTemplateRendered caches the rendered config and queues it for
+// publishing.
+//
+// The render is the trigger: HAProxy's verdict on it runs asynchronously in the
+// render gate (ADR-0022), so the published HAProxyCfg is what the fleet was
+// given, and the gate's verdict lands on it as a condition.
+//
+// This method is non-blocking: it queues work for the publishWorker instead of
+// making K8S API calls directly, so the event loop keeps up with event volume.
 func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) {
 	correlationID := event.CorrelationID()
 	if correlationID == "" {
@@ -101,40 +108,49 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 		correlationID = event.EventID()
 	}
 
-	c.logger.Debug("Caching rendered config for publishing",
-		"config_bytes", event.ConfigBytes,
-		"auxiliary_file_count", event.AuxiliaryFileCount,
-		"correlation_id", correlationID,
-	)
-
 	// Cache the rendered config indexed by correlation ID
 	c.mu.Lock()
-	c.renderedConfigs[correlationID] = &renderedConfigEntry{
+	entry := &renderedConfigEntry{
 		config:          event.HAProxyConfig,
 		auxFiles:        event.AuxiliaryFiles,
 		contentChecksum: event.ContentChecksum,
+		planID:          event.PlanID,
 		renderedAt:      event.Timestamp(),
 	}
+	c.renderedConfigs[correlationID] = entry
+	c.lastRender = entry
+	c.lastRenderCorrelationID = correlationID
+	templateConfig := c.templateConfig
+	hasTemplateConfig := c.hasTemplateConfig
+	pinned := c.gatePinned
+	if pinned {
+		c.heldRender = entry
+		c.heldCorrelationID = correlationID
+	} else {
+		c.publishedPlanID = event.PlanID
+	}
 	c.mu.Unlock()
-}
 
-// handleValidationCompleted queues the configuration for async publishing.
-// Uses correlation ID to match with the corresponding TemplateRenderedEvent.
-//
-// This method is non-blocking - it queues work for the publishWorker instead of
-// making K8S API calls directly. This prevents the event loop from blocking on
-// slow API calls, allowing the component to keep up with event volume.
-func (c *Component) handleValidationCompleted(event *events.ValidationCompletedEvent) {
-	correlationID := event.CorrelationID()
-	templateConfig, entry, ok := c.lookupCachedConfig(event.EventID(), correlationID, "ValidationCompletedEvent", "publish configuration")
-	if !ok {
+	if !hasTemplateConfig {
+		c.logger.Warn("Cannot publish configuration, no template config cached yet",
+			"correlation_id", correlationID)
+		return
+	}
+
+	// The published object is what the fleet was given. While the gate holds
+	// renders, the fleet is given nothing, so publishing this one would
+	// advertise a config no pod has — it waits for the verdict that releases it.
+	if pinned {
+		c.logger.Warn("Render gate is holding renders; not publishing this one yet",
+			"plan", event.PlanID, "correlation_id", correlationID)
 		return
 	}
 
 	c.logger.Debug("Queuing configuration for async publishing",
 		"config_name", templateConfig.Name,
 		"config_namespace", templateConfig.Namespace,
-		"config_bytes", len(entry.config),
+		"config_bytes", event.ConfigBytes,
+		"auxiliary_file_count", event.AuxiliaryFileCount,
 		"correlation_id", correlationID,
 	)
 
@@ -142,10 +158,94 @@ func (c *Component) handleValidationCompleted(event *events.ValidationCompletedE
 	// - If channel is empty, work is queued immediately
 	// - If channel has pending work, replace it with newer work (coalescing)
 	// This ensures we always publish the latest config, not stale intermediate ones.
-	workItem := c.makePublishWorkItem(correlationID, templateConfig, entry, false)
+	c.queuePublish(templateConfig, entry, correlationID)
+}
 
+// handleRenderGateCompleted mirrors the gate's latch and records its verdict on
+// the HAProxyCfg the fleet was given, so `kubectl describe haproxycfg` answers
+// whether HAProxy would load what is deployed.
+//
+// Two things make a verdict inapplicable to this object: it may judge a
+// superseded plan pods still run (the gate checks those for the revert), and
+// it may judge a render this component withheld while pinned. Neither is a
+// statement about what the object publishes.
+func (c *Component) handleRenderGateCompleted(event *events.RenderGateCompletedEvent) {
+	if !event.Newest {
+		return
+	}
+
+	c.mu.Lock()
+	templateConfig := c.templateConfig
+	hasTemplateConfig := c.hasTemplateConfig
+	c.gatePinned = !event.OK
+	released := c.releaseHeldRenderLocked(event)
+	describesPublished := event.PlanID != "" && event.PlanID == c.publishedPlanID
+	c.mu.Unlock()
+
+	if !hasTemplateConfig || templateConfig == nil {
+		return
+	}
+	if released != nil {
+		c.queuePublish(templateConfig, released.entry, released.correlationID)
+	}
+	if !describesPublished {
+		c.logger.Debug("Render gate verdict does not describe the published config",
+			"plan", event.PlanID)
+		return
+	}
+
+	c.enqueueVerdict(&configpublisher.GateVerdict{
+		Namespace: templateConfig.Namespace,
+		Name:      configpublisher.GenerateRuntimeConfigName(templateConfig.Name),
+		PlanID:    event.PlanID,
+		Accepted:  event.OK,
+		Refused:   event.Refused,
+		Pinned:    event.Pinned,
+		Message:   event.Message,
+	})
+}
+
+// heldRelease is the render a passing verdict let through.
+type heldRelease struct {
+	entry         *renderedConfigEntry
+	correlationID string
+}
+
+// releaseHeldRenderLocked hands back the withheld render when this verdict is
+// the pass that names it, and marks it as the plan the object now publishes.
+// Caller holds mu.
+func (c *Component) releaseHeldRenderLocked(event *events.RenderGateCompletedEvent) *heldRelease {
+	if !event.OK || c.heldRender == nil || c.heldRender.planID != event.PlanID {
+		return nil
+	}
+	released := &heldRelease{entry: c.heldRender, correlationID: c.heldCorrelationID}
+	c.heldRender = nil
+	c.heldCorrelationID = ""
+	c.publishedPlanID = event.PlanID
+	return released
+}
+
+// queuePublish hands a render to the publish worker.
+func (c *Component) queuePublish(
+	templateConfig *v1alpha1.HAProxyTemplateConfig, entry *renderedConfigEntry, correlationID string,
+) {
+	workItem := c.makePublishWorkItem(correlationID, templateConfig, entry, false)
 	queueWithCoalesce(c, c.publishWork, workItem, "publish", correlationID,
 		func(w *publishWorkItem) string { return w.correlationID })
+}
+
+// enqueueVerdict parks the verdict for the worker. Latest wins: a verdict is
+// the complete current answer, and the newer one supersedes the older.
+func (c *Component) enqueueVerdict(verdict *configpublisher.GateVerdict) {
+	c.verdictMu.Lock()
+	c.pendingVerdict = verdict
+	trigger := c.verdictTrigger
+	c.verdictMu.Unlock()
+
+	select {
+	case trigger <- struct{}{}:
+	default: // already signalled; the worker reads the newest slot
+	}
 }
 
 // handleDeployedConfigPublishRequest publishes, as the HAProxyCfg spec, the
@@ -485,6 +585,8 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	c.templateConfig = nil
 	c.hasTemplateConfig = false
 	c.renderedConfigs = make(map[string]*renderedConfigEntry)
+	c.lastRender = nil
+	c.lastRenderCorrelationID = ""
 	c.lastPublishedChecksum = ""
 	c.publicationTerm++
 	c.latestPublishGeneration = 0

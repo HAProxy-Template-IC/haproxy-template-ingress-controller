@@ -78,7 +78,7 @@ backend http_back
 			})
 			authority := newCurrentFilesAuthority(published)
 			generation := authority.BeginTerm()
-			authority.Accept(generation, &dataplane.AuxiliaryFiles{
+			authority.Accept(generation, "plan-test", &dataplane.AuxiliaryFiles{
 				GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "general/gate", Content: test.accepted}},
 			})
 			assert.Equal(t, test.accepted, currentFilesSnapshot(t, authority, generation)["gate"])

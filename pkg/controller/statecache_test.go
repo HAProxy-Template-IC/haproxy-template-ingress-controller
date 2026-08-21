@@ -281,7 +281,7 @@ func TestStateCache_HandleReconciliationTriggered(t *testing.T) {
 	assert.False(t, status.LastTrigger.Timestamp.IsZero())
 }
 
-func TestStateCache_HandleValidationCompleted(t *testing.T) {
+func TestStateCache_HandleRenderGateCompleted(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
@@ -293,10 +293,10 @@ func TestStateCache_HandleValidationCompleted(t *testing.T) {
 
 	// First set rendered config (validation stores this as validated config)
 	testConfig := "global\n  daemon\n"
-	bus.Publish(events.NewTemplateRenderedEvent(testConfig, nil, nil, nil, 0, 100, "", "", nil, "", true))
+	bus.Publish(events.NewTemplateRenderedEvent(testConfig, nil, nil, nil, 0, 100, "", "", nil, "plan-1", true))
 	time.Sleep(50 * time.Millisecond)
 
-	bus.Publish(events.NewValidationCompletedEvent([]string{"warning1"}, 150, "", nil, true))
+	bus.Publish(events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 150))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -307,13 +307,38 @@ func TestStateCache_HandleValidationCompleted(t *testing.T) {
 	require.NotNil(t, status.Validation)
 	assert.Equal(t, statusSucceeded, status.Validation.Status)
 	assert.Equal(t, int64(150), status.Validation.DurationMs)
-	assert.Equal(t, []string{"warning1"}, status.Validation.Warnings)
 
 	// Verify validated config was stored
 	validatedInfo, err := cache.GetValidatedConfig()
 	require.NoError(t, err)
 	assert.Equal(t, testConfig, validatedInfo.Config)
 	assert.Equal(t, int64(150), validatedInfo.ValidationDurationMs)
+}
+
+// A verdict for a plan the cache has moved past reports which plan it judged
+// and leaves the validated config on the render it actually describes.
+func TestStateCache_RenderGateVerdictForASupersededPlan(t *testing.T) {
+	cache := NewStateCache(busevents.NewEventBus(100), nil, slog.Default())
+
+	cache.handleTemplateRendered(events.NewTemplateRenderedEvent(
+		"global\n  daemon\n", nil, nil, nil, 0, 100, "", "", nil, "plan-1", true))
+	cache.handleRenderGateCompleted(
+		events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 10))
+
+	cache.handleTemplateRendered(events.NewTemplateRenderedEvent(
+		"global\n  daemon\n  nbthread 2\n", nil, nil, nil, 0, 100, "", "", nil, "plan-2", true))
+	cache.handleRenderGateCompleted(
+		events.NewRenderGateCompletedEvent("plan-1", true, false, false, "", false, 10))
+
+	validatedInfo, err := cache.GetValidatedConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "global\n  daemon\n", validatedInfo.Config,
+		"a straggler's verdict must not promote the render it did not judge")
+
+	status, err := cache.GetPipelineStatus()
+	require.NoError(t, err)
+	require.NotNil(t, status.Validation)
+	assert.Equal(t, "plan-1", status.Validation.PlanID)
 }
 
 func TestStateCache_HandleValidationFailed(t *testing.T) {
@@ -765,7 +790,7 @@ func TestStateCache_ReconciliationResetsPipelineState(t *testing.T) {
 
 	// Set up some pipeline state
 	bus.Publish(events.NewTemplateRenderedEvent("config", nil, nil, nil, 0, 100, "", "", nil, "", true))
-	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", nil, true))
+	bus.Publish(events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 50))
 	bus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,

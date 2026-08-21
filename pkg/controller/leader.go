@@ -16,11 +16,11 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -36,12 +36,6 @@ import (
 type leaderOnlyComponents struct {
 	cancel context.CancelFunc
 	run    *lifecycle.ComponentRun
-}
-
-type leadershipLostError struct{}
-
-func (*leadershipLostError) Error() string {
-	return "leader election loop exited: lease lost without shutdown"
 }
 
 // startReconciliationComponents starts all-replica reconciliation components using the lifecycle registry.
@@ -121,12 +115,11 @@ func stopLeaderOnlyComponents(components *leaderOnlyComponents, logger *slog.Log
 // Extracting these to a struct makes the dependencies explicit rather than
 // relying on closure scope, improving code clarity and testability.
 type leaderCallbackDeps struct {
-	registry    *lifecycle.Registry
-	logger      *slog.Logger
-	cancel      context.CancelFunc
-	cancelCause context.CancelCauseFunc
-	podName     string
-	errGroup    *errgroup.Group
+	registry *lifecycle.Registry
+	logger   *slog.Logger
+	cancel   context.CancelFunc
+	podName  string
+	errGroup *errgroup.Group
 }
 
 // leaderCallbackState holds mutable state shared across leader callbacks.
@@ -140,17 +133,22 @@ type leaderCallbackState struct {
 func (s *leaderCallbackState) take() *leaderOnlyComponents {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.stopped = true
 	components := s.components
 	s.components = nil
 	return components
 }
 
+// stop ends one leadership term. It does not latch: the same replica may
+// re-acquire the lease and start the components again.
 func (s *leaderCallbackState) stop(logger *slog.Logger) {
 	stopLeaderOnlyComponents(s.take(), logger)
 }
 
+// cancel is the iteration teardown: no term starts after it.
 func (s *leaderCallbackState) cancel() {
+	s.mu.Lock()
+	s.stopped = true
+	s.mu.Unlock()
 	components := s.take()
 	if components != nil && components.cancel != nil {
 		components.cancel()
@@ -185,7 +183,6 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 		},
 		OnStoppedLeading: func() {
 			deps.logger.Warn("Lost leadership, stopping deployment components")
-			deps.cancelCause(&leadershipLostError{})
 			state.stop(deps.logger)
 		},
 		OnNewLeader: func(identity string) {
@@ -199,45 +196,72 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 	return callbacks, state
 }
 
-// superviseElection runs the leader-election loop and converts an unexpected
-// exit into an iteration-fatal error.
+// reacquireDelay paces re-entry into leader election after a lost lease.
+// client-go's own acquire loop paces itself with RetryPeriod; this only keeps
+// a pathological instant return from spinning.
+const reacquireDelay = time.Second
+
+// superviseElection keeps the leader-election loop alive for the whole
+// iteration.
 //
 // client-go's LeaderElector.Run returns permanently once an acquired lease is
 // lost (a renewal missed its deadline — e.g. the apiserver or this pod was
-// starved for longer than renewDeadline). It does NOT re-enter the acquire
-// loop. Without supervision the replica would keep running its all-replica
-// components with a dead elector: never re-acquiring leadership, never
-// deploying — a permanent standby zombie (fatal on single-replica
-// deployments, issue #57).
+// starved for longer than renewDeadline, or another replica took the Lease).
+// It does NOT re-enter the acquire loop; without supervision the replica
+// would keep running its all-replica components with a dead elector — a
+// permanent standby zombie (fatal on single-replica deployments, issue #57).
 //
-// Returning an error here cancels the iteration via the errgroup context, and
-// the main run loop reinitializes — restarting the election loop with the
-// same identity. Re-acquisition without an iteration restart is not possible
-// today: the lifecycle registry only starts leader-only components from
-// Pending/Standby status, and a stopped term leaves them Stopped/Failed.
+// A lost lease re-enters election here, in place. The iteration — its config,
+// stores and webhook validators — survives: OnStoppedLeading already stopped
+// the leader-only components, the lifecycle registry restarts the same
+// instances from Stopped on re-acquisition, and a new term claims a fresh
+// fencing epoch. Tearing the iteration down instead would retire the
+// admission validators for the whole resync, denying admission for no reason.
 //
 // A nil return from start with the context still alive is exactly the
 // lost-lease case: for a replica that never acquired the lease, Run blocks in
-// the acquire loop until the context is cancelled.
-func superviseElection(ctx context.Context, start func(context.Context) error, logger *slog.Logger) error {
-	err := start(ctx)
-	var leadershipLost *leadershipLostError
-	if errors.As(context.Cause(ctx), &leadershipLost) {
-		logger.Error("Leader election failed, triggering reinitialization to restart election", "error", leadershipLost)
-		return leadershipLost
+// the acquire loop until the context is cancelled. A non-nil error is a hard
+// failure (the elector could not even be constructed) and stays
+// iteration-fatal.
+//
+// restart cancels the current attempt only: the Lease is released
+// (ReleaseOnCancel), OnStoppedLeading stops the leader-only components, and
+// the loop re-enters election. It is how the deployer's fencing stand-down
+// hands leadership to the newer leader it discovered. Nil disables it.
+func superviseElection(ctx context.Context, start func(context.Context) error, restart <-chan struct{}, logger *slog.Logger) error {
+	for {
+		attemptCtx, cancelAttempt := context.WithCancel(ctx)
+		go func() {
+			select {
+			case <-restart:
+				logger.Warn("Standing down; releasing the Lease and re-entering election")
+				cancelAttempt()
+			case <-attemptCtx.Done():
+			}
+		}()
+		err := start(attemptCtx)
+		stoodDown := attemptCtx.Err() != nil
+		cancelAttempt()
+		select {
+		case <-ctx.Done():
+			// Normal teardown (shutdown or config-change reinitialization);
+			// any error from the elector here is a cancellation artifact.
+			return nil
+		default:
+		}
+		if err != nil && !stoodDown {
+			logger.Error("Leader election failed, triggering reinitialization to restart election", "error", err)
+			return err
+		}
+		if !stoodDown {
+			logger.Warn("Lease lost; re-entering leader election")
+		}
+		select {
+		case <-time.After(reacquireDelay):
+		case <-ctx.Done():
+			return nil
+		}
 	}
-	select {
-	case <-ctx.Done():
-		// Normal teardown (shutdown or config-change reinitialization);
-		// any error from the elector here is a cancellation artifact.
-		return nil
-	default:
-	}
-	if err == nil {
-		err = &leadershipLostError{}
-	}
-	logger.Error("Leader election failed, triggering reinitialization to restart election", "error", err)
-	return err
 }
 
 // leaderIdentity resolves who this replica is to leader election, and in which
@@ -289,12 +313,11 @@ func setupLeaderElection(
 
 		// Create callbacks with explicit dependencies
 		callbacks, state := makeLeaderCallbacks(leaderCallbackDeps{
-			registry:    setup.Registry,
-			logger:      logger,
-			cancel:      setup.Cancel,
-			cancelCause: setup.CancelCause,
-			podName:     podName,
-			errGroup:    setup.ErrGroup,
+			registry: setup.Registry,
+			logger:   logger,
+			cancel:   setup.Cancel,
+			podName:  podName,
+			errGroup: setup.ErrGroup,
 		})
 
 		// Create leader election component (event adapter). It claims the
@@ -307,7 +330,7 @@ func setupLeaderElection(
 		// Start leader election loop in errgroup for graceful shutdown
 		// This ensures the elector can release the lease on context cancellation
 		setup.ErrGroup.Go(func() error {
-			return superviseElection(setup.IterCtx, elector.Start, logger)
+			return superviseElection(setup.IterCtx, elector.Start, setup.ElectionRestart, logger)
 		})
 
 		logger.Info("Leader election initialized", "identity", podName, "lease_name", leConfig.LeaseName, "lease_namespace", leConfig.LeaseNamespace)

@@ -115,10 +115,8 @@ func TestCoordinator_HandleReconciliationTriggered_Success(t *testing.T) {
 	assert.Equal(t, "test config", renderedEvent.HAProxyConfig)
 	assert.Equal(t, "test_trigger", renderedEvent.TriggerReason)
 
-	// Verify ValidationCompletedEvent
-	validationEvent := testutil.WaitForEvent[*events.ValidationCompletedEvent](t, eventChan, testutil.EventTimeout)
-	assert.Equal(t, "test_trigger", validationEvent.TriggerReason)
-	assert.Equal(t, []string{"external validator warning"}, validationEvent.Warnings)
+	// No validation event follows the render: HAProxy's verdict comes from the
+	// render gate, off this path (ADR-0022).
 
 	// Verify ReconciliationCompletedEvent
 	completedEvent := testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
@@ -151,6 +149,55 @@ func TestCoordinatorCurrentFilesAdvancesBeforeEventDelivery(t *testing.T) {
 		{"ticket.keys": "accepted"},
 	}, authority.snapshots)
 	assert.Equal(t, []int{1, 1}, pipelineExecutor.optionCounts)
+}
+
+// The term's auxiliary baseline is what the next render reads back as "what is
+// deployed", so it moves with HAProxy's verdict on the render that produced it.
+func TestCoordinatorSettlesCurrentFilesOnTheGateVerdict(t *testing.T) {
+	tests := []struct {
+		name           string
+		verdict        *events.RenderGateCompletedEvent
+		wantConfirmed  int
+		wantRolledBack int
+	}{
+		{
+			name:          "a pass confirms the render's files",
+			verdict:       events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 5),
+			wantConfirmed: 1,
+		},
+		{
+			name:           "HAProxy's refusal puts the baseline back",
+			verdict:        events.NewRenderGateCompletedEvent("plan-1", false, true, true, "boom", false, 5),
+			wantRolledBack: 1,
+		},
+		{
+			name:    "a gate that could not run leaves the baseline where it is",
+			verdict: events.NewRenderGateCompletedEvent("plan-1", false, false, true, "read-only", false, 5),
+		},
+		{
+			name:    "a verdict for a superseded plan settles nothing",
+			verdict: events.NewRenderGateCompletedEvent("plan-1", true, false, false, "", false, 5),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bus, logger := testutil.NewTestBusAndLogger()
+			authority := &recordingCurrentFilesAuthority{pendingPlanID: "plan-1"}
+			coordinator := NewCoordinator(&CoordinatorConfig{
+				EventBus:      bus,
+				Pipeline:      &mockPipeline{},
+				StoreProvider: stores.NewRealStoreProvider(nil),
+				CurrentFiles:  authority,
+				Logger:        logger,
+			})
+
+			coordinator.settleCurrentFiles(authority.BeginTerm(), tt.verdict)
+
+			assert.Equal(t, tt.wantConfirmed, authority.confirmed)
+			assert.Equal(t, tt.wantRolledBack, authority.rolledBack)
+		})
+	}
 }
 
 func TestCoordinatorCurrentFilesDoesNotAdvanceOnPipelineFailure(t *testing.T) {
@@ -449,7 +496,6 @@ func TestCoordinator_DiscardsPipelineResultsAfterCancellation(t *testing.T) {
 					case *events.ReconciliationStartedEvent:
 						started = true
 					case *events.TemplateRenderedEvent,
-						*events.ValidationCompletedEvent,
 						*events.ReconciliationCompletedEvent,
 						*events.TemplateRenderFailedEvent,
 						*events.ValidationFailedEvent,
@@ -493,11 +539,14 @@ func (m *mockPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rend
 }
 
 type recordingCurrentFilesAuthority struct {
-	generation  uint64
-	files       map[string]string
-	snapshotErr error
-	snapshots   []map[string]string
-	accepted    int
+	generation    uint64
+	files         map[string]string
+	snapshotErr   error
+	snapshots     []map[string]string
+	accepted      int
+	pendingPlanID string
+	confirmed     int
+	rolledBack    int
 }
 
 func (a *recordingCurrentFilesAuthority) BeginTerm() uint64 {
@@ -516,9 +565,24 @@ func (a *recordingCurrentFilesAuthority) Snapshot(uint64) (map[string]string, er
 	return snapshot, a.snapshotErr
 }
 
-func (a *recordingCurrentFilesAuthority) Accept(_ uint64, auxiliaryFiles *dataplane.AuxiliaryFiles) {
+func (a *recordingCurrentFilesAuthority) Accept(
+	_ uint64, planID string, auxiliaryFiles *dataplane.AuxiliaryFiles,
+) {
 	a.accepted++
+	a.pendingPlanID = planID
 	a.files = auxiliaryFiles.CurrentFiles()
+}
+
+func (a *recordingCurrentFilesAuthority) Confirm(_ uint64, planID string) {
+	if planID != "" && planID == a.pendingPlanID {
+		a.confirmed++
+	}
+}
+
+func (a *recordingCurrentFilesAuthority) Rollback(_ uint64, planID string) {
+	if planID != "" && planID == a.pendingPlanID {
+		a.rolledBack++
+	}
 }
 
 // flipFlopPipeline returns success once, then failure thereafter. Used to

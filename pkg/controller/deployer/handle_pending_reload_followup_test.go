@@ -48,8 +48,7 @@ func TestPendingReload_FollowsUpWhenTheReloadFires(t *testing.T) {
 	defer cancel()
 	startLoopForTest(t, s, ctx)
 
-	s.handleValidationCompleted(ctx, events.NewValidationCompletedEvent(nil, 5, "config_change", nil, true,
-		seedRenderIdentity(s)))
+	s.dispatchRender(ctx, "corr-paced", true, "config_validation")
 	sd1 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	require.Equal(t, checksum, sd1.ContentChecksum)
 
@@ -104,8 +103,7 @@ func TestPendingReload_DispatchesNewRendersAtOnce(t *testing.T) {
 	defer cancel()
 	startLoopForTest(t, s, ctx)
 
-	s.handleValidationCompleted(ctx, events.NewValidationCompletedEvent(nil, 5, "config_change", nil, true,
-		seedRenderIdentity(s)))
+	s.dispatchRender(ctx, "corr-render-1", true, "config_validation")
 	sd1 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	require.Equal(t, "checksum-1", sd1.ContentChecksum)
 
@@ -122,8 +120,7 @@ func TestPendingReload_DispatchesNewRendersAtOnce(t *testing.T) {
 	s.lastRenderedConfig = "render-checksum-2"
 	s.lastContentChecksum = "checksum-2"
 	s.mu.Unlock()
-	s.handleValidationCompleted(ctx, events.NewValidationCompletedEvent(nil, 5, "config_change", nil, true,
-		seedRenderIdentity(s)))
+	s.dispatchRender(ctx, "corr-render-2", true, "config_validation")
 
 	sd2 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	assert.Less(t, time.Since(pendingSince), 400*time.Millisecond, "a render is not held behind the pending reload")
