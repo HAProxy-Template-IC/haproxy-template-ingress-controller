@@ -174,7 +174,7 @@ func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutco
 	// so the pod stores it once and the other chunks would repeat 100-200 KB.
 	blob := attempt.sendsPlanBlob()
 	for i, ops := range chunks {
-		manifest := attempt.req.manifest(&decision, ops, prev, attempt.full)
+		manifest := attempt.req.manifest(&decision, ops, prev, attempt.full, attempt.state.AppliedPlanID)
 		if i > 0 {
 			manifest.InPlaceOps = nil
 		}
@@ -255,14 +255,16 @@ func fenceOf(state *api.State) fence {
 // manifest composes one apply from the decision. full overrides the verdict:
 // a pod whose baseline is unknown or whose agent is a foreign version gets the
 // complete file set and a reload, never ops composed against a guess.
-func (r *deployRequest) manifest(decision *deployplan.Decision, ops []api.Op, prev fence, full bool) *api.Manifest {
+func (r *deployRequest) manifest(
+	decision *deployplan.Decision, ops []api.Op, prev fence, full bool, appliedPlanID string,
+) *api.Manifest {
 	manifest := &api.Manifest{
 		PlanID:             r.planID,
 		PlanSchemaVersion:  r.plan.SchemaVersion,
 		Token:              r.token,
 		ExpectedPrevPlanID: prev.planID,
 		ExpectedPrevToken:  prev.token,
-		ValidatedPlanID:    r.validatedPlanID,
+		ValidatedPlanID:    r.validatedPlanFor(appliedPlanID),
 		Files:              decision.Files,
 		Ops:                ops,
 		InPlaceOps:         decision.InPlace,

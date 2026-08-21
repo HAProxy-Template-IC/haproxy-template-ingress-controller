@@ -55,6 +55,10 @@ const (
 	// Event reasons (CamelCase per Kubernetes convention).
 	eventReasonValidationFailed = "ValidationFailed"
 	eventReasonValidated        = "Validated"
+	// Render-gate Event reasons: HAProxy's verdict on a render that was
+	// already dispatched, as opposed to a config the load gate refused.
+	eventReasonRenderRefused  = "RenderRefusedByHAProxy"
+	eventReasonRenderAccepted = "RenderAcceptedByHAProxy"
 
 	// conditionValidated is the status condition type reporting whether the
 	// controller accepted (validated) the observed config generation. Its
@@ -114,6 +118,10 @@ type StatusUpdater struct {
 	// Event, so a Normal "Validated" Event fires only on recovery
 	// (Invalid -> Valid), not on every routine successful validation.
 	lastEmittedStatus string
+	// lastGateState is what the render gate's last emitted Event said, so its
+	// Events mark changes rather than repeating once per render. Nil until the
+	// gate has answered at all.
+	lastGateState *gateEventState
 }
 
 // NewStatusUpdater creates a new StatusUpdater.
@@ -152,6 +160,7 @@ func NewStatusUpdater(
 			events.EventTypeConfigValidated,
 			events.EventTypeConfigInvalid,
 			events.EventTypeValidationFailed,
+			events.EventTypeRenderGateCompleted,
 		},
 	})
 
@@ -184,7 +193,102 @@ func (u *StatusUpdater) HandleEvent(event busevents.Event) {
 		u.handleConfigInvalid(u.ctx, e)
 	case *events.ValidationFailedEvent:
 		u.handleHAProxyValidationFailed(u.ctx, e)
+	case *events.RenderGateCompletedEvent:
+		u.handleRenderGateCompleted(e)
 	}
+}
+
+// handleRenderGateCompleted emits a Kubernetes Event for the render gate's
+// verdict, so a refusal shows up under `kubectl describe haproxytemplateconfig`
+// and in `kubectl get events` — the two places an operator looks before they
+// know a metric exists.
+//
+// Only changes are emitted: the gate answers once per render, and a
+// steady-state stream of identical Warnings would bury the one that mattered.
+// The escalation from "a render was refused" to "nothing deploys any more" is
+// a change, and so is HAProxy naming a different problem, so the comparison
+// covers all three of them and not just the pass/fail bit.
+//
+// Verdicts for superseded plans are skipped: those judge a render the fleet has
+// moved past, and an operator reading Events wants the current answer.
+func (u *StatusUpdater) handleRenderGateCompleted(event *events.RenderGateCompletedEvent) {
+	if !event.Newest {
+		return
+	}
+	u.mu.RLock()
+	refs := slices.Clone(u.configRefs)
+	u.mu.RUnlock()
+	if len(refs) == 0 || u.recorder == nil {
+		return
+	}
+
+	state := gateEventState{ok: event.OK, pinned: event.Pinned, message: event.Message}
+	u.mu.Lock()
+	previous := u.lastGateState
+	changed := previous == nil || *previous != state
+	u.lastGateState = &state
+	u.mu.Unlock()
+	if !changed {
+		return
+	}
+
+	for _, ref := range refs {
+		object := &v1alpha1.HAProxyTemplateConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace},
+		}
+		if event.OK {
+			u.recorder.Event(object, corev1.EventTypeNormal, eventReasonRenderAccepted,
+				renderGateRecoveryMessage(previous))
+			continue
+		}
+		u.recorder.Event(object, corev1.EventTypeWarning, eventReasonRenderRefused,
+			renderGateEventMessage(event))
+	}
+}
+
+// gateEventState is what an emitted Event said, so the next verdict can tell
+// whether it would say anything new.
+type gateEventState struct {
+	ok      bool
+	pinned  bool
+	message string
+}
+
+// renderGateRecoveryMessage reports a pass without claiming a recovery that did
+// not happen: "again" is only true if something was refused before.
+func renderGateRecoveryMessage(previous *gateEventState) string {
+	if previous != nil && !previous.ok {
+		return "HAProxy accepted the rendered configuration again"
+	}
+	return "HAProxy accepted the rendered configuration"
+}
+
+// renderGateEventMessage says what is wrong, what it causes, and what to do.
+//
+// The effect clause has to match what actually happened: only HAProxy's own
+// refusal reverts pods (revert.go leaves them alone when the check could not
+// run), and telling an operator their fleet was rolled back when it was not
+// sends them looking for a change nobody made.
+func renderGateEventMessage(event *events.RenderGateCompletedEvent) string {
+	if event.Pinned {
+		return refusalCause(event) + ": " + event.Message +
+			". No new render reaches the pods until this is fixed."
+	}
+	if event.Refused {
+		return "HAProxy refused the rendered configuration: " + event.Message +
+			". The pods that took it without loading it were reverted to their last known " +
+			"good set, and further renders are held until a check passes."
+	}
+	return "The render gate could not run: " + event.Message +
+		". No pod was touched — the render they hold is simply unjudged — and further " +
+		"renders are held until a check succeeds."
+}
+
+func refusalCause(event *events.RenderGateCompletedEvent) string {
+	if event.Refused {
+		return "HAProxy refused the rendered configuration"
+	}
+	return "The render gate could not run"
 }
 
 // handleConfigValidated updates CRD status to reflect successful validation.

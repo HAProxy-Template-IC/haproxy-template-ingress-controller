@@ -158,8 +158,8 @@ func TestComponent_HandleValidationCompleted_NoPending(t *testing.T) {
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish ValidationCompletedEvent with no pending content
-	bus.Publish(events.NewValidationCompletedEvent(nil, 0, "", nil, true))
+	// Publish RenderGateCompletedEvent with no pending content
+	bus.Publish(events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 0))
 
 	// Should not publish any HTTPResourceAcceptedEvent
 	select {
@@ -390,10 +390,10 @@ func TestComponent_HandleValidationCompleted_WithPending(t *testing.T) {
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish ValidationCompletedEvent
+	// Publish RenderGateCompletedEvent
 	// Note: Without actual pending content, this won't publish any events
 	// This test verifies the code path executes without error
-	bus.Publish(events.NewValidationCompletedEvent(nil, 0, "", nil, true))
+	bus.Publish(events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 0))
 
 	// Give time for event processing
 	time.Sleep(testutil.DebounceWait)
@@ -540,8 +540,8 @@ func TestComponent_HandleEvent_ValidationCompletedType(t *testing.T) {
 
 	component := New(bus, logger, 0)
 
-	// Test that handleEvent properly routes ValidationCompletedEvent
-	event := events.NewValidationCompletedEvent(nil, 0, "", nil, true)
+	// Test that handleEvent properly routes RenderGateCompletedEvent
+	event := events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 0)
 	component.handleEvent(event)
 
 	// Should not panic - just verify the routing works
@@ -559,7 +559,7 @@ func TestComponent_HandleEvent_ValidationFailedType(t *testing.T) {
 	// Should not panic - just verify the routing works
 }
 
-// pending content when ValidationCompletedEvent is received.
+// pending content when RenderGateCompletedEvent is received.
 func TestComponent_ValidationCompleted_WithActualPendingContent(t *testing.T) {
 	// Create HTTP test server that returns different content on second request
 	requestCount := atomic.Int32{}

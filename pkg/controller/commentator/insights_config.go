@@ -99,20 +99,16 @@ func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (i
 	}
 }
 
-// validationInsight handles ValidationCompleted and ValidationFailed events.
+// validationInsight handles RenderGateCompleted and ValidationFailed events.
 func (ec *EventCommentator) validationInsight(event busevents.Event, attrs []any) (insight string, args []any) {
 	switch e := event.(type) {
-	case *events.ValidationCompletedEvent:
-		warningInfo := ""
-		if len(e.Warnings) > 0 {
-			warningInfo = fmt.Sprintf(" with %d warnings", len(e.Warnings))
+	case *events.RenderGateCompletedEvent:
+		if e.OK {
+			return fmt.Sprintf("HAProxy accepted render %s (%dms)", e.PlanID, e.DurationMs),
+				append(attrs, "plan", e.PlanID, "duration_ms", e.DurationMs)
 		}
-		triggerInfo := ""
-		if e.TriggerReason != "" {
-			triggerInfo = fmt.Sprintf(" (trigger: %s)", e.TriggerReason)
-		}
-		return fmt.Sprintf("HAProxy configuration validation succeeded%s (%dms)%s", warningInfo, e.DurationMs, triggerInfo),
-			append(attrs, "warnings", len(e.Warnings), "duration_ms", e.DurationMs, "trigger_reason", e.TriggerReason)
+		return fmt.Sprintf("HAProxy refused render %s (%dms): %s", e.PlanID, e.DurationMs, e.Message),
+			append(attrs, "plan", e.PlanID, "duration_ms", e.DurationMs, "pinned", e.Pinned, "refused", e.Refused)
 
 	case *events.ValidationFailedEvent:
 		triggerInfo := ""

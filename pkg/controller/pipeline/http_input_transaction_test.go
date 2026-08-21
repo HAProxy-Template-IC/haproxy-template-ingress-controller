@@ -178,6 +178,20 @@ func newHTTPInputPipeline(
 	outputValidator RenderedOutputValidator,
 ) (*Pipeline, *controllerhttpstore.Component) {
 	t.Helper()
+	return newHTTPInputPipelineWithShape(t, template, outputValidator, false)
+}
+
+// newHTTPInputPipelineWithShape builds either the proposal shape (a Validator
+// on every render) or the reconcile shape (no Validator, the same service as
+// the commit gate). Both must refuse to accept external content HAProxy
+// rejects; only the reason for running the check differs.
+func newHTTPInputPipelineWithShape(
+	t *testing.T,
+	template string,
+	outputValidator RenderedOutputValidator,
+	reconcileShape bool,
+) (*Pipeline, *controllerhttpstore.Component) {
+	t.Helper()
 
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := controllerhttpstore.New(bus, logger, 0)
@@ -195,12 +209,59 @@ func newHTTPInputPipeline(
 		Logger:            slog.Default(),
 		SkipDNSValidation: true,
 	})
-	return New(&PipelineConfig{
+	pipelineConfig := &PipelineConfig{
 		Renderer:        renderService,
 		Validator:       validationService,
 		OutputValidator: outputValidator,
 		Logger:          slog.Default(),
-	}), component
+	}
+	if reconcileShape {
+		pipelineConfig.Validator = nil
+		pipelineConfig.CommitValidator = validationService
+	}
+	return New(pipelineConfig), component
+}
+
+// The reconcile pipeline runs no `haproxy -c` per render — but accepting
+// external content is not something the render gate's later verdict can undo,
+// so that one render takes the check up front.
+func TestReconcilePipelineChecksBeforeAcceptingNewHTTPInput(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, "candidate-%d", requests.Add(1))
+	}))
+	defer server.Close()
+
+	checks := atomic.Int32{}
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheck(func(string, []string) ([]byte, error) {
+		if checks.Add(1) == 1 {
+			return []byte("[ALERT] config : rejected candidate\n"), errors.New("exit status 1")
+		}
+		return nil, nil
+	})))
+
+	pipeline, component := newHTTPInputPipelineWithShape(t, httpTemplate(server.URL), nil, true)
+	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
+
+	_, err := pipeline.Execute(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.Error(t, err, "content HAProxy rejects must not become the store's accepted version")
+	_, accepted := component.GetStore().Get(server.URL)
+	assert.False(t, accepted)
+
+	result, err := pipeline.Execute(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	acceptedContent, accepted := component.GetStore().Get(server.URL)
+	require.True(t, accepted)
+	assert.Equal(t, "candidate-2", acceptedContent)
+
+	// A render that accepts nothing new never pays for the check again: that is
+	// what keeps the gate off the steady-state reconcile path.
+	before := checks.Load()
+	_, err = pipeline.Execute(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	assert.Equal(t, before, checks.Load(),
+		"a render with no new external content must not run haproxy -c")
 }
 
 func httpTemplate(url string) string {

@@ -237,6 +237,17 @@ type ControllerConfig struct {
 	// ConfigPublishing configures how rendered configs are stored in CRDs.
 	// +optional
 	ConfigPublishing ConfigPublishingConfig `json:"configPublishing,omitempty"`
+
+	// RenderGateInterval is the shortest start-to-start spacing of the render
+	// gate's `haproxy -c` runs.
+	//
+	// The gate validates each render off the reconcile wall clock, on its own
+	// semaphore slot. This caps its duty cycle so a render storm cannot keep a
+	// core busy back-to-back and slow the admission webhook.
+	// Format: Go duration string (e.g., "1s", "500ms")
+	// Default: 1s
+	// +optional
+	RenderGateInterval string `json:"renderGateInterval,omitempty"`
 }
 
 // LeaderElectionConfig configures leader election for running multiple replicas.

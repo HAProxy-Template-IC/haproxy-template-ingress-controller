@@ -118,14 +118,15 @@ drop accounting, `Publish` semantics) is documented in
 
 Three boundaries of the pattern are recorded as ADRs:
 
-- **Rendering and HAProxy validation are synchronous, not event adapters**
+- **Rendering is synchronous, not an event adapter**
   ([ADR-0001](../adr/0001-renderer-is-synchronous-not-event-adapter.md)).
-  The leader-only Coordinator drives `Pipeline.Execute` as one direct call:
-  render and validate must produce a single atomic verdict (admission and
-  reconciliation decisions have to agree), and the Coordinator publishes
-  `TemplateRenderedEvent` / `ValidationCompletedEvent` itself in causal
-  order. The event hop was removed because it added hot-path latency and
-  made the render-validate sequence harder to reason about.
+  The leader-only Coordinator drives `Pipeline.Execute` as one direct call
+  and publishes `TemplateRenderedEvent` itself. The event hop was removed
+  because it added hot-path latency and made the sequence harder to reason
+  about. On the admission path render and `haproxy -c` still produce a
+  single atomic verdict, because the reply carries it; on the reconcile
+  path the check moved into the leader-only `rendergate` component
+  precisely to keep it off that call stack (ADR-0022).
 - **The HTTP store ↔ proposal validator hop stays event-driven**
   ([ADR-0006](../adr/0006-httpstore-proposal-validation-stays-event-driven.md)),
   even though it looks like the same single-publisher/single-subscriber

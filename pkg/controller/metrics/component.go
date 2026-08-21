@@ -77,7 +77,7 @@ func New(metrics *Metrics, eventBus *busevents.EventBus) *Component {
 		events.EventTypeDeploymentCompleted,
 		events.EventTypeDeploymentSkipped,
 		events.EventTypeInstanceDeploymentFailed,
-		events.EventTypeValidationCompleted,
+		events.EventTypeRenderGateCompleted,
 		events.EventTypeValidationFailed,
 		events.EventTypeIndexSynchronized,
 		events.EventTypeResourceIndexUpdated,
@@ -162,8 +162,8 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.metrics.SetFleetConvergence(e.Total, e.Total, 0)
 	case *events.InstanceDeploymentFailedEvent:
 		c.metrics.RecordDeployment(0, false)
-	case *events.ValidationCompletedEvent:
-		c.metrics.RecordValidation(true)
+	case *events.RenderGateCompletedEvent:
+		c.metrics.RecordValidation(e.OK)
 	case *events.ValidationFailedEvent:
 		c.metrics.RecordValidation(false)
 	case *events.IndexSynchronizedEvent:

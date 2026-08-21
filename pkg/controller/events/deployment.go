@@ -277,7 +277,7 @@ func (e *DeploymentCompletedEvent) Coalescible() bool { return true }
 // opt in later if there's a concrete need.
 //
 // This event propagates the correlation ID from the triggering event
-// (typically ValidationCompletedEvent) so the converged path remains
+// (typically TemplateRenderedEvent) so the converged path remains
 // observable in correlation-based tracing.
 type DeploymentSkippedEvent struct {
 	// Total is the number of HAProxy endpoints already serving the rendered
@@ -354,10 +354,10 @@ func (e *DeploymentSkippedEvent) Coalescible() bool { return true }
 // Published by: DeploymentScheduler.
 // Consumed by: Deployer component.
 //
-// This event propagates the correlation ID from ValidationCompletedEvent.
+// This event propagates the correlation ID from TemplateRenderedEvent.
 //
 // This event implements CoalescibleEvent. The coalescible flag is propagated from
-// ValidationCompletedEvent to enable coalescing throughout the reconciliation pipeline.
+// TemplateRenderedEvent to enable coalescing throughout the reconciliation pipeline.
 type DeploymentScheduledEvent struct {
 	// Config is the rendered HAProxy configuration to deploy.
 	Config string
@@ -407,7 +407,7 @@ type DeploymentScheduledEvent struct {
 	StatusPatches []templating.StatusPatch
 
 	// coalescible indicates if this event can be safely skipped when a newer
-	// event of the same type is available. Propagated from ValidationCompletedEvent.
+	// event of the same type is available. Propagated from TemplateRenderedEvent.
 	coalescible bool
 
 	timestamped
@@ -419,7 +419,7 @@ type DeploymentScheduledEvent struct {
 // NewDeploymentScheduledEvent creates a new DeploymentScheduledEvent.
 // Performs defensive copy of endpoints slice.
 //
-// The coalescible parameter should be propagated from ValidationCompletedEvent.Coalescible()
+// The coalescible parameter should be propagated from TemplateRenderedEvent.Coalescible()
 // to enable coalescing throughout the reconciliation pipeline.
 //
 // The parsedConfig parameter contains the pre-parsed desired configuration from validation.

@@ -138,7 +138,7 @@ func TestDriftPreventionMonitor_HandleEvent(t *testing.T) {
 	})
 
 	t.Run("ignores unknown events", func(t *testing.T) {
-		otherEvent := events.NewReconciliationCompletedEvent(0, nil, nil)
+		otherEvent := events.NewReconciliationCompletedEvent(0, "", nil, nil)
 		monitor.handleEvent(otherEvent)
 	})
 }

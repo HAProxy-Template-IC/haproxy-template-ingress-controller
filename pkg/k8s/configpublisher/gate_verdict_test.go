@@ -1,0 +1,137 @@
+// Copyright 2026 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package configpublisher
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+
+	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
+)
+
+func gateVerdictPublisher(t *testing.T, existing ...*haproxyv1alpha1.HAProxyCfg) (*Publisher, *fake.Clientset) {
+	t.Helper()
+	objects := make([]runtime.Object, 0, len(existing))
+	for _, cfg := range existing {
+		objects = append(objects, cfg)
+	}
+	crdClient := fake.NewSimpleClientset(objects...)
+	return NewWithListers(k8sfake.NewClientset(), crdClient, nil, testLogger()), crdClient
+}
+
+func runtimeConfigFixture() *haproxyv1alpha1.HAProxyCfg {
+	return &haproxyv1alpha1.HAProxyCfg{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config-haproxycfg", Namespace: "haptic"},
+	}
+}
+
+// The verdict is what `kubectl describe haproxycfg` answers with: HAProxy's own
+// words on a refusal, and the accepted plan on a pass.
+func TestApplyGateVerdict_WritesTheConditions(t *testing.T) {
+	publisher, crdClient := gateVerdictPublisher(t, runtimeConfigFixture())
+
+	require.NoError(t, publisher.ApplyGateVerdict(t.Context(), &GateVerdict{
+		Namespace: "haptic", Name: "test-config-haproxycfg", PlanID: "plan-2",
+		Refused: true, Pinned: true, Message: "[ALERT] unknown keyword 'bogus'",
+	}))
+
+	updated, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("haptic").Get(t.Context(), "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+
+	validated := meta.FindStatusCondition(updated.Status.Conditions, ConditionConfigValidated)
+	require.NotNil(t, validated)
+	assert.Equal(t, metav1.ConditionFalse, validated.Status)
+	assert.Equal(t, reasonHAProxyRefused, validated.Reason)
+	assert.Contains(t, validated.Message, "unknown keyword",
+		"the operator's only pointer at what to fix is HAProxy's own message")
+
+	pinned := meta.FindStatusCondition(updated.Status.Conditions, ConditionConfigPinned)
+	require.NotNil(t, pinned)
+	assert.Equal(t, metav1.ConditionTrue, pinned.Status)
+	assert.Equal(t, reasonGateHolding, pinned.Reason)
+}
+
+// A gate that could not run is not HAProxy refusing the config, and the reason
+// must say so or an operator debugs the wrong thing.
+func TestApplyGateVerdict_SeparatesAnUnavailableGateFromARefusal(t *testing.T) {
+	publisher, crdClient := gateVerdictPublisher(t, runtimeConfigFixture())
+
+	require.NoError(t, publisher.ApplyGateVerdict(t.Context(), &GateVerdict{
+		Namespace: "haptic", Name: "test-config-haproxycfg", PlanID: "plan-2",
+		Message: "creating temp directory: read-only file system",
+	}))
+
+	updated, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("haptic").Get(t.Context(), "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	validated := meta.FindStatusCondition(updated.Status.Conditions, ConditionConfigValidated)
+	require.NotNil(t, validated)
+	assert.Equal(t, reasonGateUnavailable, validated.Reason)
+}
+
+// A pass clears both conditions, so a recovered fleet stops alerting.
+func TestApplyGateVerdict_PassClearsThePin(t *testing.T) {
+	publisher, crdClient := gateVerdictPublisher(t, runtimeConfigFixture())
+
+	require.NoError(t, publisher.ApplyGateVerdict(t.Context(), &GateVerdict{
+		Namespace: "haptic", Name: "test-config-haproxycfg", PlanID: "plan-2",
+		Refused: true, Pinned: true, Message: "boom",
+	}))
+	require.NoError(t, publisher.ApplyGateVerdict(t.Context(), &GateVerdict{
+		Namespace: "haptic", Name: "test-config-haproxycfg", PlanID: "plan-3", Accepted: true,
+	}))
+
+	updated, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("haptic").Get(t.Context(), "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.True(t, meta.IsStatusConditionTrue(updated.Status.Conditions, ConditionConfigValidated))
+	assert.True(t, meta.IsStatusConditionFalse(updated.Status.Conditions, ConditionConfigPinned))
+}
+
+// The first publish creates the object; a verdict that arrives before it must
+// not turn into an error the operator sees.
+func TestApplyGateVerdict_MissingRuntimeConfigIsNotAnError(t *testing.T) {
+	publisher, _ := gateVerdictPublisher(t)
+
+	assert.NoError(t, publisher.ApplyGateVerdict(t.Context(), &GateVerdict{
+		Namespace: "haptic", Name: "test-config-haproxycfg", PlanID: "plan-1", Accepted: true,
+	}))
+}
+
+// An unchanged verdict must not rewrite the status on every render: each write
+// is an etcd round-trip and a watch event for every reader.
+func TestApplyGateVerdict_UnchangedVerdictSkipsTheWrite(t *testing.T) {
+	publisher, crdClient := gateVerdictPublisher(t, runtimeConfigFixture())
+	verdict := &GateVerdict{
+		Namespace: "haptic", Name: "test-config-haproxycfg", PlanID: "plan-1", Accepted: true,
+	}
+
+	require.NoError(t, publisher.ApplyGateVerdict(t.Context(), verdict))
+	crdClient.ClearActions()
+	require.NoError(t, publisher.ApplyGateVerdict(t.Context(), verdict))
+
+	for _, action := range crdClient.Actions() {
+		assert.NotEqual(t, "update", action.GetVerb(),
+			"an unchanged verdict must not write the status again")
+	}
+}

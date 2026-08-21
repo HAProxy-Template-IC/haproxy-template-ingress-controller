@@ -196,10 +196,10 @@ func (c *Component) handleEvent(event pkgevents.Event) {
         // succeed" because partial rollouts still register as forward progress.
         c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0)
 
-    case *events.ValidationCompletedEvent:
-        // Warnings are informational; ValidationCompletedEvent itself signals
-        // success. Failure is a separate ValidationFailedEvent.
-        c.metrics.RecordValidation(true)
+    case *events.RenderGateCompletedEvent:
+        // HAProxy's own verdict on the render (ADR-0022). A refusal and a gate
+        // that could not run are both recorded as a failed validation.
+        c.metrics.RecordValidation(e.OK)
 
     case *events.IndexSynchronizedEvent:
         // Initialize resource counts
@@ -673,10 +673,14 @@ type DeploymentCompletedEvent struct {
 type InstanceDeploymentFailedEvent struct { Endpoint string; Error string }
 
 // Validation
-type ValidationCompletedEvent struct {
-    Warnings   []string
+type RenderGateCompletedEvent struct {
+    PlanID     string
+    OK         bool
+    Refused    bool // HAProxy answered, and refused; false means the gate could not run
+    Newest     bool // the verdict judges the render the fleet is converging on
+    Message    string
+    Pinned     bool
     DurationMs int64
-    ParsedConfig *parser.StructuredConfig // pre-parsed so deployer can skip the parse
 }
 type ValidationFailedEvent struct { Errors []string; DurationMs int64 }
 

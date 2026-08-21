@@ -461,7 +461,7 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 - Calls Pipeline.Execute() synchronously (no event-driven render/validate flow)
 - Advances `currentFiles` synchronously after validation, scoped to the active leader term
 - Bootstraps all-replica `currentFiles` only from a completely resolved `HAProxyCfg` auxiliary reference set, including certificate Secret metadata, and fails closed on ambiguous legacy changes or a post-modern set-ID loss
-- Publishes TemplateRenderedEvent + ValidationCompletedEvent for downstream components
+- Publishes TemplateRenderedEvent for downstream components; HAProxy's verdict on the render arrives later as RenderGateCompletedEvent from the leader-only rendergate
 - Publishes ReconciliationCompletedEvent or ReconciliationFailedEvent based on outcome
 - Uses structured PipelineError for phase detection via errors.As()
 
@@ -957,7 +957,7 @@ When leadership transitions occur, leader-only components start subscribing AFTE
 ```
 14:03:29 - All-replica: Discovery publishes HAProxyPodsDiscoveredEvent
 14:03:30 - All-replica: Renderer publishes TemplateRenderedEvent
-14:03:31 - All-replica: Validator publishes ValidationCompletedEvent
+14:03:31 - Leader-only: RenderGate publishes RenderGateCompletedEvent
          ↓
 14:05:04 - Leader election completes
 14:05:05 - Leader-only: DeploymentScheduler starts subscribing

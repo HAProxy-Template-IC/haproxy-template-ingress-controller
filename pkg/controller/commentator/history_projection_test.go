@@ -54,7 +54,7 @@ func TestEventCommentator_ProcessEventProjectsPayloadAndPreservesSummary(t *test
 		nil, "", true,
 		corr,
 	)
-	validation := ctlevents.NewValidationCompletedEvent(nil, 23, "config_change", nil, true, corr)
+	validation := ctlevents.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 23, corr)
 	deployment := ctlevents.NewDeploymentCompletedEvent(&ctlevents.DeploymentResult{
 		Total:              2,
 		Succeeded:          2,
@@ -71,7 +71,7 @@ func TestEventCommentator_ProcessEventProjectsPayloadAndPreservesSummary(t *test
 	require.Len(t, entries, 4)
 	assert.Equal(t, []string{
 		ctlevents.EventTypeDeploymentCompleted,
-		ctlevents.EventTypeValidationCompleted,
+		ctlevents.EventTypeRenderGateCompleted,
 		ctlevents.EventTypeTemplateRendered,
 		ctlevents.EventTypeReconciliationTriggered,
 	}, []string{entries[0].eventType, entries[1].eventType, entries[2].eventType, entries[3].eventType})

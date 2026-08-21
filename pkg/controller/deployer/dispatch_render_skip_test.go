@@ -21,11 +21,10 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-// handleValidationCompleted has a load-bearing optimization branch
-// that the existing TestDeploymentScheduler_HandleValidationCompleted
-// does NOT cover: the canSkip path that suppresses redundant
-// deployments when the rendered config and pod set both match the
-// last successfully-deployed state.
+// dispatchRender has a load-bearing optimization branch that the existing
+// TestDeploymentScheduler_DispatchRender does NOT cover: the canSkip path that
+// suppresses redundant deployments when the rendered config and pod set both
+// match the last successfully-deployed state.
 //
 // Two contracts pinned:
 //
@@ -44,7 +43,7 @@ import (
 //     match here, drift recovery would silently never deploy and
 //     the system could never self-heal from out-of-band changes.
 
-func TestHandleValidationCompleted_SkipsWhenConfigAndPodSetUnchanged(t *testing.T) {
+func TestDispatchRender_SkipsWhenConfigAndPodSetUnchanged(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
@@ -73,13 +72,8 @@ func TestHandleValidationCompleted_SkipsWhenConfigAndPodSetUnchanged(t *testing.
 	scheduler.lastDeployedTime = time.Now()       // ← non-zero (deployment really happened)
 	scheduler.mu.Unlock()
 
-	// Use a non-drift trigger reason so the bypass doesn't fire.
-	event := events.NewValidationCompletedEvent(
-		[]string{}, 100, "config_change", nil, true,
-		seedRenderIdentity(scheduler),
-	)
-
-	scheduler.handleValidationCompleted(ctx, event)
+	// Use a non-drift reason so the bypass doesn't fire.
+	scheduler.dispatchRender(ctx, "corr-skip", true, "config_validation")
 
 	// The skip branch MUST NOT publish a DeploymentScheduledEvent.
 	// AssertNoEvent waits its full timeout and fails if one shows up.
@@ -129,7 +123,7 @@ func TestEndpointAuthorityHashIsKeyed(t *testing.T) {
 	)
 }
 
-func TestHandleValidationCompleted_DoesNotSkipSameURLReplacement(t *testing.T) {
+func TestDispatchRender_DoesNotSkipSameURLReplacement(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("replacement", 10)
 	bus.Start()
@@ -156,22 +150,20 @@ func TestHandleValidationCompleted_DoesNotSkipSameURLReplacement(t *testing.T) {
 	scheduler.lastDeployedTime = time.Now()
 	scheduler.mu.Unlock()
 
-	scheduler.handleValidationCompleted(ctx, events.NewValidationCompletedEvent(
-		nil, 100, "config_change", nil, true, seedRenderIdentity(scheduler),
-	))
+	scheduler.dispatchRender(ctx, "corr-authority", true, "config_validation")
 
 	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
 	require.Equal(t, "uid-new", scheduled.Endpoints[0].PodUID)
 }
 
-// TestHandleValidationCompleted_PublishesDeploymentSkippedOnCacheHit pins the
+// TestDispatchRender_PublishesDeploymentSkippedOnCacheHit pins the
 // contract that the skip branch ALSO publishes a DeploymentSkippedEvent so
 // the status-applier can write the "deployed" status variant. Without this,
 // resources whose addition produces no config change (Gateway with no
 // routes attached, status-only deltas) would stay at the CRD-default
 // condition state indefinitely (e.g. Programmed=Unknown / obsGen=missing,
 // which the Gateway-API conformance helper reports as "generation 0").
-func TestHandleValidationCompleted_PublishesDeploymentSkippedOnCacheHit(t *testing.T) {
+func TestDispatchRender_PublishesDeploymentSkippedOnCacheHit(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
@@ -197,12 +189,7 @@ func TestHandleValidationCompleted_PublishesDeploymentSkippedOnCacheHit(t *testi
 	scheduler.lastDeployedTime = time.Now()
 	scheduler.mu.Unlock()
 
-	event := events.NewValidationCompletedEvent(
-		[]string{}, 100, "config_change", nil, true,
-		seedRenderIdentity(scheduler),
-	)
-
-	scheduler.handleValidationCompleted(ctx, event)
+	scheduler.dispatchRender(ctx, "corr-cache-hit", true, "config_validation")
 
 	skipped := testutil.WaitForEvent[*events.DeploymentSkippedEvent](
 		t, eventChan, testutil.EventTimeout)
@@ -214,7 +201,7 @@ func TestHandleValidationCompleted_PublishesDeploymentSkippedOnCacheHit(t *testi
 	require.Equal(t, podSetHash, skipped.PodSetHash)
 }
 
-func TestHandleValidationCompleted_DriftPreventionBypassesSkip(t *testing.T) {
+func TestDispatchRender_DriftPreventionBypassesSkip(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
@@ -243,16 +230,9 @@ func TestHandleValidationCompleted_DriftPreventionBypassesSkip(t *testing.T) {
 	scheduler.lastDeployedTime = time.Now()
 	scheduler.mu.Unlock()
 
-	// CRITICAL difference: triggerReason is drift_prevention. The
-	// skip branch MUST be bypassed even though hashes match.
-	event := events.NewValidationCompletedEvent(
-		[]string{}, 100,
-		events.TriggerReasonDriftPrevention,
-		nil, false, // drift events are non-coalescible
-		seedRenderIdentity(scheduler),
-	)
-
-	scheduler.handleValidationCompleted(ctx, event)
+	// CRITICAL difference: the reason is drift_prevention. The skip branch
+	// MUST be bypassed even though hashes match. Drift is non-coalescible.
+	scheduler.dispatchRender(ctx, "corr-drift", false, events.TriggerReasonDriftPrevention)
 
 	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](
 		t, eventChan, testutil.LongTimeout)
@@ -289,7 +269,7 @@ func TestHandleTemplateRendered_CachesStatusPatches(t *testing.T) {
 		nil, 0, 50, "test", "checksum", nil, "", true,
 	)
 
-	scheduler.handleTemplateRendered(event)
+	scheduler.handleTemplateRendered(t.Context(), event)
 
 	scheduler.mu.RLock()
 	defer scheduler.mu.RUnlock()
@@ -297,12 +277,12 @@ func TestHandleTemplateRendered_CachesStatusPatches(t *testing.T) {
 	require.Equal(t, "gw", scheduler.lastValidatedStatusPatches[0].Name)
 }
 
-// TestHandleValidationCompleted_DeploymentScheduledCarriesStatusPatches pins
+// TestDispatchRender_DeploymentScheduledCarriesStatusPatches pins
 // the end-to-end carry from TemplateRenderedEvent → cached lastValidatedStatusPatches
 // → DeploymentScheduledEvent on the happy path (config changed, no skip).
 // Companion to the skip-path test above; together they cover both event
 // types the scheduler emits.
-func TestHandleValidationCompleted_DeploymentScheduledCarriesStatusPatches(t *testing.T) {
+func TestDispatchRender_DeploymentScheduledCarriesStatusPatches(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
@@ -325,16 +305,12 @@ func TestHandleValidationCompleted_DeploymentScheduledCarriesStatusPatches(t *te
 	scheduler.lastRenderedConfig = "global\n  daemon\n"
 	scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
 	scheduler.lastContentChecksum = "new-checksum" // differs from lastDeployedConfigHash
-	scheduler.lastValidatedStatusPatches = patches
+	scheduler.lastRenderedStatusPatches = patches
 	scheduler.currentEndpoints = endpoints
 	// lastDeployedTime zero → canSkip predicate is false → real deploy path.
 	scheduler.mu.Unlock()
 
-	event := events.NewValidationCompletedEvent(
-		[]string{}, 100, "config_change", nil, true,
-		seedRenderIdentity(scheduler),
-	)
-	scheduler.handleValidationCompleted(ctx, event)
+	scheduler.dispatchRender(ctx, "corr-patches", true, "config_validation")
 
 	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](
 		t, eventChan, testutil.EventTimeout)
@@ -343,4 +319,9 @@ func TestHandleValidationCompleted_DeploymentScheduledCarriesStatusPatches(t *te
 		"DeploymentScheduledEvent must carry the cached StatusPatches so "+
 			"the Deployer can forward them into DeploymentCompletedEvent")
 	require.Equal(t, "gw", scheduled.StatusPatches[0].Name)
+
+	scheduler.mu.RLock()
+	defer scheduler.mu.RUnlock()
+	require.Equal(t, patches, scheduler.lastValidatedStatusPatches,
+		"dispatch promotes the render's patches with the config they belong to")
 }

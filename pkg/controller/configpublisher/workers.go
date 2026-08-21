@@ -653,3 +653,36 @@ func (c *Component) requeueStatusWork(ctx context.Context, work *statusWorkItem)
 		c.statusRetrySignals.Schedule(ctx, statusWorkRetryDelay, c.statusWorkTrigger)
 	}
 }
+
+// verdictWorker writes the render gate's verdicts to the HAProxyCfg status.
+//
+// It is a worker and not an event-loop call because the write is an apiserver
+// round-trip: on the loop it would stall every other event the publisher
+// handles — pod status, publishes, leadership — behind one slow API call.
+func (c *Component) verdictWorker(ctx context.Context) {
+	for {
+		select {
+		case <-c.verdictTrigger:
+			c.processPendingVerdict(ctx)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (c *Component) processPendingVerdict(ctx context.Context) {
+	c.verdictMu.Lock()
+	verdict := c.pendingVerdict
+	c.pendingVerdict = nil
+	c.verdictMu.Unlock()
+	if verdict == nil {
+		return
+	}
+
+	writeCtx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPITimeout)
+	defer cancel()
+	if err := c.publisher.ApplyGateVerdict(writeCtx, verdict); err != nil {
+		c.logger.Warn("Failed to write the render gate verdict to HAProxyCfg",
+			"error", err, "plan", verdict.PlanID)
+	}
+}

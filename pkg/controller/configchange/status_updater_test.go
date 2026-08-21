@@ -92,6 +92,106 @@ func TestStatusUpdater_EmitsEvents(t *testing.T) {
 	}
 }
 
+// The render gate's verdict must reach `kubectl get events`, and only on a
+// transition: it answers once per render, so repeating the Warning would bury
+// the one that mattered under a steady stream of identical lines.
+func TestStatusUpdater_EmitsRenderGateEvents(t *testing.T) {
+	u, _ := newStatusUpdaterFixture(t)
+	rec := record.NewFakeRecorder(10)
+	u.recorder = rec
+	u.cacheConfigRefs([]events.ConfigSourceRef{{Namespace: testNamespace, Name: testName}})
+
+	u.handleRenderGateCompleted(events.NewRenderGateCompletedEvent(
+		"plan-1", false, true, true, "[ALERT] unknown keyword 'bogus'", false, 12))
+	assertNextEvent(t, rec, "Warning", eventReasonRenderRefused, "unknown keyword")
+
+	// The same verdict again is not news.
+	u.handleRenderGateCompleted(events.NewRenderGateCompletedEvent(
+		"plan-2", false, true, true, "[ALERT] unknown keyword 'bogus'", false, 12))
+	select {
+	case e := <-rec.Events:
+		t.Fatalf("expected no event on an unchanged verdict, got %q", e)
+	default:
+	}
+
+	// Escalating to pinned is: nothing reaches the pods any more.
+	u.handleRenderGateCompleted(events.NewRenderGateCompletedEvent(
+		"plan-3", false, true, true, "[ALERT] unknown keyword 'bogus'", true, 12))
+	assertNextEvent(t, rec, "Warning", eventReasonRenderRefused, "No new render reaches the pods")
+
+	// Recovery is.
+	u.handleRenderGateCompleted(events.NewRenderGateCompletedEvent("plan-4", true, false, true, "", false, 12))
+	assertNextEvent(t, rec, "Normal", eventReasonRenderAccepted, "accepted the rendered configuration again")
+
+	// A verdict for a plan the fleet has moved past says nothing about the
+	// current render, so it emits nothing.
+	u.handleRenderGateCompleted(events.NewRenderGateCompletedEvent(
+		"plan-2", false, true, false, "[ALERT] unknown keyword 'bogus'", false, 12))
+	select {
+	case e := <-rec.Events:
+		t.Fatalf("expected no event for a superseded plan's verdict, got %q", e)
+	default:
+	}
+}
+
+// The first pass of a term is not a recovery: nothing was refused before it.
+func TestStatusUpdater_FirstRenderGatePassIsNotARecovery(t *testing.T) {
+	u, _ := newStatusUpdaterFixture(t)
+	rec := record.NewFakeRecorder(10)
+	u.recorder = rec
+	u.cacheConfigRefs([]events.ConfigSourceRef{{Namespace: testNamespace, Name: testName}})
+
+	u.handleRenderGateCompleted(events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 12))
+
+	select {
+	case e := <-rec.Events:
+		assert.Contains(t, e, "HAProxy accepted the rendered configuration")
+		assert.NotContains(t, e, "again")
+	default:
+		t.Fatal("expected an Event for the term's first verdict")
+	}
+}
+
+// A gate that could not run is not HAProxy refusing the configuration, and the
+// Event has to say so or an operator debugs their own templates instead.
+func TestStatusUpdater_RenderGateEventSeparatesAnUnavailableGate(t *testing.T) {
+	u, _ := newStatusUpdaterFixture(t)
+	rec := record.NewFakeRecorder(10)
+	u.recorder = rec
+	u.cacheConfigRefs([]events.ConfigSourceRef{{Namespace: testNamespace, Name: testName}})
+
+	u.handleRenderGateCompleted(events.NewRenderGateCompletedEvent(
+		"plan-1", false, false, true, "creating temp directory: read-only file system", true, 12))
+
+	select {
+	case e := <-rec.Events:
+		assert.Contains(t, e, "could not run")
+		assert.NotContains(t, e, "HAProxy refused")
+	default:
+		t.Fatal("expected an Event for a gate that could not run")
+	}
+}
+
+// Without HAProxy's verdict no pod is reverted, so the Event must not send the
+// operator looking for a rollback that never happened.
+func TestStatusUpdater_UnavailableGateDoesNotClaimARevert(t *testing.T) {
+	u, _ := newStatusUpdaterFixture(t)
+	rec := record.NewFakeRecorder(10)
+	u.recorder = rec
+	u.cacheConfigRefs([]events.ConfigSourceRef{{Namespace: testNamespace, Name: testName}})
+
+	u.handleRenderGateCompleted(events.NewRenderGateCompletedEvent(
+		"plan-1", false, false, true, "creating temp directory: read-only file system", false, 12))
+
+	select {
+	case e := <-rec.Events:
+		assert.Contains(t, e, "No pod was touched")
+		assert.NotContains(t, e, "reverted")
+	default:
+		t.Fatal("expected an Event for a gate that could not run")
+	}
+}
+
 func assertNextEvent(t *testing.T, rec *record.FakeRecorder, wantType, wantReason, wantMsgSubstr string) {
 	t.Helper()
 	select {

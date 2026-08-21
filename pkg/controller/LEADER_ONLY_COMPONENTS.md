@@ -11,7 +11,7 @@ When leadership transitions occur, leader-only components start subscribing to e
 ```
 14:03:29 - Discovery publishes HAProxyPodsDiscoveredEvent (2 pods)
 14:03:30 - Renderer publishes TemplateRenderedEvent (config: 5523 bytes)
-14:03:31 - Validator publishes ValidationCompletedEvent (success)
+14:03:31 - RenderGate publishes RenderGateCompletedEvent (pass)
          ↓
 14:05:04 - Leader election completes, new leader elected
 14:05:05 - DeploymentScheduler starts subscribing (LEADER-ONLY)
@@ -21,18 +21,35 @@ When leadership transitions occur, leader-only components start subscribing to e
          ❌ Deployment deadlocked forever
 ```
 
+## Leadership transitions restart components in place
+
+A lost lease ends the leadership term, not the iteration: `superviseElection`
+re-enters election with the same identity, the lifecycle registry restarts the
+same leader-only component instances from `Stopped`, and the rest of the
+replica — its config, stores and admission-webhook validators — keeps serving
+throughout. Consequences for component authors:
+
+- `Start` runs once per term. Subscribe leader-only in `Start`, unsubscribe on
+  exit, and `defer Rearm()` so the next term's readiness signal works.
+- Anything cached from a previous term is stale by definition; reset per-term
+  state at the top of `Start` (see the Deployer's term reset) or on
+  `LostLeadershipEvent`.
+- A component that returns an error marks itself `Failed` and fails the
+  iteration; only a graceful, context-cancelled return is restartable.
+
 ## Leader-Only Components
 
 Components that only run on the elected leader (registered via `registry.Build().LeaderOnly(...)` in `pkg/controller/reconciliation.go`):
 
 | Component | Purpose | Event Dependencies | State Replay | Cleanup |
 |-----------|---------|-------------------|--------------|---------|
-| **Coordinator** | Drives the synchronous render-validate pipeline | `ReconciliationTriggeredEvent` | N/A (subscribes via `SubscribeTypesLeaderOnly` after lease acquired) | N/A (context cancellation tears down) |
-| **DeploymentScheduler** | Schedules HAProxy deployments with rate limiting | `TemplateRenderedEvent`<br>`ValidationCompletedEvent`<br>`HAProxyPodsDiscoveredEvent` (the three gating inputs — scheduler holds until all three are present) | N/A (receives replayed events) | ✅ `LostLeadershipEvent` |
-| **Deployer** | Executes deployments to HAProxy pods | `DeploymentScheduledEvent`<br>`DeploymentCancelRequestEvent` (cancels an in-progress deployment when the scheduler hits its `deploymentTimeout`) | N/A (stateless) | N/A (stateless) |
+| **Coordinator** | Drives the synchronous render pipeline | `ReconciliationTriggeredEvent` | N/A (subscribes via `SubscribeTypesLeaderOnly` after lease acquired) | N/A (context cancellation tears down) |
+| **RenderGate** | Runs `haproxy -c -dr` on each render off the reconcile path and owns the OPTIMISTIC/PESSIMISTIC latch | `TemplateRenderedEvent` (the render to check)<br>`ConfigAppliedToPodEvent` (which plan each pod holds, so a superseded plan pods still run is checked too)<br>`HAProxyPodTerminatedEvent` / `HAProxyPodsDiscoveredEvent` (prune that map) | N/A (a new term's first render arrives from the fresh reconcile) | ✅ `LostLeadershipEvent` + a reset in `Start` — the latch is per term, and a new leader starts optimistic because the agents' own last-known-good sets protect the fleet |
+| **DeploymentScheduler** | Schedules HAProxy deployments with rate limiting | `TemplateRenderedEvent`<br>`HAProxyPodsDiscoveredEvent` (the two gating inputs — scheduler holds until both are present)<br>`RenderGateCompletedEvent` (moves the gate's latch; a pass releases a held render) | N/A (receives replayed events) | ✅ `LostLeadershipEvent` |
+| **Deployer** | Executes deployments to HAProxy pods | `DeploymentScheduledEvent`<br>`DeploymentCancelRequestEvent` (cancels an in-progress deployment when the scheduler hits its `deploymentTimeout`)<br>`RenderGateCompletedEvent` (records the plans HAProxy passed, so a pod's manifest names the one it applied; reverts the pods carrying a refused plan) | N/A (stateless) | N/A (stateless) |
 | **DriftPreventionMonitor** | Triggers periodic drift prevention deployments | `DeploymentCompletedEvent` | N/A (timer-based) | ✅ `LostLeadershipEvent` |
-| **ConfigPublisher** | Creates and updates HAProxyCfg and auxiliary file resources | `ConfigValidatedEvent`<br>`TemplateRenderedEvent`<br>`ValidationCompletedEvent`<br>`ValidationFailedEvent` (publishes the failed render as an *invalid* HAProxyCfg)<br>`ConfigAppliedToPodEvent`<br>`HAProxyPodTerminatedEvent`<br>`HAProxyPodsDiscoveredEvent` (reconciles `deployedToPods` status against the currently-running set, cleaning up stale entries from pods that terminated while the controller was restarting) | N/A (caches state from events) | ✅ `LostLeadershipEvent` |
-| **StatusUpdater** | Writes validation results back to the `HAProxyTemplateConfig` CRD's status subresource | `ConfigValidatedEvent`, `ConfigInvalidEvent`, `ValidationFailedEvent` | N/A | N/A (context cancellation tears down) |
+| **ConfigPublisher** | Creates and updates HAProxyCfg and auxiliary file resources | `ConfigValidatedEvent`<br>`TemplateRenderedEvent` (the publish trigger)<br>`RenderGateCompletedEvent` (writes the `ConfigValidated` / `ConfigPinned` conditions)<br>`ValidationFailedEvent` (publishes the failed render as an *invalid* HAProxyCfg)<br>`ConfigAppliedToPodEvent`<br>`HAProxyPodTerminatedEvent`<br>`HAProxyPodsDiscoveredEvent` (reconciles `deployedToPods` status against the currently-running set, cleaning up stale entries from pods that terminated while the controller was restarting) | N/A (caches state from events) | ✅ `LostLeadershipEvent` |
+| **StatusUpdater** | Writes validation results back to the `HAProxyTemplateConfig` CRD's status subresource, and emits the Kubernetes Events an operator sees first | `ConfigValidatedEvent`, `ConfigInvalidEvent`, `ValidationFailedEvent`, `RenderGateCompletedEvent` (Warning on a refusal, Normal on recovery — transitions only) | N/A | N/A (context cancellation tears down) |
 
 ## All-Replica Components with State Replay
 
@@ -260,7 +277,7 @@ func (v *Validator) handleBecameLeader(_ *events.BecameLeaderEvent) {
     v.mu.RUnlock()
 
     if succeeded {
-        v.eventBus.Publish(events.NewValidationCompletedEvent(...))
+        v.eventBus.Publish(events.NewRenderGateCompletedEvent(...))
     } else {
         v.eventBus.Publish(events.NewValidationFailedEvent(...))  // ❌ Unnecessary
     }
@@ -277,7 +294,7 @@ func (v *Validator) handleBecameLeader(_ *events.BecameLeaderEvent) {
         return  // DeploymentScheduler only needs successful validations
     }
 
-    v.eventBus.Publish(events.NewValidationCompletedEvent(...))
+    v.eventBus.Publish(events.NewRenderGateCompletedEvent(...))
 }
 ```
 

@@ -114,7 +114,7 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 		true, // coalescible
 	)
 
-	scheduler.handleTemplateRendered(event)
+	scheduler.handleTemplateRendered(t.Context(), event)
 
 	scheduler.mu.RLock()
 	defer scheduler.mu.RUnlock()
@@ -143,10 +143,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true,
-			seedRenderIdentity(scheduler))
-
-		scheduler.handleValidationCompleted(ctx, event)
+		scheduler.dispatchRender(ctx, "corr-cache", true, "config_validation")
 
 		scheduler.mu.RLock()
 		defer scheduler.mu.RUnlock()
@@ -162,11 +159,8 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true,
-			seedRenderIdentity(scheduler))
-
 		// Should not panic when no config available
-		scheduler.handleValidationCompleted(ctx, event)
+		scheduler.dispatchRender(ctx, "corr-empty", true, "config_validation")
 	})
 
 	t.Run("schedules deployment when endpoints available", func(t *testing.T) {
@@ -180,10 +174,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true,
-			seedRenderIdentity(scheduler))
-
-		scheduler.handleValidationCompleted(ctx, event)
+		scheduler.dispatchRender(ctx, "corr-endpoints", true, "config_validation")
 
 		// The loop picks up the pending deploy and publishes it.
 		testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
@@ -483,23 +474,27 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		assert.Equal(t, "global\n  daemon\n", scheduler.lastRenderedConfig)
 	})
 
-	t.Run("routes ValidationCompletedEvent", func(t *testing.T) {
-		// Route a real render first and propagate its correlation onto the
-		// verdict: the scheduler only promotes a cache the verdict describes.
+	t.Run("routes TemplateRenderedEvent", func(t *testing.T) {
+		// The render is the deploy trigger now: routing it must promote the
+		// cache without waiting for a separate verdict.
 		rendered := events.NewTemplateRenderedEvent(
 			"global\n", &dataplane.AuxiliaryFiles{}, nil, nil, 0, 50, "", "", nil, "", true,
 		)
 		scheduler.handleEvent(ctx, rendered)
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true,
-			events.PropagateCorrelation(rendered))
-
-		scheduler.handleEvent(ctx, event)
-
 		scheduler.mu.RLock()
 		defer scheduler.mu.RUnlock()
 
 		assert.True(t, scheduler.hasValidConfig)
+	})
+
+	t.Run("routes RenderGateCompletedEvent", func(t *testing.T) {
+		scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-1", false, true, true, "boom", false, 5))
+
+		scheduler.mu.RLock()
+		defer scheduler.mu.RUnlock()
+
+		assert.True(t, scheduler.gatePinned, "a refusal must hold the next render")
 	})
 
 	t.Run("routes HAProxyPodsDiscoveredEvent", func(t *testing.T) {
@@ -578,7 +573,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 
 	t.Run("ignores unknown events", func(t *testing.T) {
 		// Should not panic
-		otherEvent := events.NewReconciliationCompletedEvent(0, nil, nil)
+		otherEvent := events.NewReconciliationCompletedEvent(0, "", nil, nil)
 		scheduler.handleEvent(ctx, otherEvent)
 	})
 

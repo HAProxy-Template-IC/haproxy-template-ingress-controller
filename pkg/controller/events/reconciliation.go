@@ -26,7 +26,7 @@ import (
 // expires, or immediately for config changes.
 //
 // This event starts a new correlation chain. Downstream events (TemplateRenderedEvent,
-// ValidationCompletedEvent, DeploymentScheduledEvent, etc.) should propagate
+// RenderGateCompletedEvent, DeploymentScheduledEvent, etc.) should propagate
 // the correlation ID to enable end-to-end tracing.
 //
 // This event implements CoalescibleEvent. The coalescible flag is set by the emitter
@@ -130,6 +130,10 @@ type ReconciliationCompletedEvent struct {
 	// read-only like every other event field.
 	Events []templating.RenderedEvent
 
+	// PlanID is the render this cycle produced, so a consumer can pair the
+	// cycle with the render gate's later verdict on it.
+	PlanID string
+
 	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
@@ -149,12 +153,14 @@ type ReconciliationCompletedEvent struct {
 //	    events.WithCorrelation(correlationID, causationID))
 func NewReconciliationCompletedEvent(
 	durationMs int64,
+	planID string,
 	renderedResources []templating.RenderedResource,
 	statusPatches []templating.StatusPatch,
 	opts ...CorrelationOption,
 ) *ReconciliationCompletedEvent {
 	return &ReconciliationCompletedEvent{
 		DurationMs:        durationMs,
+		PlanID:            planID,
 		RenderedResources: slices.Clone(renderedResources),
 		StatusPatches:     slices.Clone(statusPatches),
 		timestamped:       newTimestamped(),

@@ -41,6 +41,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendergate"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceapplier"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/statusapplier"
@@ -90,9 +91,10 @@ type renderInputs struct {
 // the leader-election component through setup, so both halves share one
 // counter. Nil without leader election: a single writer needs no fence.
 //
-// Standing down cancels the iteration with the cause a lost lease carries, so
-// the Lease is released (ReleaseOnCancel) and the run loop re-elects: nothing
-// short of a fresh acquisition claims a fresh epoch.
+// Standing down cancels the current election attempt, so the Lease is
+// released (ReleaseOnCancel) and superviseElection re-enters election in
+// place: nothing short of a fresh acquisition claims a fresh epoch, and the
+// iteration — its stores and admission validators — keeps running.
 func leadershipFence(setup *componentSetup, cfg *coreconfig.Config, k8sClient *client.Client, logger *slog.Logger) deployer.LeadershipFence {
 	if !cfg.Controller.LeaderElection.Enabled {
 		return nil
@@ -100,11 +102,38 @@ func leadershipFence(setup *componentSetup, cfg *coreconfig.Config, k8sClient *c
 	podName, podNamespace := leaderIdentity(k8sClient, logger)
 	epoch := leaderelectionctrl.NewLeaseEpoch(k8sClient.Clientset(),
 		podNamespace, cfg.Controller.LeaderElection.LeaseName, podName, logger)
+	setup.ElectionRestart = make(chan struct{}, 1)
 	setup.LeaderEpoch = leaderelectionctrl.NewTerm(epoch, func(reason string) {
 		logger.Error("Giving up leadership, re-electing", "reason", reason, "identity", podName)
-		setup.CancelCause(&leadershipLostError{})
+		select {
+		case setup.ElectionRestart <- struct{}{}:
+		default:
+		}
 	})
 	return setup.LeaderEpoch
+}
+
+// detectLocalCapabilities seeds the template `capabilities` input from the
+// controller image's own HAProxy binary. Discovery replaces it with the fleet's
+// lowest reported version once the pods answer; the chart pins the same
+// haproxyVersion for both images, so the seed is right on a healthy fleet and
+// only an in-flight upgrade moves it.
+func detectLocalCapabilities(ctx context.Context, logger *slog.Logger) (
+	*dataplane.Version, *renderer.CapabilitiesFanout, error,
+) {
+	localVersion, err := dataplane.DetectLocalVersionContext(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("detecting local HAProxy version: %w", err)
+	}
+	capabilities := renderer.NewCapabilitiesFanout(dataplane.CapabilitiesFromVersion(localVersion))
+
+	local := capabilities.Capabilities()
+	logger.Info("Detected local HAProxy version",
+		"version", localVersion.Full,
+		"supports_crt_list", local.SupportsCrtList,
+		"supports_map_storage", local.SupportsMapStorage,
+		"supports_general_storage", local.SupportsGeneralStorage)
+	return localVersion, capabilities, nil
 }
 
 // createReconciliationComponents creates all reconciliation components and
@@ -131,22 +160,10 @@ func createReconciliationComponents(
 	reconcilerComponent := reconciler.New(setup.Bus, logger)
 
 	// The controller image's own HAProxy binary seeds the template
-	// `capabilities` input. Discovery replaces it with the fleet's lowest
-	// reported version once the pods answer; the chart pins the same
-	// haproxyVersion for both images, so the seed is right on a healthy fleet
-	// and only an in-flight upgrade moves it.
-	localVersion, err := dataplane.DetectLocalVersionContext(setup.IterCtx)
+	localVersion, capabilities, err := detectLocalCapabilities(setup.IterCtx, logger)
 	if err != nil {
-		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
+		return nil, err
 	}
-	capabilities := renderer.NewCapabilitiesFanout(dataplane.CapabilitiesFromVersion(localVersion))
-
-	local := capabilities.Capabilities()
-	logger.Info("Detected local HAProxy version",
-		"version", localVersion.Full,
-		"supports_crt_list", local.SupportsCrtList,
-		"supports_map_storage", local.SupportsMapStorage,
-		"supports_general_storage", local.SupportsGeneralStorage)
 
 	// Get haproxy-pods store for pod-maxconn calculations in templates
 	haproxyPodStore := resourceWatcher.GetStore(names.HAProxyPodsResourceType)
@@ -185,12 +202,29 @@ func createReconciliationComponents(
 		TypedResourceTypes: wiring.TypedResourceTypes,
 	})
 
-	validationPipeline := buildValidationPipeline(cfg, localVersion, renderService, outputValidator, logger)
+	// Two pipeline instances, because the two callers answer to different
+	// clocks. The reconcile instance renders and hands the bytes to the fleet;
+	// HAProxy's verdict on them arrives from the render gate (ADR-0022). The
+	// proposal instance answers an admission request, which must carry the
+	// verdict in its own reply, so it keeps the full synchronous check.
+	proposalValidation := newProposalValidator(cfg, localVersion, logger)
+	reconcilePipeline := pipeline.New(&pipeline.PipelineConfig{
+		Renderer:        renderService,
+		OutputValidator: outputValidator,
+		CommitValidator: proposalValidation,
+		Logger:          logger,
+	})
+	proposalPipeline := pipeline.New(&pipeline.PipelineConfig{
+		Renderer:        renderService,
+		Validator:       proposalValidation,
+		OutputValidator: outputValidator,
+		Logger:          logger,
+	})
 
-	// Coordinator: leader-side render + validate + deploy.
+	// Coordinator: leader-side render + deploy.
 	coordinatorComponent := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
 		EventBus:      setup.Bus,
-		Pipeline:      validationPipeline,
+		Pipeline:      reconcilePipeline,
 		StoreProvider: storeProvider,
 		CurrentFiles:  currentFiles,
 		Logger:        logger,
@@ -199,10 +233,19 @@ func createReconciliationComponents(
 	// ProposalValidator: admission webhook + HTTP-store content promotion.
 	proposalValidatorComponent := proposalvalidator.New(&proposalvalidator.ComponentConfig{
 		EventBus:             setup.Bus,
-		Pipeline:             validationPipeline,
+		Pipeline:             proposalPipeline,
 		BaseStoreProvider:    storeProvider,
 		CurrentFilesProvider: currentFiles.publishedSnapshot,
 		Logger:               logger,
+	})
+
+	// RenderGate: the reconcile path's `haproxy -c`, off the wall clock, on its
+	// own semaphore slot so admission never queues behind a fleet-sized check.
+	renderGateComponent := rendergate.New(&rendergate.Config{
+		EventBus: setup.Bus,
+		Logger:   logger,
+		Checker:  rendergate.ServiceChecker{Service: newRenderGateValidator(cfg, localVersion, logger)},
+		Metrics:  setup.MetricsComponent.Metrics(),
 	})
 
 	// One constructor, wired inside the deployer package: the connections
@@ -293,6 +336,7 @@ func createReconciliationComponents(
 		},
 		[]lifecycle.Component{
 			coordinatorComponent,
+			renderGateComponent,
 			driftMonitorComponent,
 			deployerComponent,
 			deploymentSchedulerComponent,
@@ -322,19 +366,43 @@ func registerLifecycleComponents(reg *lifecycle.Registry, allReplica, leaderOnly
 	}
 }
 
-// buildValidationPipeline creates the full-validation pipeline used by
-// reconciliation and HTTP content promotion. DNS lookup remains
-// flaky and recovers at runtime (HAProxy starts the server DOWN and brings
-// it up when the next health check resolves).
-func buildValidationPipeline(
+// newRenderGateValidator builds the render gate's validation service: only
+// `haproxy -c -dr`, on a gate of its own.
+//
+// `-dr` matches the shipped pod and today's reconcile path — a DNS blip must
+// never revert a fleet. Syntax and schema are dropped because HAProxy's verdict
+// is a strict superset for loadability and nothing downstream reads the parse
+// (ADR-0022). The gate's own CheckGate keeps the webhook's 9 s failurePolicy:
+// Fail budget clear of it, and its duty-cycle interval bounds the CPU a render
+// storm can take from admission.
+func newRenderGateValidator(cfg *coreconfig.Config, localVersion *dataplane.Version, logger *slog.Logger) *validation.ValidationService {
+	dirConfig := extractValidationDirConfig(&cfg.Dataplane)
+	return validation.NewValidationService(&validation.ValidationServiceConfig{
+		Logger:              logger.With("validation", "rendergate"),
+		Version:             localVersion,
+		SkipDNSValidation:   true,
+		SkipSyntaxAndSchema: true,
+		DiscardParsedConfig: true,
+		CheckGate:           dataplane.NewCheckGate(cfg.Controller.GetRenderGateInterval()),
+		BaseDir:             dirConfig.BaseDir,
+		MapsDir:             dirConfig.MapsDir,
+		SSLCertsDir:         dirConfig.SSLCertsDir,
+		GeneralDir:          dirConfig.GeneralDir,
+	})
+}
+
+// newProposalValidator creates the full-validation service that answers for
+// operator input: admission proposals, HTTP content promotion, and the commit
+// of external content a reconcile render accepted for the first time. DNS
+// lookup remains flaky and recovers at runtime (HAProxy starts the server DOWN
+// and brings it up when the next health check resolves).
+func newProposalValidator(
 	cfg *coreconfig.Config,
 	localVersion *dataplane.Version,
-	renderService *renderer.RenderService,
-	outputValidator pipeline.RenderedOutputValidator,
 	logger *slog.Logger,
-) *pipeline.Pipeline {
+) *validation.ValidationService {
 	dirConfig := extractValidationDirConfig(&cfg.Dataplane)
-	validationService := validation.NewValidationService(&validation.ValidationServiceConfig{
+	return validation.NewValidationService(&validation.ValidationServiceConfig{
 		Logger:            logger.With("validation", "full"),
 		Version:           localVersion,
 		SkipDNSValidation: true,
@@ -342,12 +410,6 @@ func buildValidationPipeline(
 		MapsDir:           dirConfig.MapsDir,
 		SSLCertsDir:       dirConfig.SSLCertsDir,
 		GeneralDir:        dirConfig.GeneralDir,
-	})
-	return pipeline.New(&pipeline.PipelineConfig{
-		Renderer:        renderService,
-		Validator:       validationService,
-		OutputValidator: outputValidator,
-		Logger:          logger,
 	})
 }
 

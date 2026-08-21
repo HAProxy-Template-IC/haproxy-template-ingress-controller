@@ -22,7 +22,10 @@ import (
 )
 
 // prepareLeaderOnlyComponents promotes leader-only components that are
-// Pending or Standby to Starting and re-creates their ready channel.
+// Pending, Standby or Stopped to Starting and re-creates their ready channel.
+// Stopped is a gracefully ended leadership term: re-acquisition restarts the
+// same instances in place. Failed stays terminal — a crashed component fails
+// the iteration, never silently rejoins the next term.
 // Must be called without r.mu held.
 func (r *Registry) prepareLeaderOnlyComponents() []*registeredComponent {
 	r.mu.Lock()
@@ -31,8 +34,7 @@ func (r *Registry) prepareLeaderOnlyComponents() []*registeredComponent {
 	componentsToStart := make([]*registeredComponent, 0)
 
 	for _, comp := range r.components {
-		// Only start leader-only components that are pending or standby
-		if comp.leaderOnly && (comp.status == StatusPending || comp.status == StatusStandby) {
+		if comp.leaderOnly && (comp.status == StatusPending || comp.status == StatusStandby || comp.status == StatusStopped) {
 			comp.status = StatusStarting
 			// Re-create ready channel in case this is called multiple times
 			comp.ready = make(chan struct{})

@@ -166,6 +166,13 @@ type Component struct {
 	isLeader        bool
 	checksumCache   map[string]string // key: "ns/name/gvr" → sha256(payload)
 	lastAppliedKeys map[string]appliedKeyMeta
+
+	// gatePinned mirrors the render gate's latch, heldCycle is the cycle
+	// withheld while it is set, and acceptedCycle is the one whose resources
+	// are on the cluster — what a refusal puts back.
+	gatePinned    bool
+	heldCycle     *events.ReconciliationCompletedEvent
+	acceptedCycle *events.ReconciliationCompletedEvent
 }
 
 // appliedKeyMeta tracks the GVR + namespace + name needed to delete an
@@ -280,6 +287,7 @@ func New(cfg *Config) *Component {
 		Handler:    c,
 		EventTypes: []string{
 			events.EventTypeReconciliationCompleted,
+			events.EventTypeRenderGateCompleted,
 			events.EventTypeBecameLeader,
 			events.EventTypeLostLeadership,
 		},
@@ -318,6 +326,8 @@ func (c *Component) HandleEvent(event busevents.Event) {
 	switch e := event.(type) {
 	case *events.ReconciliationCompletedEvent:
 		c.handleReconciliationCompleted(ctx, e)
+	case *events.RenderGateCompletedEvent:
+		c.handleRenderGateCompleted(ctx, e)
 	case *events.BecameLeaderEvent:
 		c.handleBecameLeader(ctx)
 	case *events.LostLeadershipEvent:
@@ -332,10 +342,23 @@ func (c *Component) HandleEvent(event busevents.Event) {
 // — no LATEST-vs-completed race possible, mirroring statusapplier's
 // stateless contract for StatusPatches.
 func (c *Component) handleReconciliationCompleted(ctx context.Context, event *events.ReconciliationCompletedEvent) {
-	c.mu.RLock()
+	c.mu.Lock()
 	isLeader := c.isLeader
-	c.mu.RUnlock()
+	pinned := c.gatePinned
+	if pinned {
+		c.heldCycle = event
+	}
+	c.mu.Unlock()
 	if !isLeader {
+		return
+	}
+	// These resources describe the configuration HAProxy is meant to be
+	// running. While the render gate holds renders, the fleet never received
+	// this one, so applying its Services and friends would advertise routing
+	// the data plane cannot serve. They wait for the verdict that releases it.
+	if pinned {
+		c.Logger().Warn("Render gate is holding renders; not applying this cycle's resources yet",
+			"plan", event.PlanID, "correlation_id", event.CorrelationID())
 		return
 	}
 	// applyAndPrune handles the empty-set case: any resources still in
@@ -346,6 +369,7 @@ func (c *Component) handleReconciliationCompleted(ctx context.Context, event *ev
 			"correlation_id", event.CorrelationID())
 		return
 	}
+	c.rememberAppliedCycle(event)
 
 	// Forward the cycle's status patches now that its resources exist: the
 	// StatusApplier writes the "rendered" variant on this event, so
@@ -356,6 +380,56 @@ func (c *Component) handleReconciliationCompleted(ctx context.Context, event *ev
 		event.StatusPatches,
 		events.PropagateCorrelation(event),
 	))
+}
+
+// handleRenderGateCompleted mirrors the render gate's latch.
+//
+// A refusal holds the resources of every later cycle and puts back the ones of
+// the cycle HAProxy accepted, because these objects have to describe what the
+// fleet runs — the deployer reverted the pods to that same render. The pass
+// that names a held cycle applies it. Verdicts for superseded plans judge a
+// render this applier has moved past and are ignored.
+func (c *Component) handleRenderGateCompleted(ctx context.Context, event *events.RenderGateCompletedEvent) {
+	if !event.Newest {
+		return
+	}
+
+	c.mu.Lock()
+	isLeader := c.isLeader
+	c.gatePinned = !event.OK
+	var release *events.ReconciliationCompletedEvent
+	switch {
+	case !event.OK:
+		// Only HAProxy's own refusal is evidence about the config; a gate that
+		// could not run leaves the applied set alone and merely holds.
+		if event.Refused {
+			release = c.acceptedCycle
+		}
+	case c.heldCycle != nil && c.heldCycle.PlanID == event.PlanID:
+		release = c.heldCycle
+		c.heldCycle = nil
+	}
+	c.mu.Unlock()
+
+	if !isLeader || release == nil {
+		return
+	}
+	if err := c.applyAndPrune(ctx, release.RenderedResources); err != nil {
+		c.Logger().Error("Rendered resources did not converge after the render gate's verdict",
+			"error", err, "plan", release.PlanID, "correlation_id", release.CorrelationID())
+		return
+	}
+	c.mu.Lock()
+	c.acceptedCycle = release
+	c.mu.Unlock()
+}
+
+// rememberAppliedCycle records the cycle whose resources are on the cluster, so
+// a later refusal can put them back.
+func (c *Component) rememberAppliedCycle(event *events.ReconciliationCompletedEvent) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.acceptedCycle = event
 }
 
 // handleBecameLeader clears the checksum cache and rebuilds
@@ -556,6 +630,11 @@ func (c *Component) handleLostLeadership() {
 		c.Logger().Info("Lost leadership, pausing resource applies")
 	}
 	c.isLeader = false
+	// The render gate's latch is per leadership term, like every other mirror
+	// of it: a new leader starts optimistic.
+	c.gatePinned = false
+	c.heldCycle = nil
+	c.acceptedCycle = nil
 }
 
 // applyAndPrune applies the new desired set and deletes any

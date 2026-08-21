@@ -141,10 +141,10 @@ func New(
 // when an acquired lease is lost (renewal missed its deadline), after
 // invoking OnStoppedLeading — it does NOT re-enter the acquire loop. In that
 // case Start returns nil while the caller's context is still alive. Callers
-// that need leadership to ever be re-acquired must treat that return as
-// abnormal and restart election themselves (the controller does this by
-// failing the iteration and reinitializing — see
-// pkg/controller/leader.go's superviseElection).
+// that need leadership to ever be re-acquired must call Start again (each
+// call builds a fresh LeaderElector); the controller re-enters election in
+// place without disturbing the rest of the process — see
+// pkg/controller/leader.go's superviseElection.
 func (e *Elector) Start(ctx context.Context) error {
 	e.logger.Debug("Creating leader election lock",
 		"lease_name", e.config.LeaseName,

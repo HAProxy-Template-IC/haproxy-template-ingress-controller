@@ -183,6 +183,7 @@ func (sc *StateCache) GetPipelineStatus() (*debug.PipelineStatus, error) {
 			DurationMs: sc.validationDurationMs,
 			Errors:     sc.validationErrors,
 			Warnings:   sc.validationWarnings,
+			PlanID:     sc.validationPlanID,
 		}
 	}
 

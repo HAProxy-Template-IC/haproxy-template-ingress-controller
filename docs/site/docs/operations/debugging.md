@@ -218,6 +218,41 @@ curl -s 'http://localhost:8080/debug/vars/errors?field={.haproxy_validation_erro
 
 The keys (`template_render_error`, `haproxy_validation_error`, `deployment_errors`) tell you which phase rejected the change; pair with `/debug/vars/pipeline` to see whether the controller has retried since.
 
+**HAProxy refused the config the fleet was given (`ConfigValidated=False`)**
+
+The render gate runs `haproxy -c` on every render after dispatching it, so a
+refusal describes a configuration the pods may already hold. Read HAProxy's own
+message off the `HAProxyCfg`:
+
+```bash
+kubectl get haproxycfg -n haptic -o jsonpath='{.items[0].status.conditions}' | jq '.'
+```
+
+The same verdict is a Kubernetes Event on the `HAProxyTemplateConfig`
+(`RenderRefusedByHAProxy`), so `kubectl describe haproxytemplateconfig` and
+`kubectl get events` show it too.
+
+The controller has already asked every pod that took the plan without loading it
+to restore its own last known good file set, so the fleet keeps serving a
+configuration HAProxy accepted. Fix the input the message names; the next render
+that passes clears the condition, emits a `RenderAcceptedByHAProxy` Event, and
+deploys.
+
+**Renders are held (`ConfigPinned=True`, `haptic_config_pinned` is 1)**
+
+Two renders in a row were refused, so nothing new reaches the pods until the
+input changes. `ConfigValidated` carries the reason. To see what each pod is
+actually running while you work:
+
+```bash
+kubectl get haproxycfg -n haptic -o jsonpath='{.items[0].status.deployedToPods}' \
+  | jq '.[] | {pod: .podName, applied: .appliedPlanID, running: .runningPlanID}'
+```
+
+`running` is the plan the pod's worker loaded, `applied` the file set on its
+disk. A `running` that trails `applied` is expected — that difference was
+applied at runtime without a reload.
+
 **Is reconciliation happening?**
 
 ```bash

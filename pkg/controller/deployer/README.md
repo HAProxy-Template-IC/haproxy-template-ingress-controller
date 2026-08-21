@@ -38,7 +38,7 @@ Durations come from `spec.dataplane` and `spec.controller` on the CRD: `deployme
 
 ```
 TemplateRenderedEvent ───────┐
-ValidationCompletedEvent ────┤
+RenderGateCompletedEvent ────┤
 HAProxyPodsDiscoveredEvent ──┤
 DriftPreventionTriggeredEvent┤
 DeploymentCompletedEvent ────┤       (feedback edge)
@@ -81,7 +81,7 @@ On `LostLeadershipEvent` the scheduler drops any pending deployment and clears i
 On `BecameLeaderEvent` the scheduler is bootstrapped from two sides:
 
 - All-replica components that maintain state replay their last event so the new leader's scheduler doesn't have to wait. Currently that's `HAProxyPodsDiscoveredEvent` (from `pkg/controller/discovery`) and `ConfigValidatedEvent` (from `pkg/controller/configchange`). Grep for `leadership.NewStateReplayer[` to see the canonical list.
-- Neither `TemplateRenderedEvent` nor `ValidationCompletedEvent` is replayed — both are published by the leader-only `reconciler.Coordinator` from inside `Pipeline.Execute` (ADR-0001), so they only exist on the leader to begin with. Instead, the reconciler triggers a fresh reconciliation on `BecameLeaderEvent`, which produces fresh render+validate events rather than stale replays.
+- Neither `TemplateRenderedEvent` nor `RenderGateCompletedEvent` is replayed — the render comes from the leader-only `reconciler.Coordinator` (ADR-0001) and the verdict from the leader-only `rendergate`, so both only exist on the leader to begin with. Instead, the reconciler triggers a fresh reconciliation on `BecameLeaderEvent`, which produces a fresh render (and a fresh verdict) rather than stale replays.
 
 The new leader's first deployment reloads nothing: each pod reports the plan it applied, and the blob it stored is decodable by any leader.
 
@@ -93,7 +93,8 @@ See `pkg/controller/LEADER_ONLY_COMPONENTS.md` for the full replay/clear contrac
 - [`pkg/dataplane/deployplan`](../../dataplane/deployplan/) — decides what one pod has to do to reach a render
 - [`pkg/dataplane/renderplan`](../../dataplane/renderplan/) — the structure a render declares about its own output
 - [`pkg/controller/discovery`](../discovery/) — publishes `HAProxyPodsDiscoveredEvent`
-- [`pkg/controller/reconciler`](../reconciler/) — leader-only `Coordinator` that publishes `TemplateRenderedEvent` and `ValidationCompletedEvent` from inside `Pipeline.Execute`
+- [`pkg/controller/reconciler`](../reconciler/) — leader-only `Coordinator` that publishes `TemplateRenderedEvent` from inside `Pipeline.Execute`
+- [`pkg/controller/rendergate`](../rendergate/) — leader-only gate that publishes `RenderGateCompletedEvent`, HAProxy's verdict on that render
 - [`pkg/controller/leadership`](../leadership/) — the gating helper these components use
 - `pkg/controller/LEADER_ONLY_COMPONENTS.md` — leadership-transition patterns
 - `docs/site/docs/operations/high-availability.md` — user-facing view of the leader-only deployment split

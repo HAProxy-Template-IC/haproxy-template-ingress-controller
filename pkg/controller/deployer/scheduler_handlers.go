@@ -40,25 +40,180 @@ const (
 	maxFailureRetryBackoff = 60 * time.Second
 )
 
-// handleTemplateRendered handles template rendering completion.
+// handleTemplateRendered arms deployment for a completed render.
 //
-// This caches the rendered configuration and auxiliary files for later deployment
-// after validation completes.
-func (s *DeploymentScheduler) handleTemplateRendered(event *events.TemplateRenderedEvent) {
+// The render itself is the trigger now: HAProxy's verdict runs asynchronously in
+// the render gate (ADR-0022), so waiting for it here would put the check back on
+// the wall clock. While the gate holds renders — it refused the previous one —
+// the render is only cached, and the gate's pass for this plan releases it.
+func (s *DeploymentScheduler) handleTemplateRendered(ctx context.Context, event *events.TemplateRenderedEvent) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.lastRenderedConfig = event.HAProxyConfig
 	s.lastAuxiliaryFiles = event.AuxiliaryFiles
 	s.lastContentChecksum = event.ContentChecksum
-	s.lastRenderedEventID = event.EventID()
 	s.lastRenderedPlan = event.Plan
 	s.lastRenderedPlanID = event.PlanID
-	s.lastValidatedStatusPatches = event.StatusPatches
+	s.lastRenderedStatusPatches = event.StatusPatches
+	pinned := s.gatePinned
+	s.mu.Unlock()
 
-	s.logger.Debug("Cached rendered config for deployment after validation",
-		"config_bytes", event.ConfigBytes,
-		"aux_files", event.AuxiliaryFileCount)
+	if pinned {
+		s.logger.Warn("Render gate is holding renders; waiting for its verdict before deploying",
+			"plan", event.PlanID,
+			"correlation_id", event.CorrelationID())
+		return
+	}
+
+	s.dispatchRender(ctx, event.CorrelationID(), event.Coalescible(), deployReason(event.TriggerReason))
+}
+
+// handleRenderGateCompleted moves the deployment side of the gate's latch: a
+// refusal holds every later render until a verdict passes, and that pass
+// dispatches the render being held — but only when the verdict names the newest
+// render, so a verdict for a superseded plan never dispatches an unchecked one.
+func (s *DeploymentScheduler) handleRenderGateCompleted(ctx context.Context, event *events.RenderGateCompletedEvent) {
+	// A verdict for a plan the fleet has moved past scopes the gate's revert;
+	// it says nothing about the render this scheduler is converging on, so it
+	// must not move the latch, the deployable render or a queued deployment.
+	if !event.Newest {
+		s.logger.Debug("Ignoring a render gate verdict for a superseded plan",
+			"plan", event.PlanID, "ok", event.OK)
+		return
+	}
+
+	if !event.OK {
+		s.holdAfterRefusal(event)
+		return
+	}
+
+	s.mu.Lock()
+	wasPinned := s.gatePinned
+	// The bus delivers a render before its verdict (the gate learns of the
+	// render from the same event), so the only way this misses is a dropped
+	// render — and then the drift pass produces a fresh one within its
+	// interval, which the gate judges in turn.
+	namesHeldRender := s.lastRenderedPlanID != "" && s.lastRenderedPlanID == event.PlanID
+	alreadyDispatched := s.lastValidatedPlanID == event.PlanID
+	if alreadyDispatched {
+		s.acceptRenderLocked()
+	}
+	if !wasPinned || namesHeldRender {
+		s.gatePinned = false
+	}
+	s.mu.Unlock()
+
+	if !wasPinned || !namesHeldRender || alreadyDispatched {
+		return
+	}
+
+	s.logger.Info("Render gate passed the held render, deploying it", "plan", event.PlanID)
+	s.dispatchRender(ctx, event.CorrelationID(), false, "rendergate_release")
+
+	// The released render is now what the fleet runs, so it is what a later
+	// refusal must roll back to. Without this the rollback would reach past it
+	// to the render accepted before the incident, dropping everything HAProxy
+	// validated in between.
+	s.mu.Lock()
+	s.acceptRenderLocked()
+	s.mu.Unlock()
+}
+
+// holdAfterRefusal closes the latch on a failed verdict for the newest render.
+//
+// Only HAProxy's own refusal moves the deployable render back: a check that
+// could not run is not evidence about the config, and rolling back on it would
+// undo a live, working render because a temp directory was unwritable — the
+// same rule revert.go applies to the pods. Either way the gate holds: nothing
+// has judged the render, so nothing new may be dispatched.
+func (s *DeploymentScheduler) holdAfterRefusal(event *events.RenderGateCompletedEvent) {
+	s.mu.Lock()
+	s.gatePinned = true
+	restored := ""
+	if event.Refused {
+		restored = s.rollBackToAcceptedRenderLocked(event.PlanID)
+	}
+	s.mu.Unlock()
+
+	dropped := s.dropPendingPlan(event.PlanID)
+
+	s.logger.Warn("Render gate refused a render; holding further renders",
+		"plan", event.PlanID,
+		"pinned", event.Pinned,
+		"refused_by_haproxy", event.Refused,
+		"rolled_back_to", restored,
+		"dropped_pending", dropped,
+		"error", event.Message)
+}
+
+// dropPendingPlan retires a deployment of the refused plan that is queued
+// behind an in-flight one, reporting whether it dropped anything.
+//
+// The latch alone does not cover this: a render dispatched before the verdict
+// may still be sitting in the pending slot when the refusal lands, and the
+// deploy loop would publish it as soon as the current deployment finishes —
+// after the scoped revert has already run and found no pod carrying it. Scoped
+// to the named plan, because a refusal for one render must not cancel another.
+func (s *DeploymentScheduler) dropPendingPlan(planID string) bool {
+	if planID == "" {
+		return false
+	}
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+	if s.state.pending == nil || s.state.pending.planID != planID {
+		return false
+	}
+	s.workRevision++
+	s.state.pending = nil
+	return true
+}
+
+// acceptRenderLocked snapshots the render the gate just passed. Caller holds mu.
+//
+// The three paths that re-send a render to pods rather than dispatch a new one
+// — pod discovery, the validation fallback and the retry timers — all read the
+// `lastValidated*` fields. Those hold whatever was dispatched last, which under
+// the optimistic gate includes a render HAProxy has not judged yet, so this
+// snapshot is what a refusal rolls them back to.
+func (s *DeploymentScheduler) acceptRenderLocked() {
+	s.acceptedRender = &acceptedRender{
+		config:          s.lastValidatedConfig,
+		auxFiles:        s.lastValidatedAux,
+		contentChecksum: s.lastValidatedContentChecksum,
+		plan:            s.lastValidatedPlan,
+		planID:          s.lastValidatedPlanID,
+		statusPatches:   s.lastValidatedStatusPatches,
+		correlationID:   s.lastCorrelationID,
+	}
+}
+
+// rollBackToAcceptedRenderLocked undoes the optimistic promotion of a render
+// the gate then refused, so every path that re-sends "the config the fleet
+// runs" sends the last one HAProxy accepted — the same set the pods were just
+// reverted to — instead of fighting that revert with the refused render.
+// Caller holds mu. Returns the plan it rolled back to, for the log.
+//
+// A refusal naming a plan the scheduler has already superseded leaves the
+// deployable render alone: the newer one is simply unjudged, and the gate
+// checks it next. With nothing accepted yet — the term's first render was
+// refused — there is nothing to roll back to, and the refused render stays the
+// only config this controller has; HAProxy refuses it per pod at apply, which
+// is visible as a NACK rather than a silent stall.
+func (s *DeploymentScheduler) rollBackToAcceptedRenderLocked(refusedPlanID string) string {
+	if s.acceptedRender == nil || refusedPlanID == "" || s.lastValidatedPlanID != refusedPlanID {
+		return ""
+	}
+	if s.acceptedRender.planID == refusedPlanID {
+		return "" // the gate contradicting itself; keep what a pass established
+	}
+	s.lastValidatedConfig = s.acceptedRender.config
+	s.lastValidatedAux = s.acceptedRender.auxFiles
+	s.lastValidatedContentChecksum = s.acceptedRender.contentChecksum
+	s.lastValidatedPlan = s.acceptedRender.plan
+	s.lastValidatedPlanID = s.acceptedRender.planID
+	s.lastValidatedStatusPatches = s.acceptedRender.statusPatches
+	s.lastCorrelationID = s.acceptedRender.correlationID
+	s.lastCoalescible = false
+	return s.acceptedRender.planID
 }
 
 // handleConfigValidated handles ConfigValidatedEvent to cache template config metadata.
@@ -83,70 +238,23 @@ func (s *DeploymentScheduler) handleConfigValidated(event *events.ConfigValidate
 		"template_config_namespace", tc.Namespace)
 }
 
-// rendererMatchesValidation reports whether the cached render is the one this
-// validation verdict describes.
+// dispatchRender promotes the cached render to the deployable one and schedules
+// it to the current endpoint set.
 //
-// The Coordinator publishes TemplateRenderedEvent and ValidationCompletedEvent as
-// two separate Publish calls and the bus drops per subscriber, so losing only the
-// first leaves this cache holding the PREVIOUS render while the verdict describes
-// the current one. Deploying that pair sends render N-1's bytes and plan under a
-// verdict that judged render N: a config no gate passed reaches the fleet.
-//
-// The verdict's causation ID is the render event's ID (the Coordinator propagates
-// it), which makes the pairing checkable. A mismatch discards the verdict instead
-// of deploying it; the next reconcile or the drift backstop redeploys from a
-// matching pair.
-//
-// An empty cached ID means no render has been received at all, and is a mismatch
-// rather than a match — otherwise a verdict carrying no causation would pair with
-// the empty cache and the guard would depend on how the verdict was constructed.
-func (s *DeploymentScheduler) rendererMatchesValidation(event *events.ValidationCompletedEvent) bool {
-	s.mu.RLock()
-	renderedEventID := s.lastRenderedEventID
-	s.mu.RUnlock()
-
-	if renderedEventID != "" && event.CausationID() == renderedEventID {
-		return true
-	}
-
-	s.logger.Warn("Discarding validation verdict for a render this scheduler never received",
-		"validated_render", event.CausationID(),
-		"cached_render", renderedEventID,
-		"correlation_id", event.CorrelationID())
-	return false
-}
-
-// handleValidationCompleted handles successful configuration validation.
-//
-// This caches the validated configuration and schedules deployment to current endpoints.
-// This is called during full reconciliation cycles (config or resource changes).
-func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, event *events.ValidationCompletedEvent) {
-	correlationID := event.CorrelationID()
-	s.logger.Debug("Validation completed, preparing deployment",
-		"warnings", len(event.Warnings),
-		"duration_ms", event.DurationMs,
-		"correlation_id", correlationID)
-
-	// Log warnings if any
-	for _, warning := range event.Warnings {
-		s.logger.Warn("Validation warning", "warning", warning)
-	}
-
-	if !s.rendererMatchesValidation(event) {
-		return
-	}
-
-	// Get current state and cache validated config BEFORE scheduling
+// Called from the render's own event while the gate is open, and from the gate's
+// verdict while it is holding — the two paths differ only in what proved the
+// render dispatchable, never in what is dispatched.
+func (s *DeploymentScheduler) dispatchRender(ctx context.Context, correlationID string, coalescible bool, reason string) {
+	// Get current state and cache the deployable config BEFORE scheduling
 	// This prevents race where pod discovery reads stale config
 	s.mu.Lock()
 	config := s.lastRenderedConfig
 	auxFiles := s.lastAuxiliaryFiles
 	endpoints := s.currentEndpoints
-	statusPatches := s.lastValidatedStatusPatches
+	statusPatches := s.lastRenderedStatusPatches
 	configChecksum := s.lastContentChecksum
 	plan := s.lastRenderedPlan
 	planID := s.lastRenderedPlanID
-	reason := deployReason(event.TriggerReason)
 	// Cache validated config immediately to prevent race condition.
 	// `lastValidatedContentChecksum` must be captured AT THE SAME POINT as
 	// `lastValidatedConfig` — otherwise pod-discovery reads (which fall
@@ -158,8 +266,9 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	s.lastValidatedContentChecksum = configChecksum
 	s.lastValidatedPlan = plan
 	s.lastValidatedPlanID = planID
+	s.lastValidatedStatusPatches = statusPatches
 	s.lastCorrelationID = correlationID
-	s.lastCoalescible = event.Coalescible()
+	s.lastCoalescible = coalescible
 	s.hasValidConfig = true
 	s.mu.Unlock()
 
@@ -173,12 +282,12 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 		return
 	}
 
-	// Use the content checksum captured WITH the config that was just
-	// validated — `lastValidatedContentChecksum`, set above under the same
-	// lock as `lastValidatedConfig`. Reading `s.lastContentChecksum`
-	// directly here would let a fresh reconcile (which mutates that
-	// field in handleTemplateRendered) substitute a newer hash than the
-	// config we're about to deploy actually carries.
+	// Use the content checksum captured WITH the config being dispatched —
+	// `lastValidatedContentChecksum`, set above under the same lock as
+	// `lastValidatedConfig`. Reading `s.lastContentChecksum` directly here
+	// would let a fresh reconcile (which mutates that field in
+	// handleTemplateRendered) substitute a newer hash than the config we're
+	// about to deploy actually carries.
 	configHash := configChecksum
 	podSetHash := computePodSetHash(endpoints)
 
@@ -210,20 +319,20 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 			configHash,
 			podSetHash,
 			statusPatches,
-			events.PropagateCorrelation(event),
+			events.WithCorrelation(correlationID, correlationID),
 		))
 		return
 	}
 
 	// Schedule deployment to current endpoints (or queue if deployment in progress).
-	// Propagate coalescibility from validation event through the deployment pipeline.
+	// scheduleOrQueue classifies the render into a lane (runtime-raw vs structural)
+	// against the last-dispatched config; the deploy loop applies it accordingly.
 	//
-	// `configHash` was captured above from `s.lastContentChecksum` at the same
-	// point `config` was captured (line 112). Thread it through scheduleOrQueue
-	// so the eventual deploy records THIS hash, not whatever
-	// `s.lastContentChecksum` holds at deploy-time (which a later reconcile
-	// will have overwritten under sustained parallel-test load).
-	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, reason, correlationID, statusPatches, event.Coalescible(), configHash, plan, planID)
+	// `configHash` was captured above under the same lock as `config`. Thread it
+	// through scheduleOrQueue so the eventual deploy records THIS hash, not
+	// whatever `s.lastContentChecksum` holds at deploy-time (which a later
+	// reconcile will have overwritten under sustained parallel-test load).
+	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, reason, correlationID, statusPatches, coalescible, configHash, plan, planID)
 }
 
 // deployReason names why the deploy runs. The drift pass must stay
@@ -757,10 +866,14 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 
 	s.lastPodSetHash = ""
 
-	// Clear deployment cache - new leader should verify config state
+	// Clear deployment cache - new leader should verify config state.
+	// The render gate's latch is per leadership term: a new leader starts
+	// optimistic because the agents' own last-known-good set protects the fleet.
 	s.mu.Lock()
 	s.lastDeployedConfigHash = ""
 	s.lastDeployedPodSetHash = ""
 	s.lastDeployedTime = time.Time{}
+	s.gatePinned = false
+	s.acceptedRender = nil
 	s.mu.Unlock()
 }

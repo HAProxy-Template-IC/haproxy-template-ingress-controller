@@ -66,8 +66,8 @@ func renderedEventWithPlan(config string, plan *renderplan.Plan) *events.Templat
 	)
 }
 
-// scheduleFromRender routes a render and its matching verdict through the
-// scheduler and returns the deployment it parked (no deploy loop runs here).
+// scheduleFromRender routes a render through the scheduler and returns the
+// deployment it parked (no deploy loop runs here).
 func scheduleFromRender(t *testing.T, rendered *events.TemplateRenderedEvent) *scheduledDeployment {
 	t.Helper()
 
@@ -80,12 +80,10 @@ func scheduleFromRender(t *testing.T, rendered *events.TemplateRenderedEvent) *s
 	scheduler.handleEvent(ctx, events.NewHAProxyPodsDiscoveredEvent(
 		[]dataplane.Endpoint{{URL: "http://127.0.0.1:5555", PodName: "haproxy-1"}}, 1))
 	scheduler.handleEvent(ctx, rendered)
-	scheduler.handleEvent(ctx, events.NewValidationCompletedEvent(nil, 10, "", nil, true,
-		events.PropagateCorrelation(rendered)))
 
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
-	require.NotNil(t, scheduler.state.pending, "the validated render must be scheduled")
+	require.NotNil(t, scheduler.state.pending, "the render must be scheduled")
 	return scheduler.state.pending
 }
 

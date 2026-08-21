@@ -65,7 +65,7 @@ func TestCoalescibleContract(t *testing.T) {
 		},
 		{
 			name:    "ReconciliationCompletedEvent always coalescible (full state: complete rendered resources + status patches)",
-			event:   NewReconciliationCompletedEvent(0, nil, nil),
+			event:   NewReconciliationCompletedEvent(0, "", nil, nil),
 			wantVal: true,
 		},
 		{
@@ -106,16 +106,6 @@ func TestCoalescibleContract(t *testing.T) {
 		{
 			name:    "TemplateRenderedEvent honours coalescible=false",
 			event:   NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", nil, "", false),
-			wantVal: false,
-		},
-		{
-			name:    "ValidationCompletedEvent honours coalescible=true",
-			event:   NewValidationCompletedEvent(nil, 0, "", nil, true),
-			wantVal: true,
-		},
-		{
-			name:    "ValidationCompletedEvent honours coalescible=false",
-			event:   NewValidationCompletedEvent(nil, 0, "", nil, false),
 			wantVal: false,
 		},
 		{

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -60,22 +61,33 @@ func (c *blockedLeaderComponent) Start(ctx context.Context) error {
 	return nil
 }
 
-// TestSuperviseElection covers the three exit shapes of the leader-election
-// loop. The critical case is "lease lost without shutdown": client-go's
-// LeaderElector.Run returns permanently after a missed lease renewal, so a
-// nil return with a live context MUST become an iteration-fatal error —
-// otherwise the replica stays a follower with a dead elector forever
-// (issue #57).
+// TestSuperviseElection covers the exit and re-entry shapes of the
+// leader-election loop. The critical case is "lease lost without shutdown":
+// client-go's LeaderElector.Run returns permanently after a missed lease
+// renewal and never re-enters the acquire loop, so the supervisor re-enters
+// it — in place, without failing the iteration (a reinitialization would
+// retire the admission validators for the whole resync). A replica must
+// never end up a follower with a dead elector (issue #57).
 func TestSuperviseElection(t *testing.T) {
-	logger := slog.Default()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	t.Run("lease lost without shutdown fails the iteration", func(t *testing.T) {
-		ctx := context.Background()
-		// Elector returns nil while the iteration context is still alive —
-		// the lost-lease shape.
-		err := superviseElection(ctx, func(context.Context) error { return nil }, logger)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "lease lost without shutdown")
+	t.Run("lease lost re-enters election", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var calls atomic.Int32
+		done := make(chan error, 1)
+		go func() {
+			done <- superviseElection(ctx, func(ctx context.Context) error {
+				if calls.Add(1) >= 2 {
+					<-ctx.Done() // re-acquired the follower position
+				}
+				return nil // the lost-lease shape: nil with a live context
+			}, nil, logger)
+		}()
+		require.Eventually(t, func() bool { return calls.Load() >= 2 },
+			5*time.Second, 10*time.Millisecond, "the supervisor must re-enter election")
+		cancel()
+		require.NoError(t, <-done)
 	})
 
 	t.Run("normal teardown is not an error", func(t *testing.T) {
@@ -86,74 +98,73 @@ func TestSuperviseElection(t *testing.T) {
 			cancel()
 			<-ctx.Done()
 			return nil
-		}, logger)
+		}, nil, logger)
 		assert.NoError(t, err)
 	})
 
 	t.Run("elector error propagates", func(t *testing.T) {
 		ctx := context.Background()
 		electErr := errors.New("creating leader elector: boom")
-		err := superviseElection(ctx, func(context.Context) error { return electErr }, logger)
+		err := superviseElection(ctx, func(context.Context) error { return electErr }, nil, logger)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, electErr)
 	})
+
+	t.Run("a stand-down releases the attempt and re-enters", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		restart := make(chan struct{}, 1)
+		var calls atomic.Int32
+		done := make(chan error, 1)
+		go func() {
+			done <- superviseElection(ctx, func(ctx context.Context) error {
+				calls.Add(1)
+				<-ctx.Done() // holding the lease until the attempt is cancelled
+				return ctx.Err()
+			}, restart, logger)
+		}()
+		require.Eventually(t, func() bool { return calls.Load() == 1 },
+			time.Second, 10*time.Millisecond)
+		restart <- struct{}{}
+		require.Eventually(t, func() bool { return calls.Load() >= 2 },
+			5*time.Second, 10*time.Millisecond, "the stand-down must re-enter election")
+		cancel()
+		require.NoError(t, <-done)
+	})
 }
 
-func TestLeaderCallbacksCancelIterationBeforeJoiningAfterLeaseLoss(t *testing.T) {
+// A lost lease ends the term — components stop and are joined — but the
+// iteration survives, and a re-acquisition starts the same instances again.
+func TestLeaderCallbacksSurviveLeaseLossAndRestartTheNextTerm(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry := lifecycle.NewRegistry().WithLogger(logger)
-	component := newBlockedLeaderComponent()
+	component := newRestartableLeaderComponent()
 	registry.Register(component, true)
-	iterCtx, iterCancelCause := context.WithCancelCause(t.Context())
-	iterCancel := func() { iterCancelCause(nil) }
+	iterCtx, iterCancel := context.WithCancel(t.Context())
 	defer iterCancel()
 	group, _ := errgroup.WithContext(iterCtx)
 	callbacks, _ := makeLeaderCallbacks(leaderCallbackDeps{
-		registry:    registry,
-		logger:      logger,
-		cancel:      iterCancel,
-		cancelCause: iterCancelCause,
-		errGroup:    group,
+		registry: registry,
+		logger:   logger,
+		cancel:   iterCancel,
+		errGroup: group,
 	})
+
 	leaderCtx, loseLeadership := context.WithCancel(iterCtx)
-
-	startedCallbackDone := make(chan struct{})
-	go func() {
-		callbacks.OnStartedLeading(leaderCtx)
-		close(startedCallbackDone)
-	}()
-	<-component.started
+	callbacks.OnStartedLeading(leaderCtx)
+	require.Eventually(t, func() bool { return component.starts.Load() == 1 },
+		time.Second, 5*time.Millisecond)
 	loseLeadership()
+	callbacks.OnStoppedLeading()
+	require.Equal(t, int32(1), component.stops.Load(), "the term end joined the component")
+	require.NoError(t, iterCtx.Err(), "losing the lease must not fail the iteration")
 
-	stoppedCallbackDone := make(chan struct{})
-	go func() {
-		callbacks.OnStoppedLeading()
-		close(stoppedCallbackDone)
-	}()
-	select {
-	case <-iterCtx.Done():
-	case <-time.After(time.Second):
-		t.Fatal("leadership stop did not cancel the iteration before joining components")
-	}
-	var leadershipLost *leadershipLostError
-	require.ErrorAs(t, context.Cause(iterCtx), &leadershipLost)
-	select {
-	case <-startedCallbackDone:
-	case <-time.After(time.Second):
-		t.Fatal("leader startup remained blocked after authority was canceled")
-	}
-	select {
-	case <-stoppedCallbackDone:
-		t.Fatal("leadership stop returned before the component did")
-	default:
-	}
-
-	close(component.release)
-	select {
-	case <-stoppedCallbackDone:
-	case <-time.After(time.Second):
-		t.Fatal("leadership stop did not join component completion")
-	}
+	secondTerm, endSecondTerm := context.WithCancel(iterCtx)
+	callbacks.OnStartedLeading(secondTerm)
+	require.Eventually(t, func() bool { return component.starts.Load() == 2 },
+		time.Second, 5*time.Millisecond, "re-acquisition restarts the same instance")
+	endSecondTerm()
+	callbacks.OnStoppedLeading()
 	require.NoError(t, group.Wait())
 }
 
@@ -166,19 +177,31 @@ func TestLeaderCallbacksRejectDelayedStartAfterStop(t *testing.T) {
 	cancel := func() { cancelCause(nil) }
 	defer cancel()
 	group, _ := errgroup.WithContext(ctx)
-	callbacks, _ := makeLeaderCallbacks(leaderCallbackDeps{
-		registry:    registry,
-		logger:      logger,
-		cancel:      cancel,
-		cancelCause: cancelCause,
-		errGroup:    group,
+	callbacks, state := makeLeaderCallbacks(leaderCallbackDeps{
+		registry: registry,
+		logger:   logger,
+		cancel:   cancel,
+		errGroup: group,
 	})
 
+	// A start callback firing late for an already-retired term carries that
+	// term's cancelled context; it must not start anything.
+	retired, endTerm := context.WithCancel(ctx)
+	endTerm()
 	callbacks.OnStoppedLeading()
-	callbacks.OnStartedLeading(ctx)
+	callbacks.OnStartedLeading(retired)
 	select {
 	case <-component.started:
 		t.Fatal("delayed OnStartedLeading started a retired term")
+	default:
+	}
+
+	// After the iteration teardown latch, no term starts at all.
+	state.cancel()
+	callbacks.OnStartedLeading(ctx)
+	select {
+	case <-component.started:
+		t.Fatal("OnStartedLeading started a term after iteration teardown")
 	default:
 	}
 	require.NoError(t, group.Wait())
@@ -190,11 +213,10 @@ func TestLeaderCallbacksPreserveEarlierIterationFailure(t *testing.T) {
 	cancel := func() { cancelCause(nil) }
 	group, _ := errgroup.WithContext(iterCtx)
 	callbacks, _ := makeLeaderCallbacks(leaderCallbackDeps{
-		registry:    lifecycle.NewRegistry().WithLogger(logger),
-		logger:      logger,
-		cancel:      cancel,
-		cancelCause: cancelCause,
-		errGroup:    group,
+		registry: lifecycle.NewRegistry().WithLogger(logger),
+		logger:   logger,
+		cancel:   cancel,
+		errGroup: group,
 	})
 	failure := errors.New("required component failed")
 	cancelCause(failure)
@@ -205,27 +227,36 @@ func TestLeaderCallbacksPreserveEarlierIterationFailure(t *testing.T) {
 	require.NoError(t, group.Wait())
 }
 
-func TestSuperviseElectionPropagatesCallbackLeadershipLoss(t *testing.T) {
+func TestSuperviseElectionReentersAfterCallbackLeadershipLoss(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	iterCtx, cancelCause := context.WithCancelCause(t.Context())
-	cancel := func() { cancelCause(nil) }
+	iterCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	group, _ := errgroup.WithContext(iterCtx)
 	callbacks, _ := makeLeaderCallbacks(leaderCallbackDeps{
-		registry:    lifecycle.NewRegistry().WithLogger(logger),
-		logger:      logger,
-		cancel:      cancel,
-		cancelCause: cancelCause,
-		errGroup:    group,
+		registry: lifecycle.NewRegistry().WithLogger(logger),
+		logger:   logger,
+		cancel:   cancel,
+		errGroup: group,
 	})
 
-	err := superviseElection(iterCtx, func(context.Context) error {
-		callbacks.OnStoppedLeading()
-		return nil
-	}, logger)
+	var calls atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		done <- superviseElection(iterCtx, func(ctx context.Context) error {
+			if calls.Add(1) >= 2 {
+				<-ctx.Done()
+			} else {
+				callbacks.OnStoppedLeading()
+			}
+			return nil
+		}, nil, logger)
+	}()
 
-	var leadershipLost *leadershipLostError
-	require.ErrorAs(t, err, &leadershipLost)
-	require.ErrorAs(t, context.Cause(iterCtx), &leadershipLost)
+	require.Eventually(t, func() bool { return calls.Load() >= 2 },
+		5*time.Second, 10*time.Millisecond, "a callback-reported loss must re-enter election")
+	require.NoError(t, iterCtx.Err(), "losing the lease must not fail the iteration")
+	cancel()
+	require.NoError(t, <-done)
 	require.NoError(t, group.Wait())
 }
 
@@ -269,11 +300,10 @@ func TestTeardownCancelsLeaderStartupBeforeWaiting(t *testing.T) {
 	cancel := func() { cancelCause(nil) }
 	group, groupCtx := errgroup.WithContext(iterCtx)
 	callbacks, state := makeLeaderCallbacks(leaderCallbackDeps{
-		registry:    registry,
-		logger:      logger,
-		cancel:      cancel,
-		cancelCause: cancelCause,
-		errGroup:    group,
+		registry: registry,
+		logger:   logger,
+		cancel:   cancel,
+		errGroup: group,
 	})
 	setup := &componentSetup{
 		IterCtx:     groupCtx,
@@ -309,3 +339,29 @@ func TestTeardownCancelsLeaderStartupBeforeWaiting(t *testing.T) {
 }
 
 var _ lifecycle.SubscriptionReadySignaler = (*blockedLeaderComponent)(nil)
+
+// restartableLeaderComponent counts terms: instantly ready, runs until the
+// term context ends, and can be started again — the shape every leader-only
+// component has under in-place re-election.
+type restartableLeaderComponent struct {
+	ready  chan struct{}
+	starts atomic.Int32
+	stops  atomic.Int32
+}
+
+func newRestartableLeaderComponent() *restartableLeaderComponent {
+	c := &restartableLeaderComponent{ready: make(chan struct{})}
+	close(c.ready)
+	return c
+}
+
+func (*restartableLeaderComponent) Name() string { return "restartable-leader" }
+
+func (c *restartableLeaderComponent) SubscriptionReady() <-chan struct{} { return c.ready }
+
+func (c *restartableLeaderComponent) Start(ctx context.Context) error {
+	c.starts.Add(1)
+	<-ctx.Done()
+	c.stops.Add(1)
+	return nil
+}

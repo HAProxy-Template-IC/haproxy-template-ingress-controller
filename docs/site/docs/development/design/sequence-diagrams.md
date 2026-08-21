@@ -86,6 +86,7 @@ sequenceDiagram
     participant Coordinator as Coordinator<br/>(leader-only)
     participant Pipeline as Pipeline<br/>(synchronous)
     participant Scheduler as Deployment<br/>Scheduler<br/>(leader-only)
+    participant RenderGate as RenderGate<br/>(leader-only)
     participant Deployer as Deployer<br/>(leader-only)
     participant HAProxy1 as HAProxy<br/>Instance 1
     participant HAProxy2 as HAProxy<br/>Instance 2
@@ -103,19 +104,22 @@ sequenceDiagram
     Coordinator->>EventBus: Publish(ReconciliationStartedEvent)
 
     Coordinator->>Pipeline: Execute(ctx, storeProvider) — synchronous call
-    Note over Pipeline: 1. RenderService.Render (templates → HAProxy config)<br/>2. ComputeContentChecksum<br/>3. fast ValidationService.Validate (syntax + schema — haproxy -c ran at admission)
+    Note over Pipeline: 1. RenderService.Render (templates → HAProxy config)<br/>2. ComputeContentChecksum<br/>3. pluggable output validators (none by default)
     Pipeline-->>Coordinator: *PipelineResult or *PipelineError
 
     alt Pipeline succeeded
         Coordinator->>EventBus: Publish(TemplateRenderedEvent)
-        Coordinator->>EventBus: Publish(ValidationCompletedEvent)
     else Pipeline failed
         Coordinator->>EventBus: Publish(ReconciliationFailedEvent)
     end
 
-    EventBus->>Scheduler: ValidationCompletedEvent (+ TemplateRenderedEvent + HAProxyPodsDiscoveredEvent)
-    Note over Scheduler: Wait for all three inputs<br/>Apply min interval / latest-wins
+    EventBus->>Scheduler: TemplateRenderedEvent (+ HAProxyPodsDiscoveredEvent)
+    Note over Scheduler: Wait for both inputs<br/>Apply min interval / latest-wins
     Scheduler->>EventBus: Publish(DeploymentScheduledEvent)
+
+    EventBus->>RenderGate: TemplateRenderedEvent
+    Note over RenderGate: haproxy -c -dr on the newest render,<br/>concurrent with the fan-out
+    RenderGate->>EventBus: Publish(RenderGateCompletedEvent)
 
     EventBus->>Deployer: DeploymentScheduledEvent
     Deployer->>EventBus: Publish(DeploymentStartedEvent)
@@ -138,9 +142,10 @@ sequenceDiagram
 1. **Resource Change**: ResourceWatcher receives Kubernetes events, updates the local index, and coalesces bursts within a per-resource debounce window before publishing one `ResourceIndexUpdatedEvent` per quiet window. The window defaults to 100 ms (`pkg/k8s/types.DefaultDebounceInterval`); each watched resource can override it via `spec.watchedResources.<name>.debounceInterval` (the bundled chart sets `"0"` on EndpointSlice). This is the only debounce layer.
 2. **Reconciliation Trigger**: Reconciler publishes `ReconciliationTriggeredEvent` immediately on every event it receives — there is no second reconciler-level refractory window. Whole-store events (`IndexSynchronizedEvent`, `BecameLeaderEvent`, `DriftPreventionTriggeredEvent`) trigger the same way; only the initial-sync variant of `ResourceIndexUpdatedEvent` is filtered out. Reload throttling happens downstream in the deployer's `minDeploymentInterval`.
 3. **Coordinator (leader-only)**: subscribes to `ReconciliationTriggeredEvent`, publishes `ReconciliationStartedEvent`, then calls `pkg/controller/pipeline.Pipeline.Execute(ctx, storeProvider)` **synchronously** — render and validation are one atomic step, not a multi-hop event chain.
-4. **Pipeline**: runs `RenderService.Render` (template engine + auxiliary files), computes the content checksum once, then runs the fast `ValidationService.Validate` (syntax via client-native parser → OpenAPI schema; the leader pipeline skips the `haproxy -c` phase — the strict service runs it at admission and on HTTP-store promotion).
-5. **Coordinator post-pipeline**: on success, publishes `TemplateRenderedEvent` + `ValidationCompletedEvent` for downstream consumers; on failure, publishes `ReconciliationFailedEvent` carrying a `*PipelineError` (use `errors.AsType[*PipelineError]` to extract the failed phase).
-6. **DeploymentScheduler (leader-only)**: subscribes to `TemplateRenderedEvent`, `ValidationCompletedEvent`, and `HAProxyPodsDiscoveredEvent`; only deploys when all three inputs are present. Enforces `minDeploymentInterval` and "latest wins" coalescing.
+4. **Pipeline**: runs `RenderService.Render` (template engine + auxiliary files), computes the content checksum once, then runs any pluggable output validators (an operator opt-in; none by default). The reconcile instance has no `ValidationService` at all — HAProxy's verdict is the render gate's job, off this path (ADR-0022).
+5. **Coordinator post-pipeline**: on success, publishes `TemplateRenderedEvent` for downstream consumers; on failure, publishes `ReconciliationFailedEvent` carrying a `*PipelineError` (use `errors.AsType[*PipelineError]` to extract the failed phase).
+6. **DeploymentScheduler (leader-only)**: subscribes to `TemplateRenderedEvent` and `HAProxyPodsDiscoveredEvent`; deploys when both are present. Enforces `minDeploymentInterval` and "latest wins" coalescing. `RenderGateCompletedEvent` moves the gate's latch: a refusal holds every later render, and the pass that names the held one releases it.
+6a. **RenderGate (leader-only)**: runs `haproxy -c -dr` on the newest render, on a semaphore slot of its own, and publishes `RenderGateCompletedEvent`. A refusal reverts the pods that took the plan without loading it, and the deployer names each passing plan on its next apply so the agents may promote their rollback baseline.
 7. **Deployer (leader-only)**: diffs the render against each pod's baseline, applies the result to every endpoint in parallel, logs successful endpoints directly, and publishes per-endpoint `InstanceDeploymentFailedEvent` plus aggregate `DeploymentCompletedEvent`.
 8. **Completion**: Coordinator subscribes to `DeploymentCompletedEvent` and publishes `ReconciliationCompletedEvent` with duration metrics.
 
@@ -208,7 +213,7 @@ sequenceDiagram
 5. **Phase 1.5 — OpenAPI schema**: parsed structure cross-checked against a version-specific OpenAPI schema via `pkg/generated/validators`. Catches out-of-range values, pattern violations, missing required fields. Also cheap (in-memory, no fork).
 6. **Phase 2 — Semantic**: writes the config + auxiliary files into a per-call temp directory, runs `haproxy -c -f <tempdir>/haproxy.cfg`, parses the binary's stderr on failure. The temp directory mirrors the production layout (`maps/`, `ssl/`, `general/`) under `default-path origin <tempdir>` so file references resolve exactly like at runtime.
 7. **Rendered-output validators**: after the built-in phases pass, the pipeline sends the complete rendered file set to each configured pluggable validator. An error becomes phase `external`; warnings remain attached to the successful result.
-8. **Result**: Pipeline wraps the result into a `*PipelineResult` (success) or `*PipelineError` (failure carrying `Phase` for `errors.AsType[*PipelineError]`); the Coordinator then publishes `ValidationCompletedEvent` or `ReconciliationFailedEvent` accordingly.
+8. **Result**: Pipeline wraps the result into a `*PipelineResult` (success) or `*PipelineError` (failure carrying `Phase` for `errors.AsType[*PipelineError]`); the Coordinator then publishes `TemplateRenderedEvent` or `ReconciliationFailedEvent` accordingly.
 
 ## Zero-reload deployment strategy
 

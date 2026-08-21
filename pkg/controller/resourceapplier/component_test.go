@@ -113,7 +113,7 @@ func setLeader(c *Component) {
 // these events directly (mirrors how the Coordinator publishes them in
 // production) — there is no side-channel cache to seed.
 func reconciliationCompletedEvent(resources []templating.RenderedResource) *events.ReconciliationCompletedEvent {
-	return events.NewReconciliationCompletedEvent(0, resources, nil)
+	return events.NewReconciliationCompletedEvent(0, "", resources, nil)
 }
 
 func sampleResource(ns, name string, port int) templating.RenderedResource {
@@ -508,6 +508,47 @@ func TestHandleReconciliationCompleted_ReadsResourcesFromEvent(t *testing.T) {
 		"applier must read resources directly from the event payload, not from any cached field")
 }
 
+// These resources describe the configuration HAProxy is meant to run, so they
+// move with the render gate's verdict: held while it is pinned, applied by the
+// pass that releases the cycle they belong to.
+func TestHandleRenderGateCompleted_HoldsAndReleasesTheCycle(t *testing.T) {
+	comp, _, counter := newTestComp(t, false)
+	setLeader(comp)
+
+	comp.handleRenderGateCompleted(context.Background(),
+		events.NewRenderGateCompletedEvent("plan-1", false, true, true, "boom", false, 5))
+
+	held := events.NewReconciliationCompletedEvent(0, "plan-2",
+		[]templating.RenderedResource{sampleResource("haptic", "svc-a", 80)}, nil)
+	comp.handleReconciliationCompleted(context.Background(), held)
+	assert.Equal(t, int32(0), counter.Load(),
+		"a cycle the fleet was never given must not be advertised on the cluster")
+
+	comp.handleRenderGateCompleted(context.Background(),
+		events.NewRenderGateCompletedEvent("plan-2", true, false, true, "", false, 5))
+	assert.Equal(t, int32(1), counter.Load(), "the pass that names the held cycle applies it")
+}
+
+// A verdict for a plan the applier has moved past says nothing about what it
+// holds, so it neither closes the latch nor re-applies anything.
+func TestHandleRenderGateCompleted_IgnoresASupersededPlan(t *testing.T) {
+	comp, _, counter := newTestComp(t, false)
+	setLeader(comp)
+
+	comp.handleReconciliationCompleted(context.Background(),
+		events.NewReconciliationCompletedEvent(0, "plan-1",
+			[]templating.RenderedResource{sampleResource("haptic", "svc-a", 80)}, nil))
+	require.Equal(t, int32(1), counter.Load())
+
+	comp.handleRenderGateCompleted(context.Background(),
+		events.NewRenderGateCompletedEvent("plan-0", false, true, false, "boom", false, 5))
+
+	assert.Equal(t, int32(1), counter.Load(), "a straggler's refusal must not re-apply an older cycle")
+	comp.mu.Lock()
+	defer comp.mu.Unlock()
+	assert.False(t, comp.gatePinned, "a straggler's refusal must not close the latch")
+}
+
 // TestRecoverManagedResources_PrunesStartupOrphan covers the case where the
 // controller was killed while a Gateway was deleted (so the Service we
 // applied for that Gateway was never pruned). On leader-acquire we must
@@ -671,8 +712,7 @@ func TestHandleReconciliationCompleted_PublishesResourcesApplied(t *testing.T) {
 		Variants:   map[string]map[string]any{"rendered": {"conditions": []any{}}},
 	}}
 	evt := events.NewReconciliationCompletedEvent(
-		0,
-		[]templating.RenderedResource{sampleResource("default", "svc-1", 80)},
+		0, "", []templating.RenderedResource{sampleResource("default", "svc-1", 80)},
 		patches,
 		events.WithCorrelation("corr-1", "cause-1"),
 	)
@@ -701,7 +741,7 @@ func TestHandleReconciliationCompleted_ApplyFailureWithholdsSuccessAndRetries(t 
 		return false, nil, nil
 	})
 
-	evt := events.NewReconciliationCompletedEvent(0, []templating.RenderedResource{
+	evt := events.NewReconciliationCompletedEvent(0, "", []templating.RenderedResource{
 		sampleResource("haptic", "svc-a", 80),
 		sampleResource("haptic", "svc-b", 81),
 	}, nil)
@@ -778,7 +818,7 @@ func TestHandleReconciliationCompleted_NoPublishWhenNotLeader(t *testing.T) {
 	bus.Start()
 
 	comp.handleReconciliationCompleted(context.Background(),
-		events.NewReconciliationCompletedEvent(0, nil, nil))
+		events.NewReconciliationCompletedEvent(0, "", nil, nil))
 
 	testutil.AssertNoEvent[*events.ResourcesAppliedEvent](t, observer, testutil.NoEventTimeout)
 }

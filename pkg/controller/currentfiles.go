@@ -30,6 +30,14 @@ type currentFilesAuthority struct {
 	active      bool
 	hasAccepted bool
 	accepted    map[string]string
+
+	// confirmed is the last baseline HAProxy accepted, and pendingPlanID names
+	// the render whose files are provisional. A refusal rolls `accepted` back
+	// to `confirmed`, so the term's idea of "what is deployed" never keeps a
+	// render the fleet was reverted away from.
+	hasConfirmed  bool
+	confirmed     map[string]string
+	pendingPlanID string
 }
 
 func newCurrentFilesAuthority(published *publishedAuxFiles) *currentFilesAuthority {
@@ -44,6 +52,9 @@ func (a *currentFilesAuthority) BeginTerm() uint64 {
 	a.active = true
 	a.hasAccepted = false
 	a.accepted = nil
+	a.hasConfirmed = false
+	a.confirmed = nil
+	a.pendingPlanID = ""
 	if a.published != nil {
 		a.published.beginLeaderTerm()
 	}
@@ -60,6 +71,9 @@ func (a *currentFilesAuthority) EndTerm(generation uint64) {
 	a.active = false
 	a.hasAccepted = false
 	a.accepted = nil
+	a.hasConfirmed = false
+	a.confirmed = nil
+	a.pendingPlanID = ""
 	if a.published != nil {
 		a.published.endLeaderTerm()
 	}
@@ -87,7 +101,15 @@ func (a *currentFilesAuthority) publishedAvailabilityError() error {
 	return a.published.availabilityError()
 }
 
-func (a *currentFilesAuthority) Accept(generation uint64, auxiliaryFiles *dataplane.AuxiliaryFiles) {
+// Accept records the files a render produced as the term's working baseline.
+//
+// The next render reads them back — that is what lets a template keep the
+// content it rotated instead of re-seeding it every cycle — but they are only
+// PROVISIONAL until HAProxy has judged the render they came from. Confirm and
+// Rollback settle them.
+func (a *currentFilesAuthority) Accept(
+	generation uint64, planID string, auxiliaryFiles *dataplane.AuxiliaryFiles,
+) {
 	files := auxiliaryFiles.CurrentFiles()
 
 	a.mu.Lock()
@@ -98,6 +120,45 @@ func (a *currentFilesAuthority) Accept(generation uint64, auxiliaryFiles *datapl
 	}
 	a.hasAccepted = true
 	a.accepted = maps.Clone(files)
+	a.pendingPlanID = planID
+}
+
+// Confirm settles the provisional baseline once the render gate passed the
+// render it came from.
+func (a *currentFilesAuthority) Confirm(generation uint64, planID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if !a.active || a.generation != generation || planID == "" || planID != a.pendingPlanID {
+		return
+	}
+	a.confirmed = maps.Clone(a.accepted)
+	a.hasConfirmed = true
+	a.pendingPlanID = ""
+}
+
+// Rollback puts the baseline back to the last confirmed one after HAProxy
+// refused the render that produced the provisional files.
+//
+// Without it, the refused render's auxiliary files would be what the next
+// render reads as "what is deployed" — and the fleet was reverted away from
+// exactly those, so the two would disagree for the rest of the term.
+func (a *currentFilesAuthority) Rollback(generation uint64, planID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if !a.active || a.generation != generation || planID == "" || planID != a.pendingPlanID {
+		return
+	}
+	a.pendingPlanID = ""
+	if !a.hasConfirmed {
+		// Nothing was ever confirmed this term: fall back to the published
+		// snapshot rather than keep a refused render's files.
+		a.hasAccepted = false
+		a.accepted = nil
+		return
+	}
+	a.accepted = maps.Clone(a.confirmed)
 }
 
 func (a *currentFilesAuthority) publishedSnapshot() (map[string]string, error) {

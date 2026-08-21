@@ -106,6 +106,19 @@ type scheduledDeployment struct {
 	contentChecksum string                   // Hash of THIS deployment's config+aux — captured at schedule-time
 }
 
+// acceptedRender is one render the render gate passed, kept so a later refusal
+// has somewhere to roll back to. Every field is captured together with the
+// config it belongs to, same rule as scheduledDeployment.contentChecksum.
+type acceptedRender struct {
+	config          string
+	auxFiles        *dataplane.AuxiliaryFiles
+	contentChecksum string
+	plan            *renderplan.Plan
+	planID          string
+	statusPatches   []templating.StatusPatch
+	correlationID   string
+}
+
 // DeploymentScheduler decides which render is deployed next, and when.
 //
 // It subscribes to events that trigger deployments, maintains the state of
@@ -114,8 +127,8 @@ type scheduledDeployment struct {
 // only rate limit it applies; reload pacing lives in the agent.
 //
 // Event subscriptions:
-//   - TemplateRenderedEvent: Track rendered config and auxiliary files
-//   - ValidationCompletedEvent: Cache validated config and schedule deployment
+//   - TemplateRenderedEvent: Cache the render and schedule deployment
+//   - RenderGateCompletedEvent: Move the gate's latch; a pass releases a held render
 //   - ValidationFailedEvent: Deploy cached config for drift prevention fallback
 //   - HAProxyPodsDiscoveredEvent: Update endpoints and schedule deployment
 //
@@ -137,10 +150,10 @@ type DeploymentScheduler struct {
 	lastRenderedConfig           string                    // Last rendered HAProxy config (before validation)
 	lastAuxiliaryFiles           *dataplane.AuxiliaryFiles // Last rendered auxiliary files
 	lastContentChecksum          string                    // Pre-computed content checksum from pipeline
-	lastRenderedEventID          string                    // EventID of the render that wrote the four fields above — see handleValidationCompleted
 	lastRenderedPlan             *renderplan.Plan          // Plan of the last rendered config
 	lastRenderedPlanID           string                    // Digest of lastRenderedPlan
-	lastValidatedStatusPatches   []templating.StatusPatch  // Patches from the last successful render — forwarded to deploy events for StatusApplier
+	lastRenderedStatusPatches    []templating.StatusPatch  // Patches of the last render — promoted with the config it belongs to
+	lastValidatedStatusPatches   []templating.StatusPatch  // Patches of the dispatched render — captured with it, forwarded to deploy events for StatusApplier
 	lastValidatedConfig          string                    // Last validated HAProxy config
 	lastValidatedAux             *dataplane.AuxiliaryFiles // Last validated auxiliary files
 	lastValidatedContentChecksum string                    // Hash captured WITH lastValidatedConfig — must travel together, never reconstructed
@@ -154,6 +167,16 @@ type DeploymentScheduler struct {
 	runtimeConfigNamespace       string                    // Namespace of HAProxyCfg resource (set by ConfigPublishedEvent)
 	templateConfigName           string                    // Name from ConfigValidatedEvent.TemplateConfig (for early runtimeConfigName computation)
 	templateConfigNamespace      string                    // Namespace from ConfigValidatedEvent.TemplateConfig
+
+	// gatePinned holds every render until the render gate passes one. Set from
+	// RenderGateCompletedEvent; the gate itself owns the latch (ADR-0022).
+	gatePinned bool
+
+	// acceptedRender is the newest render the gate passed. A refusal rolls the
+	// lastValidated* fields back to it, so pod discovery, the validation
+	// fallback and the retry timers re-send the config HAProxy accepted rather
+	// than the one it just refused. Nil until the gate has passed a render.
+	acceptedRender *acceptedRender
 
 	// Deployment scheduling and rate limiting
 	schedulerMutex    sync.Mutex
@@ -279,6 +302,7 @@ func (s *DeploymentScheduler) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
+	defer s.Rearm()
 	s.ctx = ctx // Save context for scheduling operations
 	s.schedulerMutex.Lock()
 	s.retryStopped = false
@@ -296,7 +320,7 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	s.eventChan = s.eventBus.SubscribeTypesLeaderOnly(SchedulerComponentName, SchedulerEventBufferSize,
 		events.EventTypeTemplateRendered,
 		events.EventTypeConfigValidated,
-		events.EventTypeValidationCompleted,
+		events.EventTypeRenderGateCompleted,
 		events.EventTypeValidationFailed,
 		events.EventTypeHAProxyPodsDiscovered,
 		events.EventTypeDeploymentCompleted,
@@ -349,13 +373,13 @@ func (s *DeploymentScheduler) handleEvent(ctx context.Context, event busevents.E
 
 	switch e := event.(type) {
 	case *events.TemplateRenderedEvent:
-		s.handleTemplateRendered(e)
+		s.handleTemplateRendered(ctx, e)
 
 	case *events.ConfigValidatedEvent:
 		s.handleConfigValidated(e)
 
-	case *events.ValidationCompletedEvent:
-		s.handleValidationCompleted(ctx, e)
+	case *events.RenderGateCompletedEvent:
+		s.handleRenderGateCompleted(ctx, e)
 
 	case *events.ValidationFailedEvent:
 		s.handleValidationFailed(ctx, e)

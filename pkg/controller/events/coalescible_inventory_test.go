@@ -58,9 +58,6 @@ var armedForCollapsing = map[string]coalescibleReason{
 	"HAProxyPodsDiscoveredEvent": {
 		why: "carries the whole endpoint set, not a diff — the latest snapshot supersedes every earlier one",
 	},
-	"ValidationCompletedEvent": {
-		why: "one global render-validate cycle; the verdict describes the whole config",
-	},
 	"ReconciliationTriggeredEvent": {
 		why: "a bare 'something changed' edge over the store; the render re-reads current state, so only the latest trigger matters. Emitter-gated: drift and fallback triggers report false so their deploy is never skipped",
 	},

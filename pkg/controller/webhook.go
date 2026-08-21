@@ -331,8 +331,8 @@ func buildDryRunValidator(
 //
 // The Reconciler debounces resource changes and triggers reconciliation events.
 // The Coordinator orchestrates the render-validate pipeline by calling Pipeline.Execute()
-// directly and publishing events (TemplateRenderedEvent, ValidationCompletedEvent) for
-// downstream components like DeploymentScheduler.
+// directly and publishing TemplateRenderedEvent for downstream components like
+// DeploymentScheduler.
 //
 // All components are started after initial resource synchronization to ensure we
 // have a complete view of the cluster state before beginning reconciliation cycles.

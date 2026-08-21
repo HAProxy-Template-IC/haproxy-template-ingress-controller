@@ -135,6 +135,11 @@ type Metrics struct {
 	// serve the last-good one — the operator's config never took effect.
 	ConfigRejectedTotal *prometheus.CounterVec
 
+	// ConfigPinned is 1 while the render gate is holding renders it has
+	// already refused once: nothing new reaches the fleet, which keeps serving
+	// the last config HAProxy accepted, until the operator's input changes.
+	ConfigPinned prometheus.Gauge
+
 	// Build info metric
 	BuildInfo *prometheus.GaugeVec
 }
@@ -370,6 +375,12 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			[]string{"validator"},
 		),
 
+		ConfigPinned: pkgmetrics.NewGauge(
+			registry,
+			"haptic_config_pinned",
+			"1 while the render gate holds renders HAProxy refused: the fleet keeps serving the last accepted config and no new render reaches it until the input is fixed (leader-only; 0 on followers).",
+		),
+
 		// Build info metric
 		BuildInfo: pkgmetrics.NewGaugeVec(
 			registry,
@@ -455,12 +466,14 @@ func (m *Metrics) SetFleetConvergence(total, succeeded, failed int) {
 //   - fleet_size / fleet_converged / consecutive_failures → 0
 //     (so converged < fleet_size becomes 0 < 0, i.e. false, and can't false-alert)
 //   - last_full_sync → now, so a former leader doesn't accrue growing staleness
+//   - config_pinned → 0, since the render gate's latch is per leadership term
 func (m *Metrics) ResetFleetConvergence() {
 	m.consecutiveFailures = 0
 	m.HAProxyFleetSize.Set(0)
 	m.HAProxyFleetConverged.Set(0)
 	m.DeploymentConsecutiveFailures.Set(0)
 	m.LastFullSyncTimestamp.Set(float64(time.Now().Unix()))
+	m.ConfigPinned.Set(0)
 }
 
 // RecordAgentApply records one apply a pod's agent accepted, by the mode it
@@ -562,6 +575,15 @@ func (m *Metrics) RecordHAProxyPodRejected(reason string) {
 // validator (the one whose check failed).
 func (m *Metrics) RecordConfigRejected(validator string) {
 	m.ConfigRejectedTotal.WithLabelValues(validator).Inc()
+}
+
+// SetConfigPinned sets whether the render gate is holding renders.
+func (m *Metrics) SetConfigPinned(pinned bool) {
+	if pinned {
+		m.ConfigPinned.Set(1)
+		return
+	}
+	m.ConfigPinned.Set(0)
 }
 
 // SetIsLeader sets whether this replica is the leader.

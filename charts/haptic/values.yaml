@@ -286,11 +286,13 @@ controller:
         leaderElectionLost: true
         fleetDiverged: true
         configRejected: true
+        configPinned: true
         haproxyPodsRejected: true
         noHAProxyPods: true
         criticalEventsDropped: true
         applyRejected: true
         agentInvariantViolated: true
+        recoveryReloadFailed: true
         agentVersionSkew: true
         # HAProxy discarded access-log records because the vector sidecar
         # stopped draining the UNIX datagram socket. Traffic is unaffected;
@@ -602,6 +604,13 @@ controller:
         # Interval between leadership refresh attempts
         # Default: 5s (must be < renewDeadline, typically 1/4 of it)
         retryPeriod: 5s
+      # Shortest start-to-start spacing of the render gate's `haproxy -c` runs.
+      # The gate validates each render off the reconcile wall clock, on a
+      # semaphore slot of its own, so this only caps how much CPU a render
+      # storm can take from the admission webhook. At 3000 routes one check
+      # costs ~350 ms, so 1s keeps the gate under ~35% of one core.
+      # Default: 1s
+      renderGateInterval: 1s
     dataplane:
       # The controller connection port is injected from
       # haproxy.ports.dataplane so the client and managed sidecar cannot drift.

@@ -135,6 +135,15 @@ func (t *InputTransaction) cachedResult(key string) (*inputFetchResult, error) {
 	return t.results[key], nil
 }
 
+// HasCandidates reports whether this render accepted HTTP content no previous
+// render had. Only such a render needs the synchronous check before its commit:
+// content already in the store was checked when it was first accepted.
+func (t *InputTransaction) HasCandidates() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.candidates) > 0
+}
+
 // Commit atomically accepts every candidate used by the validated render.
 func (t *InputTransaction) Commit(ctx context.Context) error {
 	t.mu.Lock()

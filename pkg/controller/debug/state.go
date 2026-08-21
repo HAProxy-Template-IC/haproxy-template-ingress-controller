@@ -192,6 +192,9 @@ type ValidationStatus struct {
 	DurationMs int64     `json:"duration_ms"`
 	Errors     []string  `json:"errors,omitempty"`
 	Warnings   []string  `json:"warnings,omitempty"`
+	// PlanID names the render this verdict judged. The render gate also
+	// answers for plans pods still run, so it is not always the newest one.
+	PlanID string `json:"plan_id,omitempty"`
 }
 
 // DeploymentStatus represents the deployment phase status.

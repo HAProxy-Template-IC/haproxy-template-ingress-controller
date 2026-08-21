@@ -26,14 +26,22 @@ import (
 	"time"
 )
 
-// The gate serializes HAProxy checks while allowing cancelled waiters to leave.
-var haproxyCheckGate = make(chan struct{}, 1)
+// defaultCheckGate serializes the checks of every caller that does not bring
+// its own gate — the admission webhook, the startup load gate, the test runner.
+var defaultCheckGate = NewCheckGate(0)
+
+// ErrHAProxyRefused reports that the haproxy binary judged a configuration and
+// refused it. A check that could not run at all (no binary, unwritable temp
+// tree, cancelled) does not wrap it, so callers never read an infrastructure
+// failure as a verdict on the config.
+var ErrHAProxyRefused = errors.New("haproxy validation failed")
 
 // validateSemantics performs semantic validation using haproxy binary.
 // This writes files to actual /etc/haproxy/ directories and runs haproxy -c.
 // If skipDNSValidation is true, the -dr flag is passed to HAProxy to skip DNS resolution
 // failures (servers with unresolvable hostnames start in DOWN state instead of failing).
-func validateSemantics(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
+// gate serializes the check; nil uses defaultCheckGate.
+func validateSemantics(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool, gate *CheckGate) error {
 	if cause := context.Cause(ctx); cause != nil {
 		return cause
 	}
@@ -72,7 +80,7 @@ func validateSemantics(ctx context.Context, mainConfig string, auxFiles *Auxilia
 
 	// Run haproxy -c -f <ConfigFile>
 	haproxyCheckStart := time.Now()
-	if err := runHAProxyCheck(ctx, paths.ConfigFile, mainConfig, skipDNSValidation); err != nil {
+	if err := runHAProxyCheck(ctx, paths.ConfigFile, mainConfig, skipDNSValidation, gate); err != nil {
 		return err
 	}
 	haproxyCheckMs = time.Since(haproxyCheckStart).Milliseconds()
@@ -285,13 +293,14 @@ func writeAuxiliaryFiles(auxFiles *AuxiliaryFiles, paths *ValidationPaths) error
 //
 // Execution goes through the installed HAProxyExecutor (see haproxy_exec.go)
 // so unit tests can substitute a fake instead of shelling out.
-func runHAProxyCheck(ctx context.Context, configPath, configContent string, skipDNSValidation bool) error {
-	select {
-	case haproxyCheckGate <- struct{}{}:
-		defer func() { <-haproxyCheckGate }()
-	case <-ctx.Done():
-		return context.Cause(ctx)
+func runHAProxyCheck(ctx context.Context, configPath, configContent string, skipDNSValidation bool, gate *CheckGate) error {
+	if gate == nil {
+		gate = defaultCheckGate
 	}
+	if err := gate.enter(ctx); err != nil {
+		return err
+	}
+	defer gate.leave()
 	if cause := context.Cause(ctx); cause != nil {
 		return cause
 	}
@@ -363,7 +372,7 @@ func interpretHAProxyExitError(output []byte, exitErr error, configContent strin
 			"output", trimmedOutput)
 		return nil
 	}
-	return fmt.Errorf("haproxy validation failed: %s", parseHAProxyError(string(output), configContent))
+	return fmt.Errorf("%w: %s", ErrHAProxyRefused, parseHAProxyError(string(output), configContent))
 }
 
 // hasFailureLines reports whether output contains any HAProxy log line at or
