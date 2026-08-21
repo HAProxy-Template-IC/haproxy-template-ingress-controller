@@ -51,6 +51,26 @@ type Publisher struct {
 	// When set, status updates first check the cache to determine if an update
 	// is needed, avoiding unnecessary API GETs.
 	listers *Listers
+
+	// auxStamps elides per-pod status re-stamps on auxiliary-file CRs whose
+	// value is unchanged (see aux_stamp_cache.go). Zero value is ready to use.
+	auxStamps auxStampCache
+}
+
+// ResetAuxiliaryStampCache drops every remembered auxiliary-file status stamp.
+// Call it on a leadership transition so a new leader re-stamps each (pod, file)
+// once rather than trusting a cache it did not populate.
+func (p *Publisher) ResetAuxiliaryStampCache() {
+	p.auxStamps.reset()
+}
+
+// forgetAuxFileStampOnDelete drops an auxiliary-file CR's stamp cache entries
+// once it is deleted (or already gone), so a recreation under the same
+// content-hashed name re-stamps instead of being elided against the stale cache.
+func (p *Publisher) forgetAuxFileStampOnDelete(err error, kind, namespace, name string) {
+	if err == nil || apierrors.IsNotFound(err) {
+		p.auxStamps.forgetAuxFile(kind, namespace, name)
+	}
 }
 
 // NewWithListers creates a Publisher with informer-backed listers for cached reads.
@@ -236,7 +256,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 				PublicationStageAuxiliary,
 				runtimeConfig.Namespace,
 				runtimeConfig.Name,
-				"HAProxyMapFile",
+				kindMapFile,
 				name,
 				err,
 			)
@@ -292,7 +312,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 				PublicationStageAuxiliary,
 				runtimeConfig.Namespace,
 				runtimeConfig.Name,
-				"HAProxyGeneralFile",
+				kindGeneralFile,
 				name,
 				err,
 			)
@@ -320,7 +340,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 				PublicationStageAuxiliary,
 				runtimeConfig.Namespace,
 				runtimeConfig.Name,
-				"HAProxyCRTListFile",
+				kindCRTListFile,
 				name,
 				err,
 			)

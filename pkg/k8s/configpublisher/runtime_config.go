@@ -246,10 +246,10 @@ func buildAuxiliaryFileReferences(namespace string, result *PublishResult, setID
 	}
 	return &haproxyv1alpha1.AuxiliaryFileReferences{
 		SetID:           setID,
-		MapFiles:        refs(result.MapFileNames, "HAProxyMapFile"),
+		MapFiles:        refs(result.MapFileNames, kindMapFile),
 		SSLCertificates: refs(result.SecretNames, "Secret"),
-		GeneralFiles:    refs(result.GeneralFileNames, "HAProxyGeneralFile"),
-		CRTListFiles:    refs(result.CRTListFileNames, "HAProxyCRTListFile"),
+		GeneralFiles:    refs(result.GeneralFileNames, kindGeneralFile),
+		CRTListFiles:    refs(result.CRTListFileNames, kindCRTListFile),
 	}
 }
 

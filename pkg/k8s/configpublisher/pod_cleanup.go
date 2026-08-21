@@ -39,6 +39,10 @@ func (p *Publisher) CleanupPodReferences(ctx context.Context, cleanup *PodCleanu
 		"namespace", cleanup.Namespace,
 	)
 
+	// Drop the departing pod's remembered aux-file stamps so a recycled pod
+	// name re-stamps from scratch instead of being elided against stale state.
+	p.auxStamps.forgetPod(cleanup.PodName)
+
 	// List HAProxyCfgs in the specified namespace only (namespace-scoped).
 	// The controller manages CRDs in its own namespace, not cluster-wide.
 	runtimeConfigs, err := p.crdClient.HaproxyTemplateICV1alpha1().
@@ -74,6 +78,12 @@ func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, namespace strin
 	for _, pod := range runningPods {
 		runningSet[pod.PodName] = pod
 	}
+
+	// Evict aux-file stamps for pods that left the fleet, so a pod removed here
+	// (missed termination event, or a transient discovery blip) re-stamps if it
+	// returns. runningPods is the complete current fleet, so a podName absent
+	// from it is genuinely gone.
+	p.auxStamps.retainRunningPods(runningSet)
 
 	// List HAProxyCfgs in the specified namespace only (namespace-scoped).
 	// The controller manages CRDs in its own namespace, not cluster-wide.

@@ -391,6 +391,14 @@ func (c *Component) Start(ctx context.Context) error {
 }
 
 func (c *Component) preparePublicationTerm() {
+	// A new leadership term must not trust aux-file status stamps a previous
+	// term (or another replica) populated: clear the cache so this leader
+	// re-stamps each (pod, file) once. Independent of the mutexes below — the
+	// publisher guards the cache with its own lock.
+	if c.publisher != nil {
+		c.publisher.ResetAuxiliaryStampCache()
+	}
+
 	c.mu.Lock()
 	c.publicationTerm++
 	c.templateConfig = nil

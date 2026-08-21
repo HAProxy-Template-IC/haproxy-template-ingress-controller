@@ -566,6 +566,12 @@ func (c *Component) getCompressionThreshold(templateConfig *v1alpha1.HAProxyTemp
 //   - Old renderedConfig is incorrectly published
 //   - Cached auxiliary files reference non-existent resources
 func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
+	// Clear the publisher's aux-file stamp cache so a reacquiring leader
+	// re-stamps from scratch rather than trusting stamps from this term.
+	if c.publisher != nil {
+		c.publisher.ResetAuxiliaryStampCache()
+	}
+
 	c.endpointAuthorityMu.Lock()
 	c.endpointAuthorities = make(map[podAuthorityKey]podAuthority)
 	c.endpointAuthoritiesSet = false
