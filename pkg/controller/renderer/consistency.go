@@ -35,11 +35,10 @@ var mapStrRefRE = regexp.MustCompile(`\bmap(?:_str|_beg|_dir|_dom|_end|_int|_ip|
 
 // auxiliaryFilesConsistencyError describes a render output where the rendered
 // HAProxy config references one or more map files the renderer did not
-// register in its desired auxiliary file set. Without this check the
-// orchestrator's post-config-delete phase would happily delete the file as
-// "unreferenced" by the desired set, then the next reload (triggered by any
-// later auxiliary file push) would fail with a cryptic
-// `failed to open pattern file <maps/X.map>` error and never recover.
+// register in its desired auxiliary file set. Without this check the manifest
+// would not list the file, the agent would delete it as one of its own that
+// the desired set no longer names, and the next reload would fail with a
+// cryptic `failed to open pattern file <maps/X.map>` error and never recover.
 type auxiliaryFilesConsistencyError struct {
 	missingMaps []string
 }
@@ -48,7 +47,7 @@ func (e *auxiliaryFilesConsistencyError) Error() string {
 	return fmt.Sprintf(
 		"rendered config references map files missing from the desired auxiliary set: %s — "+
 			"this indicates a chart bug where a snippet emits a map_str(...) reference without a corresponding fileRegistry.Register(\"map\", ...). "+
-			"Failing the render to prevent the orchestrator from deleting the file and breaking subsequent HAProxy reloads",
+			"Failing the render to prevent the agent from deleting the file and breaking subsequent HAProxy reloads",
 		strings.Join(e.missingMaps, ", "))
 }
 
@@ -57,9 +56,8 @@ func (e *auxiliaryFilesConsistencyError) Error() string {
 // desired aux files. Catches a class of chart-side bugs early: under high
 // resource churn, snippets that should register a map and emit its rule in
 // lockstep have been observed to drift, leaving the rule referencing a map
-// the renderer never registered. The orchestrator would then mark that file
-// as unreferenced, delete it on post-config, and every subsequent reload
-// would fail.
+// the renderer never registered. The manifest would then omit that file, the
+// agent would delete it, and every subsequent reload would fail.
 //
 // Only map files are checked because they are the only auxiliary file type
 // surfaced through this exact failure mode in production. SSL certificate

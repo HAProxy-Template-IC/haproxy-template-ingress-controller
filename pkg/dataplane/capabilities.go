@@ -14,36 +14,38 @@
 
 package dataplane
 
-import "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+// Capabilities is what the fleet's HAProxy supports. The controller derives it
+// from the lowest version its pods report, so a render never uses a feature the
+// oldest pod would reject. Templates read the fields as snake_case keys
+// (`capabilities.supports_crt_list`), which makes every field name a contract.
+type Capabilities struct {
+	// Storage capabilities
+	SupportsCrtList        bool // crt-list files (3.2+)
+	SupportsMapStorage     bool // map files (3.0+)
+	SupportsGeneralStorage bool // general files (3.0+)
+	SupportsSslCaFiles     bool // CA files (3.2+)
+	SupportsSslCrlFiles    bool // CRL files (3.2+)
 
-// Capabilities defines which features are available for a given HAProxy
-// version. This type is re-exported from pkg/dataplane/client for convenience.
-//
-// The field names still read as Dataplane API endpoints because they are the
-// chart's contract (templates read `capabilities.supports_crt_list` and
-// friends). What they now answer is what the FLEET's HAProxy supports: the
-// controller derives them from the lowest version its pods report, so a render
-// never uses a feature the oldest pod would reject.
-type Capabilities = client.Capabilities
+	// Configuration capabilities
+	SupportsHTTP2            bool // HTTP/2 (3.0+)
+	SupportsQUIC             bool // QUIC/HTTP3 (3.0+)
+	SupportsQUICInitialRules bool // quic-initial rules (3.1+)
 
-// CapabilitiesFromVersion computes capabilities based on a HAProxy version.
-// The controller's own binary seeds the value at startup; discovery replaces it
+	// Observability capabilities
+	SupportsLogProfiles bool // log-profile sections (3.1+)
+	SupportsTraces      bool // traces section (3.1+)
+
+	// Certificate automation capabilities
+	SupportsAcmeProviders bool // acme sections (3.2+)
+
+	// Runtime capabilities
+	SupportsRuntimeMaps    bool // runtime map operations (3.0+)
+	SupportsRuntimeServers bool // runtime server operations (3.0+)
+}
+
+// CapabilitiesFromVersion computes what a fleet running v supports. The
+// controller's own binary seeds the value at startup; the deployer replaces it
 // with the fleet minimum once the pods have reported.
-//
-// Capability thresholds (verified against OpenAPI specs):
-//   - SupportsCrtList: v3.2+ (CRT-list storage endpoint)
-//   - SupportsMapStorage: v3.0+ (Map file storage endpoint)
-//   - SupportsGeneralStorage: v3.0+ (General file storage)
-//   - SupportsSslCaFiles: v3.2+ (SSL CA file runtime endpoint)
-//   - SupportsSslCrlFiles: v3.2+ (SSL CRL file runtime endpoint)
-//   - SupportsLogProfiles: v3.1+ (Log profiles configuration endpoint)
-//   - SupportsTraces: v3.1+ (Traces configuration endpoint)
-//   - SupportsAcmeProviders: v3.2+ (ACME provider configuration endpoint)
-//   - SupportsQUIC: v3.0+ (QUIC/HTTP3 configuration options)
-//   - SupportsQUICInitialRules: v3.1+ (QUIC initial rules endpoints)
-//   - SupportsHTTP2: v3.0+ (HTTP/2 configuration)
-//   - SupportsRuntimeMaps: v3.0+ (Runtime map operations)
-//   - SupportsRuntimeServers: v3.0+ (Runtime server operations)
 func CapabilitiesFromVersion(v *Version) Capabilities {
 	if v == nil {
 		return Capabilities{} // All false - safest default

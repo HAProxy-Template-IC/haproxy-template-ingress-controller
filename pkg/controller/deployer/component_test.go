@@ -59,7 +59,6 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 	event := events.NewDeploymentScheduledEvent(
 		"test config",
 		nil,
-		nil, // parsedConfig
 		[]dataplane.Endpoint{},
 		"test-runtime-config",
 		"test-namespace",
@@ -129,7 +128,6 @@ func TestComponent_EndToEndFlow(t *testing.T) {
 	bus.Publish(events.NewDeploymentScheduledEvent(
 		"global\n  daemon\n",
 		&dataplane.AuxiliaryFiles{},
-		nil,                    // parsedConfig
 		[]dataplane.Endpoint{}, // no endpoints
 		"test-runtime-config",
 		"test-namespace",
@@ -243,7 +241,6 @@ func TestComponent_HandleEvent(t *testing.T) {
 		event := events.NewDeploymentScheduledEvent(
 			"test config",
 			nil,
-			nil, // parsedConfig
 			[]dataplane.Endpoint{},
 			"test-runtime-config",
 			"test-namespace",
@@ -270,7 +267,6 @@ func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 	event := events.NewDeploymentScheduledEvent(
 		"test config",
 		nil,
-		nil, // parsedConfig
 		[]dataplane.Endpoint{},
 		"test-runtime-config",
 		"test-namespace",
@@ -310,7 +306,6 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 	event := events.NewDeploymentScheduledEvent(
 		"test config",
 		nil,
-		nil, // parsedConfig
 		[]dataplane.Endpoint{},
 		"test-runtime-config",
 		"test-namespace",

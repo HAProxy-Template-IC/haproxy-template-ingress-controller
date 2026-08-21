@@ -109,9 +109,6 @@ func mergeGlobalBaseline(acc, add *v1alpha1.ValidationTest, accOrigin, addOrigin
 	// mean one baseline silently overrides the other, and every test in the
 	// suite inherits whichever won.
 	var err error
-	if acc.CurrentConfig, err = mergeScalar(acc.CurrentConfig, add.CurrentConfig, "currentConfig", accOrigin, addOrigin); err != nil {
-		return err
-	}
 	if acc.MinHAProxyVersion, err = mergeScalar(acc.MinHAProxyVersion, add.MinHAProxyVersion, "minHAProxyVersion", accOrigin, addOrigin); err != nil {
 		return err
 	}

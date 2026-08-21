@@ -49,6 +49,7 @@ linters:
     - copyloopvar     # Detect loop variable reference issues (Go 1.22+)
 
     # Maintenance
+    - depguard        # Ban imports that break an architectural rule
     - godox           # Detect TODO/FIXME/BUG comments
     - asciicheck      # Ensure only ASCII characters
     - bidichk         # Detect dangerous Unicode bidirectional characters
@@ -62,6 +63,55 @@ linters:
   settings:
     gocyclo:
       min-complexity: 20
+
+    depguard:
+      rules:
+        # Nothing in production parses HAProxy configuration: the generator
+        # declares what it generated and HAProxy parses what it is given
+        # (ADR-0022). client-native can parse and re-serialise a config, so it
+        # reaches only the agent's master-socket client, the browser
+        # playground's `haproxy_valid` fallback, and the differential test.
+        # scripts/check-client-native-free.sh proves the same at the link site.
+        client-native:
+          list-mode: lax
+          files:
+            - $all
+            # The differential CI test is client-native's parser as an oracle.
+            - "!$test"
+            # The agent's HAProxy runtime client. Its own rule is below.
+            - "!**/pkg/dataplane/agent/cli/**"
+            - "!**/pkg/dataplane/agent/server/**"
+            - "!**/pkg/dataplane/agent/files/**"
+            # The generator of the playground's schema validators. A chore
+            # tool, in no image; check-client-native-free.sh covers the binaries.
+            - "!**/cmd/gen-validators/**"
+            # The syntax + schema check, behind the `playground` build tag.
+            - "!**/pkg/dataplane/parser/**"
+            - "!**/pkg/dataplane/validators/**"
+            - "!**/pkg/dataplane/validate_syntax.go"
+            - "!**/pkg/dataplane/validate_schema.go"
+            - "!**/pkg/dataplane/validate_syntax_schema.go"
+          deny:
+            - pkg: github.com/haproxytech/client-native
+              desc: >-
+                client-native parses HAProxy configuration, which no production
+                code may do. Declare the structure in renderplan instead; the
+                master-socket client belongs under pkg/dataplane/agent.
+        # The agent drives the HAProxy master socket with client-native's
+        # runtime client. It still may not parse a configuration.
+        client-native-agent:
+          list-mode: lax
+          files:
+            - "**/pkg/dataplane/agent/cli/**"
+            - "**/pkg/dataplane/agent/server/**"
+            - "**/pkg/dataplane/agent/files/**"
+          deny:
+            - pkg: github.com/haproxytech/client-native/v6/config-parser
+              desc: the agent executes commands; it never parses a configuration
+            - pkg: github.com/haproxytech/client-native/v6/configuration
+              desc: the agent executes commands; it never parses a configuration
+            - pkg: github.com/haproxytech/client-native/v6/models
+              desc: the agent's wire types are pkg/dataplane/agent/api, not client-native models
 
     goconst:
       min-len: 3

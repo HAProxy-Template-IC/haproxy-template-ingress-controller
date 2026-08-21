@@ -66,7 +66,7 @@ worker. **Out of scope for a controller-only fix.**
   **inside the HAProxy pod**; the controller has no network path to it.
 - The deployed Dataplane API exposes **no** worker/process routing and **no** raw
   runtime-command passthrough. Verified against the newest bundled spec (v3.3,
-  `pkg/generated/dataplaneapi/v33/spec.json`): the runtime endpoints are ACLs,
+  `cmd/gen-validators/spec/v33.json`): the runtime endpoints are ACLs,
   maps, `ssl_*`, `stick_tables`, `servers`, and `info` only. The runtime server
   mutation `PUT /services/haproxy/runtime/backends/{parent_name}/servers/{name}`
   takes only the `name` + `parent_name` **path** params — no `process`/`pid`

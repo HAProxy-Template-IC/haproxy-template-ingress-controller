@@ -19,11 +19,12 @@ import (
 	"path"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
 // CanonicalizeAuxiliaryFiles returns an independent, deterministically sorted
-// file set and rejects definitions that collapse to one Dataplane API object.
+// file set and rejects definitions that collapse to one written file. The agent
+// writes a file under the path the plan names, so the base name is the whole
+// identity: two definitions that share one are the same file.
 func CanonicalizeAuxiliaryFiles(files *AuxiliaryFiles) (*AuxiliaryFiles, error) {
 	if files == nil {
 		return &AuxiliaryFiles{}, nil
@@ -51,9 +52,7 @@ func CanonicalizeAuxiliaryFiles(files *AuxiliaryFiles) (*AuxiliaryFiles, error) 
 	}
 	result.SSLCertificates, err = canonicalizeFileItems(
 		"SSL certificate", files.SSLCertificates,
-		func(file auxiliaryfiles.SSLCertificate) string {
-			return client.SanitizeSSLCertName(path.Base(file.Path))
-		},
+		func(file auxiliaryfiles.SSLCertificate) string { return path.Base(file.Path) },
 		func(a, b auxiliaryfiles.SSLCertificate) bool { return a == b },
 		func(file auxiliaryfiles.SSLCertificate) auxiliaryfiles.SSLCertificate { return file },
 	)
@@ -71,9 +70,7 @@ func CanonicalizeAuxiliaryFiles(files *AuxiliaryFiles) (*AuxiliaryFiles, error) 
 	}
 	result.CRTListFiles, err = canonicalizeFileItems(
 		"CRT-list file", files.CRTListFiles,
-		func(file auxiliaryfiles.CRTListFile) string {
-			return client.SanitizeStorageName(path.Base(file.Path))
-		},
+		func(file auxiliaryfiles.CRTListFile) string { return path.Base(file.Path) },
 		func(a, b auxiliaryfiles.CRTListFile) bool { return a == b },
 		func(file auxiliaryfiles.CRTListFile) auxiliaryfiles.CRTListFile { return file },
 	)
@@ -136,7 +133,7 @@ func rejectSharedGeneralStorageName(
 		generalNames[file.Filename] = struct{}{}
 	}
 	for _, file := range crtListFiles {
-		name := client.SanitizeStorageName(path.Base(file.Path))
+		name := path.Base(file.Path)
 		if _, exists := generalNames[name]; exists {
 			return fmt.Errorf("general file and CRT-list %q use the same storage name; rename one file", name)
 		}

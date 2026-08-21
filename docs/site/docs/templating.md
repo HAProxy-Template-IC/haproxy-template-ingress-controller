@@ -984,7 +984,7 @@ In this hand-written example the slot count is a hard cap: a third endpoint beyo
         server SRV_3 192.0.2.1:1 disabled
     ```
 
-    The Dataplane API can update Address, Port, and enabled/disabled state at runtime without reloading HAProxy. Both `enabled` and `disabled` are runtime-supported, enabling the reserved slots pattern. Options like `check` on individual server lines trigger reloads on any change.
+    HAProxy's runtime API can update Address, Port, and enabled/disabled state without reloading. Both `enabled` and `disabled` are runtime-supported, enabling the reserved slots pattern. Options like `check` on individual server lines trigger reloads on any change.
 
 ### Cross-Resource Lookups
 

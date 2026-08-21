@@ -41,7 +41,8 @@ type Config struct {
 	// Logging configures logging behavior.
 	Logging LoggingConfig `yaml:"logging"`
 
-	// Dataplane configures the Dataplane API for production HAProxy instances.
+	// Dataplane configures how the controller reaches the HAProxy pods and where
+	// their files live. The block keeps its name across the agent cutover.
 	Dataplane DataplaneConfig `yaml:"dataplane"`
 
 	// TemplatingSettings configures template rendering behavior and custom variables.
@@ -131,12 +132,6 @@ type ValidationTest struct {
 	// name and then by server name, exposed to templates as
 	// `currentConfig.ServerIndex` for testing slot-aware server assignment.
 	CurrentServers map[string]map[string]ServerAddr `yaml:"currentServers,omitempty" json:"currentServers,omitempty"`
-
-	// CurrentConfig contains the raw HAProxy configuration from a previous deployment.
-	//
-	// This field is deprecated: use CurrentServers. The text is parsed with the
-	// HAProxy config parser, which a later release drops.
-	CurrentConfig string `yaml:"currentConfig,omitempty"`
 
 	// CurrentFiles are the currently-deployed general auxiliary files
 	// (filename → content) exposed to templates under `currentFiles`. Used to
@@ -295,9 +290,10 @@ type LoggingConfig struct {
 	Level string `yaml:"level"`
 }
 
-// DataplaneConfig configures the Dataplane API for production HAProxy instances.
+// DataplaneConfig configures how the controller reaches the HAProxy pods and
+// where their files live. The block keeps its name across the agent cutover.
 type DataplaneConfig struct {
-	// Port is the Dataplane API port for production HAProxy pods.
+	// Port is the agent's apply/state API port on each HAProxy pod.
 	// A value of 0 means "uninitialized" and will be replaced with the default.
 	// This is a production port and MUST NOT remain 0 after defaults are applied.
 	// Default: 5555
@@ -311,7 +307,7 @@ type DataplaneConfig struct {
 
 	// DriftPreventionInterval triggers periodic deployments to prevent configuration drift.
 	// A deployment is automatically triggered if no deployment has occurred within this interval.
-	// This detects and corrects drift caused by external Dataplane API clients.
+	// This detects and corrects a pod whose file tree drifted from the render.
 	// Format: Go duration string (e.g., "60s", "5m")
 	// Default: 60s
 	DriftPreventionInterval string `yaml:"drift_prevention_interval"`
@@ -635,7 +631,7 @@ func (t *TemplatingSettings) GetRenderTimeout() time.Duration {
 	return DefaultRenderTimeout
 }
 
-// Credentials contains HAProxy Dataplane API credentials.
+// Credentials contains the HAPTIC agent credentials.
 //
 // Loaded by pkg/core/config.LoadCredentials from the Secret referenced by
 // spec.credentialsSecretRef on the HAProxyTemplateConfig CRD — kept out of

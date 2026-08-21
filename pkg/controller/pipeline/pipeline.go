@@ -26,7 +26,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -120,11 +119,6 @@ type PipelineResult struct {
 	// ValidationPhase indicates which validation phase completed last.
 	// Empty string means all phases passed.
 	ValidationPhase string
-
-	// ParsedConfig is the pre-parsed desired configuration from syntax validation.
-	// May be nil when validation fails or the validation service discards parsed results.
-	// When non-nil, can be passed to downstream sync operations to avoid re-parsing.
-	ParsedConfig *parser.StructuredConfig
 
 	// ValidationWarnings contains non-fatal diagnostics produced after render.
 	ValidationWarnings []string
@@ -313,7 +307,6 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 		ValidateDurationMs: validationResult.DurationMs,
 		TotalDurationMs:    time.Since(startTime).Milliseconds(),
 		ValidationPhase:    validationResult.Phase,
-		ParsedConfig:       validationResult.ParsedConfig,
 	}
 
 	if validationResult.Valid && p.outputValidator != nil {

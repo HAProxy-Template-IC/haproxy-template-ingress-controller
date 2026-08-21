@@ -87,12 +87,12 @@ Downloads the OpenAPI v3 specification for a given HAProxy Dataplane API version
 ```bash
 ./scripts/extract-dataplane-spec.sh 3.2
 ./scripts/extract-dataplane-spec.sh 3.1 /tmp/dataplane-v31.json
-./scripts/extract-dataplane-spec.sh 3.0 pkg/generated/dataplaneapi/v30/spec.json
+./scripts/extract-dataplane-spec.sh 3.0 cmd/gen-validators/spec/v30.json
 ```
 
 Requirements: Docker, `curl`, `jq`, `nc`. The script handles container lifecycle itself — if you see cleanup errors, remove the container manually with `docker rm -f dataplaneapi-extract-<version>`.
 
-Used for code generation — after saving a new spec, run `make generate-dataplaneapi-v<version>` to regenerate the typed Go client under `pkg/generated/dataplaneapi/`.
+The specs feed `cmd/gen-validators`, whose output is the browser playground's schema check — HAPTIC does not speak the Data Plane API. After refreshing a spec, run `make generate-playground-validators` to regenerate the validators under `pkg/generated/validators/`.
 
 ## fetch-k8s-openapi-schemas.sh
 

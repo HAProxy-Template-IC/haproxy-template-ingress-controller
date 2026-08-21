@@ -105,6 +105,10 @@ type Component struct {
 	// in tests.
 	ackedPlans AckedPlanSink
 
+	// baselineSeeded is set once this term has adopted (or given up on) the
+	// plan the fleet was already running. See seedBaseline.
+	baselineSeeded atomic.Bool
+
 	// stateMu guards the per-fleet facts the apply path reads: which pods must
 	// be re-sent their complete state, which plans are proven good, which plans
 	// each pod last reported it holds, and the pods this controller last wrote
@@ -158,6 +162,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, syncTimeout time.Dur
 		EventTypes: []string{
 			events.EventTypeDeploymentScheduled,
 			events.EventTypeRenderGateCompleted,
+			events.EventTypeHAProxyPodsDiscovered,
 		},
 	})
 	c.cancelEventChan = eventBus.SubscribeTypes(cancellationSubscriberName, EventBufferSize,
@@ -191,6 +196,7 @@ func (c *Component) Start(ctx context.Context) error {
 	// state worth keeping, and its apply sequence restarts under a new epoch.
 	c.clients.Close()
 	c.renderSeq.Store(0)
+	c.baselineSeeded.Store(false)
 	c.clearBaselineInvalidations()
 	c.forgetAwaitingConvergence()
 
@@ -215,6 +221,8 @@ func (c *Component) HandleEvent(event busevents.Event) {
 		c.performDeployment(c.ctx, e)
 	case *events.RenderGateCompletedEvent:
 		c.handleRenderGateCompleted(c.ctx, e)
+	case *events.HAProxyPodsDiscoveredEvent:
+		c.seedBaseline(c.ctx, e.Endpoints)
 	}
 }
 

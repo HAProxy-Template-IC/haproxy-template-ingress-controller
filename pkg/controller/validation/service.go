@@ -27,7 +27,6 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
 // Default directory paths for HAProxy validation.
@@ -61,17 +60,12 @@ type ValidationResult struct {
 	// Error contains the validation error if Valid is false.
 	Error error
 
-	// Phase indicates which validation phase failed (syntax, schema, semantic, render, setup).
+	// Phase indicates which validation phase failed (semantic, render, setup).
 	// Empty if validation succeeded.
 	Phase string
 
 	// DurationMs is the total validation duration in milliseconds.
 	DurationMs int64
-
-	// ParsedConfig is the pre-parsed configuration from syntax validation.
-	// May be nil if validation failed or the service discards parsed results.
-	// When non-nil, can be passed to downstream sync operations to avoid re-parsing.
-	ParsedConfig *parser.StructuredConfig
 
 	// Warnings contains non-fatal diagnostics from additional validation stages.
 	Warnings []string
@@ -94,35 +88,21 @@ func (r *ValidationResult) ErrorMessage() string {
 // - Runs haproxy -c for semantic validation
 // - Cleans up temp directory after validation
 //
-// The service caches the last successful validation result keyed by a content
-// checksum of the config and auxiliary files. When called with unchanged content,
-// it returns the cached verdict and optional ParsedConfig immediately, skipping all validation phases.
-// Only successful validations are cached; failures always trigger a full retry.
+// HAProxy's own verdict is the whole check: it is a strict superset of any
+// parse HAPTIC could run over the same bytes (ADR-0022).
+//
+// The service caches the last successful verdict keyed by a content checksum of
+// the config and auxiliary files. When called with unchanged content, it returns
+// the cached verdict immediately. Only successful validations are cached;
+// failures always trigger a full retry.
 //
 // The service can be called concurrently from multiple goroutines.
 type ValidationService struct {
 	logger *slog.Logger
 
-	// version is the HAProxy version for schema selection.
-	version *dataplane.Version
-
 	// skipDNSValidation controls whether to skip DNS resolution failures.
 	// Use true for runtime validation (permissive) and false for webhook validation (strict).
 	skipDNSValidation bool
-
-	// skipSemanticValidation controls whether to skip the `haproxy -c`
-	// semantic-validation step entirely. Use true for the deployment
-	// path (the chart already validated the template, the syntax + schema
-	// check still runs, and the dominant runtime risk is rolling-restart
-	// reaction latency where `haproxy -c` adds ~60 ms per render) and
-	// false for the webhook path (admission requests come from operator
-	// input where strict validation is what the user expects).
-	skipSemanticValidation bool
-
-	// skipSyntaxAndSchema drops the client-native parse and the DPAPI schema
-	// check. `haproxy -c` is a strict superset for loadability (ADR-0022), so
-	// the render gate pays for the binary's verdict only.
-	skipSyntaxAndSchema bool
 
 	// checkGate serializes this service's `haproxy -c` runs. Nil shares the
 	// process-wide default gate with the admission webhook.
@@ -138,13 +118,10 @@ type ValidationService struct {
 	sslCertsDir string
 	generalDir  string
 
-	discardParsedConfig bool
-
-	// Validation result cache - skips all validation phases when content unchanged.
+	// Validation result cache - skips the check when content is unchanged.
 	// Per-instance cache prevents webhook validation from evicting main pipeline cache.
-	cacheMu            sync.RWMutex
-	cachedChecksum     string
-	cachedParsedConfig *parser.StructuredConfig
+	cacheMu        sync.RWMutex
+	cachedChecksum string
 }
 
 // ValidationServiceConfig contains configuration for creating a ValidationService.
@@ -152,19 +129,10 @@ type ValidationServiceConfig struct {
 	// Logger is the structured logger for logging.
 	Logger *slog.Logger
 
-	// Version is the HAProxy version for schema selection (nil uses default v3.0).
-	Version *dataplane.Version
-
 	// SkipDNSValidation controls whether to skip DNS resolution failures during validation.
 	// When true, servers with unresolvable hostnames start in DOWN state instead of failing.
 	// When false (strict mode), DNS resolution failures cause validation to fail.
 	SkipDNSValidation bool
-
-	// SkipSemanticValidation controls whether to skip the `haproxy -c`
-	// semantic-validation step. Set true for the deployment pipeline
-	// (~60 ms per render saved, syntax + schema still runs), false for
-	// the webhook (admission requests must still be strictly validated).
-	SkipSemanticValidation bool
 
 	// BaseDir is the production base directory used in "default-path origin" directive.
 	// During local validation, this is replaced with the temp directory path so that
@@ -183,15 +151,6 @@ type ValidationServiceConfig struct {
 	// GeneralDir is the relative directory name for general files (e.g., "general").
 	// Should match the basename of the dataplane GeneralStorageDir config.
 	GeneralDir string
-
-	// DiscardParsedConfig caches only successful verdicts and omits ParsedConfig from results.
-	// Syntax and schema validation still parse the complete configuration.
-	DiscardParsedConfig bool
-
-	// SkipSyntaxAndSchema runs `haproxy -c` alone. Set true for the render
-	// gate: HAProxy's own verdict is a strict superset of both, and neither
-	// produces a ParsedConfig anyone downstream reads (ADR-0022).
-	SkipSyntaxAndSchema bool
 
 	// CheckGate serializes this service's `haproxy -c` runs. Give the render
 	// gate its own so admission never waits out a fleet-sized config check.
@@ -224,17 +183,13 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 	}
 
 	return &ValidationService{
-		logger:                 logger,
-		version:                cfg.Version,
-		skipDNSValidation:      cfg.SkipDNSValidation,
-		skipSemanticValidation: cfg.SkipSemanticValidation,
-		skipSyntaxAndSchema:    cfg.SkipSyntaxAndSchema,
-		checkGate:              cfg.CheckGate,
-		baseDir:                baseDir,
-		mapsDir:                mapsDir,
-		sslCertsDir:            sslCertsDir,
-		generalDir:             generalDir,
-		discardParsedConfig:    cfg.DiscardParsedConfig,
+		logger:            logger,
+		skipDNSValidation: cfg.SkipDNSValidation,
+		checkGate:         cfg.CheckGate,
+		baseDir:           baseDir,
+		mapsDir:           mapsDir,
+		sslCertsDir:       sslCertsDir,
+		generalDir:        generalDir,
 	}
 }
 
@@ -242,26 +197,17 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 // This avoids redundant hashing when the caller (e.g., Pipeline) has already computed the checksum.
 //
 // This method:
-// 1. Parses and validates the ORIGINAL config (syntax + schema) - this produces the ParsedConfig
-// 2. Creates an isolated temp directory
-// 3. Replaces production baseDir with temp directory in config (for default-path origin)
-// 4. Writes the config and auxiliary files
-// 5. Runs semantic validation with haproxy -c using the MODIFIED config
-// 6. Cleans up the temp directory
-// 7. Returns the original ParsedConfig when the caller retains parsed results
-//
-// Syntax/schema validation doesn't need actual files or temp paths; only semantic
-// validation does. Parsing the original config keeps any returned ParsedConfig on
-// production paths.
+// 1. Creates an isolated temp directory
+// 2. Replaces production baseDir with temp directory in config (for default-path origin)
+// 3. Writes the config and auxiliary files
+// 4. Runs `haproxy -c` using the MODIFIED config
+// 5. Cleans up the temp directory
 //
 // Parameters:
 //   - ctx: Context for cancellation
 //   - config: The rendered HAProxy configuration content
 //   - auxFiles: Auxiliary files (maps, certificates, general files)
 //   - checksum: Pre-computed content checksum (see dataplane.ComputeContentChecksum)
-//
-// Returns:
-//   - ValidationResult with status, timing, and an optional ParsedConfig on production paths
 func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles, checksum string) *ValidationResult {
 	startTime := time.Now()
 
@@ -270,52 +216,15 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 		return failedResult(err, "setup", startTime)
 	}
 
-	// Check validation cache - skip all phases if content unchanged
-	if cachedConfig, ok := s.getCachedResult(checksum); ok {
+	// Check validation cache - skip the check entirely if content unchanged
+	if s.cached(checksum) {
 		if err := validationCancellationError(ctx); err != nil {
 			return failedResult(err, "setup", startTime)
 		}
-		return &ValidationResult{
-			Valid:        true,
-			DurationMs:   time.Since(startTime).Milliseconds(),
-			ParsedConfig: cachedConfig,
-		}
+		return &ValidationResult{Valid: true, DurationMs: time.Since(startTime).Milliseconds()}
 	}
 
-	// Step 1: Parse and validate the ORIGINAL config (syntax + schema)
-	// This runs syntax validation and API schema validation without needing temp files.
-	// The returned parsedConfig contains production paths (e.g., /etc/haproxy) which
-	// is what downstream components need.
-	var parsedConfig *parser.StructuredConfig
-	if !s.skipSyntaxAndSchema {
-		var err error
-		if parsedConfig, err = dataplane.ValidateSyntaxAndSchema(config, s.version); err != nil {
-			return failedResult(err, validationPhase(err), startTime)
-		}
-	}
-	if err := validationCancellationError(ctx); err != nil {
-		return failedResult(err, "setup", startTime)
-	}
-
-	// Short-circuit: when the deployment pipeline opts out of semantic
-	// validation, syntax + schema is enough. The chart's bundled
-	// validationTests + the webhook's strict semantic check already
-	// guard against structurally-broken configs; skipping the per-render
-	// `haproxy -c` invocation here removes ~60 ms from every reconcile
-	// (the dominant fixed cost on the rolling-restart hot path) without
-	// affecting admission-time correctness.
-	if s.skipSemanticValidation {
-		if err := s.cacheResult(ctx, checksum, parsedConfig); err != nil {
-			return failedResult(err, "setup", startTime)
-		}
-		return &ValidationResult{
-			Valid:        true,
-			DurationMs:   time.Since(startTime).Milliseconds(),
-			ParsedConfig: s.resultParsedConfig(parsedConfig),
-		}
-	}
-
-	// Step 2: Create isolated temp directory for semantic validation
+	// Step 1: Create isolated temp directory for semantic validation
 	tempDir, err := os.MkdirTemp("", "haproxy-validation-*")
 	if err != nil {
 		return failedResult(fmt.Errorf("creating temp directory: %w", err), "setup", startTime)
@@ -331,7 +240,7 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 		}
 	}()
 
-	// Step 3: Create modified config with temp directory paths for semantic validation
+	// Step 2: Create modified config with temp directory paths for semantic validation
 	// The rendered config contains "default-path origin /etc/haproxy" (or similar).
 	// For local validation with haproxy -c, we need HAProxy to resolve relative paths
 	// from the temp directory, so we replace the production path with the temp directory path.
@@ -339,8 +248,8 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 
 	// Build validation paths using relative subdirectories
 	// These must match the relative paths used by RenderService.
-	// CRTListDir uses generalDir because CRT-list files are always stored in general
-	// file storage to avoid triggering HAProxy reloads (see pkg/dataplane/auxiliaryfiles/crtlist.go).
+	// CRTListDir uses generalDir because CRT-list files are always stored alongside
+	// general files.
 	paths := &dataplane.ValidationPaths{
 		TempDir:           tempDir,
 		MapsDir:           filepath.Join(tempDir, s.mapsDir),
@@ -355,24 +264,19 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 		return failedResult(err, "setup", startTime)
 	}
 
-	// Step 4: Run semantic validation with haproxy -c using the MODIFIED config
+	// Step 3: Run semantic validation with haproxy -c using the MODIFIED config
 	// This validates that HAProxy can actually load the config with all file references resolved.
 	err = dataplane.ValidateSemanticsContext(ctx, validationConfig, auxFiles, paths, s.skipDNSValidation, s.checkGate)
 	if err != nil {
 		return failedResult(err, validationPhase(err), startTime)
 	}
 
-	// Step 5: Cache successful result and return the ORIGINAL parsed config
-	// (with production paths, not temp paths).
-	if err := s.cacheResult(ctx, checksum, parsedConfig); err != nil {
+	// Step 4: Cache the successful verdict.
+	if err := s.cacheResult(ctx, checksum); err != nil {
 		return failedResult(err, "setup", startTime)
 	}
 
-	return &ValidationResult{
-		Valid:        true,
-		DurationMs:   time.Since(startTime).Milliseconds(),
-		ParsedConfig: s.resultParsedConfig(parsedConfig),
-	}
+	return &ValidationResult{Valid: true, DurationMs: time.Since(startTime).Milliseconds()}
 }
 
 // failedResult builds a Valid=false ValidationResult with the elapsed time
@@ -404,29 +308,18 @@ func validationCancellationError(ctx context.Context) error {
 	return nil
 }
 
-func (s *ValidationService) getCachedResult(checksum string) (*parser.StructuredConfig, bool) {
+func (s *ValidationService) cached(checksum string) bool {
 	s.cacheMu.RLock()
 	defer s.cacheMu.RUnlock()
-	if s.cachedChecksum != "" && s.cachedChecksum == checksum {
-		return s.cachedParsedConfig, true
-	}
-	return nil, false
+	return s.cachedChecksum != "" && s.cachedChecksum == checksum
 }
 
-func (s *ValidationService) cacheResult(ctx context.Context, checksum string, parsedConfig *parser.StructuredConfig) error {
+func (s *ValidationService) cacheResult(ctx context.Context, checksum string) error {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	if err := validationCancellationError(ctx); err != nil {
 		return err
 	}
 	s.cachedChecksum = checksum
-	s.cachedParsedConfig = s.resultParsedConfig(parsedConfig)
 	return nil
-}
-
-func (s *ValidationService) resultParsedConfig(parsedConfig *parser.StructuredConfig) *parser.StructuredConfig {
-	if s.discardParsedConfig {
-		return nil
-	}
-	return parsedConfig
 }

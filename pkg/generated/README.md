@@ -9,33 +9,32 @@ Everything under this directory is generated — never edit by hand. There are t
 | Subtree | Source | Generator |
 |---------|--------|-----------|
 | `clientset/` + `informers/` + `listers/` | `pkg/apis/haproxytemplate/v1alpha1/` (Go types) | `code-generator` (`make generate-clientset`) |
-| `dataplaneapi/v3{0,1,2,3}/` + `dataplaneapi/v3{0,1,2}ee/` | DataPlane API OpenAPI spec at each subtree's `spec.json` | `oapi-codegen` (`make generate-dataplaneapi-v3<x>` / `…ee`) |
-| `validators/` | The same OpenAPI specs, used for zero-allocation request validation | `make generate-validators` |
+| `validators/` | The pinned Data Plane API OpenAPI specs under `cmd/gen-validators/spec/` | `make generate-playground-validators` |
 
-All of the above run together via `make generate`. Run `make verify-generate` locally to verify that CRD manifests and DeepCopy methods are up-to-date (the dataplaneapi clients and validators are not checked by that target).
+`make generate` runs the clientset half. Run `make verify-generate` locally to
+verify that CRD manifests and DeepCopy methods are up-to-date.
 
-## Refreshing the DataPlane API Clients
+## The validators are playground-only
 
-Bumping the OpenAPI spec for a HAProxy version is a two-step process:
+`validators/` builds only under the `playground` build tag. It is the schema
+half of the check the browser playground answers `haproxy_valid` with, because
+the browser has no `haproxy` binary. No production binary links it —
+`scripts/check-client-native-free.sh` proves that — and HAProxy's own verdict is
+a strict superset of it everywhere else (see `docs/adr/0022-haptic-agent.md`).
+
+The specs it is generated from are pinned: HAPTIC does not speak the Data Plane
+API any more, so there is nothing to track. Refresh one only if you deliberately
+want the playground to check against a newer schema:
 
 ```bash
-./scripts/extract-dataplane-spec.sh 3.2 pkg/generated/dataplaneapi/v32/spec.json
-make generate-dataplaneapi-v32
+./scripts/extract-dataplane-spec.sh 3.2 cmd/gen-validators/spec/v32.json
+make generate-playground-validators
 ```
-
-The Enterprise variants follow the same pattern but the extract script needs an `--enterprise` (or `-e`) flag and `r1`-suffixed versions because the spec lives in a different registry:
-
-```bash
-./scripts/extract-dataplane-spec.sh -e 3.2r1 pkg/generated/dataplaneapi/v32ee/spec.json
-make generate-dataplaneapi-v32ee
-```
-
-`./scripts/extract-dataplane-spec.sh --help`-style usage is documented in the script's header — see the comment block at the top.
 
 ## See Also
 
 - [`pkg/apis`](../apis/) — the source Go types for the typed clientset
-- `scripts/extract-dataplane-spec.sh` — pulls a fresh OpenAPI spec from a running DataPlane API
+- `cmd/gen-validators` — the validator generator and its pinned specs
 - `Makefile` — every `generate-*` target
 
 ## License

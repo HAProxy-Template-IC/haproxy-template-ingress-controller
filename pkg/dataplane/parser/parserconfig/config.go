@@ -1,55 +1,16 @@
-// Package parserconfig provides canonical configuration types for HAProxy parsing.
-//
-// This package defines StructuredConfig - the single source of truth for
-// parsed HAProxy configurations. Both CE and EE parsers return this type.
+//go:build playground
+
+// Package parserconfig holds StructuredConfig, what the client-native parse of
+// a HAProxy configuration produces. It exists for the browser playground's
+// schema check only — no production binary parses HAProxy configuration.
 package parserconfig
 
 import (
 	"github.com/haproxytech/client-native/v6/models"
-
-	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
-)
-
-// EE filter type constants.
-const (
-	FilterTypeWAF     = "waf"
-	FilterTypeBotMgmt = "botmgmt"
-)
-
-// EE http-request action type constants.
-const (
-	ActionWAFEvaluate     = "waf-evaluate"
-	ActionBotMgmtEvaluate = "botmgmt-evaluate"
-)
-
-// Common keyword constants.
-const (
-	KeywordProfile  = "profile"
-	KeywordLearning = "learning"
-	KeywordIf       = "if"
-	KeywordUnless   = "unless"
 )
 
 // StructuredConfig holds all parsed configuration sections.
-//
-// This is the canonical configuration type used by both CE and EE parsers.
-// CE parser populates standard fields, leaving EE fields nil.
-// EE parser populates all fields including enterprise-specific ones.
-//
-// Usage:
-//
-//	// CE parsing
-//	ceParser, _ := parser.New()
-//	config, _ := ceParser.ParseFromString(configStr)
-//	// config.WAFProfiles is nil, config.EEFrontends is nil
-//
-//	// EE parsing
-//	eeParser := enterprise.NewParser()
-//	config, _ := eeParser.ParseFromString(configStr)
-//	// config.WAFProfiles and config.EEFrontends are populated
 type StructuredConfig struct {
-	// Standard HAProxy sections (CE and EE)
-
 	Global      *models.Global
 	Defaults    []*models.Defaults
 	Frontends   []*models.Frontend
@@ -71,30 +32,6 @@ type StructuredConfig struct {
 
 	// Certificate automation (v3.2+ features)
 	AcmeProviders []*models.AcmeProvider // acme sections for Let's Encrypt/ACME automation
-
-	// Enterprise Edition standalone sections (EE only)
-	// These are nil when parsed by CE parser.
-
-	UDPLBs          []*v32ee.UdpLbBase      // udp-lb sections
-	WAFGlobal       *v32ee.WafGlobal        // waf-global section (singleton)
-	WAFProfiles     []*v32ee.WafProfile     // waf-profile sections
-	BotMgmtProfiles []*v32ee.BotmgmtProfile // botmgmt-profile sections
-	Captchas        []*v32ee.Captcha        // captcha sections
-
-	// Enterprise Edition directives in CE sections (EE only)
-	// These capture EE-specific directives within standard sections.
-	// These are nil when parsed by CE parser.
-
-	// EEFrontends maps frontend name to EE-specific directive data.
-	// Contains filter waf/botmgmt, http-request waf-evaluate/botmgmt-evaluate, etc.
-	EEFrontends map[string]*EEFrontendData
-
-	// EEBackends maps backend name to EE-specific directive data.
-	EEBackends map[string]*EEBackendData
-
-	// EEGlobal holds EE-specific directives from the global section.
-	// Contains maxmind-load, maxmind-cache-size, etc.
-	EEGlobal *EEGlobalData
 
 	// Pointer-based indexes for zero-copy iteration
 	//
@@ -134,8 +71,7 @@ type StructuredConfig struct {
 
 // NewStructuredConfig allocates a StructuredConfig with all pointer-based
 // indexes pre-initialised so callers can write to them without an additional
-// nil-check. EE-specific maps (EEFrontends, EEBackends) are left nil for
-// callers that opt into them.
+// nil-check.
 func NewStructuredConfig() *StructuredConfig {
 	return &StructuredConfig{
 		ServerIndex:         make(map[string]map[string]*models.Server),
@@ -147,77 +83,6 @@ func NewStructuredConfig() *StructuredConfig {
 		UserIndex:           make(map[string]map[string]*models.User),
 		GroupIndex:          make(map[string]map[string]*models.Group),
 	}
-}
-
-// EEFrontendData holds EE-specific directives parsed from a frontend section.
-type EEFrontendData struct {
-	Filters      []*EEFilter
-	HTTPRequests []*EEHTTPRequestAction
-}
-
-// EEBackendData holds EE-specific directives parsed from a backend section.
-type EEBackendData struct {
-	Filters      []*EEFilter
-	HTTPRequests []*EEHTTPRequestAction
-}
-
-// EEGlobalData holds EE-specific directives parsed from the global section.
-type EEGlobalData struct {
-	Directives []*EEGlobalDirective
-}
-
-// EEFilter represents an Enterprise Edition filter directive.
-type EEFilter struct {
-	// Type is the filter type: "waf" or "botmgmt"
-	Type string
-
-	// Name is the filter instance name (for WAF filters)
-	Name string
-
-	// Profile is the profile reference (for botmgmt filters)
-	Profile string
-
-	// RulesFile is the path to rules file (for WAF filters)
-	RulesFile string
-
-	// Learning enables learning mode for WAF filters
-	Learning bool
-
-	// LogEnabled enables logging for the filter
-	LogEnabled bool
-
-	// Comment is the inline comment
-	Comment string
-}
-
-// EEHTTPRequestAction represents an Enterprise Edition http-request action.
-type EEHTTPRequestAction struct {
-	// Type is the action type: "waf-evaluate" or "botmgmt-evaluate"
-	Type string
-
-	// Profile is the profile name for the action
-	Profile string
-
-	// Cond is the condition type: "if" or "unless"
-	Cond string
-
-	// CondTest is the ACL condition expression
-	CondTest string
-
-	// Comment is the inline comment
-	Comment string
-}
-
-// EEGlobalDirective represents an Enterprise Edition global directive.
-type EEGlobalDirective struct {
-	// Type is the directive type: "maxmind-load", "maxmind-cache-size", etc.
-	Type string
-
-	// Parts contains the directive arguments
-	Parts []string
-
-	// Comment is the inline comment
-	Comment string
 }
 
 // BuildPointerIndex builds a pointer index from a slice of items, keyed by

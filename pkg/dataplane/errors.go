@@ -14,111 +14,7 @@ var ErrValidationCacheHit = errors.New("validation cache hit")
 const (
 	phaseNameSyntax   = "syntax"
 	phaseNameSemantic = "semantic"
-	configTypeCurrent = "current"
-	stageApply        = "apply"
-
-	// stagePostReloadReadback marks a failure to READ BACK the on-disk config
-	// after a verified reload (fetch/transport failure — the pod's state is
-	// unknown, retry re-syncs it).
-	stagePostReloadReadback = "post_reload_readback"
-
-	// stagePostReloadDivergence marks a CONFIRMED read-back divergence: the
-	// on-disk config after a verified reload differs STRUCTURALLY from the
-	// pushed body — a concurrent writer clobbered the file between our write
-	// and the read-back (issue #84). The deploy did not truthfully land;
-	// returning it as an error makes the fast retry redeploy.
-	stagePostReloadDivergence = "post_reload_divergence"
-
-	hintCheckHAProxyLogs = "Check HAProxy logs for detailed error information"
-	hintValidateConfig   = "Validate the configuration with: haproxy -c -f <config>"
 )
-
-// IsPostReloadDivergence reports whether err is (or wraps) the confirmed
-// post-reload read-back divergence failure — the on-disk config structurally
-// diverged from the body a verified reload pushed (issue #84). Callers use it
-// to count divergences (haptic_deploy_runtime_divergence_total) separately
-// from ordinary retryable sync failures.
-func IsPostReloadDivergence(err error) bool {
-	syncErr, ok := errors.AsType[*SyncError](err)
-	return ok && syncErr.Stage == stagePostReloadDivergence
-}
-
-// SyncError represents a synchronization failure with actionable context.
-// It provides detailed information about what stage failed and suggestions
-// for how to fix the problem.
-type SyncError struct {
-	// Stage indicates where the failure occurred. Common values:
-	//   "connect", "parse-current", "parse-desired",
-	//   "compare", "compare_files", "compare_ssl", "compare_ssl_ca", "compare_maps", "compare_crtlists",
-	//   "sync_ssl_pre", "sync_ssl_ca_pre", "sync_files_pre", "sync_maps_pre",
-	//   "apply", "commit", "reload_verification", "auxiliary_reload_verification",
-	//   "post_reload_readback", "post_reload_divergence", "fallback"
-	Stage string
-
-	// Message provides a detailed error description
-	Message string
-
-	// Cause is the underlying error that caused the failure
-	Cause error
-
-	// Hints provides actionable suggestions for fixing the problem
-	Hints []string
-}
-
-// Error implements the error interface.
-func (e *SyncError) Error() string {
-	msg := fmt.Sprintf("%s stage failed: %s", e.Stage, e.Message)
-	if e.Cause != nil {
-		msg += fmt.Sprintf(": %v", e.Cause)
-	}
-	return msg
-}
-
-// Unwrap returns the underlying cause for error unwrapping.
-func (e *SyncError) Unwrap() error {
-	return e.Cause
-}
-
-// ConnectionError represents a failure to connect to the Dataplane API.
-type ConnectionError struct {
-	// Endpoint is the URL that failed to connect
-	Endpoint string
-
-	// Cause is the underlying connection error
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *ConnectionError) Error() string {
-	return fmt.Sprintf("connecting to dataplane API at %s: %v", e.Endpoint, e.Cause)
-}
-
-// Unwrap returns the underlying cause for error unwrapping.
-func (e *ConnectionError) Unwrap() error {
-	return e.Cause
-}
-
-// ParseError represents a configuration parsing failure.
-type ParseError struct {
-	// ConfigType indicates which config failed: "current" or "desired"
-	ConfigType string
-
-	// ConfigSnippet contains the first 200 characters of the problematic config
-	ConfigSnippet string
-
-	// Cause is the underlying parsing error
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *ParseError) Error() string {
-	return fmt.Sprintf("parsing %s configuration: %v", e.ConfigType, e.Cause)
-}
-
-// Unwrap returns the underlying cause for error unwrapping.
-func (e *ParseError) Unwrap() error {
-	return e.Cause
-}
 
 // ValidationError represents semantic validation failure from HAProxy.
 type ValidationError struct {
@@ -154,53 +50,11 @@ type validationPhase struct {
 	message string
 }
 
-var (
-	phaseSyntax   = validationPhase{name: phaseNameSyntax, message: "configuration has syntax errors"}
-	phaseSchema   = validationPhase{name: "schema", message: "configuration violates API schema constraints"}
-	phaseSemantic = validationPhase{name: phaseNameSemantic, message: "configuration has semantic errors"}
-)
+var phaseSemantic = validationPhase{name: phaseNameSemantic, message: "configuration has semantic errors"}
 
 // wrap builds a ValidationError attributing the failure to this phase.
 func (p validationPhase) wrap(cause error) *ValidationError {
 	return &ValidationError{Phase: p.name, Message: p.message, Cause: cause}
-}
-
-// Helper functions to create common error scenarios
-
-// NewConnectionError creates a ConnectionError.
-func NewConnectionError(endpoint string, cause error) *SyncError {
-	return &SyncError{
-		Stage:   "connect",
-		Message: fmt.Sprintf("connecting to dataplane API at %s", endpoint),
-		Cause:   &ConnectionError{Endpoint: endpoint, Cause: cause},
-		Hints: []string{
-			"Verify the dataplane API URL is correct",
-			"Check that HAProxy is running and accessible",
-			"Ensure network connectivity to the HAProxy host",
-			"Verify credentials are correct",
-		},
-	}
-}
-
-// NewParseError creates a ParseError.
-func NewParseError(configType, configSnippet string, cause error) *SyncError {
-	hints := []string{
-		"Check the HAProxy configuration syntax",
-		hintValidateConfig,
-	}
-
-	if configType == configTypeCurrent {
-		hints = append(hints, "The current config from dataplane API may be corrupted")
-	} else {
-		hints = append(hints, "Review the desired configuration for syntax errors")
-	}
-
-	return &SyncError{
-		Stage:   fmt.Sprintf("parse-%s", configType),
-		Message: fmt.Sprintf("parsing %s configuration", configType),
-		Cause:   &ParseError{ConfigType: configType, ConfigSnippet: configSnippet, Cause: cause},
-		Hints:   hints,
-	}
 }
 
 // SimplifyValidationError parses HAProxy validation errors and extracts

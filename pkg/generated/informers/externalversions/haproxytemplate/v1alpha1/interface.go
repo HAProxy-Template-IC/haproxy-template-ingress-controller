@@ -32,6 +32,8 @@ type Interface interface {
 	HAProxyMapFiles() HAProxyMapFileInformer
 	// HAProxyTemplateConfigs returns a HAProxyTemplateConfigInformer.
 	HAProxyTemplateConfigs() HAProxyTemplateConfigInformer
+	// HAProxyTemplateLibraries returns a HAProxyTemplateLibraryInformer.
+	HAProxyTemplateLibraries() HAProxyTemplateLibraryInformer
 }
 
 type version struct {
@@ -68,4 +70,9 @@ func (v *version) HAProxyMapFiles() HAProxyMapFileInformer {
 // HAProxyTemplateConfigs returns a HAProxyTemplateConfigInformer.
 func (v *version) HAProxyTemplateConfigs() HAProxyTemplateConfigInformer {
 	return &hAProxyTemplateConfigInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// HAProxyTemplateLibraries returns a HAProxyTemplateLibraryInformer.
+func (v *version) HAProxyTemplateLibraries() HAProxyTemplateLibraryInformer {
+	return &hAProxyTemplateLibraryInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

@@ -29,7 +29,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
@@ -100,7 +99,7 @@ type RenderResult struct {
 // RenderService is a pure service that transforms stores into HAProxy configuration.
 //
 // This service uses absolute paths from the config's Dataplane settings to ensure
-// rendered configs reference files at the correct locations where DataPlane API
+// rendered configs reference files at the correct locations where the agent
 // stores auxiliary files.
 //
 // Resources in stores are already converted (floats to ints) at storage time,
@@ -130,7 +129,6 @@ type RenderService struct {
 	// Optional dependencies for building render context
 	haproxyPodStore         stores.Store
 	httpStoreComponent      *httpstore.Component
-	currentConfigStore      *currentconfigstore.Store
 	currentAuxFilesProvider func() map[string]string
 
 	// typedResourceTypes maps watched-resource user-names to the
@@ -167,9 +165,6 @@ type RenderServiceConfig struct {
 	// HTTPStoreComponent is the HTTP store for dynamic content (optional).
 	HTTPStoreComponent *httpstore.Component
 
-	// CurrentConfigStore is the store for current deployed config (optional).
-	CurrentConfigStore *currentconfigstore.Store
-
 	// CurrentAuxFilesProvider returns the default auxiliary baseline. The
 	// Coordinator overrides it with a leader-term snapshot for reconciliation.
 	CurrentAuxFilesProvider func() map[string]string
@@ -196,7 +191,7 @@ type RenderServiceConfig struct {
 // directive in the global section, which makes HAProxy resolve paths from the specified
 // base directory regardless of where the config file is located. This works for:
 //   - Local validation: ValidationService replaces baseDir with temp directory
-//   - DataPlane API deployment: baseDir points to where files are stored (e.g., /etc/haproxy)
+//   - Deployment: baseDir points to where the agent writes files (e.g., /etc/haproxy)
 func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 	// Create path resolver with relative paths derived from config.
 	// Use path.Base() to extract just the directory name from absolute paths.
@@ -233,7 +228,6 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		capabilities:            cfg.Capabilities,
 		haproxyPodStore:         cfg.HAProxyPodStore,
 		httpStoreComponent:      cfg.HTTPStoreComponent,
-		currentConfigStore:      cfg.CurrentConfigStore,
 		currentAuxFilesProvider: cfg.CurrentAuxFilesProvider,
 		typedResourceTypes:      cfg.TypedResourceTypes,
 	}

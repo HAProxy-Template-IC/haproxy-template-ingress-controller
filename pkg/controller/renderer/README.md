@@ -20,8 +20,11 @@ svc := renderer.NewRenderService(&renderer.RenderServiceConfig{
     Capabilities:       capabilities,          // from local HAProxy probe
     HAProxyPodStore:    haproxyPodStore,       // optional; needed for {{ controller.haproxy_pods }}
     HTTPStoreComponent: httpStoreComponent,    // optional; needed for {{ http.Fetch(...) }}
-    CurrentConfigStore: currentConfigStore,    // optional; needed for slot-aware server assignment
 })
+
+// The servers templates read as `currentConfig` for slot-aware assignment come
+// from the plan the fleet ACKed (SetAckedPlan), or the last reconcile render
+// until a pod ACKs one — the renderer holds them in memory, no config field.
 
 result, err := svc.Render(ctx, storeProvider) // *RenderResult, error
 ```

@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
@@ -868,15 +869,14 @@ func TestRunner_RunTests_WithCurrentConfig(t *testing.T) {
 				Fixtures: map[string][]runtime.RawExtension{
 					"services": {},
 				},
-				// Provide a currentConfig with backends for the template to read
-				CurrentConfig: `
-backend my-backend-1
-    server srv1 10.0.0.1:8080
-
-backend my-backend-2
-    server srv2 10.0.0.2:8080
-    server srv3 10.0.0.3:8080
-`,
+				// Declare the servers of a previous deployment for the template to read
+				CurrentServers: map[string]map[string]v1alpha1.ServerAddr{
+					"my-backend-1": {"srv1": {Address: "10.0.0.1", Port: ptr.To(int64(8080))}},
+					"my-backend-2": {
+						"srv2": {Address: "10.0.0.2", Port: ptr.To(int64(8080))},
+						"srv3": {Address: "10.0.0.3", Port: ptr.To(int64(8080))},
+					},
+				},
 				Assertions: []v1alpha1.ValidationAssertion{
 					{
 						Type:        "contains",
@@ -940,15 +940,13 @@ backend my-backend-2
 	assert.Contains(t, testResult.RenderedConfig, "Previous backend: my-backend-2")
 }
 
-// currentServers is the structured replacement for the currentConfig text: the
-// same server index reaches templates without a config parse in between.
+// currentServers is how a test declares the previous deployment: the server
+// index reaches templates with no config parse in between.
 func TestRunner_RunTests_WithCurrentServers(t *testing.T) {
 	port := int64(8080)
 	tests := []struct {
 		name           string
 		currentServers map[string]map[string]v1alpha1.ServerAddr
-		currentConfig  string
-		wantPassed     bool
 		wantError      string
 	}{
 		{
@@ -957,15 +955,6 @@ func TestRunner_RunTests_WithCurrentServers(t *testing.T) {
 				"my-backend-1": {"srv1": {Address: "10.0.0.1", Port: &port}},
 				"my-backend-2": {"srv2": {Address: "10.0.0.2", Port: &port}},
 			},
-			wantPassed: true,
-		},
-		{
-			name: "declaring both fixtures is rejected rather than silently ignored",
-			currentServers: map[string]map[string]v1alpha1.ServerAddr{
-				"my-backend-1": {"srv1": {Address: "10.0.0.1", Port: &port}},
-			},
-			currentConfig: "backend my-backend-2\n    server srv2 10.0.0.2:8080\n",
-			wantError:     "sets both currentServers and the deprecated currentConfig",
 		},
 	}
 
@@ -985,7 +974,6 @@ func TestRunner_RunTests_WithCurrentServers(t *testing.T) {
 					"test-currentservers": {
 						Fixtures:       map[string][]runtime.RawExtension{"services": {}},
 						CurrentServers: tt.currentServers,
-						CurrentConfig:  tt.currentConfig,
 						Assertions: []v1alpha1.ValidationAssertion{
 							{Type: "contains", Target: "haproxy.cfg", Pattern: "srv1 at 10\\.0\\.0\\.1"},
 						},

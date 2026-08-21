@@ -22,7 +22,7 @@ import (
 // This event is always coalescible since it represents endpoint state where only the
 // latest set of endpoints matters.
 type HAProxyPodsDiscoveredEvent struct {
-	// Endpoints is the list of discovered HAProxy Dataplane API endpoints.
+	// Endpoints is the list of discovered HAProxy pods, by their agent endpoint.
 	Endpoints []dataplane.Endpoint
 	Count     int
 	timestamped
@@ -69,7 +69,7 @@ func (e *HAProxyPodTerminatedEvent) EventType() string { return EventTypeHAProxy
 
 // HAProxyPodRejectedEvent is published by the discovery component when a
 // candidate HAProxy pod is refused admission. The most common cause is an
-// unsupported DataPlane API or an HAProxy series mismatch with the controller's
+// unreachable agent or an HAProxy series mismatch with the controller's
 // bundled binary. Surfaced via Prometheus
 // (haptic_haproxy_pods_rejected_total{reason}) so operators can alert on
 // "controller refuses to talk to N HAProxy pods" without log-grepping.

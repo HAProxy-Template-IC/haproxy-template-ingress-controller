@@ -902,7 +902,8 @@ func MergeExtraContextInto(renderCtx map[string]any, cfg *config.Config) {
 
 // CapabilitiesToMap converts a Capabilities struct to a template-friendly map.
 // The map uses snake_case keys matching the Capabilities struct field names
-// (e.g., "supports_waf" for SupportsWAF) for consistency with template conventions.
+// (e.g., "supports_crt_list" for SupportsCrtList) for consistency with template
+// conventions.
 func CapabilitiesToMap(caps *dataplane.Capabilities) map[string]any {
 	if caps == nil {
 		return map[string]any{}
@@ -913,31 +914,23 @@ func CapabilitiesToMap(caps *dataplane.Capabilities) map[string]any {
 		"supports_crt_list":        caps.SupportsCrtList,
 		"supports_map_storage":     caps.SupportsMapStorage,
 		"supports_general_storage": caps.SupportsGeneralStorage,
+		"supports_ssl_ca_files":    caps.SupportsSslCaFiles,
+		"supports_ssl_crl_files":   caps.SupportsSslCrlFiles,
 
 		// Configuration capabilities
-		"supports_http2": caps.SupportsHTTP2,
-		"supports_quic":  caps.SupportsQUIC,
+		"supports_http2":              caps.SupportsHTTP2,
+		"supports_quic":               caps.SupportsQUIC,
+		"supports_quic_initial_rules": caps.SupportsQUICInitialRules,
+
+		// Observability capabilities
+		"supports_log_profiles": caps.SupportsLogProfiles,
+		"supports_traces":       caps.SupportsTraces,
+
+		// Certificate automation
+		"supports_acme_providers": caps.SupportsAcmeProviders,
 
 		// Runtime capabilities
 		"supports_runtime_maps":    caps.SupportsRuntimeMaps,
 		"supports_runtime_servers": caps.SupportsRuntimeServers,
-
-		// Enterprise-only capabilities
-		"supports_waf":                     caps.SupportsWAF,
-		"supports_waf_global":              caps.SupportsWAFGlobal,
-		"supports_waf_profiles":            caps.SupportsWAFProfiles,
-		"supports_udp_lb_acls":             caps.SupportsUDPLBACLs,
-		"supports_udp_lb_server_switching": caps.SupportsUDPLBServerSwitchingRules,
-		"supports_keepalived":              caps.SupportsKeepalived,
-		"supports_udp_load_balancing":      caps.SupportsUDPLoadBalancing,
-		"supports_bot_management":          caps.SupportsBotManagement,
-		"supports_git_integration":         caps.SupportsGitIntegration,
-		"supports_dynamic_update":          caps.SupportsDynamicUpdate,
-		"supports_aloha":                   caps.SupportsALOHA,
-		"supports_advanced_logging":        caps.SupportsAdvancedLogging,
-		"supports_ping":                    caps.SupportsPing,
-
-		// Edition detection (convenience flags)
-		"is_enterprise": caps.SupportsWAF, // Any enterprise capability indicates Enterprise edition
 	}
 }

@@ -318,8 +318,7 @@ func (p *publishedAuxFiles) readinessError() error {
 // them. It waits for each initial sync so the snapshot is populated before the
 // first render. The watchers publish no events — they only refresh the snapshot —
 // so they cannot trigger a reconcile loop against the files the controller itself
-// publishes (the same contract as the HAProxyCfg watcher in
-// setupCurrentConfigStore).
+// publishes.
 func setupPublishedAuxFilesStore(
 	setup *componentSetup,
 	k8sClient *client.Client,

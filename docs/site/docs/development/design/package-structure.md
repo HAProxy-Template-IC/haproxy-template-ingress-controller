@@ -23,9 +23,8 @@ haptic/
 │   ├── core/                # Shared primitives (config parsing, logging setup)
 │   ├── events/              # Generic EventBus and request/response plumbing
 │   │   └── ringbuffer/      # Thread-safe generic ring buffer (event history)
-│   ├── generated/           # Code generation output (clientset, informers, listers,
-│   │                        #   DataPlane API clients per HAProxy version, zero-alloc
-│   │                        #   OpenAPI validators)
+│   ├── generated/           # Code generation output (clientset, informers, listers;
+│   │                        #   plus the playground-only OpenAPI validators)
 │   ├── httpstore/           # Fetches and caches HTTP resources referenced from templates
 │   ├── introspection/       # /debug/vars HTTP infrastructure (registry, JSONPath, pprof)
 │   ├── k8s/                 # Pure Kubernetes integration library
@@ -43,19 +42,21 @@ haptic/
 │   ├── metrics/             # Instance-based Prometheus registry + /metrics server
 │   ├── stores/              # Store overlays/providers used for webhook dry-run validation
 │   ├── templating/          # Scriggo-based template engine (pure)
-│   ├── dataplane/           # HAProxy Dataplane API integration (pure)
-│   │   ├── auxiliaryfiles/  # 3-phase sync of general files, SSL, SSL-CA, maps, crt-list
-│   │   ├── client/          # HTTP client with transaction lifecycle + per-version dispatcher
-│   │   ├── comparator/      # Fine-grained config comparison (per-section logic)
-│   │   │   └── sections/    # Section factories
-│   │   │       # Operations are descriptors only; execution is raw-push via orchestrator
-│   │   ├── parser/          # client-native wrapper for syntax parsing
-│   │   │   └── enterprise/  # Enterprise section extensions
-│   │   # Operation execution lives in the top-level orchestrator*.go files
-│   │   └── validators/      # Per-model validators generated from OpenAPI specs
-│   │   # Public types (Endpoint, SyncOptions, AuxiliaryFiles, SyncResult,
-│   │   # Capabilities, Version, ValidationPaths) live at the top level —
-│   │   # there is no pkg/dataplane/types subpackage.
+│   ├── dataplane/           # The path from a render to a running HAProxy (pure)
+│   │   ├── renderplan/      # What a render declares: sections, backends, maps, files
+│   │   ├── deployplan/      # What one pod has to do to reach a render
+│   │   ├── agent/           # The HAPTIC agent and its wire contract
+│   │   │   ├── api/         #   the contract, compiled by both ends
+│   │   │   ├── client/      #   the controller's end: State + streaming Apply
+│   │   │   ├── server/      #   the agent: HTTP surface, state machine, transaction
+│   │   │   ├── files/       #   the file tree it owns: mounts, journal, temp+rename
+│   │   │   └── cli/         #   typed ops → HAProxy runtime commands
+│   │   ├── auxiliaryfiles/  # The auxiliary-file types a render produces
+│   │   ├── parser/          # playground-only: client-native syntax parse
+│   │   └── validators/      # playground-only: per-model OpenAPI validators
+│   │   # Public types (Endpoint, AuxiliaryFiles, Capabilities, Version,
+│   │   # ValidationPaths) live at the top level — there is no
+│   │   # pkg/dataplane/types subpackage.
 │   ├── webhook/             # HTTP server shared by validating webhook and health probes
 │   └── controller/          # Event-driven orchestration (adapters + components)
 │       ├── component/       # Shared event-loop scaffold embedded by most components
@@ -69,7 +70,6 @@ haptic/
 │       ├── conversion/      # Converts CRD types <-> internal config structs
 │       ├── crdwatch/        # Reinitializes the controller when watched-resource CRDs change
 │       ├── credentialsloader/ # Parses dataplane credentials from Secret
-│       ├── currentconfigstore/ # Caches the last-deployed HAProxy config for templates
 │       ├── debug/           # Controller-specific introspection Vars
 │       ├── deployer/        # Scheduler + per-instance deployer + drift-prevention monitor
 │       ├── discovery/       # HAProxy pod discovery
@@ -135,7 +135,7 @@ The packages form a DAG, enforced at build time by `arch-go.yml`:
 
 **Single-resource vs. bulk watching.** `pkg/k8s/watcher` provides `Watcher` (collections, debounced) and `SingleWatcher` (one named resource, immediate callbacks) so the `HAProxyTemplateConfig` CRD and credentials Secret don't pay indexing overhead.
 
-**Three-phase HAProxy validation.** `pkg/dataplane` exposes context-aware validation that runs (1) the client-native parser for syntax, (2) OpenAPI schema validation against the version-specific DataPlane API spec, and (3) the `haproxy -c` binary check for semantics. Results are cached by `(configHash, auxHash, versionHash)` so the same rendered output isn't re-validated during drift-prevention. The caller supplies `*ValidationPaths` (Maps/SSL/General/CRTList directories); `validateSemantics` clears those directories, writes the auxiliary files there, and serialises the binary through a cancellable gate. The `pkg/controller/validation.ValidationService` wrapper additionally allocates a per-call `os.MkdirTemp` and rewrites the rendered config's `default-path origin <baseDir>` to point at it before delegating, so the production HAProxy directories are never touched.
+**HAProxy validation.** `pkg/dataplane` exposes context-aware validation: HAProxy's own `haproxy -c` verdict, which is what decides whether a configuration loads. Nothing in production parses the configuration itself (see [ADR-0022](https://gitlab.com/haproxy-haptic/haptic/blob/main/docs/adr/0022-haptic-agent.md)); the syntax + schema parse survives only behind the `playground` build tag, for the browser playground that has no HAProxy binary. Results are cached by `(configHash, auxHash)` so the same rendered output isn't re-validated during drift-prevention. The caller supplies `*ValidationPaths` (Maps/SSL/General/CRTList directories); `validateSemantics` clears those directories, writes the auxiliary files there, and serialises the binary through a cancellable gate. The `pkg/controller/validation.ValidationService` wrapper additionally allocates a per-call `os.MkdirTemp` and rewrites the rendered config's `default-path origin <baseDir>` to point at it before delegating, so the production HAProxy directories are never touched.
 
 **Component lifecycle.** `pkg/lifecycle` centralises registration, dependency ordering, leader-only flags, and health tracking; the controller registers every component there instead of starting goroutines directly.
 

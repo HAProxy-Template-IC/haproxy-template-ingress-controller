@@ -31,6 +31,7 @@ type HaproxyTemplateICV1alpha1Interface interface {
 	HAProxyGeneralFilesGetter
 	HAProxyMapFilesGetter
 	HAProxyTemplateConfigsGetter
+	HAProxyTemplateLibrariesGetter
 }
 
 // HaproxyTemplateICV1alpha1Client is used to interact with features provided by the haproxy-haptic.org group.
@@ -56,6 +57,10 @@ func (c *HaproxyTemplateICV1alpha1Client) HAProxyMapFiles(namespace string) HAPr
 
 func (c *HaproxyTemplateICV1alpha1Client) HAProxyTemplateConfigs(namespace string) HAProxyTemplateConfigInterface {
 	return newHAProxyTemplateConfigs(c, namespace)
+}
+
+func (c *HaproxyTemplateICV1alpha1Client) HAProxyTemplateLibraries(namespace string) HAProxyTemplateLibraryInterface {
+	return newHAProxyTemplateLibraries(c, namespace)
 }
 
 // NewForConfig creates a new HaproxyTemplateICV1alpha1Client for the given config.

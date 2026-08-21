@@ -26,6 +26,7 @@ fail=0
 #   acceptance           -> `make test-acceptance`              [CI: test-acceptance]
 #   gateway_conformance  -> `make test-gateway-conformance`     [CI: test-gateway-conformance]
 #   ingress_conformance  -> `make test-ingress-conformance`     [CI: test-ingress-conformance]
+#   playground           -> `make test-playground`              [CI: test]
 
 while IFS= read -r f; do
   # First //go:build line, stripped to the expression.
@@ -51,6 +52,11 @@ while IFS= read -r f; do
           echo "UNWIRED: $f (tag: '${tag:-none}') — files under tests/conformance/ must carry gateway_conformance or ingress_conformance (or a negation of one) so a conformance job compiles them"
           fail=1; continue ;;
       esac ;;
+    pkg/dataplane/parser/*|pkg/dataplane/validators/*|pkg/dataplane/validate_syntax_test.go|pkg/dataplane/validate_schema_test.go|pkg/generated/validators/*)
+      # The client-native syntax + schema check the browser playground answers
+      # `haproxy_valid` with. No production binary may link it, so it carries
+      # the `playground` tag and `make test-playground` is its runner.
+      want="playground" ;;
     *)
       # Unit tests (pkg/, cmd/, tests/*.go, scripts/…): run by `make test`
       # (plain `go test ./...`), which only compiles files whose build

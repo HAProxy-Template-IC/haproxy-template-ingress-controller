@@ -10,7 +10,6 @@ package dataplane
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -173,59 +172,6 @@ func TestAuxiliaryFiles_Sort_HandlesEmptyAndSingleElement(t *testing.T) {
 				"Sort must handle empty/nil slices without panicking")
 		})
 	}
-}
-
-// SyncOptions defaults are part of the dataplane public contract.
-// DefaultSyncOptions has safety-relevant defaults that, if changed
-// silently, would alter production sync behaviour:
-//
-//   - DefaultSyncOptions.VerifyReload=true — operators rely on this to
-//     detect failed reloads. Flipping to false would silently mask
-//     regressions where HAProxy rejects the new config but Kubernetes
-//     keeps routing traffic.
-//   - DefaultSyncOptions.ReloadVerificationTimeout=10s — values higher
-//     than this serialize sync behind reloads; lower values race with
-//     the DataPlane API's own reload-delay setting.
-//
-// Pin every safety-relevant default so a regression in DefaultSyncOptions
-// surfaces immediately.
-func TestSyncOptions_Default_SafetyContracts(t *testing.T) {
-	t.Run("DefaultSyncOptions pins safety-relevant defaults", func(t *testing.T) {
-		opts := DefaultSyncOptions()
-		require.NotNil(t, opts)
-
-		// VerifyReload MUST default to true — operators rely on
-		// reload-status polling to detect HAProxy rejecting the new
-		// config. Flipping this would silently mask production
-		// regressions.
-		assert.True(t, opts.VerifyReload,
-			"VerifyReload MUST default to true so operators detect "+
-				"failed reloads — flipping it would silently mask "+
-				"production regressions where HAProxy rejects the new "+
-				"config but Kubernetes keeps routing traffic")
-
-		// 10s is the documented contract — values higher than this
-		// serialize sync behind reloads, lower values race with the
-		// DataPlane API's reload-delay.
-		assert.Equal(t, 10*time.Second, opts.ReloadVerificationTimeout,
-			"ReloadVerificationTimeout MUST default to 10s — higher "+
-				"serializes sync behind reloads, lower races the "+
-				"DataPlane API's reload-delay setting")
-	})
-
-	t.Run("DefaultSyncOptions returns independent instances", func(t *testing.T) {
-		// Both functions must return fresh structs — if they shared
-		// a backing struct, callers mutating one would silently
-		// affect the other (and the very next caller would see the
-		// mutation). This is the kind of bug that's near-impossible
-		// to trace.
-		a := DefaultSyncOptions()
-		b := DefaultSyncOptions()
-		require.NotSame(t, a, b,
-			"DefaultSyncOptions MUST return a fresh struct per call — "+
-				"shared instances would let callers silently mutate "+
-				"the defaults seen by the next caller")
-	})
 }
 
 // snapshot captures only the identifier fields (which Sort uses) so

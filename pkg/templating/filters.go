@@ -28,7 +28,8 @@ import (
 // See: github.com/haproxytech/client-native/v6/misc/stringutil.go (lines 220-245).
 var sanitizeStorageNameRegex = regexp.MustCompile(`[^a-zA-Z0-9_\-]+`)
 
-// sanitizeStorageName sanitizes a filename for HAProxy Dataplane API storage.
+// sanitizeStorageName reduces a filename to HAPTIC's own certificate and
+// crt-list naming convention.
 // The client-native library replaces ALL non-alphanumeric characters (except underscore and hyphen)
 // with underscores in the basename, preserving the extension.
 //
@@ -62,7 +63,7 @@ func sanitizeStorageName(name string) string {
 // The paths are relative (maps/, ssl/, files/) and rely on HAProxy's
 // "default-path origin <BaseDir>" directive to resolve to absolute locations.
 // This enables the same rendered config to work for both local validation
-// and DataPlane API deployment.
+// and deployment onto the pod.
 type PathResolver struct {
 	// BaseDir is the absolute base path for HAProxy auxiliary files.
 	// This is used with "default-path origin" in HAProxy's global section

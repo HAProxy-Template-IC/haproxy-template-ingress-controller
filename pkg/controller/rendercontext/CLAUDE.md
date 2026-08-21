@@ -81,7 +81,7 @@ marked "optional"):
 | `WithStores(map[string]stores.Store)` | Resource stores keyed by watched-resource name; ends up in `resources`; API-backed reads use the `NewBuilder` context |
 | `WithHAProxyPodStore(stores.Store)` | HAProxy pod store; ends up in `controller["haproxy_pods"]` |
 | `WithHTTPFetcher(templating.HTTPFetcher)` | Wires the `http` runtime variable so templates can call `http.Fetch(...)` |
-| `WithCurrentConfig(*renderplan.CurrentConfig)` | Adds `currentConfig` to the context so templates can reason about the running servers; nil on the first deployment. Production feeds it from the last render's plan plus `currentconfigstore`; the testrunner builds it from a test's `currentServers:` fixture, or from the deprecated `currentConfig:` text via `currentconfigstore.CurrentConfigFrom` |
+| `WithCurrentConfig(*renderplan.CurrentConfig)` | Adds `currentConfig` to the context so templates can reason about the running servers; nil on the first deployment. Production feeds it from the plan the fleet ACKed (or the last reconcile render until a pod ACKs), projected via `plan.CurrentConfig()`; the testrunner builds it from a test's `currentServers:` fixture |
 | `WithCapabilities(dataplane.Capabilities)` | Sets the HAProxy version capabilities exposed under `capabilities`. The testrunner passes the detected local capabilities so `controller validate` matches production; omit it and `Build()` still populates an all-false map |
 
 `extraContext` is **not** an option — `Build()` reads `cfg.TemplatingSettings.ExtraContext`

@@ -2,7 +2,6 @@ package dataplane
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,15 +50,6 @@ func TestEndpoint_HasCachedVersion(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
-}
-
-func TestDefaultSyncOptions(t *testing.T) {
-	opts := DefaultSyncOptions()
-
-	require.NotNil(t, opts)
-	assert.Equal(t, 2*time.Minute, opts.Timeout)
-	assert.True(t, opts.VerifyReload)
-	assert.Equal(t, 10*time.Second, opts.ReloadVerificationTimeout)
 }
 
 func TestDefaultAuxiliaryFiles(t *testing.T) {

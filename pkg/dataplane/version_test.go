@@ -5,8 +5,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
 func TestVersion_Compare(t *testing.T) {
@@ -134,84 +132,8 @@ func TestParseHAProxyVersionOutput(t *testing.T) {
 	}
 }
 
-func TestVersionFromAPIInfo(t *testing.T) {
-	tests := []struct {
-		name        string
-		info        *client.VersionInfo
-		wantMajor   int
-		wantMinor   int
-		wantFull    string
-		expectError bool
-	}{
-		{
-			name: "standard API version",
-			info: &client.VersionInfo{
-				API: struct {
-					Version string `json:"version"`
-				}{Version: "v3.2.6 87ad0bcf"},
-			},
-			wantMajor: 3,
-			wantMinor: 2,
-			wantFull:  "v3.2.6 87ad0bcf",
-		},
-		{
-			name: "API version without commit hash",
-			info: &client.VersionInfo{
-				API: struct {
-					Version string `json:"version"`
-				}{Version: "v3.0.0"},
-			},
-			wantMajor: 3,
-			wantMinor: 0,
-			wantFull:  "v3.0.0",
-		},
-		{
-			name: "API version 3.1",
-			info: &client.VersionInfo{
-				API: struct {
-					Version string `json:"version"`
-				}{Version: "v3.1.2 abc123"},
-			},
-			wantMajor: 3,
-			wantMinor: 1,
-			wantFull:  "v3.1.2 abc123",
-		},
-		{
-			name:        "nil info",
-			info:        nil,
-			expectError: true,
-		},
-		{
-			name: "empty version string",
-			info: &client.VersionInfo{
-				API: struct {
-					Version string `json:"version"`
-				}{Version: ""},
-			},
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ver, err := VersionFromAPIInfo(tt.info)
-
-			if tt.expectError {
-				require.Error(t, err)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantMajor, ver.Major)
-			assert.Equal(t, tt.wantMinor, ver.Minor)
-			assert.Equal(t, tt.wantFull, ver.Full)
-		})
-	}
-}
-
 // TestParseVersionParts exercises the dotted major.minor[.patch] split through
-// the public ParseVersionString wrapper (the former private parseVersionParts
-// helper was collapsed into client.ParseVersion).
+// the public ParseVersionString wrapper.
 func TestParseVersionParts(t *testing.T) {
 	tests := []struct {
 		name        string

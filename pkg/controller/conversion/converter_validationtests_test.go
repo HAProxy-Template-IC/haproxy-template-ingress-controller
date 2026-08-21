@@ -27,7 +27,7 @@ import (
 //
 // Pin every contract:
 //   - empty input yields an empty (non-nil) map (callers iterate)
-//   - simple fields (Description, CurrentConfig, MinHAProxyVersion)
+//   - simple fields (Description, MinHAProxyVersion)
 //     are copied verbatim
 //   - nested fixtures / HTTP fixtures / assertions flow through to
 //     the per-helper converters
@@ -51,7 +51,6 @@ func TestConvertValidationTests(t *testing.T) {
 		in := map[string]v1alpha1.ValidationTest{
 			"basic": {
 				Description:       "smoke test",
-				CurrentConfig:     "global\n  daemon\n",
 				MinHAProxyVersion: "3.0",
 				Requires:          []string{"httproutes"},
 				RequiresFields:    []string{"httproutes.spec.rules.filters.cors"},
@@ -64,7 +63,6 @@ func TestConvertValidationTests(t *testing.T) {
 
 		test := got["basic"]
 		assert.Equal(t, "smoke test", test.Description)
-		assert.Equal(t, "global\n  daemon\n", test.CurrentConfig)
 		assert.Equal(t, "3.0", test.MinHAProxyVersion)
 		assert.Equal(t, []string{"httproutes"}, test.Requires)
 		assert.Equal(t, []string{"httproutes.spec.rules.filters.cors"}, test.RequiresFields)

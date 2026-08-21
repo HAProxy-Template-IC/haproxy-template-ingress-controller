@@ -29,7 +29,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	ctrlconfigpublisher "gitlab.com/haproxy-haptic/haptic/pkg/controller/configpublisher"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/deployer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/discovery"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/eventemitter"
@@ -119,11 +118,11 @@ func leadershipFence(setup *componentSetup, cfg *coreconfig.Config, k8sClient *c
 // haproxyVersion for both images, so the seed is right on a healthy fleet and
 // only an in-flight upgrade moves it.
 func detectLocalCapabilities(ctx context.Context, logger *slog.Logger) (
-	*dataplane.Version, *renderer.CapabilitiesFanout, error,
+	*renderer.CapabilitiesFanout, error,
 ) {
 	localVersion, err := dataplane.DetectLocalVersionContext(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("detecting local HAProxy version: %w", err)
+		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
 	}
 	capabilities := renderer.NewCapabilitiesFanout(dataplane.CapabilitiesFromVersion(localVersion))
 
@@ -133,7 +132,7 @@ func detectLocalCapabilities(ctx context.Context, logger *slog.Logger) (
 		"supports_crt_list", local.SupportsCrtList,
 		"supports_map_storage", local.SupportsMapStorage,
 		"supports_general_storage", local.SupportsGeneralStorage)
-	return localVersion, capabilities, nil
+	return capabilities, nil
 }
 
 // createReconciliationComponents creates all reconciliation components and
@@ -147,7 +146,6 @@ func createReconciliationComponents(
 	crd *v1alpha1.HAProxyTemplateConfig,
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
-	currentConfigStore *currentconfigstore.Store,
 	currentFiles *currentFilesAuthority,
 	storeProvider stores.StoreProvider,
 	outputValidator pipeline.RenderedOutputValidator,
@@ -160,7 +158,7 @@ func createReconciliationComponents(
 	reconcilerComponent := reconciler.New(setup.Bus, logger)
 
 	// The controller image's own HAProxy binary seeds the template
-	localVersion, capabilities, err := detectLocalCapabilities(setup.IterCtx, logger)
+	capabilities, err := detectLocalCapabilities(setup.IterCtx, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +196,6 @@ func createReconciliationComponents(
 		Capabilities:       capabilities.Capabilities(),
 		HAProxyPodStore:    haproxyPodStore,
 		HTTPStoreComponent: httpStoreComponent,
-		CurrentConfigStore: currentConfigStore,
 		TypedResourceTypes: wiring.TypedResourceTypes,
 	})
 
@@ -207,7 +204,7 @@ func createReconciliationComponents(
 	// HAProxy's verdict on them arrives from the render gate (ADR-0022). The
 	// proposal instance answers an admission request, which must carry the
 	// verdict in its own reply, so it keeps the full synchronous check.
-	proposalValidation := newProposalValidator(cfg, localVersion, logger)
+	proposalValidation := newProposalValidator(cfg, logger)
 	reconcilePipeline := pipeline.New(&pipeline.PipelineConfig{
 		Renderer:        renderService,
 		OutputValidator: outputValidator,
@@ -244,7 +241,7 @@ func createReconciliationComponents(
 	renderGateComponent := rendergate.New(&rendergate.Config{
 		EventBus: setup.Bus,
 		Logger:   logger,
-		Checker:  rendergate.ServiceChecker{Service: newRenderGateValidator(cfg, localVersion, logger)},
+		Checker:  rendergate.ServiceChecker{Service: newRenderGateValidator(cfg, logger)},
 		Metrics:  setup.MetricsComponent.Metrics(),
 	})
 
@@ -366,28 +363,23 @@ func registerLifecycleComponents(reg *lifecycle.Registry, allReplica, leaderOnly
 	}
 }
 
-// newRenderGateValidator builds the render gate's validation service: only
-// `haproxy -c -dr`, on a gate of its own.
+// newRenderGateValidator builds the render gate's validation service: the
+// `haproxy -c -dr` run, on a gate of its own.
 //
 // `-dr` matches the shipped pod and today's reconcile path — a DNS blip must
-// never revert a fleet. Syntax and schema are dropped because HAProxy's verdict
-// is a strict superset for loadability and nothing downstream reads the parse
-// (ADR-0022). The gate's own CheckGate keeps the webhook's 9 s failurePolicy:
-// Fail budget clear of it, and its duty-cycle interval bounds the CPU a render
-// storm can take from admission.
-func newRenderGateValidator(cfg *coreconfig.Config, localVersion *dataplane.Version, logger *slog.Logger) *validation.ValidationService {
+// never revert a fleet. The gate's own CheckGate keeps the webhook's 9 s
+// failurePolicy: Fail budget clear of it, and its duty-cycle interval bounds
+// the CPU a render storm can take from admission.
+func newRenderGateValidator(cfg *coreconfig.Config, logger *slog.Logger) *validation.ValidationService {
 	dirConfig := extractValidationDirConfig(&cfg.Dataplane)
 	return validation.NewValidationService(&validation.ValidationServiceConfig{
-		Logger:              logger.With("validation", "rendergate"),
-		Version:             localVersion,
-		SkipDNSValidation:   true,
-		SkipSyntaxAndSchema: true,
-		DiscardParsedConfig: true,
-		CheckGate:           dataplane.NewCheckGate(cfg.Controller.GetRenderGateInterval()),
-		BaseDir:             dirConfig.BaseDir,
-		MapsDir:             dirConfig.MapsDir,
-		SSLCertsDir:         dirConfig.SSLCertsDir,
-		GeneralDir:          dirConfig.GeneralDir,
+		Logger:            logger.With("validation", "rendergate"),
+		SkipDNSValidation: true,
+		CheckGate:         dataplane.NewCheckGate(cfg.Controller.GetRenderGateInterval()),
+		BaseDir:           dirConfig.BaseDir,
+		MapsDir:           dirConfig.MapsDir,
+		SSLCertsDir:       dirConfig.SSLCertsDir,
+		GeneralDir:        dirConfig.GeneralDir,
 	})
 }
 
@@ -398,13 +390,11 @@ func newRenderGateValidator(cfg *coreconfig.Config, localVersion *dataplane.Vers
 // and brings it up when the next health check resolves).
 func newProposalValidator(
 	cfg *coreconfig.Config,
-	localVersion *dataplane.Version,
 	logger *slog.Logger,
 ) *validation.ValidationService {
 	dirConfig := extractValidationDirConfig(&cfg.Dataplane)
 	return validation.NewValidationService(&validation.ValidationServiceConfig{
 		Logger:            logger.With("validation", "full"),
-		Version:           localVersion,
 		SkipDNSValidation: true,
 		BaseDir:           dirConfig.BaseDir,
 		MapsDir:           dirConfig.MapsDir,

@@ -27,7 +27,6 @@ import (
 	"k8s.io/client-go/restmapper"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
@@ -239,9 +238,8 @@ func createDryRunValidator(
 
 	// Admission wrappers reuse matching HTTP content and stage other sources per render.
 	//
-	// HAProxyPodStore and CurrentConfigStore intentionally remain nil:
-	// the webhook validates hypothetical future state, not what's
-	// currently deployed.
+	// HAProxyPodStore intentionally remains nil: the webhook validates
+	// hypothetical future state, not what's currently deployed.
 	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
 		Engine:             wiring.engine,
 		Config:             cfg,
@@ -265,13 +263,12 @@ func createDryRunValidator(
 	// Use strict DNS validation for webhook (catch DNS issues before admission)
 	dirConfig := extractValidationDirConfig(&cfg.Dataplane)
 	validationService := validation.NewValidationService(&validation.ValidationServiceConfig{
-		Logger:              logger,
-		SkipDNSValidation:   false, // Strict mode for webhook validation
-		BaseDir:             dirConfig.BaseDir,
-		MapsDir:             dirConfig.MapsDir,
-		SSLCertsDir:         dirConfig.SSLCertsDir,
-		GeneralDir:          dirConfig.GeneralDir,
-		DiscardParsedConfig: true,
+		Logger:            logger,
+		SkipDNSValidation: false, // Strict mode for webhook validation
+		BaseDir:           dirConfig.BaseDir,
+		MapsDir:           dirConfig.MapsDir,
+		SSLCertsDir:       dirConfig.SSLCertsDir,
+		GeneralDir:        dirConfig.GeneralDir,
 	})
 
 	return buildDryRunValidator(bus, renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, cfg.WatchedResources, wiring.publishedCurrentFiles.get, logger)
@@ -346,13 +343,12 @@ func setupReconciliation(
 	creds *coreconfig.Credentials,
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
-	currentConfigStore *currentconfigstore.Store,
 	currentFiles *currentFilesAuthority,
 	storeProvider stores.StoreProvider,
 	outputValidator pipeline.RenderedOutputValidator,
 	logger *slog.Logger,
 ) (*reconciliationWiring, error) {
-	wiring, err := createReconciliationComponents(setup, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, currentFiles, storeProvider, outputValidator, logger)
+	wiring, err := createReconciliationComponents(setup, cfg, crd, k8sClient, resourceWatcher, currentFiles, storeProvider, outputValidator, logger)
 	if err != nil {
 		return nil, err
 	}

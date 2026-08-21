@@ -152,7 +152,7 @@ func deployTo(t *testing.T, component *Component, bus *deployerBus, plan *render
 	config string, aux *dataplane.AuxiliaryFiles, reason string, endpoints ...dataplane.Endpoint,
 ) *events.DeploymentCompletedEvent {
 	t.Helper()
-	event := events.NewDeploymentScheduledEvent(config, aux, nil, endpoints,
+	event := events.NewDeploymentScheduledEvent(config, aux, endpoints,
 		"rt-cfg-1", "haptic", reason, "checksum-"+plan.ID, plan, plan.ID, nil, true)
 	component.deployToEndpoints(context.Background(), func() {}, event, "deployment-"+plan.ID)
 	return testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, bus.Events, testutil.LongTimeout)
@@ -641,7 +641,7 @@ func TestApply_RenderWithoutAPlanFailsLoudly(t *testing.T) {
 	bus := newTestBus(t)
 	component := createTestDeployer(bus.EventBus)
 
-	event := events.NewDeploymentScheduledEvent("config", nil, nil,
+	event := events.NewDeploymentScheduledEvent("config", nil,
 		[]dataplane.Endpoint{agentEndpoint(agent, "haproxy-0")},
 		"rt-cfg-1", "haptic", "config_validation", "checksum", nil, "", nil, true)
 	component.deployToEndpoints(context.Background(), func() {}, event, "deployment-1")

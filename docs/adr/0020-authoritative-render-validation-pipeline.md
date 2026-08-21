@@ -5,11 +5,13 @@
 Accepted 2026-08-10. Supersedes ADR-0016's strict-first/fast-later validation
 implementation; its other decisions stand.
 
-[ADR-0022](0022-haptic-agent.md) supersedes decision steps 1 to 3 — the syntax
-parse, the schema check and the synchronous `haproxy -c` — for the reconcile
-path only: that render is now render-only, and the same `haproxy -c` runs
-asynchronously in `rendergate`. The webhook and the config-load gate keep every
-step of this ADR.
+[ADR-0022](0022-haptic-agent.md) supersedes decision steps 1 and 2 — the syntax
+parse and the schema check — for every caller: no production binary parses
+HAProxy configuration any more, and `haproxy -c` is a strict superset of both
+for loadability. It supersedes step 3, the synchronous `haproxy -c`, on the
+reconcile path only: that render is now render-only, and the same check runs
+asynchronously in `rendergate`. The webhook and the config-load gate keep step
+3, and step 4 (the pluggable output validators) is unchanged everywhere.
 
 ## Context
 

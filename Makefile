@@ -19,7 +19,6 @@ GOLANGCI_LINT_VERSION := v2.12.2
 GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck
 ARCH_GO := $(shell which arch-go 2>/dev/null || echo "$(GO) run github.com/arch-go/arch-go/v2")
-OAPI_CODEGEN := $(GO) run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 CONTROLLER_GEN := $(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen
 
 # Docker variables
@@ -109,6 +108,10 @@ else
 	$(GOLANGCI_LINT) run \
 		./cmd/... ./examples/... ./pkg/... ./tests/... ./tools/...
 endif
+	@echo "Running golangci-lint over the playground-tagged files..."
+	$(GOLANGCI_LINT) run --build-tags=playground ./pkg/dataplane/... ./pkg/generated/validators/...
+	@echo "Checking no production binary links a HAProxy config parser..."
+	./scripts/check-client-native-free.sh
 	@echo "Running arch-go..."
 	$(ARCH_GO)
 	@echo "Running event immutability checker..."
@@ -278,6 +281,15 @@ test: ## Run tests
 	# error). Whole-module coverage instrumentation makes the variants
 	# consistent.
 	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -cover -coverpkg=./... ./...
+	@$(MAKE) test-playground
+
+# The `playground` tag builds the client-native syntax + schema check that the
+# browser playground answers `haproxy_valid` with. Nothing else may import it
+# (depguard + check-client-native-free.sh), so its tests need their own run.
+test-playground: ## Run the playground-tagged tests (client-native syntax + schema check)
+	@echo "Running playground-tagged tests..."
+	$(GO) tool gotestsum --junitfile report-playground.xml --format testname -- \
+		-tags=playground -race ./pkg/dataplane/... ./pkg/generated/validators/...
 
 test-integration: ## Run integration tests (requires kind cluster)
 	@echo "Running integration tests..."
@@ -872,14 +884,25 @@ verify: ## Verify dependencies
 verify-generate: ## Verify generated code (CRDs, DeepCopy) is up-to-date
 	@echo "Verifying generated code is up-to-date..."
 	@$(MAKE) generate-crds generate-deepcopy
+	@# tests/schemas is the offline --schema-dir. Its HAPTIC CRD copies must
+	@# track charts/haptic/crds, or an author can validate a config against a
+	@# field the real CRD dropped (e.g. a deleted validationTest key) and never
+	@# see it pruned live. Refresh those copies deterministically (a plain cp,
+	@# no module cache) and fold them into the diff below. The Gateway API copies
+	@# come from GOMODCACHE via `make extract-schemas`; the go.mod pin guards
+	@# their version, so they are not regenerated here.
+	@cp charts/haptic/crds/*.yaml $(SCHEMA_DIR)/
+	@# --intent-to-add stages a brand-new CRD copy as empty so git diff sees it
+	@# too, not just modifications to existing ones.
+	@git add --intent-to-add '$(SCHEMA_DIR)/haproxy-haptic.org_*.yaml' >/dev/null 2>&1 || true
 	@# Deliberately does NOT revert the regenerated files. It used to, which meant
 	@# running this with a freshly regenerated (but not yet committed) type threw
 	@# that work away and left the tree unbuildable. CI runs on a fresh checkout,
 	@# so there is nothing there worth reverting either.
-	@if ! git diff --quiet --exit-code -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go'; then \
+	@if ! git diff --quiet --exit-code -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go' '$(SCHEMA_DIR)/haproxy-haptic.org_*.yaml'; then \
 		echo ""; \
 		echo "ERROR: Generated files are out of date:"; \
-		git diff --stat -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go'; \
+		git diff --stat -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go' '$(SCHEMA_DIR)/haproxy-haptic.org_*.yaml'; \
 		echo ""; \
 		echo "The regenerated files have been left in place — commit them."; \
 		exit 1; \
@@ -888,7 +911,7 @@ verify-generate: ## Verify generated code (CRDs, DeepCopy) is up-to-date
 
 ## Code generation
 
-generate: generate-crds generate-deepcopy generate-clientset generate-dataplaneapi-all generate-validators ## Run all code generation
+generate: generate-crds generate-deepcopy generate-clientset ## Run all code generation
 
 generate-crds: ## Generate CRD manifests from Go types
 	@echo "Generating CRD manifests..."
@@ -909,24 +932,12 @@ generate-clientset: ## Generate Kubernetes clientset, informers, and listers
 	./hack/update-codegen.sh
 	@echo "✓ Clientset, informers, and listers generated"
 
-# DataPlane API client versions = the oapi-codegen configs present under hack/.
-# Intentionally DECOUPLED from HAPROXY_VERSIONS: the DataPlane API has its own
-# release cadence, so a HAProxy binary release does not imply a new API version
-# (e.g. the HAProxy 3.4 image ships DataPlane API v3.3). Adding a DataPlane API
-# version is therefore a new hack/oapi-codegen-<v>.yaml plus its spec.json.
-DATAPLANE_API_VERSIONS := $(patsubst hack/oapi-codegen-%.yaml,%,$(wildcard hack/oapi-codegen-*.yaml))
-
-generate-dataplaneapi-all: ## Generate all HAProxy DataPlane API clients (community + enterprise)
-	@set -e; for v in $(DATAPLANE_API_VERSIONS); do \
-		echo "Generating DataPlane API $$v client (models + client)..."; \
-		mkdir -p pkg/generated/dataplaneapi/$$v; \
-		$(OAPI_CODEGEN) -config hack/oapi-codegen-$$v.yaml pkg/generated/dataplaneapi/$$v/spec.json; \
-	done
-	@echo "✓ All DataPlane API clients generated (community + enterprise)"
-
-generate-validators: ## Generate zero-allocation OpenAPI validators
-	@echo "Generating zero-allocation validators..."
-	go run ./cmd/gen-validators
+# Deliberately outside `make generate`: the output is the browser playground's
+# `haproxy_valid` fallback, generated from pinned Data Plane API specs that no
+# release moves any more. Run it by hand if a spec is ever refreshed.
+generate-playground-validators: ## Regenerate the playground's OpenAPI validators
+	@echo "Generating the playground's schema validators..."
+	$(GO) run ./cmd/gen-validators
 	@echo "✓ Validators generated in pkg/generated/validators/"
 
 ## Cleanup
@@ -961,7 +972,6 @@ install-tools: ## Install/sync all tool dependencies (from go.mod tools section)
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	$(GO) install golang.org/x/vuln/cmd/govulncheck
 	$(GO) install github.com/arch-go/arch-go/v2
-	$(GO) install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 	$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
 	@echo "✓ All tools installed!"
 

@@ -603,7 +603,7 @@ The codebase uses **relative paths** that work in every consumer:
 1. **RenderService** (`pkg/controller/renderer/service.go`) constructs a `PathResolver` whose `MapsDir` / `SSLDir` / `CRTListDir` / `GeneralDir` are the **basenames** of the production directories (e.g. `maps`, `ssl`, `general`), and whose `BaseDir` is the parent (e.g. `/etc/haproxy`).
 2. **Templates** call `pathResolver.GetPath(name, type)` which returns relative paths like `general/400.http`, `maps/host.map`.
 3. **ValidationService** writes the auxiliary tree under a per-call temp directory and patches `default-path origin` to point at it.
-4. **DataPlane API deployment** stores the rendered files in the production `BaseDir`, so the same relative paths resolve there too.
+4. **The agent** writes the rendered files under the production `BaseDir` on the pod, so the same relative paths resolve there too.
 
 ### PathResolver Construction
 
@@ -2552,7 +2552,7 @@ charts/haptic/
 │   ├── _libraries.tpl          # Library loading (haptic.prepareLibraries, haptic.watchedResourcesUnion)
 │   ├── _naming.tpl             # Names, labels, apiGroup/apiVersion split
 │   ├── _image.tpl              # Image refs, binary paths, runAsUser
-│   ├── _credentials.tpl        # Dataplane API username/password
+│   ├── _credentials.tpl        # Agent username/password
 │   ├── _resources.tpl          # CPU/mem math, nbthread, GOMAXPROCS, checksums
 │   ├── _spoa-hub.tpl           # SPOA-hub helpers (enabled/disabled, image, libName)
 │   ├── _pod-spec.tpl           # Shared pod-spec scheduling/runtime fields

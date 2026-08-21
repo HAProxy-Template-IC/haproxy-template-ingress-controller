@@ -37,7 +37,7 @@ cp "$WEB/highlight/config-highlight.bundle.js" "$OUT/highlight/"
 sed -i "s#<html lang=\"en\">#<html lang=\"en\" data-version=\"${VERSION}\">#" "$OUT/index.html"
 
 echo "==> wasm ($VERSION) + matching wasm_exec.js"
-( cd "$REPO" && GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o "$OUT/playground.wasm" ./cmd/playground )
+( cd "$REPO" && GOOS=js GOARCH=wasm go build -tags=playground -trimpath -ldflags="-s -w" -o "$OUT/playground.wasm" ./cmd/playground )
 # wasm_exec.js MUST come from the exact toolchain that built the wasm.
 cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" "$OUT/wasm_exec.js"
 

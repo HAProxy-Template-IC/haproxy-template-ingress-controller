@@ -110,12 +110,12 @@ func TestCoalescibleContract(t *testing.T) {
 		},
 		{
 			name:    "DeploymentScheduledEvent honours coalescible=true",
-			event:   NewDeploymentScheduledEvent("", nil, nil, nil, "", "", "", "", nil, "", nil, true),
+			event:   NewDeploymentScheduledEvent("", nil, nil, "", "", "", "", nil, "", nil, true),
 			wantVal: true,
 		},
 		{
 			name:    "DeploymentScheduledEvent honours coalescible=false",
-			event:   NewDeploymentScheduledEvent("", nil, nil, nil, "", "", "", "", nil, "", nil, false),
+			event:   NewDeploymentScheduledEvent("", nil, nil, "", "", "", "", nil, "", nil, false),
 			wantVal: false,
 		},
 	}

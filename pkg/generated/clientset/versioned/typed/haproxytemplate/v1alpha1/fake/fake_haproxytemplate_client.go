@@ -46,6 +46,10 @@ func (c *FakeHaproxyTemplateICV1alpha1) HAProxyTemplateConfigs(namespace string)
 	return newFakeHAProxyTemplateConfigs(c, namespace)
 }
 
+func (c *FakeHaproxyTemplateICV1alpha1) HAProxyTemplateLibraries(namespace string) v1alpha1.HAProxyTemplateLibraryInterface {
+	return newFakeHAProxyTemplateLibraries(c, namespace)
+}
+
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
 func (c *FakeHaproxyTemplateICV1alpha1) RESTClient() rest.Interface {

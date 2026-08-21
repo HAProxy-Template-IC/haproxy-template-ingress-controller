@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -137,7 +139,7 @@ func TestValidationService_DoesNotCacheAfterCancellationWhileWaiting(t *testing.
 	done := make(chan error, 1)
 	go func() {
 		close(started)
-		done <- svc.cacheResult(ctx, "new", nil)
+		done <- svc.cacheResult(ctx, "new")
 	}()
 	<-started
 	cancel(cause)
@@ -349,27 +351,6 @@ func TestValidationService_Validate_Concurrent(t *testing.T) {
 const validConfig = testutil.MinimalHAProxyConfig
 
 func TestValidationService_CacheHit(t *testing.T) {
-	svc := NewValidationService(&ValidationServiceConfig{
-		Logger:            slog.Default(),
-		SkipDNSValidation: true,
-	})
-
-	// First call: full validation (populates cache)
-	result1 := validate(svc, context.Background(), validConfig, nil)
-	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
-	require.NotNil(t, result1.ParsedConfig)
-
-	// Second call: same content -> cache hit (should be significantly faster)
-	result2 := validate(svc, context.Background(), validConfig, nil)
-	require.True(t, result2.Valid)
-	require.NotNil(t, result2.ParsedConfig)
-
-	// Both calls return the same ParsedConfig pointer (cached)
-	assert.Same(t, result1.ParsedConfig, result2.ParsedConfig,
-		"cache hit should return the same ParsedConfig instance")
-}
-
-func TestValidationService_DiscardParsedConfigKeepsVerdictCache(t *testing.T) {
 	checks := 0
 	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheck(
 		func(string, []string) ([]byte, error) {
@@ -379,24 +360,20 @@ func TestValidationService_DiscardParsedConfigKeepsVerdictCache(t *testing.T) {
 	)))
 
 	svc := NewValidationService(&ValidationServiceConfig{
-		Logger:              slog.Default(),
-		SkipDNSValidation:   true,
-		DiscardParsedConfig: true,
+		Logger:            slog.Default(),
+		SkipDNSValidation: true,
 	})
 
 	result1 := validate(svc, context.Background(), validConfig, nil)
 	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
-	assert.Nil(t, result1.ParsedConfig)
 
 	result2 := validate(svc, context.Background(), validConfig, nil)
 	require.True(t, result2.Valid)
-	assert.Nil(t, result2.ParsedConfig)
-	assert.Equal(t, 1, checks, "cache hit should skip semantic validation")
+	assert.Equal(t, 1, checks, "cache hit must not run haproxy -c again")
 
 	svc.cacheMu.RLock()
 	defer svc.cacheMu.RUnlock()
 	assert.NotEmpty(t, svc.cachedChecksum)
-	assert.Nil(t, svc.cachedParsedConfig)
 }
 
 func TestValidationService_CacheMiss_ConfigChange(t *testing.T) {
@@ -534,23 +511,29 @@ func TestValidationService_CacheConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			r := validate(svc, context.Background(), validConfig, nil)
 			assert.True(t, r.Valid)
-			assert.NotNil(t, r.ParsedConfig)
 		}()
 	}
 
 	wg.Wait()
 }
 
-func TestValidationService_Validate_ParsedConfigPreservesProductionPaths(t *testing.T) {
-	// This test ensures the pre-parsed config optimization returns configs
-	// with production paths, not temp validation paths.
-	//
-	// The validation service replaces "default-path origin /etc/haproxy" with
-	// "default-path origin /tmp/haproxy-validation-XXX" for haproxy -c validation.
-	// The parsed config must contain the ORIGINAL production path, not the temp path,
-	// because downstream components (deployer) use this config for sync operations.
-
+func TestValidationService_Validate_TempPathRewriteIsLocalToTheCheck(t *testing.T) {
+	// The service repoints `default-path origin` at its temp directory so
+	// haproxy -c resolves the auxiliary files it wrote there. Only the checked
+	// copy is rewritten: the caller's config is what ships to the fleet.
 	const productionBaseDir = "/etc/haproxy"
+
+	var checked string
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheck(
+		func(workDir string, args []string) ([]byte, error) {
+			contents, err := os.ReadFile(filepath.Join(workDir, args[len(args)-1]))
+			if err != nil {
+				return nil, err
+			}
+			checked = string(contents)
+			return nil, nil
+		},
+	)))
 
 	svc := NewValidationService(&ValidationServiceConfig{
 		Logger:            slog.Default(),
@@ -558,7 +541,6 @@ func TestValidationService_Validate_ParsedConfigPreservesProductionPaths(t *test
 		BaseDir:           productionBaseDir,
 	})
 
-	// Config with default-path origin directive - this is what production configs look like
 	config := `global
     daemon
     default-path origin /etc/haproxy
@@ -578,21 +560,12 @@ backend http_back
 `
 
 	result := validate(svc, context.Background(), config, nil)
-
 	require.NotNil(t, result)
 	require.True(t, result.Valid, "expected valid config, got error: %v", result.Error)
 
-	// Critical assertions for the pre-parsed config optimization
-	require.NotNil(t, result.ParsedConfig, "ParsedConfig should be set for successful validation")
-	require.NotNil(t, result.ParsedConfig.Global, "Global section should be parsed")
-	require.NotNil(t, result.ParsedConfig.Global.DefaultPath, "DefaultPath should be parsed")
-
-	// THE BUG: ParsedConfig.Global.DefaultPath.Path contains "/tmp/haproxy-validation-XXX"
-	// instead of the production path "/etc/haproxy"
-	assert.Equal(t, "origin", result.ParsedConfig.Global.DefaultPath.Type,
-		"DefaultPath type should be 'origin'")
-	assert.Equal(t, productionBaseDir, result.ParsedConfig.Global.DefaultPath.Path,
-		"DefaultPath.Path should contain production path, not temp validation path")
-	assert.NotContains(t, result.ParsedConfig.Global.DefaultPath.Path, "/tmp/",
-		"DefaultPath.Path must NOT contain temp directory path")
+	require.NotEmpty(t, checked, "the fake binary must have seen a config")
+	assert.NotContains(t, checked, "default-path origin "+productionBaseDir,
+		"the checked copy must point at the temp directory")
+	assert.Contains(t, config, "default-path origin "+productionBaseDir,
+		"the caller's config must come back untouched")
 }

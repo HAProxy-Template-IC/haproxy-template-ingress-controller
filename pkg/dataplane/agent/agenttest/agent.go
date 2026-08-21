@@ -36,7 +36,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
 )
 
-// Default credentials, mirroring the chart's Dataplane API Secret.
+// Default credentials, mirroring the chart's agent Secret.
 const (
 	DefaultUsername = "admin"
 	DefaultPassword = "adminpwd"

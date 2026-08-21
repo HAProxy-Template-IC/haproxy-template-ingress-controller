@@ -71,7 +71,7 @@ type PanicHandler interface {
 //
 // WHEN A COMPONENT MUST RUN IN MAILBOX MODE. Declare a type when BOTH hold:
 //
-//  1. The handler can block — a Kubernetes API round-trip, a Dataplane API
+//  1. The handler can block — a Kubernetes API round-trip, an agent
 //     call, any network I/O — for longer than the gap between two events.
 //  2. At least one subscribed type can arrive faster than the handler drains
 //     it: published per render, per pod, per resource change, or by a watcher

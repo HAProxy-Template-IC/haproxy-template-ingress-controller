@@ -296,7 +296,7 @@ Per-line "this config line came from snippet X" mapping is a feature of the [int
 
 ## Security reminders
 
-- `/debug/vars/credentials` returns metadata only — the controller never exposes the actual DataPlane passwords here, the state dump, or any other endpoint.
+- `/debug/vars/credentials` returns metadata only — the controller never exposes the actual agent passwords here, the state dump, or any other endpoint.
 - `/debug/vars/state` includes the full rendered `haproxy.cfg` (which may reference internal hostnames and backend addresses). Restrict reachability, don't forward the port from CI systems you wouldn't trust with the rendered output.
 - See [Security — Network Exposure](./security.md#network-exposure) for a NetworkPolicy pinning the debug port to your observability namespace.
 

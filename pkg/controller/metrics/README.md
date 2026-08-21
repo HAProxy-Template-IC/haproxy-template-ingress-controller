@@ -59,9 +59,10 @@ Each agent also exports its own view on the pod's `agent-metrics` port; [monitor
 
 | Metric | Type | Labels | What it tracks |
 |--------|------|--------|----------------|
-| `haptic_validation_total` | counter | — | Controller-side validations (`haproxy -c` + parser) |
+| `haptic_validation_total` | counter | — | Controller-side `haproxy -c` runs |
 | `haptic_validation_errors_total` | counter | — | Controller-side validation failures |
 | `haptic_config_rejected_total` | counter | `validator` | `HAProxyTemplateConfig` loads refused by the config-validation gate, labelled by the validator that rejected it (`basic`, `template`, `jsonpath`, `validationtests`), or `coordinator` when one timed out |
+| `haptic_config_pinned` | gauge | — | `1` while the render gate holds back renders HAProxy refused twice in a row. Leader-only; `0` on followers |
 
 ### Watched resources
 

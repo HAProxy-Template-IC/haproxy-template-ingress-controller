@@ -502,7 +502,6 @@ func TestDeploymentEvents(t *testing.T) {
 		event := NewDeploymentScheduledEvent(
 			"haproxy config",
 			auxFiles,
-			nil, // parsedConfig
 			endpoints,
 			"my-config",
 			"default",
@@ -526,7 +525,7 @@ func TestDeploymentEvents(t *testing.T) {
 
 	t.Run("DeploymentScheduledEvent_DefensiveCopy", func(t *testing.T) {
 		endpoints := []dataplane.Endpoint{{URL: "http://ep1:5555"}}
-		event := NewDeploymentScheduledEvent("cfg", nil, nil, endpoints, "n", "ns", "r", "", nil, "", nil, true)
+		event := NewDeploymentScheduledEvent("cfg", nil, endpoints, "n", "ns", "r", "", nil, "", nil, true)
 
 		// Modify original
 		endpoints[0] = dataplane.Endpoint{URL: "http://modified:5555"}
@@ -536,7 +535,7 @@ func TestDeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentScheduledEvent_WithCorrelation", func(t *testing.T) {
-		event := NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "", nil, "", nil, true,
+		event := NewDeploymentScheduledEvent("cfg", nil, nil, "n", "ns", "r", "", nil, "", nil, true,
 			WithCorrelation("corr", "cause"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr", event.CorrelationID())
@@ -793,7 +792,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"DeploymentStarted", NewDeploymentStartedEvent(0)},
 		{"InstanceDeploymentFailed", NewInstanceDeploymentFailedEvent(nil, "error", false)},
 		{"DeploymentCompleted", NewDeploymentCompletedEvent(&DeploymentResult{})},
-		{"DeploymentScheduled", NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "", nil, "", nil, true)},
+		{"DeploymentScheduled", NewDeploymentScheduledEvent("cfg", nil, nil, "n", "ns", "r", "", nil, "", nil, true)},
 		{"DriftPreventionTriggered", NewDriftPreventionTriggeredEvent(0)},
 		// Discovery events
 		{"HAProxyPodsDiscovered", NewHAProxyPodsDiscoveredEvent(nil, 0)},

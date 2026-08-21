@@ -560,7 +560,7 @@ controller:
   # Users can customize this configuration using Helm values or create
   # the HAProxyTemplateConfig resource manually
   config:
-    # Reference to the Secret containing HAProxy Dataplane API credentials
+    # Reference to the Secret containing the HAPTIC agent credentials
     # The Secret is automatically created by the Helm chart
     credentialsSecretRef:
       # Name will be set by the template to: {{ include "haptic.fullname" . }}-credentials
@@ -1408,11 +1408,13 @@ gatewayClass:
     name: ""
     # Namespace will default to Release.Namespace if empty
     namespace: ""
-# Dataplane API credentials
+# HAPTIC agent credentials
+# The keys keep their `dataplane_` names across the agent cutover, so a rotation
+# set up against the old Secret keeps working.
 # If password is empty, it will be:
 #   1. Preserved from the existing Secret (via lookup during helm install/upgrade)
 #   2. Otherwise generated as a random 32-char password
-# The Dataplane API is HAProxy's runtime control plane over plain HTTP, so the
+# The agent applies whatever it is sent to HAProxy, over plain HTTP, so the
 # password must not be guessable — set an explicit value for dev environments
 # where you need predictable credentials.
 # GitOps note: under ArgoCD/Flux (rendering without cluster lookup), an empty
