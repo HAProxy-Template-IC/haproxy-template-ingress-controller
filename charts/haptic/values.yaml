@@ -427,6 +427,11 @@ controller:
     # nginx.ingress.kubernetes.io/* compatibility (ingress-nginx migration). Opt-in.
     nginxIngress:
       enabled: false
+    # Worked example of a resource-agnostic library for a custom Route CRD, for
+    # learning or exercising the reload-free author contract. Not for production
+    # routing (it watches a demo `Route` kind). Opt-in.
+    customCrdExample:
+      enabled: false
     # HAProxy-side wiring for the bundled spoa-hub sidecar. Auto-loaded when
     # any spoaHub.plugins.* is on; flip to true
     # here only to force-load the library with no plugins enabled.

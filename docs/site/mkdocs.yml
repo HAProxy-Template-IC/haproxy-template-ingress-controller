@@ -97,6 +97,7 @@ nav:
   - Template Libraries:
     - Overview: template-libraries.md
     - Base: libraries/base.md
+    - Reload-free routing: libraries/reload-free.md
     - SSL: libraries/ssl.md
     - Ingress: libraries/ingress.md
     - Gateway API: libraries/gateway.md

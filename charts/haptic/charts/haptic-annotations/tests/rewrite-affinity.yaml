@@ -169,10 +169,45 @@ validationTests:
       - type: contains
         target: map:reqhdr-host.map
         pattern: "default_hdr-ing_svc_hdr-svc_80 internal.svc.local"
-      - {type: contains, target: map:reqhdr-xfwd-prefix.map, pattern: "default_hdr-ing_svc_hdr-svc_80 /api"}
+      - {type: contains, target: map:reqhdr-xfwd-prefix.map, pattern: "default_hdr-ing_svc_hdr-svc_80 %2fapi"}
       - type: contains
         target: map:reqhdr-connection.map
         pattern: "default_hdr-ing_svc_hdr-svc_80 keep-alive"
+
+  test-haptic-upstream-headers-encoding:
+    description: A set-host / x-forwarded-prefix value with a space, a + and a % is URL-encoded in the reqhdr maps (space -> %20, + -> %2b, % -> %25), so the shared url_dec(1) reader round-trips it instead of turning + into a space or failing on the %.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: enc-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: enc-ing
+            annotations:
+              haproxy-haptic.org/x-forwarded-prefix: "/a b+c%d"
+              haproxy-haptic.org/set-host: "up+stream.example.com"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: enc.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: enc-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:reqhdr-xfwd-prefix.map, pattern: "default_enc-ing_svc_enc-svc_80 %2fa%20b%2bc%25d"}
+      - {type: contains, target: map:reqhdr-host.map, pattern: "default_enc-ing_svc_enc-svc_80 up%2bstream\\.example\\.com"}
+      # Negative control: the raw value must not leak into the map (it would be
+      # mangled by the runtime CLI and mis-decoded by url_dec(1)).
+      - {type: not_contains, target: map:reqhdr-xfwd-prefix.map, pattern: "b\\+c"}
 
   test-haptic-session-affinity:
     description: haproxy-haptic.org/affinity=cookie builds a best-of-breed cookie directive with dynamic key

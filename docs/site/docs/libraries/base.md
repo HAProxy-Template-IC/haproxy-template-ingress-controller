@@ -629,10 +629,18 @@ And these per-backend feature maps, all keyed by backend name and looked up with
 |----------|---------|
 | body-size.map | Request body-size limit in bytes |
 | request-buffering.map | Per-route request-buffering override (`on`/`off`) |
-| reqhdr-host.map | Upstream `Host` header override |
-| reqhdr-xfwd-prefix.map | `X-Forwarded-Prefix` header value |
-| reqhdr-connection.map | `Connection` header override |
-| path-rewrite.map | Literal full-path rewrite |
+| reqhdr-host.map | Upstream `Host` header override (URL-encoded) |
+| reqhdr-xfwd-prefix.map | `X-Forwarded-Prefix` header value (URL-encoded) |
+| reqhdr-connection.map | `Connection` header override (URL-encoded) |
+| path-rewrite.map | Literal full-path rewrite (URL-encoded) |
+| backend-timeouts.map | Settable server/tunnel timeouts, keyed `<backend>\|server` / `<backend>\|tunnel`, integer milliseconds |
+| ing-reqhdr.map | Ingress request-header modifiers, keyed `<backend>\|<op>\|<name>` (op ∈ set/add/del), value URL-encoded (`1` for del) |
+| ing-reshdr.map | Ingress response-header modifiers, keyed `<backend>\|<op>\|<name>`, value URL-encoded (`1` for del) |
+
+Values a request-time reader takes from a map are URL-encoded by the writer
+(`queryEscape`) and decoded with `url_dec(1)`, so a space, `;` or `%` in a value
+can neither split the map line on the runtime CLI nor be re-read as a log-format
+fetch. See [Reload-free routing](reload-free.md).
 
 ### Writing a map from a library
 

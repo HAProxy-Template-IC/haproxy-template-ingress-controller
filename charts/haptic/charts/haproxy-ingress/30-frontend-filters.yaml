@@ -124,55 +124,15 @@ templateSnippets:
             "haproxy-ingress/cors") }}
       {%- end -%}
 
-  frontend-filters-670-haproxy-ingress-headers:
+  # Reload-free: the `headers` annotation (pipe-separated name:value pairs)
+  # becomes entries in ing-reqhdr.map (built by ingress.yaml
+  # frontend-filters-263-ingress-headers), keyed on the resolved backend. This
+  # scopes the header to the ingress's own backends rather than every request
+  # for the host — the wildcard/host-less HostMatchCondition gap goes with it.
+  features-670-haproxy-ingress-headers:
     template: |
-      {#
-        HAProxy-Ingress Headers Annotation
-
-        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#headers
-
-        Annotations:
-          - haproxy-ingress.github.io/headers: "name:value|name:value|..." (optional)
-
-        Format: Pipe-separated list of header:value pairs
-
-        Generated HAProxy Config:
-          http-request set-header <name> <value> if <host-match>
-      #}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var headersStr = ingress.Metadata.Annotations["haproxy-ingress.github.io/headers"] %}
-          {%- if headersStr != "" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-      # haproxy-ingress/headers ({{ key }})
-              {%- for _, header := range split(headersStr, "|") %}
-                {%- var headerTrimmed = trimSpace(header) %}
-                {%- if headerTrimmed != "" %}
-                  {%- var parts = split(headerTrimmed, ":") %}
-                  {%- if len(parts) >= 2 %}
-                    {%- var headerName = trimSpace(parts[0]) %}
-                    {%- var headerValue = trimSpace(join(parts[1:], ":")) %}
-                    {%- var nameInj = ConfigInjectionKind(headerName, "token") %}
-                    {%- if nameInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidHeader", "Ingress " + key + " annotation 'haproxy-ingress.github.io/headers' has a header name containing " + nameInj + ", which would break the set-header directive; the header is not applied. Remove whitespace, quotes and control characters from the header name.") -}}{%- continue %}{%- end %}
-                    {%- var valueInj = ConfigInjectionKind(headerValue, "line") %}
-                    {%- if valueInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidHeader", "Ingress " + key + " annotation 'haproxy-ingress.github.io/headers' has a value for header '" + headerName + "' containing " + valueInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}{%- continue %}{%- end %}
-      http-request set-header {{ headerName }} "{{ EscapeLogFormatValue(headerValue) }}" if {{ HostMatchCondition(hosts) }}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+      {%- import "util-ingress-header-contribute" for IngressHeaderContribute -%}
+      {{- IngressHeaderContribute("haproxy-ingress.github.io/headers", "", "|", ":") -}}
 
   frontend-filters-680-haproxy-ingress-default-backend-redirect:
     template: |

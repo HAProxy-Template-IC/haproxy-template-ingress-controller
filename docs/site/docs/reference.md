@@ -113,6 +113,7 @@ A `pre-install`/`pre-upgrade` hook Job renders the chart embedded in the control
 | `controller.templateLibraries.haproxytech.enabled` | bool | `false` | `haproxy.org/*` annotation compatibility (haproxytech/kubernetes-ingress migration) — opt-in |
 | `controller.templateLibraries.haproxyIngress.enabled` | bool | `false` | `haproxy-ingress.github.io/*` annotation compatibility (jcmoraisjr/haproxy-ingress migration) — opt-in |
 | `controller.templateLibraries.nginxIngress.enabled` | bool | `false` | `nginx.ingress.kubernetes.io/*` annotation compatibility (ingress-nginx migration) — opt-in |
+| `controller.templateLibraries.customCrdExample.enabled` | bool | `false` | Worked example of a resource-agnostic library for a custom `Route` CRD, for learning or exercising the reload-free author contract. Not for production routing (it watches a demo kind) — opt-in |
 | `controller.templateLibraries.spoaHub.enabled` | bool | `false` | HAProxy-side Stream Processing Offload Agent (SPOA) hub wiring. Auto-loaded when the SPOA hub sidecar is rendered (any `spoaHub.plugins.*` enabled, or `spoaHub.enabled: true`); set this to `true` to force-load the library standalone |
 
 ## Shared response cache

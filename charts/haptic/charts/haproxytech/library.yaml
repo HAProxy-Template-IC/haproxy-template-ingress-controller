@@ -400,7 +400,10 @@ templateSnippets:
       {%- if ingress != nil %}
         {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
         {%- var emitted = false %}
-        {%- for _, t := range [][]string{ {"haproxy.org/timeout-server", "server"}, {"haproxy.org/timeout-connect", "connect"}, {"haproxy.org/timeout-queue", "queue"}, {"haproxy.org/timeout-tunnel", "tunnel"}, {"haproxy.org/timeout-check", "check"} } %}
+        {#- timeout-server and timeout-tunnel are the settable timeouts: they move to
+            backend-timeouts.map via map-backend-timeout-100-haproxytech-timeouts
+            (reload-free). connect/queue/check stay per-value here. -#}
+        {%- for _, t := range [][]string{ {"haproxy.org/timeout-connect", "connect"}, {"haproxy.org/timeout-queue", "queue"}, {"haproxy.org/timeout-check", "check"} } %}
           {%- var ann = t[0] %}
           {%- var n = t[1] %}
           {%- var v = ingress.Metadata.Annotations[ann] %}
@@ -418,6 +421,13 @@ templateSnippets:
           {%- end %}
         {%- end %}
       {%- end -%}
+
+  # Reload-free settable timeouts: timeout-server / timeout-tunnel become
+  # `<backend>|server` / `<backend>|tunnel` entries in backend-timeouts.map.
+  map-backend-timeout-100-haproxytech-timeouts:
+    template: |
+      {%- import "util-ingress-backend-timeout" for IngressBackendTimeoutMapEntries -%}
+      {{- IngressBackendTimeoutMapEntries("haproxy.org/timeout-server", "haproxy.org/timeout-tunnel") -}}
 
   backend-directives-150-haproxytech-load-balance:
     template: |
@@ -561,61 +571,22 @@ templateSnippets:
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
               {%- if first_seen("map-reqhdr-host", be) -%}
-      {{ "\n" }}{{ be }} {{ ValidateConfigValue(host, "haproxy.org/set-host", key, false) }}
+      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(host, "haproxy.org/set-host", key, true)) }}
               {%- end -%}
             {%- end -%}
           {%- end -%}
         {%- end -%}
       {%- end -%}
 
-  backend-directives-300-haproxytech-header-manipulation:
+  # Reload-free header manipulation: haproxy.org/request-set-header and
+  # response-set-header become entries in ing-reqhdr.map / ing-reshdr.map (built
+  # by ingress.yaml frontend-filters-263-ingress-headers), keyed on the resolved
+  # backend, so changing a header value is a map-only update. Contributes in the
+  # features phase (before the frontend builder reads the shared list).
+  features-300-haproxytech-header-mods:
     template: |
-      {#- The VALUE is emitted double-quoted through EscapeLogFormatValue: a set-header
-          value is an HAProxy log-format string, so " / $ / % / \ are escaped and a
-          literal ' no longer closes the old single-quoted form. Lines are pre-split on
-          "\n", so only a stray control char (a tab) remains to reject on the value. -#}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- if ingress != nil %}
-        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-        {%- var reqHeaders = ingress.Metadata.Annotations["haproxy.org/request-set-header"] %}
-        {%- var respHeaders = ingress.Metadata.Annotations["haproxy.org/response-set-header"] %}
-        {%- if reqHeaders != "" %}
-      # haproxytech/backend-directives-haproxytech-header-manipulation (request)
-          {%- for _, line := range split(reqHeaders, "\n") %}
-            {%- var t = trimSpace(line) %}
-            {%- if t != "" && strings_contains(t, " ") %}
-              {%- var parts = split(t, " ") %}
-              {%- var hVal = parts[1:] | join(" ") %}
-              {%- if ConfigInjectionKind(parts[0], "token") != "" %}
-                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy.org/request-set-header' on Ingress '" + key + "' names a header containing " + ConfigInjectionKind(parts[0], "token") + "; that header is skipped.") -}}
-              {%- else if ConfigInjectionKind(hVal, "line") != "" %}
-                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy.org/request-set-header' on Ingress '" + key + "' has a value containing " + ConfigInjectionKind(hVal, "line") + ", which would split the backend directive; that header is skipped.") -}}
-              {%- else %}
-      http-request set-header {{ parts[0] }} "{{ EscapeLogFormatValue(hVal) }}"
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-        {%- if respHeaders != "" %}
-      # haproxytech/backend-directives-haproxytech-header-manipulation (response)
-          {%- for _, line := range split(respHeaders, "\n") %}
-            {%- var t = trimSpace(line) %}
-            {%- if t != "" && strings_contains(t, " ") %}
-              {%- var parts = split(t, " ") %}
-              {%- var hVal = parts[1:] | join(" ") %}
-              {%- if ConfigInjectionKind(parts[0], "token") != "" %}
-                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy.org/response-set-header' on Ingress '" + key + "' names a header containing " + ConfigInjectionKind(parts[0], "token") + "; that header is skipped.") -}}
-              {%- else if ConfigInjectionKind(hVal, "line") != "" %}
-                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy.org/response-set-header' on Ingress '" + key + "' has a value containing " + ConfigInjectionKind(hVal, "line") + ", which would split the backend directive; that header is skipped.") -}}
-              {%- else %}
-      http-response set-header {{ parts[0] }} "{{ EscapeLogFormatValue(hVal) }}"
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end -%}
+      {%- import "util-ingress-header-contribute" for IngressHeaderContribute -%}
+      {{- IngressHeaderContribute("haproxy.org/request-set-header", "haproxy.org/response-set-header", "\n", " ") -}}
 
   backend-directives-350-haproxytech-path-rewrite:
     template: |
@@ -1912,7 +1883,9 @@ validationTests:
                     - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "timeout server 30s"}
+      # The settable server timeout lives as ms in backend-timeouts.map (reload-free).
+      - {type: contains, target: 'map:backend-timeouts.map', pattern: 'default_ok-be_svc_echo_80\|server 30000'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "timeout server 30s"}
       - {type: contains, target: haproxy.cfg, pattern: "balance leastconn"}
       - {type: contains, target: haproxy.cfg, pattern: "default-server check inter 10s"}
       - {type: contains, target: haproxy.cfg, pattern: "cookie SESSIONID insert indirect nocache dynamic"}
@@ -1920,7 +1893,11 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "option httpchk GET /healthz HTTP/1.1"}
       - {type: contains, target: haproxy.cfg, pattern: 'set-src hdr\(X-Real-IP\)'}
       - {type: contains, target: haproxy.cfg, pattern: "capture request header X-Forwarded-For len 256"}
-      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Pct "a%%b"'}
+      # Header manipulation is reload-free: the value lives URL-encoded in
+      # ing-reqhdr.map (a%b -> a%25b), read by one static line keyed on the backend.
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_ok-be_svc_echo_80\|set\|x-pct a%25b'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Pct %\[var\(txn\.backend_name\),concat\(\|set\|x-pct\),map\([^)]*ing-reqhdr\.map\),url_dec\(1\)\]'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-header X-Pct "a'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request replace-path /api/\(\.\*\) /v2/\\1'}
       - {type: contains, target: haproxy.cfg, pattern: 'var\(txn\.cors_origin\) -m reg ''https://\.\*\\\.example\\\.com'''}
       - {type: contains, target: haproxy.cfg, pattern: 'Access-Control-Allow-Methods "GET, POST"'}

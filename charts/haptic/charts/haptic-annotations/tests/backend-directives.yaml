@@ -34,12 +34,65 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "timeout connect 10s"}
-      - {type: contains, target: haproxy.cfg, pattern: "timeout server 60s"}
       - {type: contains, target: haproxy.cfg, pattern: "timeout queue 30s"}
-      - {type: contains, target: haproxy.cfg, pattern: "timeout tunnel 1h"}
       - {type: contains, target: haproxy.cfg, pattern: "timeout http-request 15s"}
       - {type: contains, target: haproxy.cfg, pattern: "timeout http-keep-alive 20s"}
       - {type: contains, target: haproxy.cfg, pattern: "timeout check 5s"}
+      # The settable server/tunnel timeouts live URL-free as integer ms in
+      # backend-timeouts.map (60s -> 60000, 1h -> 3600000), read by the uniform
+      # set-timeout line every backend carries — editing them is a map-only change.
+      - {type: contains, target: 'map:backend-timeouts.map', pattern: 'default_timeout-ingress_svc_echo_80\|server 60000'}
+      - {type: contains, target: 'map:backend-timeouts.map', pattern: 'default_timeout-ingress_svc_echo_80\|tunnel 3600000'}
+      # Exactly one uniform set-timeout line per backend (one backend here), for
+      # each of server and tunnel — the value never appears in the config.
+      - {type: match_count, target: haproxy.cfg, expected: "1", pattern: 'http-request set-timeout server var\(txn\.backend_name\),concat\(\|server\),map_str_int\([^)]*backend-timeouts\.map\) if \{ var\(txn\.backend_name\),concat\(\|server\),map_str_int\([^)]*backend-timeouts\.map\) -m found \}'}
+      - {type: match_count, target: haproxy.cfg, expected: "1", pattern: 'http-request set-timeout tunnel var\(txn\.backend_name\),concat\(\|tunnel\),map_str_int\([^)]*backend-timeouts\.map\) if \{ var\(txn\.backend_name\),concat\(\|tunnel\),map_str_int\([^)]*backend-timeouts\.map\) -m found \}'}
+      # The raw value is never a per-backend directive (negative controls).
+      - {type: not_contains, target: haproxy.cfg, pattern: "timeout server 60s"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "timeout tunnel 1h"}
+
+  test-haptic-timeout-overflow-admission-rejected:
+    description: A timeout whose digit count would overflow toint (which returns 0) is rejected at render time, not silently written as `0` — a 0ms timeout means "no timeout", so the malformed annotation would otherwise disable the timeout it was meant to set.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: to-overflow, annotations: {haproxy-haptic.org/timeout-server: "99999999999999999999d"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: ovf.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "is not an HAProxy duration"}
+
+  test-haptic-timeout-overflow-reconcile-skips-not-zeroed:
+    description: On reconcile the overflow-length timeout is skipped, never written to backend-timeouts.map as `0` (which would disable the timeout), while a valid sibling still lands.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: to-overflow, annotations: {haproxy-haptic.org/timeout-server: "99999999999999999999d"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: ovf.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: to-good, annotations: {haproxy-haptic.org/timeout-server: "45s"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: good.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: 'map:backend-timeouts.map', pattern: 'default_to-good_svc_echo_80\|server 45000'}
+      # The overflow value never lands, and never as a 0 (no-timeout) entry.
+      - {type: not_contains, target: 'map:backend-timeouts.map', pattern: 'default_to-overflow_svc_echo_80\|server'}
 
   test-haptic-load-balance:
     description: haproxy-haptic.org/load-balance accepts exact and parameterized algorithms

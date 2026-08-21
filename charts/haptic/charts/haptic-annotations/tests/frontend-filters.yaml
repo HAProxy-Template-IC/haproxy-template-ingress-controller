@@ -59,12 +59,46 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-Custom-Req "req-value" if'}
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-response set-header X-Custom-Resp "resp-value" if'
+      # Header modifiers are reload-free: the value lives in ing-reqhdr.map /
+      # ing-reshdr.map keyed on the backend, read by one static line per name.
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hdr-ingress_svc_echo_80\|set\|x-custom-req req-value'}
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hdr-ingress_svc_echo_80\|set\|x-env production'}
+      - {type: contains, target: 'map:ing-reshdr.map', pattern: 'default_hdr-ingress_svc_echo_80\|set\|x-custom-resp resp-value'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-Custom-Req %\[var\(txn\.backend_name\),concat\(\|set\|x-custom-req\),map\([^)]*ing-reqhdr\.map\),url_dec\(1\)\]'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response set-header X-Custom-Resp %\[var\(txn\.backend_name\),concat\(\|set\|x-custom-resp\),map\([^)]*ing-reshdr\.map\),url_dec\(1\)\]'}
+      # The value never appears as a per-backend directive (negative control).
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-header X-Custom-Req "req-value"'}
       - {type: contains, target: haproxy.cfg, pattern: "http-request set-src hdr\\(X-Real-IP\\) if"}
       - {type: contains, target: haproxy.cfg, pattern: "capture request header X-Forwarded-Proto len 256"}
+
+  test-haptic-header-name-shared-across-ingresses:
+    description: Two ingresses setting the same header name share one static line per frontend, spelled the lexicographically smallest of the two — which here is the SECOND ingress's, so the choice is a rule, not ingress order. A second ingress reusing a header name is a map entry, never a new config line.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: hdr-a, annotations: {haproxy-haptic.org/request-set-header: "x-shared from-a"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: a.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: hdr-b, annotations: {haproxy-haptic.org/request-set-header: "X-Shared from-b"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: b.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hdr-a_svc_echo_80\|set\|x-shared from-a'}
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hdr-b_svc_echo_80\|set\|x-shared from-b'}
+      # One static line per rendered frontend (h1/h2c/https), not one per ingress.
+      - {type: match_count, target: haproxy.cfg, pattern: 'set-header X-Shared %\[var\(txn\.backend_name\),concat\(\|set\|x-shared\)', expected: "3"}
+      # Negative control: the lowercase spelling from the first ingress loses.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-header x-shared %'}
 
   test-haptic-cors:
     description: cors-enable emits the shared CORS macro output (http-after-response Allow-Origin + preflight 204)

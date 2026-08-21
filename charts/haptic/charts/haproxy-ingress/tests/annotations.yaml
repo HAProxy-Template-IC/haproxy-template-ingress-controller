@@ -33,7 +33,10 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "timeout server 60s"}
+      # The settable server timeout lives as ms in backend-timeouts.map
+      # (reload-free); connect/queue stay per-value.
+      - {type: contains, target: 'map:backend-timeouts.map', pattern: 'default_timeout-ingress_svc_echo_80\|server 60000'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "timeout server 60s"}
       - {type: contains, target: haproxy.cfg, pattern: "timeout connect 10s"}
       - {type: contains, target: haproxy.cfg, pattern: "timeout queue 30s"}
 
@@ -818,7 +821,7 @@ validationTests:
                       backend: {service: {name: rwlit-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:path-rewrite.map, pattern: "default_rwlit-ing_svc_rwlit-svc_80 /new"}
+      - {type: contains, target: map:path-rewrite.map, pattern: "default_rwlit-ing_svc_rwlit-svc_80 %2fnew"}
       - {type: not_contains, target: haproxy.cfg, pattern: "replace-path \\(\\.\\*\\) /new"}
 
 

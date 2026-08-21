@@ -288,7 +288,7 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "cookie SESS insert indirect nocache dynamic httponly secure"}
 
   test-haproxy-ingress-headers-value-escaped:
-    description: A headers value with a double quote, dollar and log-format percent renders escaped inside double quotes, so it cannot break out, expand an env var, or read request state.
+    description: A headers value with a double quote, dollar and log-format percent is URL-encoded in ing-reqhdr.map (" -> %22, $ -> %24, % -> %25, [ -> %5b) and decoded with url_dec(1), so it cannot break out, expand an env var, or read request state.
     extraContext: {renderMode: reconcile}
     fixtures:
       ingresses:
@@ -306,7 +306,9 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Esc "a\\"b\\\$c%%\[var\(txn\.foo\)\]" if'}
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hdr-esc_svc_echo_80\|set\|x-esc a%22b%24c%25%5bvar%28txn\.foo%29%5d'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Esc %\[var\(txn\.backend_name\),concat\(\|set\|x-esc\),map\([^)]*ing-reqhdr\.map\),url_dec\(1\)\]'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-header X-Esc "'}
 
   test-haproxy-ingress-auth-realm-escape-and-fail-closed:
     description: An auth-realm double quote renders escaped inside its quoted literal, while a control character fails the route closed with 503 instead of a splittable directive.
