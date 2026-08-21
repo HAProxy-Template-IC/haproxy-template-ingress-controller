@@ -1331,7 +1331,8 @@ controller:
         indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
         # "0" = no per-watcher debounce: fire on every EndpointSlice change so
         # a pod-IP rotation reaches HAProxy inside the kubelet Ready→SIGTERM
-        # window. The reconciler-level refractory still batches across kinds.
+        # window. The coordinator still coalesces triggers that arrive while a
+        # render is in flight.
         debounceInterval: "0"
       secrets:
         apiVersion: v1
@@ -1340,7 +1341,7 @@ controller:
         indexBy: ["metadata.namespace", "metadata.name"]
         #
         # Add custom or override library-defined entries. Per-resource
-        # debounceInterval is supported (default 2s).
+        # debounceInterval is supported (default 100ms).
     # Override or extend the library-provided templateSnippets / maps /
     # files / haproxyConfig / validationTests sections by defining the
     # same keys here — user-provided values always win.

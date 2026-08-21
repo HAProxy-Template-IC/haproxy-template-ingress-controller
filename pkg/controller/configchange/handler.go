@@ -13,7 +13,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
 const (
@@ -38,10 +37,10 @@ const (
 // DefaultReinitDebounceInterval is the default time to wait after the last config
 // change before signaling controller reinitialization. This allows rapid CRD updates
 // to be coalesced, ensuring templates are fully rendered before reinitialization starts.
-// Reuses the lenient per-watcher debounce default (types.DefaultDebounceInterval, 2s):
-// CRD config edits are operator-initiated and tolerate a couple of seconds of
-// coalescing, like other structural changes.
-var DefaultReinitDebounceInterval = types.DefaultDebounceInterval
+// Stays lenient where the per-watcher default (types.DefaultDebounceInterval) is
+// near zero: reinit tears down and rebuilds every informer, so coalescing a burst
+// of operator-initiated CRD edits is worth the added seconds.
+const DefaultReinitDebounceInterval = 2 * time.Second
 
 // syntheticBootstrapVersion is the literal version string webhook.go
 // stamps on the placeholder ConfigValidatedEvent and

@@ -107,7 +107,7 @@ type Config struct {
 // There is intentionally no Kind field; the controller derives the kind from
 // the GroupVersionResource at watch time. DebounceInterval is optional —
 // when empty or unparseable, the watcher falls back to
-// pkg/k8s/types.DefaultDebounceInterval (2s); the field exists so noisy
+// pkg/k8s/types.DefaultDebounceInterval (100ms); the field exists so noisy
 // resources (HTTPRoute, EndpointSlice) can override the global window
 // (the chart sets it to "0" on EndpointSlice for instant rolling-restart
 // reaction).
@@ -302,7 +302,7 @@ const (
     DefaultMinDeploymentInterval   = 2 * time.Second
     DefaultDriftPreventionInterval = 60 * time.Second
     // The watcher debounce window is intentionally NOT redefined here;
-    // reuse pkg/k8s/types.DefaultDebounceInterval (2 * time.Second).
+    // reuse pkg/k8s/types.DefaultDebounceInterval (100 * time.Millisecond).
 )
 
 // There is no reconciler-level debounce default here. The reconciler fires

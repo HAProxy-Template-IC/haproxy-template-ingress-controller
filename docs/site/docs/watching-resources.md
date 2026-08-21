@@ -23,7 +23,7 @@ watchedResources:
     labelSelector: ""                       # "app=myapp" — string, not matchLabels object
     enableValidationWebhook: false          # include this kind in the webhook fan-out
     store: full                             # "full" (default) or "on-demand"
-    debounceInterval: ""                    # Go duration string; empty / invalid uses the 2s default
+    debounceInterval: ""                    # Go duration string; empty / invalid uses the 100ms default
 ```
 
 All selector fields are plain label-selector strings — the `matchLabels`/`matchExpressions` object form that Prometheus Operator and others use is *not* accepted here.

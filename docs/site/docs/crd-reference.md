@@ -106,7 +106,7 @@ More than one key can target the same Kubernetes group, version, and resource tu
 | `fieldSelector` | string | No | `""` (client-side JSONPath equality, `"field.path=value"`; matches any field) |
 | `store` | string (`full` / `on-demand`) | No | `full` |
 | `enableValidationWebhook` | bool | No | `false` |
-| `debounceInterval` | string | No | `""` — empty / invalid uses the `2s` default; an explicit `"0"` disables debouncing |
+| `debounceInterval` | string | No | `""` — empty / invalid uses the `100ms` default; an explicit `"0"` disables debouncing |
 
 ```yaml
 watchedResources:
@@ -518,7 +518,7 @@ controller:
 ```
 
 !!! note
-    There is no reconciler-level debounce knob. The Reconciler fires immediately on every resource/HTTP event; batching is per-watcher (`spec.watchedResources.<name>.debounceInterval`, default `2s`) and reload throttling is the deployer's `spec.dataplane.minDeploymentInterval`.
+    There is no reconciler-level debounce knob. The Reconciler fires immediately on every resource/HTTP event; batching is per-watcher (`spec.watchedResources.<name>.debounceInterval`, default `100ms`) and reload throttling is the deployer's `spec.dataplane.minDeploymentInterval`.
 
 !!! note
     These are the controller's built-in defaults from `pkg/core/config/defaults.go` — deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (`15s`/`10s`/`2s`), so the leader rides out multi-second API-server or CPU starvation stalls without losing the lease. The Helm chart sets the same values; setting any of these fields on the CRD only matters if you need different values (for example faster crash-failover, or clusters with significant clock skew).

@@ -33,7 +33,7 @@ cfg := types.WatcherConfig{
     OnSyncComplete: func(store types.Store, count int) {
         log.Info("ingresses initial sync complete", "count", count)
     },
-    // DebounceInterval defaults to types.DefaultDebounceInterval (2s)
+    // DebounceInterval defaults to types.DefaultDebounceInterval (100ms)
 }
 
 w, err := watcher.New(cfg, c, slog.Default())

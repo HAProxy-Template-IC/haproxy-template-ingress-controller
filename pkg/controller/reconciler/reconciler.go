@@ -19,7 +19,7 @@
 // change events and publishes a ReconciliationTriggeredEvent IMMEDIATELY for
 // each one — there is no reconciler-level refractory/debounce. Batching of
 // rapid changes happens upstream, per watched-resource kind (the
-// pkg/k8s/watcher leading-edge debouncer; default 2s, EndpointSlice "0"), and
+// pkg/k8s/watcher leading-edge debouncer; default 100ms, EndpointSlice "0"), and
 // reload throttling happens downstream (the deployer's minDeploymentInterval,
 // which the runtime-eligible fast path bypasses). Keeping the reconciler
 // immediate means a runtime-eligible endpoint change reaches the deployer with

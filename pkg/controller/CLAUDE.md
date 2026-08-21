@@ -407,7 +407,7 @@ func (r *Reconciler) Start(ctx context.Context) error {
 
 **Features:**
 
-- Fires a reconciliation immediately on every event — no reconciler-level debounce, no refractory window, no timer. Batching of rapid changes is the per-watcher debounce window's job (`types.DefaultDebounceInterval`, currently 2s; EndpointSlice watchers run at `debounceInterval: "0"`). Reload throttling is the deployer's `minDeploymentInterval`. There is no `spec.controller.reconciliationDebounceInterval` CRD knob and no `reconciler.Config`.
+- Fires a reconciliation immediately on every event — no reconciler-level debounce, no refractory window, no timer. Batching of rapid changes is the per-watcher debounce window's job (`types.DefaultDebounceInterval`, currently 100ms; EndpointSlice watchers run at `debounceInterval: "0"`). Reload throttling is the deployer's `minDeploymentInterval`. There is no `spec.controller.reconciliationDebounceInterval` CRD knob and no `reconciler.Config`.
 - Triggers immediate reconciliation when all indices are synchronized
 - Filters initial sync events to prevent premature reconciliation
 - Publishes ReconciliationTriggeredEvent

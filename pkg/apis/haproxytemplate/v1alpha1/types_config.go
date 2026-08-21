@@ -529,7 +529,7 @@ type WatchedResource struct {
 	Store string `json:"store,omitempty"`
 
 	// DebounceInterval overrides the watcher's refractory window.
-	// "0" disables debouncing; default 2s.
+	// "0" disables debouncing; default 100ms.
 	// +optional
 	DebounceInterval string `json:"debounceInterval,omitempty"`
 }

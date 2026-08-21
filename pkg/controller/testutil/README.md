@@ -26,7 +26,7 @@ This package is **only consumed from tests**. Production code must not import it
 | Name | Value | Use for |
 |------|-------|---------|
 | `StartupDelay` | 50ms | Brief settling pause after starting components |
-| `DebounceWait` | 100ms | Long enough for debounce timers (default is 2s in production but tests override down) |
+| `DebounceWait` | 100ms | Long enough for debounce timers (tests override the production windows down) |
 | `EventTimeout` | 500ms | Default waiting timeout for a single event |
 | `LongTimeout` | 1s | Operations that may take longer (graceful stop) |
 | `VeryLongTimeout` | 2s | Integration-style tests inside unit test files |

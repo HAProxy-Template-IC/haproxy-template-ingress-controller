@@ -112,7 +112,7 @@ The runner accepts these environment variables:
 | `BENCH_SCALE_DURATION` | `10m` | HAPTIC analysis duration after the scale readiness proof; accepts a positive integer followed by `s`, `m`, or `h` |
 | `BENCH_SCALE_STARTUP_TIMEOUT` | `20m` | Maximum time for the scale workload to pass the HAPTIC readiness proof |
 | `BENCH_DEPLOY_INTERVAL` | unset; chart default (`5s` at this commit) | Override HAPTIC's minimum structural-deployment interval |
-| `BENCH_WATCH_DEBOUNCE` | unset; controller default (`2s` at this commit) | Override the Gateway and HTTPRoute watcher debounce |
+| `BENCH_WATCH_DEBOUNCE` | unset; controller default (`100ms` at this commit) | Override the Gateway and HTTPRoute watcher debounce |
 | `BENCH_KEEP_CLUSTER` | `false` | Keep a cluster that this runner created |
 | `BENCH_ALLOW_DIRTY` | `false` | Allow an uncommitted HAPTIC tree and mark the result non-comparable |
 | `BENCH_ALLOW_COSCHEDULED_CLUSTERS` | `false` | Allow other Kind clusters for a non-comparable smoke or debug run |
@@ -230,9 +230,9 @@ rate(container_cpu_usage_seconds_total{container="haptic"}[5m])
 
 ## Reconciliation tuning
 
-### Debounce interval (per-resource override, `2s` default)
+### Debounce interval (per-resource override, `100ms` default)
 
-The resource watchers coalesce bursts of Kubernetes events via a leading-edge debouncer with a 2-second refractory period (`pkg/k8s/types.DefaultDebounceInterval`). The first change in a quiet period fires immediately, so isolated updates are fast; only subsequent changes arriving within 2 s are batched.
+The resource watchers coalesce bursts of Kubernetes events via a leading-edge debouncer with a 100-millisecond refractory period (`pkg/k8s/types.DefaultDebounceInterval`). The first change in a quiet period fires immediately, so isolated updates are fast; only subsequent changes arriving within 100 ms are batched.
 
 Each watched resource can override the window via `spec.watchedResources.<name>.debounceInterval`:
 
@@ -241,14 +241,14 @@ watchedResources:
   httproutes:
     apiVersion: gateway.networking.k8s.io/v1
     resources: httproutes
-    debounceInterval: "200ms"  # react fast on canary rollouts
+    debounceInterval: "1s"     # batch harder where route churn is noisy
   endpointslices:
     apiVersion: discovery.k8s.io/v1
     resources: endpointslices
     debounceInterval: "0"      # fire immediately — pod-IP rotations reach HAProxy instantly (chart default)
 ```
 
-Empty / invalid strings fall back to the `2s` default silently; `"0"` disables debouncing so every change fires immediately. This is the only debounce layer — the Reconciler fires immediately on every event with no separate refractory window, and reload throttling lives in the deployer (see [Deployment Pacing](#deployment-pacing) below and [architecture-overview](../development/design/architecture-overview.md)).
+Empty / invalid strings fall back to the `100ms` default silently; `"0"` disables debouncing so every change fires immediately. This is the only debounce layer — the Reconciler fires immediately on every event with no separate refractory window, and reload throttling lives in the deployer (see [Deployment Pacing](#deployment-pacing) below and [architecture-overview](../development/design/architecture-overview.md)).
 
 ### Deployment pacing
 
@@ -296,7 +296,7 @@ production because a connection that never drains can otherwise retain an old
 worker until its pod restarts. If you replace `haproxy.initialConfig` entirely,
 include your own `hard-stop-after` directive in that custom bootstrap config.
 
-Resource deletions take the same path as any structural change: the watch delete fires, the leading-edge debouncer forwards it (the first change in a quiet window fires immediately, so an isolated delete isn't held for the 2 s window), the reconciler re-renders without the resource, and the deployer pushes a reload paced by `minDeploymentInterval`. Unlike EndpointSlice pod-IP rotations, a deletion isn't runtime-fast-path eligible — that path covers only server weight, address, port, and admin-state updates — so it always reloads. An isolated deletion typically converges in about one to a few seconds.
+Resource deletions take the same path as any structural change: the watch delete fires, the leading-edge debouncer forwards it (the first change in a quiet window fires immediately, so an isolated delete isn't held for the refractory window), the reconciler re-renders without the resource, and the deployer pushes a reload paced by `minDeploymentInterval`. Unlike EndpointSlice pod-IP rotations, a deletion isn't runtime-fast-path eligible — that path covers only server weight, address, port, and admin-state updates — so it always reloads. An isolated deletion typically converges in about one to a few seconds.
 
 **Tuning guidelines:**
 
@@ -746,7 +746,7 @@ Controller images ship built with Profile-Guided Optimization (PGO), which typic
 ### Initial Deployment
 
 - [ ] Set appropriate resource requests/limits
-- [ ] Tune `dataplane.minDeploymentInterval` for workload, plus `spec.watchedResources.<name>.debounceInterval` per resource if the `2s` default is wrong for a specific kind (for example, slower on EndpointSlice on large clusters)
+- [ ] Tune `dataplane.minDeploymentInterval` for workload, plus `spec.watchedResources.<name>.debounceInterval` per resource if the `100ms` default is wrong for a specific kind (for example, slower on EndpointSlice on large clusters)
 - [ ] Set HAProxy `maxconn` based on expected load
 - [ ] Match `nbthread` to CPU allocation
 
