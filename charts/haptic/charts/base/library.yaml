@@ -2303,20 +2303,22 @@ templateSnippets:
       {# Resource-agnostic upstream Host override, keyed on the resolved backend.
          Relocated from a per-backend `http-request set-header Host`; resource
          libraries populate reqhdr-host.map via map-reqhdr-host-* snippets.
-         Inert until a backend has an entry, so changing the Host is map-only. #}
-      {{ "\n" }}http-request set-header Host %[var(txn.backend_name),map({{ m }})] if { var(txn.backend_name),map({{ m }}) -m found }
+         Inert until a backend has an entry, so changing the Host is map-only.
+         Values are URL-encoded by the writers, so url_dec(1) here: the runtime
+         map CLI splits a value at the first space and truncates it at a `;`. #}
+      {{ "\n" }}http-request set-header Host %[var(txn.backend_name),map({{ m }}),url_dec(1)] if { var(txn.backend_name),map({{ m }}) -m found }
 
   frontend-filters-261-request-set-xfwd-prefix:
     template: |
       {%- var m, _ = pathResolver.GetPath("reqhdr-xfwd-prefix.map", "map") -%}
-      {# Resource-agnostic X-Forwarded-Prefix override, keyed on the resolved backend. #}
-      {{ "\n" }}http-request set-header X-Forwarded-Prefix %[var(txn.backend_name),map({{ m }})] if { var(txn.backend_name),map({{ m }}) -m found }
+      {# Resource-agnostic X-Forwarded-Prefix override, keyed on the resolved backend. url_dec(1): values are URL-encoded by the writers. #}
+      {{ "\n" }}http-request set-header X-Forwarded-Prefix %[var(txn.backend_name),map({{ m }}),url_dec(1)] if { var(txn.backend_name),map({{ m }}) -m found }
 
   frontend-filters-262-request-set-connection:
     template: |
       {%- var m, _ = pathResolver.GetPath("reqhdr-connection.map", "map") -%}
-      {# Resource-agnostic Connection header override, keyed on the resolved backend. #}
-      {{ "\n" }}http-request set-header Connection %[var(txn.backend_name),map({{ m }})] if { var(txn.backend_name),map({{ m }}) -m found }
+      {# Resource-agnostic Connection header override, keyed on the resolved backend. url_dec(1): values are URL-encoded by the writers. #}
+      {{ "\n" }}http-request set-header Connection %[var(txn.backend_name),map({{ m }}),url_dec(1)] if { var(txn.backend_name),map({{ m }}) -m found }
 
   frontend-filters-400-path-rewrite:
     template: |
@@ -2325,8 +2327,9 @@ templateSnippets:
          LITERAL replacements live in the map; capture/regex rewrites stay as
          `http-request replace-path` in the backend (the regex side can't be
          map-driven). Runs after routing (path-based backend selection already
-         happened), matching the old in-backend `replace-path (.*) <literal>`. #}
-      {{ "\n" }}http-request set-path %[var(txn.backend_name),map({{ m }})] if { var(txn.backend_name),map({{ m }}) -m found }
+         happened), matching the old in-backend `replace-path (.*) <literal>`.
+         url_dec(1): values are URL-encoded by the writers. #}
+      {{ "\n" }}http-request set-path %[var(txn.backend_name),map({{ m }}),url_dec(1)] if { var(txn.backend_name),map({{ m }}) -m found }
 
   features-170-redirect-location-map:
     template: |
@@ -2364,6 +2367,58 @@ templateSnippets:
       {%- for _, code := range codes -%}
         {{- HostKeyedMapFile(byCode[code], "location", "redirect-loc-" + code + ".map") -}}
       {%- end -%}
+
+  util-haproxy-duration:
+    template: |-
+      {#
+        HAProxyDurationMs parses an HAProxy time value — a bare integer (which
+        HAProxy reads as milliseconds) or an integer with a us/ms/s/m/h/d suffix —
+        to integer milliseconds as a string, or "" when it is not a valid duration.
+        `us` is refused: a sub-millisecond server/tunnel timeout is not meaningful
+        and would round to 0 ("no timeout"). This is the render-time validator that
+        replaces the `haproxy -c` parse a timeout loses when its value moves out of
+        a `timeout server <v>` directive and into backend-timeouts.map.
+
+        Resource-agnostic (RULE #1) — it sees a string.
+      #}
+      {%- macro HAProxyDurationMs(value string) string -%}
+        {%%
+          var s = strip(value)
+          if s == "" {
+            show ""
+            return
+          }
+          var mult = 1
+          var num = s
+          if hasSuffix(s, "us") {
+            show ""
+            return
+          } else if hasSuffix(s, "ms") {
+            num = s[:len(s)-2]
+          } else if hasSuffix(s, "s") {
+            num = s[:len(s)-1]
+            mult = 1000
+          } else if hasSuffix(s, "m") {
+            num = s[:len(s)-1]
+            mult = 60000
+          } else if hasSuffix(s, "h") {
+            num = s[:len(s)-1]
+            mult = 3600000
+          } else if hasSuffix(s, "d") {
+            num = s[:len(s)-1]
+            mult = 86400000
+          }
+          // Bound the digit count so toint (strconv.Atoi) can't overflow to 0: a
+          // value like 99999999999999999999d would otherwise pass the digit check,
+          // wrap to 0, and silently DISABLE the timeout ("0" means no timeout)
+          // instead of being rejected. 15 digits dwarfs any legitimate timeout.
+          if !regex_search(num, "^[0-9]{1,15}$") {
+            show ""
+            return
+          }
+          show tostring(toint(num) * mult)
+        %%}
+      {%- end macro -%}
 
   util-header-modifier-rules:
     template: |-
@@ -2943,6 +2998,16 @@ maps:
       # rewrites stay as http-request replace-path in the backend). Populated via
       # map-path-rewrite-*; applied by frontend-filters-400-path-rewrite.
       {{ render_glob "map-path-rewrite-*" -}}
+
+  backend-timeouts.map:
+    ordered: false
+    template: |
+      # Per-backend settable timeouts: `<backend>|server` / `<backend>|tunnel` → integer ms.
+      # Populated by resource libraries (map-backend-timeout-*); read by the two uniform
+      # set-timeout lines every ingress backend carries, so editing a timeout annotation is a
+      # map-only, reload-free change. The non-settable timeouts (connect/queue/http-request/
+      # http-keep-alive/check) stay as per-value backend directives.
+      {{ render_glob "map-backend-timeout-*" -}}
 
 files:
   400.http:

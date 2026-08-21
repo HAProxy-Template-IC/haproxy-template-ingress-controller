@@ -85,102 +85,16 @@ templateSnippets:
             "haptic/denylist-source-range ({KEY})") }}
       {%- end -%}
 
-  frontend-filters-820-haptic-request-set-header:
+  # Reload-free: request-set-header and response-set-header (newline-separated
+  # "<name> <value>" records) become entries in ing-reqhdr.map / ing-reshdr.map
+  # (built by ingress.yaml frontend-filters-263-ingress-headers), keyed on the
+  # resolved backend. This scopes each header to the ingress's own backends
+  # rather than every request for the host — the wildcard/host-less
+  # HostMatchCondition gap goes with it.
+  features-820-haptic-header-mods:
     template: |
-      {#
-        HAPTIC request header injection (best-of-breed: haproxytech newline form)
-
-        Annotations:
-          - haproxy-haptic.org/request-set-header: newline-separated "<name> <value>"
-            lines (one header per line).
-
-        Generated HAProxy Config (host-scoped):
-          http-request set-header <name> '<value>' if <host-match>
-
-        Guards: the header name (single token, no spaces) and value (control
-        chars rejected) both pass ValidateConfigValue before interpolation.
-      #}
-      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var reqHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/request-set-header"] %}
-          {%- if reqHeaders != "" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-      # haptic/request-set-header ({{ key }})
-              {%- for _, line := range split(reqHeaders, "\n") %}
-                {%- var t = trimSpace(line) %}
-                {%- if t != "" && strings_contains(t, " ") %}
-                  {%- var parts = split(t, " ") %}
-                  {%- var hName = ValidateConfigValue(parts[0], "haproxy-haptic.org/request-set-header", key, false) %}
-                  {%- var hVal = join(parts[1:], " ") %}
-                  {%- var hInj = ConfigInjectionKind(hVal, "line") %}
-                  {%- if hInj != "" %}
-                    {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/request-set-header' value contains " + hInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
-                  {%- else %}
-      http-request set-header {{ hName }} "{{ EscapeLogFormatValue(hVal) }}" if {{ HostMatchCondition(hosts) }}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
-
-  frontend-filters-825-haptic-response-set-header:
-    template: |
-      {#
-        HAPTIC response header injection (best-of-breed: haproxytech newline form)
-
-        Annotations:
-          - haproxy-haptic.org/response-set-header: newline-separated "<name> <value>"
-            lines (one header per line).
-
-        Generated HAProxy Config (host-scoped):
-          http-response set-header <name> '<value>' if <host-match>
-      #}
-      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var respHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/response-set-header"] %}
-          {%- if respHeaders != "" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-      # haptic/response-set-header ({{ key }})
-              {%- for _, line := range split(respHeaders, "\n") %}
-                {%- var t = trimSpace(line) %}
-                {%- if t != "" && strings_contains(t, " ") %}
-                  {%- var parts = split(t, " ") %}
-                  {%- var hName = ValidateConfigValue(parts[0], "haproxy-haptic.org/response-set-header", key, false) %}
-                  {%- var hVal = join(parts[1:], " ") %}
-                  {%- var hInj = ConfigInjectionKind(hVal, "line") %}
-                  {%- if hInj != "" %}
-                    {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/response-set-header' value contains " + hInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
-                  {%- else %}
-      http-response set-header {{ hName }} "{{ EscapeLogFormatValue(hVal) }}" if {{ HostMatchCondition(hosts) }}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+      {%- import "util-ingress-header-contribute" for IngressHeaderContribute -%}
+      {{- IngressHeaderContribute("haproxy-haptic.org/request-set-header", "haproxy-haptic.org/response-set-header", "\n", " ") -}}
 
   frontend-filters-830-haptic-cors:
     template: |

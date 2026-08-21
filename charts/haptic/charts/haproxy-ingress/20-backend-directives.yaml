@@ -26,12 +26,13 @@ templateSnippets:
       {%- if ingress != nil %}
         {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
         {%- var tConnect = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-connect"] %}
-        {%- var tServer = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-server"] %}
         {%- var tQueue = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-queue"] %}
-        {%- var tTunnel = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-tunnel"] %}
         {%- var tHttpReq = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-http-request"] %}
         {%- var tKeepAlive = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-keep-alive"] %}
-        {%- var hasTimeout = tConnect != "" || tServer != "" || tQueue != "" || tTunnel != "" || tHttpReq != "" || tKeepAlive != "" %}
+        {#- timeout-server and timeout-tunnel are the settable timeouts: they move to
+            backend-timeouts.map via map-backend-timeout-600-haproxy-ingress-timeouts
+            (reload-free). The rest stay per-value here. -#}
+        {%- var hasTimeout = tConnect != "" || tQueue != "" || tHttpReq != "" || tKeepAlive != "" %}
         {%- if hasTimeout %}
       # haproxy-ingress/backend-directives-timeouts
         {%- end %}
@@ -41,22 +42,10 @@ templateSnippets:
       timeout connect {{ tConnect }}
           {%- end %}
         {% end %}
-        {%- if tServer != "" %}
-          {%- var injTS = ConfigInjectionKind(tServer, "token") %}
-          {%- if injTS != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidTimeout", "Ingress " + key + " annotation 'haproxy-ingress.github.io/timeout-server' contains " + injTS + "; the timeout is not applied. Remove whitespace, quotes and control characters.") -}}{%- else %}
-      timeout server {{ tServer }}
-          {%- end %}
-        {% end %}
         {%- if tQueue != "" %}
           {%- var injTQ = ConfigInjectionKind(tQueue, "token") %}
           {%- if injTQ != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidTimeout", "Ingress " + key + " annotation 'haproxy-ingress.github.io/timeout-queue' contains " + injTQ + "; the timeout is not applied. Remove whitespace, quotes and control characters.") -}}{%- else %}
       timeout queue {{ tQueue }}
-          {%- end %}
-        {% end %}
-        {%- if tTunnel != "" %}
-          {%- var injTT = ConfigInjectionKind(tTunnel, "token") %}
-          {%- if injTT != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidTimeout", "Ingress " + key + " annotation 'haproxy-ingress.github.io/timeout-tunnel' contains " + injTT + "; the timeout is not applied. Remove whitespace, quotes and control characters.") -}}{%- else %}
-      timeout tunnel {{ tTunnel }}
           {%- end %}
         {% end %}
         {%- if tHttpReq != "" %}
@@ -72,6 +61,13 @@ templateSnippets:
           {%- end %}
         {% end %}
       {%- end -%}
+
+  # Reload-free settable timeouts: timeout-server / timeout-tunnel become
+  # `<backend>|server` / `<backend>|tunnel` entries in backend-timeouts.map.
+  map-backend-timeout-600-haproxy-ingress-timeouts:
+    template: |
+      {%- import "util-ingress-backend-timeout" for IngressBackendTimeoutMapEntries -%}
+      {{- IngressBackendTimeoutMapEntries("haproxy-ingress.github.io/timeout-server", "haproxy-ingress.github.io/timeout-tunnel") -}}
 
   backend-directives-610-haproxy-ingress-load-balance:
     template: |
@@ -698,7 +694,7 @@ templateSnippets:
               {%- for _, path := range rule.Http.Paths -%}
                 {%- var be = BackendNameIngress(ingress, path) -%}
                 {%- if first_seen("map-path-rewrite", be) -%}
-      {{ "\n" }}{{ be }} {{ ValidateConfigValue(rewrite, "haproxy-ingress.github.io/rewrite-target", key, false) }}
+      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(rewrite, "haproxy-ingress.github.io/rewrite-target", key, true)) }}
                 {%- end -%}
               {%- end -%}
             {%- end -%}

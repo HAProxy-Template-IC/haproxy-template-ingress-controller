@@ -209,6 +209,7 @@ WORST_CASE_LIBS := \
 	--set controller.templateLibraries.nginxIngress.enabled=true \
 	--set controller.templateLibraries.haproxytech.enabled=true \
 	--set controller.templateLibraries.haproxyIngress.enabled=true \
+	--set controller.templateLibraries.customCrdExample.enabled=true \
 	--set controller.templateLibraries.spoaHub.enabled=true
 
 chart-size-check: ## Estimate the Helm release-Secret size; fail if it nears the 1 MiB Secret limit

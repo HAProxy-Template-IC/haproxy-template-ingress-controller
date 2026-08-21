@@ -258,7 +258,7 @@ templateSnippets:
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
               {%- if first_seen("map-reqhdr-host", be) -%}
-      {{ "\n" }}{{ be }} {{ ValidateConfigValue(host, "haproxy-haptic.org/set-host", key, false) }}
+      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(host, "haproxy-haptic.org/set-host", key, true)) }}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -279,7 +279,7 @@ templateSnippets:
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
               {%- if first_seen("map-reqhdr-xfwd-prefix", be) -%}
-      {{ "\n" }}{{ be }} {{ ValidateConfigValue(v, "haproxy-haptic.org/x-forwarded-prefix", key, true) }}
+      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(v, "haproxy-haptic.org/x-forwarded-prefix", key, true)) }}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -300,7 +300,7 @@ templateSnippets:
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
               {%- if first_seen("map-reqhdr-connection", be) -%}
-      {{ "\n" }}{{ be }} {{ ValidateConfigValue(v, "haproxy-haptic.org/backend-connection-header", key, true) }}
+      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(v, "haproxy-haptic.org/backend-connection-header", key, true)) }}
               {%- end -%}
             {%- end -%}
           {%- end -%}

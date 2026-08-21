@@ -33,7 +33,10 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "timeout connect 10s"}
-      - {type: contains, target: haproxy.cfg, pattern: "timeout server 60s"}
+      # read/send timeout collapses into the settable server timeout, stored as ms
+      # in backend-timeouts.map (reload-free) rather than a per-backend directive.
+      - {type: contains, target: 'map:backend-timeouts.map', pattern: 'default_timeout-ingress_svc_echo_80\|server 60000'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "timeout server 60s"}
 
   test-nginx-ingress-load-balance:
     description: Nginx Ingress load-balance annotation maps to HAProxy algorithm
@@ -1014,8 +1017,8 @@ validationTests:
                       backend: {service: {name: rwlit-svc, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      # Literal rewrite → path-rewrite.map entry + shared frontend set-path.
-      - {type: contains, target: map:path-rewrite.map, pattern: "default_rwlit-ing_svc_rwlit-svc_80 /new"}
+      # Literal rewrite → path-rewrite.map entry (URL-encoded) + shared frontend set-path.
+      - {type: contains, target: map:path-rewrite.map, pattern: "default_rwlit-ing_svc_rwlit-svc_80 %2fnew"}
       # No per-backend replace-path for the literal case (it moved to the map).
       - {type: not_contains, target: haproxy.cfg, pattern: "replace-path \\(\\.\\*\\) /new"}
 
@@ -1322,7 +1325,7 @@ validationTests:
       - type: contains
         target: map:reqhdr-host.map
         pattern: "default_uh-ingress_svc_uh-svc_80 internal.example.com"
-      - {type: contains, target: map:reqhdr-xfwd-prefix.map, pattern: "default_uh-ingress_svc_uh-svc_80 /app"}
+      - {type: contains, target: map:reqhdr-xfwd-prefix.map, pattern: "default_uh-ingress_svc_uh-svc_80 %2fapp"}
       - type: contains
         target: map:reqhdr-connection.map
         pattern: "default_uh-ingress_svc_uh-svc_80 keep-alive"
@@ -1517,7 +1520,7 @@ validationTests:
   # Load-bearing special case: a custom-request-headers value is double-quoted and
   # log-format escaped, so a literal `%` is doubled and can't read request state.
   test-nginx-ingress-custom-request-header-value-log-format-escaped:
-    description: A literal percent in a custom-request-headers value is doubled so HAProxy can't interpret it as a log-format fetch.
+    description: A literal percent in a custom-request-headers value is URL-encoded (% -> %25) in ing-reqhdr.map and decoded with url_dec(1), so HAProxy can't interpret it as a log-format fetch.
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1534,7 +1537,9 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-Discount "50%%off"'}
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hdr-escape_svc_echo_80\|set\|x-discount 50%25off'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Discount %\[var\(txn\.backend_name\),concat\(\|set\|x-discount\),map\([^)]*ing-reqhdr\.map\),url_dec\(1\)\]'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-header X-Discount "'}
 
   # A malformed rate-limit threshold reaches an unquoted ACL operand and must fail
   # closed rather than silently ship without the limit (rpm/connections share the

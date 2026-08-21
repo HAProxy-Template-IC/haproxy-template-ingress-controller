@@ -201,6 +201,7 @@ the cost of its source being stored in the release Secret.
     "subchart:haproxytech"
     "subchart:haproxy-ingress"
     "subchart:nginx-ingress"
+    "subchart:custom-crd-example"
     "subchart:spoa-hub"
     "subchart:vector"
 }}

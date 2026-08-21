@@ -1,0 +1,126 @@
+# Custom-CRD example library — the RULE #1 end-to-end proof that the reload-free
+# author contract is resource-agnostic. It watches a `Route` custom resource
+# (no bundled schema; accessed untyped through the resource-agnostic resource()
+# accessor and dig(), the same way the governance library reads any kind) and builds
+# the same shape the ingress and gateway libraries build from their own inputs:
+# one Backend() per Route with a literal server list, and per-Route request
+# headers moved into route-reqhdr.map read by one static HeaderModifierRules line
+# keyed on the backend. Default-disabled — it exists to document and test the
+# macros, not for production routing. See docs/site/docs/libraries/reload-free.md.
+_helm_load:
+  enable: '{{ .Values.controller.templateLibraries.customCrdExample.enabled }}'
+
+watchedResources:
+  routes:
+    apiVersion: haptic-example.org/v1
+    resources: routes
+    indexBy: ["metadata.namespace", "metadata.name"]
+
+templateSnippets:
+  # Builds route-reqhdr.map + the header-name set and emits one static set-header
+  # line per distinct header name, keyed on the resolved backend — a Route reusing
+  # a header name is a map entry, no reload. Values are URL-encoded; names are
+  # validated against the exact charset HeaderModifierRules emits a line for. The
+  # build result is captured from the single ComputeIfAbsent call (memoised across
+  # the three frontend renders); there is deliberately no `func() any { return nil }`
+  # read-back, which would cache nil for the render if it ran before the write.
+  frontend-filters-990-custom-route-headers:
+    template: |
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- import "util-header-modifier-rules" for HeaderModifierRules -%}
+      {%%
+        var hmVal, _ = shared.ComputeIfAbsent("customRouteHeaders", func() any {
+          var names = map[string]string{}
+          var entries = []string{"# <backend>|set|<name> -> URL-encoded value"}
+          for _, r := range resource("routes") {
+            var be = tostring(dig(r, "metadata", "namespace")) + "_" + tostring(dig(r, "metadata", "name"))
+            for _, h := range toSlice(dig(r, "spec", "requestHeaders")) {
+              var hn = tostring(dig(h, "name"))
+              if !regex_search(hn, "^[A-Za-z0-9!$&*+.^_~-]+$") {
+                continue
+              }
+              var lower = toLower(hn)
+              // Smallest spelling wins so two Routes disagreeing on case share one line.
+              var cur, seen = names[lower]
+              if !seen || hn < cur {
+                names[lower] = hn
+              }
+              entries = append(entries, be + "|set|" + lower + " " + queryEscape(tostring(dig(h, "value"))))
+            }
+          }
+          var lowered = []any{}
+          for _, k := range keys(names) {
+            lowered = append(lowered, k)
+          }
+          var display = []string{}
+          for _, k := range sort_strings(lowered) {
+            display = append(display, names[tostring(k)])
+          }
+          return map[string]any{"path": RegisterMap("route-reqhdr.map", entries, map[string]any{"ordered": false}), "set": display}
+        })
+        var hm = hmVal.(map[string]any)
+      %%}
+      {{- HeaderModifierRules("request", "var(txn.backend_name)", tostring(hm["path"]), hm["set"].([]string), []string{}, []string{}) -}}
+
+  # Backends phase: one dynamic-shape Backend() per Route, servers from a literal
+  # list (no Kubernetes Service navigation), so the plan records a dynamic backend.
+  backends-990-custom-route:
+    template: |
+      {%- import "util-backend" for Backend -%}
+      {%- for _, r := range resource("routes") -%}
+        {%- var be = tostring(dig(r, "metadata", "namespace")) + "_" + tostring(dig(r, "metadata", "name")) -%}
+      {{ Backend(map[string]any{
+           "name": be,
+           "guid": make_guid("be", be),
+           "shape": "dynamic",
+           "comments": []any{"# Custom Route " + be},
+           "servers": []any{map[string]any{"name": "primary", "address": tostring(dig(r, "spec", "backend", "address")), "port": toint(dig(r, "spec", "backend", "port"))}},
+         }) }}
+      {%- end -%}
+
+validationTests:
+  test-custom-crd-route-reload-free:
+    requires: [routes]
+    description: A custom Route CRD drives Backend(), a literal server list, RegisterMap() and HeaderModifierRules() through the same base macros the ingress and gateway libraries use — the resource-agnostic proof. Two Routes sharing a header name emit one static line (smallest spelling wins) and one map entry each.
+    fixtures:
+      # One Ingress only so the base builds an HTTP frontend for the shared
+      # HeaderModifierRules line to render into; the Route CRD drives everything
+      # asserted below.
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: web}
+          spec: {ports: [{port: 80}]}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: web, annotations: {kubernetes.io/ingress.class: haptic}}
+          spec:
+            rules:
+              - host: web.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: web, port: {number: 80}}}}
+      routes:
+        - apiVersion: haptic-example.org/v1
+          kind: Route
+          metadata: {namespace: default, name: r1}
+          spec:
+            backend: {address: 10.0.0.1, port: 8080}
+            requestHeaders: [{name: X-Env, value: "prod eu"}]
+        - apiVersion: haptic-example.org/v1
+          kind: Route
+          metadata: {namespace: default, name: r2}
+          spec:
+            backend: {address: 10.0.0.2, port: 8080}
+            requestHeaders: [{name: x-env, value: "prod us"}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend default_r1$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'server primary 10\.0\.0\.1:8080'}
+      - {type: contains, target: map:route-reqhdr.map, pattern: 'default_r1\|set\|x-env prod%20eu'}
+      - {type: contains, target: map:route-reqhdr.map, pattern: 'default_r2\|set\|x-env prod%20us'}
+      # One static line per header NAME (both Routes share x-env), one per frontend.
+      - {type: match_count, target: haproxy.cfg, expected: "3", pattern: 'set-header X-Env %\[var\(txn\.backend_name\),concat\(\|set\|x-env\),map\([^)]*route-reqhdr\.map\),url_dec\(1\)\]'}
+      # Smallest spelling wins regardless of Route order (X-Env < x-env).
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-header x-env %'}

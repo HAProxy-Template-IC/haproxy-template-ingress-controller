@@ -31,69 +31,15 @@ templateSnippets:
             "nginx-ingress/cors") }}
       {%- end -%}
 
-  frontend-filters-740-nginx-ingress-custom-headers:
+  # Reload-free: custom-request/response-headers become entries in
+  # ing-reqhdr.map / ing-reshdr.map (built by ingress.yaml
+  # frontend-filters-263-ingress-headers), keyed on the resolved backend. This
+  # scopes the header to the ingress's own backends rather than every request
+  # for the host — the wildcard/host-less HostMatchCondition gap goes with it.
+  features-740-nginx-ingress-custom-headers:
     template: |
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var reqHeaders = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/custom-request-headers"] %}
-          {%- var respHeaders = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/custom-response-headers"] %}
-          {%- var hosts = []string{} %}
-          {%- for _, rule := range ingress.Spec.Rules %}
-            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-          {%- end %}
-          {%- if len(hosts) > 0 %}
-            {%- if reqHeaders != "" %}
-      # nginx-ingress/custom-request-headers ({{ key }})
-              {%- for _, header := range split(reqHeaders, "|") %}
-                {%- var headerTrimmed = trimSpace(header) %}
-                {%- if headerTrimmed != "" %}
-                  {%- var parts = split(headerTrimmed, ":") %}
-                  {%- if len(parts) >= 2 %}
-                    {%- var headerName = trimSpace(parts[0]) %}
-                    {%- var headerValue = trimSpace(join(parts[1:], ":")) %}
-                    {%- var nameInj = ConfigInjectionKind(headerName, "token") %}
-                    {%- var valInj = ConfigInjectionKind(headerValue, "line") %}
-                    {%- if nameInj != "" %}
-                      {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/custom-request-headers' header name contains " + nameInj + ", which would break the set-header directive; the header is not applied. Remove it from the header name.") -}}
-                    {%- else if valInj != "" %}
-                      {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/custom-request-headers' value contains " + valInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
-                    {%- else %}
-      http-request set-header {{ headerName }} "{{ EscapeLogFormatValue(headerValue) }}" if {{ HostMatchCondition(hosts) }}
-                    {%- end %}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-            {%- if respHeaders != "" %}
-      # nginx-ingress/custom-response-headers ({{ key }})
-              {%- for _, header := range split(respHeaders, "|") %}
-                {%- var headerTrimmed = trimSpace(header) %}
-                {%- if headerTrimmed != "" %}
-                  {%- var parts = split(headerTrimmed, ":") %}
-                  {%- if len(parts) >= 2 %}
-                    {%- var headerName = trimSpace(parts[0]) %}
-                    {%- var headerValue = trimSpace(join(parts[1:], ":")) %}
-                    {%- var nameInj = ConfigInjectionKind(headerName, "token") %}
-                    {%- var valInj = ConfigInjectionKind(headerValue, "line") %}
-                    {%- if nameInj != "" %}
-                      {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/custom-response-headers' header name contains " + nameInj + ", which would break the set-header directive; the header is not applied. Remove it from the header name.") -}}
-                    {%- else if valInj != "" %}
-                      {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/custom-response-headers' value contains " + valInj + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.") -}}
-                    {%- else %}
-      http-response set-header {{ headerName }} "{{ EscapeLogFormatValue(headerValue) }}" if {{ HostMatchCondition(hosts) }}
-                    {%- end %}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+      {%- import "util-ingress-header-contribute" for IngressHeaderContribute -%}
+      {{- IngressHeaderContribute("nginx.ingress.kubernetes.io/custom-request-headers", "nginx.ingress.kubernetes.io/custom-response-headers", "|", ":") -}}
 
   # app-root and permanent/temporal-redirect live in features-145/-140: they register
   # hosts into gf maps that base.yaml emits one shared map-driven rule from — don't

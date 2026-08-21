@@ -211,6 +211,7 @@ if ! helm template "$CHART_DIR" \
     --set controller.templateLibraries.haproxytech.enabled=true \
     --set controller.templateLibraries.haproxyIngress.enabled=true \
     --set controller.templateLibraries.nginxIngress.enabled=true \
+    --set controller.templateLibraries.customCrdExample.enabled=true \
     --set defaultSSLCertificate.secretName=regression-custom-rsa-cert \
     --set defaultSSLCertificate.ecdsaSecretName=regression-custom-ecdsa-cert \
     `# Regression guard: run the WHOLE suite with the session-ticket opt-in ON.` \

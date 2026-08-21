@@ -50,6 +50,9 @@ dependencies:
   - name: nginx-ingress
     version: 0.1.0
     condition: controller.templateLibraries.nginxIngress.enabled
+  - name: custom-crd-example
+    version: 0.1.0
+    condition: controller.templateLibraries.customCrdExample.enabled
   - name: vector
     version: 0.1.0
     condition: vector.enabled

@@ -44,27 +44,22 @@ templateSnippets:
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
         {%- var tConnect = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-connect"] %}
-        {%- var tServer = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-server"] %}
         {%- var tQueue = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-queue"] %}
-        {%- var tTunnel = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-tunnel"] %}
         {%- var tHttpReq = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-http-request"] %}
         {%- var tKeepAlive = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-keep-alive"] %}
         {%- var tCheck = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-check"] %}
-        {%- var hasTimeout = tConnect != "" || tServer != "" || tQueue != "" || tTunnel != "" || tHttpReq != "" || tKeepAlive != "" || tCheck != "" %}
+        {#- timeout-server and timeout-tunnel are the settable timeouts: they move to
+            backend-timeouts.map via map-backend-timeout-800-haptic-timeouts, so editing
+            one is a map-only, reload-free change. The rest stay per-value here. -#}
+        {%- var hasTimeout = tConnect != "" || tQueue != "" || tHttpReq != "" || tKeepAlive != "" || tCheck != "" %}
         {%- if hasTimeout %}
       # haptic/timeouts ({{ key }})
         {%- end %}
         {%- if tConnect != "" %}
       timeout connect {{ ValidateConfigValue(tConnect, "haproxy-haptic.org/timeout-connect", key, false) }}
         {% end %}
-        {%- if tServer != "" %}
-      timeout server {{ ValidateConfigValue(tServer, "haproxy-haptic.org/timeout-server", key, false) }}
-        {% end %}
         {%- if tQueue != "" %}
       timeout queue {{ ValidateConfigValue(tQueue, "haproxy-haptic.org/timeout-queue", key, false) }}
-        {% end %}
-        {%- if tTunnel != "" %}
-      timeout tunnel {{ ValidateConfigValue(tTunnel, "haproxy-haptic.org/timeout-tunnel", key, false) }}
         {% end %}
         {%- if tHttpReq != "" %}
       timeout http-request {{ ValidateConfigValue(tHttpReq, "haproxy-haptic.org/timeout-http-request", key, false) }}
@@ -76,6 +71,14 @@ templateSnippets:
       timeout check {{ ValidateConfigValue(tCheck, "haproxy-haptic.org/timeout-check", key, false) }}
         {% end %}
       {%- end -%}
+
+  # Reload-free settable timeouts: timeout-server / timeout-tunnel become
+  # `<backend>|server` / `<backend>|tunnel` entries in backend-timeouts.map, read
+  # by the two uniform set-timeout lines every ingress backend carries.
+  map-backend-timeout-800-haptic-timeouts:
+    template: |
+      {%- import "util-ingress-backend-timeout" for IngressBackendTimeoutMapEntries -%}
+      {{- IngressBackendTimeoutMapEntries("haproxy-haptic.org/timeout-server", "haproxy-haptic.org/timeout-tunnel") -}}
 
   backend-directives-810-haptic-load-balance:
     template: |

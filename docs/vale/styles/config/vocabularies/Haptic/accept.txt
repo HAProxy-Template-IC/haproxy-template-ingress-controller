@@ -1,3 +1,4 @@
+accessor
 ACL
 ACLs
 ADR
@@ -25,6 +26,7 @@ Autoscaling
 AWS
 backend's
 Backend's
+backendRef
 backoff
 Backpressure
 backpressure
@@ -221,6 +223,7 @@ lookbehind
 lookups
 Lookups
 loopback
+loopbacks
 Loopback
 lossily
 lossy
@@ -395,6 +398,7 @@ typegen
 UDP
 UID
 UIDs
+unix
 unary
 uncacheable
 uninspected

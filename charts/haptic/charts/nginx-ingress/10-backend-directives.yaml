@@ -67,31 +67,65 @@ templateSnippets:
 
   backend-directives-700-nginx-ingress-timeouts:
     template: |
+      {#- proxy-read-timeout / proxy-send-timeout collapse into HAProxy's single
+          settable server timeout (the larger wins), which moves to
+          backend-timeouts.map via map-backend-timeout-700-nginx-timeouts
+          (reload-free). timeout-connect stays per-value here. -#}
       {%- if ingress != nil %}
         {%- var connectTimeout = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-connect-timeout"] %}
-        {%- var readTimeout = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"] %}
-        {%- var sendTimeout = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-send-timeout"] %}
-        {%- var hasTimeout = connectTimeout != "" || readTimeout != "" || sendTimeout != "" %}
-        {%- if hasTimeout %}
-      # nginx-ingress/backend-directives-timeouts
-        {%- end %}
         {%- if connectTimeout != "" %}
+      # nginx-ingress/backend-directives-timeouts
       timeout connect {{ connectTimeout }}s
         {% end %}
-        {%- if readTimeout != "" || sendTimeout != "" %}
-          {%- var serverVal = 0 %}
-          {%- if readTimeout != "" %}
-            {%- serverVal = toint(readTimeout) %}
-          {%- end %}
-          {%- if sendTimeout != "" %}
-            {%- var sendVal = toint(sendTimeout) %}
-            {%- if sendVal > serverVal %}
-              {%- serverVal = sendVal %}
-            {%- end %}
-          {%- end %}
-      timeout server {{ serverVal }}s
-        {% end %}
       {%- end -%}
+
+  # Reload-free settable timeout: proxy-read-timeout / proxy-send-timeout (seconds,
+  # larger wins) become a `<backend>|server` entry in backend-timeouts.map as ms.
+  # There is no tunnel equivalent in the nginx annotation set.
+  map-backend-timeout-700-nginx-timeouts:
+    template: |
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%%
+        var lines = []string{}
+        for _, ingress := range resources.ingresses.List() {
+          var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name
+          var readT = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"]
+          var sendT = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-send-timeout"]
+          if readT == "" && sendT == "" {
+            continue
+          }
+          var bad = ""
+          if readT != "" && !regex_search(readT, "^[0-9]+$") {
+            bad = "proxy-read-timeout"
+          }
+          if sendT != "" && !regex_search(sendT, "^[0-9]+$") {
+            bad = "proxy-send-timeout"
+          }
+          if bad != "" {
+            _ = WebhookRejectOrWarn(ingress, "InvalidTimeout", "Annotation 'nginx.ingress.kubernetes.io/" + bad + "' on Ingress '" + key + "' is not a whole number of seconds; the timeout is not applied.")
+            continue
+          }
+          var secs = toint(readT)
+          if toint(sendT) > secs {
+            secs = toint(sendT)
+          }
+          if secs <= 0 {
+            continue
+          }
+          for _, rule := range ingress.Spec.Rules {
+            for _, path := range rule.Http.Paths {
+              var be = BackendNameIngress(ingress, path)
+              if first_seen("map-backend-timeout", be, "server") {
+                lines = append(lines, be + "|server " + tostring(secs * 1000))
+              }
+            }
+          }
+        }
+        if len(lines) > 0 {
+          show "\n" + join(lines, "\n")
+        }
+      %%}
 
   backend-directives-710-nginx-ingress-load-balance:
     template: |
@@ -314,7 +348,7 @@ templateSnippets:
               {%- for _, path := range rule.Http.Paths -%}
                 {%- var be = BackendNameIngress(ingress, path) -%}
                 {%- if first_seen("map-path-rewrite", be) -%}
-      {{ "\n" }}{{ be }} {{ ValidateConfigValue(rewrite, "nginx.ingress.kubernetes.io/rewrite-target", key, false) }}
+      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(rewrite, "nginx.ingress.kubernetes.io/rewrite-target", key, true)) }}
                 {%- end -%}
               {%- end -%}
             {%- end -%}
@@ -405,7 +439,7 @@ templateSnippets:
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
               {%- if first_seen("map-reqhdr-host", be) -%}
-      {{ "\n" }}{{ be }} {{ ValidateConfigValue(v, "nginx.ingress.kubernetes.io/upstream-vhost", key, true) }}
+      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(v, "nginx.ingress.kubernetes.io/upstream-vhost", key, true)) }}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -424,7 +458,7 @@ templateSnippets:
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
               {%- if first_seen("map-reqhdr-xfwd-prefix", be) -%}
-      {{ "\n" }}{{ be }} {{ ValidateConfigValue(v, "nginx.ingress.kubernetes.io/x-forwarded-prefix", key, true) }}
+      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(v, "nginx.ingress.kubernetes.io/x-forwarded-prefix", key, true)) }}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -443,7 +477,7 @@ templateSnippets:
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
               {%- if first_seen("map-reqhdr-connection", be) -%}
-      {{ "\n" }}{{ be }} {{ ValidateConfigValue(v, "nginx.ingress.kubernetes.io/connection-proxy-header", key, true) }}
+      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(v, "nginx.ingress.kubernetes.io/connection-proxy-header", key, true)) }}
               {%- end -%}
             {%- end -%}
           {%- end -%}

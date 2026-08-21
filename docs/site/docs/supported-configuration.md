@@ -171,6 +171,18 @@ Most of what an HTTPRoute or GRPCRoute rule configures is a map entry rather tha
 
 What stays structural, because HAProxy can't source it at request time: advanced matchers (method, header, query parameter, gRPC method), the `CORS` filter, `RegularExpression` path *rewrites*, and the backend section a new route's Service needs.
 
+#### Ingress per-route logic
+
+The ingress annotation libraries move the same kinds of per-route value into maps, so changing one is a map content update — the row above:
+
+| Annotation | Where the value lives | Reloads when |
+|------------|-----------------------|--------------|
+| request/response header modifiers (`request-set-header`/`response-set-header`, `custom-request-headers`/`custom-response-headers`, `headers`) | `ing-reqhdr.map`, `ing-reshdr.map` | the first ingress in the cluster names a given header |
+| settable timeouts (`timeout-server`, `timeout-tunnel`; nginx `proxy-read-timeout`/`proxy-send-timeout`) | `backend-timeouts.map` | never |
+| upstream `Host`/`Connection`/`X-Forwarded-Prefix` override, literal path rewrite, body-size limit | `reqhdr-host.map`, `reqhdr-connection.map`, `reqhdr-xfwd-prefix.map`, `path-rewrite.map`, `body-size.map` | never |
+
+The non-settable timeouts (`connect`, `queue`, `http-request`, `http-keep-alive`, `check`) and any `config-backend`/`configuration-snippet` injection stay in the backend section, so changing one reloads that backend. See [Reload-free routing](./libraries/reload-free.md).
+
 The new content is also written to disk (so a later, unrelated reload re-reads it), but the reload-free property comes from the Runtime API call, not the disk write. Caveats:
 
 - The map or certificate must already exist **and be referenced by the running config** so HAProxy has it loaded. **Creating or deleting** a map/cert file, or changing one the config doesn't reference, takes the reload path. This is why the bundled libraries register their maps unconditionally, empty ones included.

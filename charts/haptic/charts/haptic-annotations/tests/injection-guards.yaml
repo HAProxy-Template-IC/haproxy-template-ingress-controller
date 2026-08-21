@@ -14,7 +14,7 @@ validationTests:
 
   # ---- request/response-set-header VALUE escaping + control-char guard ----
   test-haptic-request-set-header-escapes-values:
-    description: A set-header value with a single quote ('self'), a double quote, and a dollar sign renders inside double quotes with " and $ escaped and ' passed through — closing the quote-break the old single-quoted form allowed.
+    description: A set-header value with a single quote ('self'), a double quote, a space, and a dollar sign is URL-encoded in ing-reqhdr.map (space -> %20, ' -> %27, " -> %22, $ -> %24) and decoded with url_dec(1) at request time, so none of them can break the config or read request state.
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -31,9 +31,12 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'set-header Content-Security-Policy "default-src ''self''" if'}
-      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Quoted "has\\"quote" if'}
-      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Dollar "a\\\$b" if'}
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hdr-esc_svc_echo_80\|set\|content-security-policy default-src%20%27self%27'}
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hdr-esc_svc_echo_80\|set\|x-quoted has%22quote'}
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hdr-esc_svc_echo_80\|set\|x-dollar a%24b'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header Content-Security-Policy %\[var\(txn\.backend_name\),concat\(\|set\|content-security-policy\),map\([^)]*ing-reqhdr\.map\),url_dec\(1\)\]'}
+      # No raw value in a per-backend/frontend directive (negative control).
+      - {type: not_contains, target: haproxy.cfg, pattern: "set-header Content-Security-Policy \""}
 
   test-haptic-request-set-header-control-char-reconcile-warns-and-skips:
     description: A control character in a request-set-header value is skipped while a valid sibling Ingress still emits its header.
@@ -58,8 +61,10 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Good "goodval" if'}
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hdr-ok_svc_echo_80\|set\|x-good goodval'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Good %\[var\(txn\.backend_name\),concat\(\|set\|x-good\),map\([^)]*ing-reqhdr\.map\),url_dec\(1\)\]'}
       - {type: not_contains, target: haproxy.cfg, pattern: "X-Bad"}
+      - {type: not_contains, target: 'map:ing-reqhdr.map', pattern: "X-Bad"}
 
   test-haptic-request-set-header-control-char-admission-rejected:
     description: A control character in a request-set-header value is denied by the admission webhook.
@@ -100,8 +105,53 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'http-response set-header X-Good "goodval" if'}
+      - {type: contains, target: 'map:ing-reshdr.map', pattern: 'default_rhdr-ok_svc_echo_80\|set\|x-good goodval'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response set-header X-Good %\[var\(txn\.backend_name\),concat\(\|set\|x-good\),map\([^)]*ing-reshdr\.map\),url_dec\(1\)\]'}
       - {type: not_contains, target: haproxy.cfg, pattern: "X-Bad"}
+      - {type: not_contains, target: 'map:ing-reshdr.map', pattern: "X-Bad"}
+
+  # ---- request-set-header NAME injection guard ----
+  test-haptic-request-set-header-hostile-name-admission-rejected:
+    description: A header NAME outside the HTTP token charset is denied at admission — it would otherwise become part of an ing-reqhdr.map key, where `|` is the delimiter, and the static line would then silently drop it.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: hn-bad, annotations: {haproxy-haptic.org/request-set-header: "X|Bad val"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hnbad.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "is not an HTTP token"}
+
+  test-haptic-request-set-header-hostile-name-reconcile-skips:
+    description: On reconcile the hostile header NAME is skipped and never reaches ing-reqhdr.map, while a valid sibling still emits its entry.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: hn-bad, annotations: {haproxy-haptic.org/request-set-header: "X|Bad val"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hnbad.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: hn-ok, annotations: {haproxy-haptic.org/request-set-header: "X-Good goodval"}}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hnok.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: 'map:ing-reqhdr.map', pattern: "[Xx]\\|[Bb]ad"}
+      - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hn-ok_svc_echo_80\|set\|x-good goodval'}
 
   # ---- fixed-response / mock-response content-type + body ----
   test-haptic-fixed-response-body-escapes-dollar:
