@@ -49,7 +49,8 @@ validationTests:
                 backendRefs: [{name: web, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-Version "ok" if'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_rh-good_0\|set\|x-version ok'}
+      - {type: not_contains, target: map:gw-reqhdr.map, pattern: 'default_rh-attacker_0'}
       - {type: not_contains, target: haproxy.cfg, pattern: "X-Pwned"}
 
   test-httproute-request-header-value-injection-admission-rejected:
@@ -73,7 +74,7 @@ validationTests:
                         - {name: X-Version, value: "v1\nhttp-request set-header X-Pwned 1"}
                 backendRefs: [{name: web, port: 80}]
     assertions:
-      - {type: contains, target: rendering_error, pattern: "would split the frontend directive"}
+      - {type: contains, target: rendering_error, pattern: "would inject a header break at request time"}
 
   test-httproute-request-header-value-escaped:
     requires: [httproutes]
@@ -97,7 +98,10 @@ validationTests:
                 backendRefs: [{name: web, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Esc "a\\"b\\\$c" if'}
+      # The value lives in a map, so it is percent-encoded rather than escaped
+      # for a quoted directive — a quote or a dollar has nothing to break out of.
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_rh-esc_0\|set\|x-esc a%22b%24c'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'X-Esc "a'}
 
   test-httproute-request-header-value-percent-escaped:
     requires: [httproutes]
@@ -121,7 +125,10 @@ validationTests:
                 backendRefs: [{name: web, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Con "50%%-%%\[var\(txn\.foo\)\]" if'}
+      # Percent-encoded in the map and inserted through a fetch, so HAProxy
+      # never re-reads the value as a log-format string.
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_rh-pct_0\|set\|x-con 50%25-%25%5bvar%28txn.foo%29%5d'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'var\(txn\.foo\)'}
 
   # ---- ResponseHeaderModifier value (frontend) ----
   test-httproute-response-header-value-injection-reconcile-warns-and-skips:
@@ -159,7 +166,8 @@ validationTests:
                 backendRefs: [{name: web, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'http-response set-header X-Frame "SAMEORIGIN" if'}
+      - {type: contains, target: map:gw-reshdr.map, pattern: 'default_rsh-good_0\|set\|x-frame SAMEORIGIN'}
+      - {type: not_contains, target: map:gw-reshdr.map, pattern: 'default_rsh-attacker_0'}
       - {type: not_contains, target: haproxy.cfg, pattern: "X-Pwned"}
 
   test-httproute-response-header-value-injection-admission-rejected:
@@ -183,7 +191,7 @@ validationTests:
                         - {name: X-Frame, value: "DENY\nhttp-response set-header X-Pwned 1"}
                 backendRefs: [{name: web, port: 80}]
     assertions:
-      - {type: contains, target: rendering_error, pattern: "would split the frontend directive"}
+      - {type: contains, target: rendering_error, pattern: "would inject a header break at request time"}
 
   # ---- backendRef RequestHeaderModifier value (backend) ----
   test-httproute-backend-header-value-injection-reconcile-warns-and-skips:
@@ -225,7 +233,8 @@ validationTests:
                             - {name: Backend, value: v2ok}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header Backend "v2ok" if'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_brh-route_0\|gtw_default_brh-route_web2_80\|set\|backend v2ok'}
+      - {type: not_contains, target: map:gw-reqhdr.map, pattern: 'gtw_default_brh-route_web_80\|set\|backend'}
       - {type: not_contains, target: haproxy.cfg, pattern: "X-Pwned"}
 
   test-httproute-backend-header-value-injection-admission-rejected:
@@ -251,7 +260,7 @@ validationTests:
                           set:
                             - {name: Backend, value: "v1\nhttp-request set-header X-Pwned 1"}
     assertions:
-      - {type: contains, target: rendering_error, pattern: "would split the backend directive"}
+      - {type: contains, target: rendering_error, pattern: "would inject a header break at request time"}
 
   # ---- per-listener TLS options (bind line) ----
   test-gateway-listener-tls-options-injection-reconcile-warns-and-skips:

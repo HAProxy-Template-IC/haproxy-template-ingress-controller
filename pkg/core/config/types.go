@@ -510,6 +510,11 @@ type MapFile struct {
 	// PostProcessing defines optional post-processors to apply after rendering.
 	// Post-processors are applied in order to transform the rendered output.
 	PostProcessing []PostProcessorConfig `yaml:"post_processing,omitempty"`
+
+	// Ordered mirrors the CRD's maps[].ordered. Nil means true — only an
+	// explicit false lets a new entry be appended over the runtime API instead
+	// of rewriting the file and reloading.
+	Ordered *bool `yaml:"ordered,omitempty"`
 }
 
 // GeneralFile is a general-purpose auxiliary file template.

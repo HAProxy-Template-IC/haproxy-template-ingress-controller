@@ -57,22 +57,11 @@ templateSnippets:
       {% end %}
 
   # Body-inspecting features pass req.body to SPOE, and HAProxy only exposes
-  # buffered bytes. Emit the one shared tune.bufsize configured for all request
-  # inspectors; duplicate feature-specific directives would be ambiguous.
-  global-settings-350-request-body-inspection-buffer:
-    template: |
-      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
-      {%- var messages = toStringSlice(messagesAny) %}
-      {%- var bodyInspectionEnabled = messages contains "validate-request" || messages contains "check-request" %}
-      {%- if bodyInspectionEnabled %}
-        {%- var bufferSize = 16384 %}
-        {%- var configuredBufferSize = extraContext | dig("requestBodyInspection", "haproxyBuffer", "sizeBytes") %}
-        {%- if configuredBufferSize != nil %}{%- bufferSize = toint(configuredBufferSize) %}{%- end %}
-        {%- if bufferSize < 16384 || bufferSize > 2097152 %}
-          {%- fail("extraContext.requestBodyInspection.haproxyBuffer.sizeBytes must be between 16384 and 2097152 bytes.") %}
-        {%- end %}
-      tune.bufsize {{ bufferSize }}
-      {%- end %}
+  # buffered bytes — so the buffer has to hold the whole body. The size is a knob
+  # here (extraContext.requestBodyInspection.haproxyBuffer.sizeBytes) but the
+  # directive belongs to base's global-settings-270-cli-limits, which takes the
+  # larger of it and the CLI-batch size: two snippets emitting one global keyword
+  # leave the effective value to band order.
 
   # ==========================================================================
   # JSON access-log fields (extension point: log-fields-*, band 300).

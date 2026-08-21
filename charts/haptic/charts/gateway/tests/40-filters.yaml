@@ -51,15 +51,17 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request add-header X-Custom-Header "custom-value" if'
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_header-filter-route_0\|set\|x-replace-header new-value'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_header-filter-route_0\|add\|x-custom-header custom-value'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_header-filter-route_0\|del\|x-remove-header 1'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-header X-Replace-Header "new-value" if'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-Replace-Header %\[var\(txn\.gw_rule_id\),concat\(\|set\|x-replace-header\),map\([^)]*gw-reqhdr\.map\),url_dec\(1\)\] if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request add-header X-Custom-Header %\[var\(txn\.gw_rule_id\),concat\(\|add\|x-custom-header\),map\([^)]*gw-reqhdr\.map\),url_dec\(1\)\] if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-Remove-Header if \{ var\(txn\.gw_rule_id\),concat\(\|del\|x-remove-header\),map\([^)]*gw-reqhdr\.map\) -m found \}'}
 
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-Remove-Header if'}
+      # The value is never inlined: it lives in the map, so a second route
+      # using this header name adds no config line.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-header X-Replace-Header "new-value"'}
 
   test-httproute-response-header-modifier:
     requires: [httproutes]
@@ -89,15 +91,13 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-response add-header X-Response-Header "response-value" if'
+      - {type: contains, target: map:gw-reshdr.map, pattern: 'default_response-filter-route_0\|set\|x-replace-response new-response'}
+      - {type: contains, target: map:gw-reshdr.map, pattern: 'default_response-filter-route_0\|add\|x-response-header response-value'}
+      - {type: contains, target: map:gw-reshdr.map, pattern: 'default_response-filter-route_0\|del\|x-remove-response 1'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-response set-header X-Replace-Response "new-response" if'
-
-      - {type: contains, target: haproxy.cfg, pattern: 'http-response del-header X-Remove-Response if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response set-header X-Replace-Response %\[var\(txn\.gw_rule_id\),concat\(\|set\|x-replace-response\),map\([^)]*gw-reshdr\.map\),url_dec\(1\)\] if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response add-header X-Response-Header %\[var\(txn\.gw_rule_id\),concat\(\|add\|x-response-header\),map\([^)]*gw-reshdr\.map\),url_dec\(1\)\] if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response del-header X-Remove-Response if \{ var\(txn\.gw_rule_id\),concat\(\|del\|x-remove-response\),map\([^)]*gw-reshdr\.map\) -m found \}'}
 
   test-httproute-request-redirect:
     requires: [httproutes]
@@ -126,13 +126,18 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.gw_redirect_path\) path,regsub\("\^/old","/new"\) if'
+      # code|scheme|host|port|pathmode|pfxlen|path. /old is 4 bytes, so the
+      # remainder starts there and the encoded /new is prepended.
+      - {type: contains, target: map:gw-redirect.map, pattern: 'default_redirect-route_0 301\|https\|new\.example\.com\|\|P\|4\|%2fnew'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request redirect location "https://new\.example\.com%\[var\(txn\.gw_redirect_path\)\]" code 301 if'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.gw_redir\) var\(txn\.gw_rule_id\),map\([^)]*gw-redirect\.map\) if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.gw_redir_rest\) path,bytes\(txn\.gw_pfxlen\) if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.gw_redir_query\) pathq,regsub\(\^\[\^\?\]\*,\) if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request redirect location "%\[var\(txn\.gw_redir_scheme\)\]://%\[var\(txn\.gw_redir_host\)\]%\[var\(txn\.gw_redir_port\)\]%\[var\(txn\.gw_redir_path\)\]%\[var\(txn\.gw_redir_query\)\]" code 301 if \{ var\(txn\.gw_redir\),field\(1,\|\) -m str 301 \}'}
+
+      # One line per redirect code per rendered frontend (five codes, two
+      # frontends here); the count does not grow with the number of routes.
+      - {type: match_count, target: haproxy.cfg, pattern: 'http-request redirect location "%\[var\(txn\.gw_redir_scheme\)', expected: "10"}
 
   test-httproute-request-redirect-default-port-omission:
     requires: [httproutes]
@@ -167,9 +172,14 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - {type: not_contains, target: haproxy.cfg, pattern: 'http://example\.org:80(?:[^0-9]|$)'}
-      - {type: not_contains, target: haproxy.cfg, pattern: 'https://example\.org:443(?:[^0-9]|$)'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http://example\.org:8080'}
+      # The port part is a map field now, so the assertions read the map: an
+      # empty 4th field means Location carries no port.
+      - {type: contains, target: map:gw-redirect.map, pattern: 'default_redirect-default-ports_0 302\|\|example\.org\|\|'}
+      - {type: contains, target: map:gw-redirect.map, pattern: 'default_redirect-default-ports_1 302\|https\|example\.org\|\|'}
+      # Negative control for the two above: a non-default port IS carried.
+      - {type: contains, target: map:gw-redirect.map, pattern: 'default_redirect-default-ports_2 302\|http\|example\.org\|:8080\|'}
+      - {type: not_contains, target: map:gw-redirect.map, pattern: 'example\.org\|:80\|'}
+      - {type: not_contains, target: map:gw-redirect.map, pattern: 'example\.org\|:443\|'}
 
   test-httproute-url-rewrite:
     requires: [httproutes]
@@ -196,13 +206,15 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-header Host 'internal.example.com' if"
+      # host|pathmode|pfxlen|path. /api/v1 is 7 bytes.
+      - {type: contains, target: map:gw-urlrewrite.map, pattern: 'default_rewrite-route_0 internal\.example\.com\|P\|7\|%2fapi%2fv2'}
 
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request replace-path'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header Host %\[var\(txn\.gw_rw\),field\(1,\|\),url_dec\(1\)\] if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.gw_rw_rest\) path,bytes\(txn\.gw_pfxlen\) if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-path %\[var\(txn\.gw_rw_path\)\] if'}
 
-      - {type: contains, target: haproxy.cfg, pattern: '"/api/v2'}
+      # The rewrite is no longer a per-route replace-path pair.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http-request replace-path'}
 
   test-httproute-cors-filter:
     requires: [gatewayclasses, gateways, httproutes]
@@ -356,17 +368,15 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?s)backend gtw_default_br-route_backend-v1_8080.*?http-request set-header Backend "backend-v1".*?backend gtw_default_br-route_backend-v2_8080'
+      # Keyed by rule AND backend, so one frontend line serves both backendRefs.
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_br-route_0\|gtw_default_br-route_backend-v1_8080\|set\|backend backend-v1'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_br-route_0\|gtw_default_br-route_backend-v2_8080\|set\|backend backend-v2'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?s)backend gtw_default_br-route_backend-v2_8080.*?http-request set-header Backend "backend-v2"'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header Backend %\[var\(txn\.gw_rule_id\),concat\(\|,txn\.backend_name,\),concat\(\|set\|backend\),map\([^)]*gw-reqhdr\.map\),url_dec\(1\)\] if'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend gtw_default_br-route_backend-v1_8080[^a-zA-Z]+[^\\n]*\\n([^\\n]+\\n){0,5}[^\\n]*http-request set-header Backend \"backend-v1\""
+      # The backend sections carry no header lines at all now.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-header Backend "backend-v1"'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-header Backend "backend-v2"'}
 
   test-httproute-backend-response-header-modifier:
     requires: [gatewayclasses, gateways, httproutes]
@@ -407,16 +417,19 @@ validationTests:
                     port: 8080
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?s)backend gtw_default_route_backend_80\n.*?http-response add-header my-added-header "added-value" if \{ var\(txn.gw_rule_id\) -m str "default_route_0" \}.*?backend gtw_default_route_backend_8080'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?s)backend gtw_default_route_backend_80\n.*?http-response set-header X-Set "set-value" if \{ var\(txn.gw_rule_id\) -m str "default_route_0" \}'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?s)backend gtw_default_route_backend_80\n.*?http-response del-header X-Remove if \{ var\(txn.gw_rule_id\) -m str "default_route_0" \}'
-      - {type: match_count, target: haproxy.cfg, pattern: 'http-response add-header my-added-header', expected: "1"}
+      - {type: contains, target: map:gw-reshdr.map, pattern: 'default_route_0\|gtw_default_route_backend_80\|add\|my-added-header added-value'}
+      - {type: contains, target: map:gw-reshdr.map, pattern: 'default_route_0\|gtw_default_route_backend_80\|set\|x-set set-value'}
+      - {type: contains, target: map:gw-reshdr.map, pattern: 'default_route_0\|gtw_default_route_backend_80\|del\|x-remove 1'}
+
+      # In the frontend, after the rule-level block, so a backendRef modifier
+      # overrides a rule-level one for the same header (spec order).
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response set-header X-Set %\[var\(txn\.gw_rule_id\),concat\(\|,txn\.backend_name,\),concat\(\|set\|x-set\),map\([^)]*gw-reshdr\.map\),url_dec\(1\)\] if'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response del-header X-Remove if \{ var\(txn\.gw_rule_id\),concat\(\|,txn\.backend_name,\),concat\(\|del\|x-remove\),map\([^)]*gw-reshdr\.map\) -m found \}'}
+
+      # Negative control for the two above: nothing lands inside a backend now.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http-response set-header X-Set "set-value"'}
+      # One static line per header name per op — not one per frontend backend.
+      - {type: match_count, target: map:gw-reshdr.map, pattern: 'add\|my-added-header', expected: "1"}
 
   test-httproute-cors-no-hostname:
     requires: [gatewayclasses, gateways, httproutes]
@@ -511,28 +524,15 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-var\\(txn\\.gw_request_scheme\\) str\\(http\\) if !\\{ ssl_fc \\}"
+      # An empty scheme field means "keep the request's scheme"; "L" in the port
+      # field means "the Gateway listener's port, resolved per request".
+      - {type: contains, target: map:gw-redirect.map, pattern: 'default_redir-route_0 302\|\|example\.org\|L\|'}
+      - {type: contains, target: map:gw-redirect.map, pattern: 'default_redir-route_1 302\|https\|example\.org\|\|'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-var\\(txn\\.gw_request_scheme\\) str\\(https\\) if \\{ ssl_fc \\}"
-
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request redirect location "%\[var\(txn\.gw_request_scheme\)\]://example\.org%\[var\(txn\.gw_redir_port_part\)\]%\[path\]" code 302'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.gw_redir_port_part\) str\(\) if .* \{ var\(txn\.gw_listener_port\) -m int \d+ \} !\{ ssl_fc \}'
-
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.gw_redir_port_part\) str\(:\),concat\(,txn\.gw_listener_port,\) if .* !\{ var\(txn\.gw_redir_port_part\) -m found \}'
-
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request redirect location "https://example\.org%\[path\]" code 302'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.gw_redir_scheme\) str\(http\) if \{ var\(txn\.gw_redir\) -m found \} \{ var\(txn\.gw_redir_scheme\) -m len 0 \} !\{ ssl_fc \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.gw_redir_scheme\) str\(https\) if \{ var\(txn\.gw_redir\) -m found \} \{ var\(txn\.gw_redir_scheme\) -m len 0 \} \{ ssl_fc \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.gw_redir_port\) str\(\) if \{ var\(txn\.gw_redir_port\) -m str L \} \{ var\(txn\.gw_listener_port\) -m int \d+ \} !\{ ssl_fc \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.gw_redir_port\) str\(:\),concat\(,txn\.gw_listener_port,\) if \{ var\(txn\.gw_redir_port\) -m str L \}'}
 
   test-httproute-request-mirror-single:
     requires: [httproutes]
@@ -568,13 +568,17 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request wait-for-body time 10s if \{ req\.hdr\(content-length\) -m found \} !\{ var\(txn\.backend_name\),map\(.*request-buffering\.map,on\) -m str off \}'
+      # Buffering is gated on the rule having a mirror, so a cluster with no
+      # mirrors never buffers even though the line is always present.
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request wait-for-body time 10s if \{ req\.hdr\(content-length\) -m found \} !\{ var\(txn\.backend_name\),map\([^)]*request-buffering\.map,on\) -m str off \} \{ var\(txn\.gw_rule_id\),map_str_int\([^)]*gw-mirror-pct\.map\) -m found \}'}
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.gw_mirror_targets\) str\(http\|mirror-backend\.default\.svc\.cluster\.local:8080\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if'
+      - {type: contains, target: map:gw-mirror.map, pattern: 'default_mirror-route_0 http%7cmirror-backend\.default\.svc\.cluster\.local%3a8080%7c2000%7c0%3b'}
+      - {type: contains, target: map:gw-mirror-pct.map, pattern: 'default_mirror-route_0 100'}
+
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.gw_mirror_targets\) var\(txn\.gw_rule_id\),map\([^)]*gw-mirror\.map\),url_dec\(1\) if \{ var\(txn\.gw_rule_id\),map\([^)]*gw-mirror\.map\) -m found \} \{ rand\(100\),sub\(txn\.gw_mirror_pct\) -m int lt 0 \}'}
+
+      # The target list is a map value, not a per-route directive.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'str\(http\|mirror-backend'}
 
       - type: contains
         target: haproxy.cfg
@@ -618,11 +622,15 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.gw_mirror_targets\) str\(http\|mirror-backend\.default\.svc\.cluster\.local:8080\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if .* \{ rand\(100\) -m int lt 20 \}'
+      # rand(100) draws 0..99 and sub() goes negative exactly when the draw is
+      # below the percentage, so the sampling gate is one static line.
+      - {type: contains, target: map:gw-mirror-pct.map, pattern: 'default_mirror-percent-route_0 20'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.gw_mirror_pct\) var\(txn\.gw_rule_id\),map_str_int\([^)]*gw-mirror-pct\.map\) if'}
+      - {type: contains, target: haproxy.cfg, pattern: '\{ rand\(100\),sub\(txn\.gw_mirror_pct\) -m int lt 0 \}'}
 
       - {type: not_contains, target: haproxy.cfg, pattern: 'gw_mirror_sample'}
+      # Negative control: a per-route rand() ACL is gone from the shared path.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'rand\(100\) -m int lt 20'}
 
   test-httproute-request-mirror-fraction:
     requires: [httproutes]
@@ -657,9 +665,8 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.gw_mirror_targets\) str\(http\|mirror-backend\.default\.svc\.cluster\.local:8080\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if .* \{ rand\(100\) -m int lt 50 \}'
+      - {type: contains, target: map:gw-mirror-pct.map, pattern: 'default_mirror-fraction-route_0 50'}
+      - {type: contains, target: map:gw-mirror.map, pattern: 'default_mirror-fraction-route_0 http%7cmirror-backend\.default\.svc\.cluster\.local%3a8080%7c2000%7c0%3b'}
 
   test-httproute-request-mirror-multiple:
     requires: [httproutes]
@@ -698,13 +705,11 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.gw_mirror_targets\) str\(http\|mirror-a\.default\.svc\.cluster\.local:8081\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if'
-
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.gw_mirror_targets\) str\(http\|mirror-b\.default\.svc\.cluster\.local:8082\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if'
+      # Both targets share one map value, ';'-separated and encoded once so the
+      # runtime CLI cannot mistake the separator for a command break.
+      - {type: contains, target: map:gw-mirror.map, pattern: 'default_mirror-multi-route_0 http%7cmirror-a\.default\.svc\.cluster\.local%3a8081%7c2000%7c0%3bhttp%7cmirror-b\.default\.svc\.cluster\.local%3a8082%7c2000%7c0%3b'}
+      # Negative control: the raw ';' never reaches the map file.
+      - {type: not_contains, target: map:gw-mirror.map, pattern: '8081\|2000\|0;'}
 
       - type: contains
         target: haproxy.cfg
@@ -743,9 +748,7 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.gw_mirror_targets\) str\(https\|mirror-tls\.default\.svc\.cluster\.local:443\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if'
+      - {type: contains, target: map:gw-mirror.map, pattern: 'default_mirror-https-route_0 https%7cmirror-tls\.default\.svc\.cluster\.local%3a443%7c2000%7c0%3b'}
 
   test-httproute-request-mirror-static-spoe-config:
     requires: [httproutes]
@@ -808,24 +811,20 @@ validationTests:
       - {type: not_contains, target: file:spoe.conf, pattern: 'spoe-group mirror-1-group'}
 
       # The 3-mirror route appends all three targets to the one list variable.
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'str\(http\|m1\.default\.svc\.cluster\.local:8081\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\)'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'str\(http\|m2\.default\.svc\.cluster\.local:8082\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\)'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'str\(http\|m3\.default\.svc\.cluster\.local:8083\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\)'
+      - {type: contains, target: map:gw-mirror.map, pattern: 'default_r-three_0 http%7cm1\.default\.svc\.cluster\.local%3a8081%7c2000%7c0%3bhttp%7cm2\.default\.svc\.cluster\.local%3a8082%7c2000%7c0%3bhttp%7cm3\.default\.svc\.cluster\.local%3a8083%7c2000%7c0%3b'}
+      - {type: contains, target: map:gw-mirror.map, pattern: 'default_r-one_0 http%7cm1\.default\.svc\.cluster\.local%3a8081%7c2000%7c0%3b'}
 
-  # Rewrite/redirect directive injection guard (#155). replaceFullPath /
-  # replacePrefixMatch are arbitrary strings (no Gateway-API charset validation) that
-  # land inside double-quoted set-path / replace-path / regsub / redirect directives; a
-  # " breaks out and a newline splits the line into a new directive. Guarded before
-  # emission: denied at admission, warned-and-skipped on reconcile.
-  test-httproute-urlrewrite-replacefullpath-injection-reconcile-warns-and-skips:
+      # One line per rendered frontend, however many routes mirror.
+      - {type: match_count, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.gw_mirror_targets\) var\(txn\.gw_rule_id\)', expected: "2"}
+
+  # Rewrite/redirect path injection guard (#155). replaceFullPath /
+  # replacePrefixMatch are arbitrary strings (no Gateway-API charset validation).
+  # They are percent-encoded into a map value now, so a quote has nothing to break
+  # out of; a control character still survives url_dec into the runtime Location or
+  # path, so it stays guarded — denied at admission, warned-and-skipped on reconcile.
+  test-httproute-urlrewrite-replacefullpath-quote-encoded:
     requires: [httproutes]
-    description: A double quote in a URLRewrite ReplaceFullPath value is skipped; the set-path directive is not emitted while a valid sibling rewrite renders.
+    description: A double quote in a URLRewrite ReplaceFullPath value is percent-encoded into the map, so it cannot become a directive.
     extraContext: {renderMode: reconcile}
     fixtures:
       services: *servicesServiceApiService
@@ -862,7 +861,8 @@ validationTests:
                   - {name: api-service, port: 80}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-path "/rwok" if'}
+      - {type: contains, target: map:gw-urlrewrite.map, pattern: 'default_rw-attacker_0 \|F\|0\|%2fnew%22%20if%20%7b%20path%20%2frwpwned%20%7d'}
+      - {type: contains, target: map:gw-urlrewrite.map, pattern: 'default_rw-good_0 \|F\|0\|%2frwok'}
       - {type: not_contains, target: haproxy.cfg, pattern: "rwpwned"}
 
   test-httproute-urlrewrite-replacefullpath-injection-admission-rejected:
@@ -888,11 +888,11 @@ validationTests:
                 backendRefs:
                   - {name: api-service, port: 80}
     assertions:
-      - {type: contains, target: rendering_error, pattern: "break out of the set-path directive"}
+      - {type: contains, target: rendering_error, pattern: "would break the rewritten path"}
 
-  test-httproute-urlrewrite-replaceprefix-injection-admission-rejected:
+  test-httproute-urlrewrite-replaceprefix-quote-encoded:
     requires: [httproutes]
-    description: A double quote in a URLRewrite ReplacePrefixMatch value is denied by the admission webhook.
+    description: A double quote in a URLRewrite ReplacePrefixMatch value is percent-encoded into the map, so it cannot become a directive.
     extraContext: {renderMode: admission}
     fixtures:
       services: *servicesServiceApiService
@@ -913,11 +913,12 @@ validationTests:
                 backendRefs:
                   - {name: api-service, port: 80}
     assertions:
-      - {type: contains, target: rendering_error, pattern: "break out of the replace-path directive"}
+      - type: haproxy_valid
+      - {type: contains, target: map:gw-urlrewrite.map, pattern: 'default_rw-prefix-attacker_0 \|P\|2\|%2fnew%22x'}
 
-  test-httproute-redirect-replaceprefix-injection-admission-rejected:
+  test-httproute-redirect-replaceprefix-quote-encoded:
     requires: [httproutes]
-    description: A double quote in a RequestRedirect ReplacePrefixMatch value is denied by the admission webhook.
+    description: A double quote in a RequestRedirect ReplacePrefixMatch value is percent-encoded into the map, so it cannot become a directive.
     extraContext: {renderMode: admission}
     fixtures:
       services: *servicesServiceApiService
@@ -941,11 +942,12 @@ validationTests:
                 backendRefs:
                   - {name: api-service, port: 80}
     assertions:
-      - {type: contains, target: rendering_error, pattern: "break out of the redirect directive"}
+      - type: haproxy_valid
+      - {type: contains, target: map:gw-redirect.map, pattern: 'default_redir-attacker_0 301\|https\|new\.example\.com\|\|P\|2\|%2fnew%22x'}
 
-  test-httproute-redirect-replacefullpath-injection-reconcile-warns-and-skips:
+  test-httproute-redirect-replacefullpath-quote-encoded:
     requires: [httproutes]
-    description: A double quote in a RequestRedirect ReplaceFullPath value is skipped; the redirect directive is not emitted while a valid sibling redirect renders.
+    description: A double quote in a RequestRedirect ReplaceFullPath value is percent-encoded into the map, so it cannot become a directive; a clean sibling redirect is unaffected.
     extraContext: {renderMode: reconcile}
     fixtures:
       services: *servicesServiceApiService
@@ -988,20 +990,19 @@ validationTests:
                   - {name: api-service, port: 80}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'https://new\.example\.com/redirok'}
+      - {type: contains, target: map:gw-redirect.map, pattern: 'default_redir-good_0 301\|https\|new\.example\.com\|\|F\|0\|%2fredirok'}
       - {type: not_contains, target: haproxy.cfg, pattern: "redirpwned"}
 
   # The RequestRedirect ReplacePrefixMatch branch folds the route's own match path
-  # (routeInfo.pathValue) into regsub("^<sanitize_regex(path)>", ...). sanitize_regex
-  # (QuoteMeta) escapes regex metacharacters but NOT a " or control character, so a
-  # RegularExpression match path is a second injection vector even when the
-  # replacePrefixMatch value itself is clean. The clean header match makes the rule
-  # non-path-only, so the frontend routing ACL matches on the derived conflict group,
-  # not the raw path — the redirect regsub is then the sole place the path is emitted,
-  # isolating this fallback guard from the match-value guard.
-  test-httproute-redirect-regex-path-injection-admission-rejected:
+  # The RequestRedirect ReplacePrefixMatch branch used to fold the route's own
+  # match path into regsub("^<sanitize_regex(path)>", ...), where a " or control
+  # character in a RegularExpression match path broke out even when the
+  # replacePrefixMatch value itself was clean. ReplacePrefixMatch now needs a
+  # PathPrefix match to take a length from, so the combination is refused before
+  # the match path reaches anything.
+  test-httproute-redirect-replaceprefix-on-regex-rejected:
     requires: [httproutes]
-    description: A double quote in a RegularExpression match path is denied by admission even when the RequestRedirect ReplacePrefixMatch value is clean.
+    description: ReplacePrefixMatch against a RegularExpression match has no prefix to replace, so it is refused rather than stripping the regex source's byte length off the request path.
     extraContext: {renderMode: admission}
     fixtures:
       services: *servicesServiceApiService
@@ -1027,7 +1028,7 @@ validationTests:
                 backendRefs:
                   - {name: api-service, port: 80}
     assertions:
-      - {type: contains, target: rendering_error, pattern: "break out of the redirect directive"}
+      - {type: contains, target: rendering_error, pattern: "ReplacePrefixMatch on a RegularExpression path match"}
 
   test-httproute-redirect-regex-path-injection-reconcile-warns-and-skips:
     requires: [httproutes]
@@ -1076,5 +1077,8 @@ validationTests:
                   - {name: api-service, port: 80}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'regsub\("\^/b","/clean"\)'}
+      - {type: contains, target: map:gw-redirect.map, pattern: 'default_redir-path-good_0 301\|https\|new\.example\.com\|\|P\|2\|%2fclean'}
+      # The regex-matched rule is refused, so neither its path nor a prefix
+      # length derived from it reaches the configuration or the map.
+      - {type: not_contains, target: map:gw-redirect.map, pattern: 'default_redir-path-attacker_0'}
       - {type: not_contains, target: haproxy.cfg, pattern: "REDIRPATHPWNED"}

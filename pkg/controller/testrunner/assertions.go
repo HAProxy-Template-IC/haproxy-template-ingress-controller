@@ -341,6 +341,22 @@ func hasRenderingErrorAssertions(assertions []config.ValidationAssertion) bool {
 }
 
 // runAssertion executes a single assertion.
+// SupportedAssertionTypes is every assertion type runAssertion dispatches. The
+// CRD's ValidationAssertion.Type enum must list exactly these: a type the enum
+// omits makes the apiserver refuse the whole library object at apply time,
+// which no offline gate sees.
+var SupportedAssertionTypes = []string{
+	"haproxy_valid",
+	"contains",
+	"not_contains",
+	"equals",
+	"jsonpath",
+	"match_count",
+	"match_order",
+	"not_exists",
+	"deterministic",
+}
+
 func (r *Runner) runAssertion(
 	ctx context.Context,
 	assertion *config.ValidationAssertion,
@@ -382,6 +398,9 @@ func (r *Runner) runAssertion(
 	case "match_order":
 		result = r.assertMatchOrder(haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, assertion, renderError)
 
+	case "not_exists":
+		result = r.assertNotExists(haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, assertion, renderError)
+
 	case "deterministic":
 		if renderDeps == nil {
 			result.Passed = false
@@ -392,7 +411,7 @@ func (r *Runner) runAssertion(
 
 	default:
 		result.Passed = false
-		result.Error = fmt.Sprintf("unknown assertion type: %s", assertion.Type)
+		result.Error = fmt.Sprintf("unknown assertion type: %s (known: %s)", assertion.Type, strings.Join(SupportedAssertionTypes, ", "))
 	}
 
 	return result

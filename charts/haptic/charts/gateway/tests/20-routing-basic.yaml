@@ -376,7 +376,7 @@ validationTests:
 
       - type: contains
         target: map:path-regex.map
-        pattern: "api\\.example\\.com\\^/api/v\\[0-9\\]\\+/users\\$ gtw_default_regex-route_versioned-service_80"
+        pattern: "api\\.example\\.com\\^/api/v\\[0-9\\]\\+/users\\$ GW_ROUTE_ID:http:default_regex-route_0"
 
       - {type: not_contains, target: map:path-prefix.map, pattern: "api.example.com/.*users"}
 
@@ -421,7 +421,8 @@ validationTests:
                   - {name: web, port: 80}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:path-regex.map, pattern: "good\\.example\\.com\\^/ok\\$ gtw_default_regex-good_web_80"}
+      - {type: contains, target: map:path-regex.map, pattern: "good\\.example\\.com\\^/ok\\$ GW_ROUTE_ID:http:default_regex-good_0"}
+      - {type: contains, target: map:route-backend.map, pattern: "default_regex-good_0 BACKEND:gtw_default_regex-good_web_80"}
       - {type: not_contains, target: map:path-regex.map, pattern: "victim\\.example\\.com/secret"}
 
   test-httproute-path-injection-admission-rejected:

@@ -1,0 +1,64 @@
+suite: map entry order
+# A map read with map_str/map_beg/map_ip/map_str_int finds a key by its own
+# value, so a new entry can be appended over the runtime API. Declaring that
+# wrong in the ordered direction costs a reload per route; declaring it wrong in
+# the unordered direction appends a regex entry to the end of a first-match-wins
+# list, where it never fires. Both are silent, so pin the declarations.
+templates:
+  - haproxytemplateconfig.yaml
+tests:
+  - it: should declare every map read by key unordered
+    template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-base
+    asserts:
+      - equal:
+          path: spec.maps["host.map"].ordered
+          value: false
+      - equal:
+          path: spec.maps["pod-names.map"].ordered
+          value: false
+      - equal:
+          path: spec.maps["path-exact.map"].ordered
+          value: false
+      - equal:
+          path: spec.maps["path-prefix-exact.map"].ordered
+          value: false
+      - equal:
+          path: spec.maps["path-prefix.map"].ordered
+          value: false
+      - equal:
+          path: spec.maps["weighted-multi-backend.map"].ordered
+          value: false
+      - equal:
+          path: spec.maps["body-size.map"].ordered
+          value: false
+      - equal:
+          path: spec.maps["request-buffering.map"].ordered
+          value: false
+      - equal:
+          path: spec.maps["reqhdr-host.map"].ordered
+          value: false
+      - equal:
+          path: spec.maps["reqhdr-xfwd-prefix.map"].ordered
+          value: false
+      - equal:
+          path: spec.maps["reqhdr-connection.map"].ordered
+          value: false
+      - equal:
+          path: spec.maps["path-rewrite.map"].ordered
+          value: false
+
+  - it: should leave the regex maps ordered
+    template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-base
+    asserts:
+      # Absent, not `true`: the CRD default supplies it. An explicit value here
+      # would mean base started declaring the regex maps by hand.
+      - notExists:
+          path: spec.maps["host-regex.map"].ordered
+      - notExists:
+          path: spec.maps["path-regex.map"].ordered

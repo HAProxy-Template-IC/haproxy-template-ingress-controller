@@ -247,6 +247,19 @@ spec:
                       - The internal config type: pkg/core/config/types.go (MapFile)
                       - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - maps section)
                   properties:
+                    ordered:
+                      default: true
+                      description: |-
+                        Ordered declares whether the position of an entry inside this map file
+                        changes what HAProxy does with it.
+
+                        Keep it true for a map read with map_reg, map_sub, map_dom, map_dir or
+                        map_end: those are evaluated as a list, first match wins, so an entry
+                        inserted in the middle must land in the middle. Set it to false for a
+                        map_str, map_beg, map_ip or map_str_int lookup, where a key is found by
+                        its own value and a new entry can simply be appended at runtime instead
+                        of rewriting the file and reloading.
+                      type: boolean
                     postProcessing:
                       description: |-
                         PostProcessing defines optional post-processors to apply after rendering.
@@ -490,6 +503,7 @@ spec:
                                 - jsonpath: Evaluates JSONPath expression against target
                                 - match_count: Counts how many times pattern matches in target (regex)
                                 - match_order: Validates that patterns appear in specified order
+                                - not_exists: Checks that the render produced no artefact under the target
                                 - deterministic: Verifies that rendering twice produces identical output
                             enum:
                             - haproxy_valid
@@ -499,6 +513,7 @@ spec:
                             - jsonpath
                             - match_count
                             - match_order
+                            - not_exists
                             - deterministic
                             type: string
                         required:

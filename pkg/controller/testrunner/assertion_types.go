@@ -101,7 +101,13 @@ func (r *Runner) assertContains(
 	}
 
 	// Resolve target to actual content
-	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
+	target, targetErr := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
+	if targetErr != nil {
+		result.Passed = false
+		result.Error = targetErr.Error()
+		r.populateTargetMetadata(&result, target, assertion.Target, true)
+		return result
+	}
 
 	// Check if pattern matches
 	matched, err := regexp.MatchString(assertion.Pattern, target)
@@ -145,7 +151,13 @@ func (r *Runner) assertNotContains(
 	}
 
 	// Resolve target to actual content
-	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
+	target, targetErr := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
+	if targetErr != nil {
+		result.Passed = false
+		result.Error = targetErr.Error()
+		r.populateTargetMetadata(&result, target, assertion.Target, true)
+		return result
+	}
 
 	// Check if pattern matches
 	matched, err := regexp.MatchString(assertion.Pattern, target)
@@ -165,6 +177,42 @@ func (r *Runner) assertNotContains(
 	// Populate target metadata for observability
 	r.populateTargetMetadata(&result, target, assertion.Target, matched)
 
+	return result
+}
+
+// assertNotExists checks that the render produced no artefact under this target.
+//
+// The counterpart of the strict resolution in resolveTarget: "the file is
+// absent" is a property worth pinning (a listener whose CA is unresolvable must
+// emit no crt-list at all), and a `not_contains` cannot express it without
+// relying on a missing target reading as empty.
+func (r *Runner) assertNotExists(
+	haproxyConfig string,
+	auxiliaryFiles *dataplane.AuxiliaryFiles,
+	k8sResources, statusPatches map[string]string,
+	renderedEvents string,
+	assertion *config.ValidationAssertion,
+	renderError string,
+) AssertionResult {
+	result := AssertionResult{
+		Type:        "not_exists",
+		Description: assertion.Description,
+		Passed:      true,
+	}
+
+	if result.Description == "" {
+		result.Description = fmt.Sprintf("Target %s must not be produced", assertion.Target)
+	}
+
+	target, targetErr := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
+	if targetErr != nil {
+		r.populateTargetMetadata(&result, "", assertion.Target, false)
+		return result
+	}
+
+	result.Passed = false
+	result.Error = fmt.Sprintf("target %s was produced by this render (%d bytes)", assertion.Target, len(target))
+	r.populateTargetMetadata(&result, target, assertion.Target, true)
 	return result
 }
 
@@ -189,7 +237,13 @@ func (r *Runner) assertMatchCount(
 	}
 
 	// Resolve target to actual content
-	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
+	target, targetErr := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
+	if targetErr != nil {
+		result.Passed = false
+		result.Error = targetErr.Error()
+		r.populateTargetMetadata(&result, target, assertion.Target, true)
+		return result
+	}
 
 	// Compile regex pattern
 	re, err := regexp.Compile(assertion.Pattern)
@@ -247,7 +301,13 @@ func (r *Runner) assertEquals(
 	}
 
 	// Resolve target to actual content
-	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
+	target, targetErr := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
+	if targetErr != nil {
+		result.Passed = false
+		result.Error = targetErr.Error()
+		r.populateTargetMetadata(&result, target, assertion.Target, true)
+		return result
+	}
 
 	// Compare values
 	failed := target != assertion.Expected
@@ -353,7 +413,13 @@ func (r *Runner) assertMatchOrder(
 	}
 
 	// Resolve target to actual content
-	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
+	target, targetErr := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
+	if targetErr != nil {
+		result.Passed = false
+		result.Error = targetErr.Error()
+		r.populateTargetMetadata(&result, target, assertion.Target, true)
+		return result
+	}
 
 	// Check that we have patterns to match
 	if len(assertion.Patterns) == 0 {

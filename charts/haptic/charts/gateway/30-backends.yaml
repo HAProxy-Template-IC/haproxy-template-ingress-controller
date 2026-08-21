@@ -360,74 +360,16 @@ templateSnippets:
           spCookieEmitted = true
         }
 
-        // HAProxy rejects `set-timeout server` in a frontend (no backend bound
-        // yet), so per-rule timeouts land here, gated on the txn.gw_rule_id the
-        // frontend matcher set. HTTPRoute only.
-        if protoFlag == "" {
-          var ruleIdxLocal = 0
-          for _, rl := range route.Spec.Rules {
-            // Dig-only: rules[].timeouts is newer than the oldest schema
-            // generation the httproutes candidate list resolves.
-            var tval = dig_string(rl, "", "timeouts", "request")
-            if tval == "" || tval == "0s" {
-              tval = dig_string(rl, "", "timeouts", "backendRequest")
-            }
-            if tval != "" && tval != "0s" {
-              var ruleRouteId = tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxLocal)
-              body = append(body, "http-request set-timeout server " + tval +
-                ` if { var(txn.gw_rule_id) -m str "` + ruleRouteId + `" }`)
-            }
-            ruleIdxLocal = ruleIdxLocal + 1
-          }
-
-          // One backend serves every rule that references this (service, port),
-          // so per-backendRef filters must be gated on txn.gw_rule_id or they
-          // cross-bleed between rules. Rule-level filters run in the frontend,
-          // so backendRef-level ones evaluated here take precedence per spec.
-          var ruleIdxBe = 0
-          for _, rl := range route.Spec.Rules {
-            for _, bRef := range rl.BackendRefs {
-              var bRefNs = tostring(bRef.Namespace)
-              if bRefNs == "" { bRefNs = tostring(routeNs) }
-              if bRef.Name != backendName || toint(bRef.Port) != toint(backendPort) || bRefNs != tostring(backendNs) {
-                continue
-              }
-              var gate = ` if { var(txn.gw_rule_id) -m str "` +
-                tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxBe) + `" }`
-              for _, bf := range bRef.Filters {
-                var directive = ""
-                var mod any = nil
-                if bf.Type == "RequestHeaderModifier" {
-                  directive = "http-request"
-                  mod = bf.RequestHeaderModifier
-                } else if bf.Type == "ResponseHeaderModifier" {
-                  directive = "http-response"
-                  mod = bf.ResponseHeaderModifier
-                }
-                if directive == "" || mod == nil {
-                  continue
-                }
-                for _, action := range []string{"set", "add"} {
-                  for _, h := range dig(mod, action) | toSlice() {
-                    var hName = dig_string(h, "", "name")
-                    var hVal = dig_string(h, "", "value")
-                    var hInj = ConfigInjectionKind(hVal, "line")
-                    if hInj != "" {
-                      _ = WebhookRejectOrWarn(route, "InvalidHeaderModifier", "HTTPRoute " + routeNs + "/" + routeName + " backendRef " + bf.Type + " " + action + "-header value contains " + hInj + ", which would split the backend directive; the header is not applied. Remove control characters from the value.")
-                      continue
-                    }
-                    body = append(body, directive + " " + action + "-header " + hName +
-                      ` "` + EscapeLogFormatValue(hVal) + `"` + gate)
-                  }
-                }
-                for _, name := range dig(mod, "remove") | toSlice() {
-                  body = append(body, directive + " del-header " + tostring(name) + gate)
-                }
-              }
-            }
-            ruleIdxBe = ruleIdxBe + 1
-          }
+        // GEP-1742 timeouts, keyed on the txn.gw_rule_id the frontend matcher
+        // set: one line for every rule this backend serves, its value from a
+        // map. `set-timeout server` is backend-only, which is why it is here
+        // and not with the other map-driven filters.
+        var toMap, toErr = pathResolver.GetPath("gw-timeout.map", "map")
+        if toErr != nil {
+          fail("failed to resolve gw-timeout.map: " + tostring(toErr))
         }
+        body = append(body, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
+          tostring(toMap) + ") if { var(txn.gw_rule_id),map_str_int(" + tostring(toMap) + ") -m found }")
       %%}
       {{ Backend(map[string]any{
            "name": beKey,
@@ -737,6 +679,14 @@ templateSnippets:
             "dynamic-cookie-key " + sha256(beKey))
           spCookieEmitted = true
         }
+
+        // GEP-1742 timeouts, same map and gate as the HTTPRoute backend above.
+        var toMap, toErr = pathResolver.GetPath("gw-timeout.map", "map")
+        if toErr != nil {
+          fail("failed to resolve gw-timeout.map: " + tostring(toErr))
+        }
+        body = append(body, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
+          tostring(toMap) + ") if { var(txn.gw_rule_id),map_str_int(" + tostring(toMap) + ") -m found }")
       %%}
       {{ Backend(map[string]any{
            "name": beKey,

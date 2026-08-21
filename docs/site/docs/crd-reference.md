@@ -247,10 +247,12 @@ HAProxy map file templates. Each key is a map filename, referenced in config via
 |-------|------|----------|---------|
 | `template` | string | Yes | — |
 | `postProcessing` | `[]PostProcessor` | No | — (see [`postProcessing`](#postprocessing-all-template-entries)) |
+| `ordered` | bool | No | `true` |
 
 ```yaml
 maps:
   host.map:
+    ordered: false
     template: |
       {% for _, ingress := range resources.ingresses.List() %}
       {% for _, rule := range ingress.spec.rules %}
@@ -258,6 +260,10 @@ maps:
       {% end %}
       {% end %}
 ```
+
+Set `ordered: false` when the configuration reads the map with `map_str`, `map_beg`, `map_ip` or `map_str_int`. Those find a key by its own value, so the controller can add a new entry over the runtime API instead of rewriting the file and reloading HAProxy.
+
+Keep the default `true` for `map_reg`, `map_sub`, `map_dom`, `map_dir` and `map_end`. HAProxy evaluates those as a list and takes the first match, so an entry has to land in its intended position — appending it to the end would silently never match.
 
 See [Templating — Map Files](./templating.md#map-files).
 

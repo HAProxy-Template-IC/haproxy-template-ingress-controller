@@ -634,6 +634,75 @@ And these per-backend feature maps, all keyed by backend name and looked up with
 | reqhdr-connection.map | `Connection` header override |
 | path-rewrite.map | Literal full-path rewrite |
 
+### Writing a map from a library
+
+`RegisterMap` writes a map file and declares whether the order of its entries is
+load-bearing. It returns the path the configuration references the file by:
+
+```scriggo
+{%- import "util-register-map" for RegisterMap -%}
+{%- var lines = []string{"# <backend> -> upstream host"} %}
+{%- for _, e := range entries %}
+  {%- lines = append(lines, tostring(e | dig("backend")) + " " + queryEscape(tostring(e | dig("host")))) %}
+{%- end %}
+{%- var path = RegisterMap("my-feature.map", lines, map[string]any{"ordered": false}) %}
+http-request set-header Host %[var(txn.backend_name),map({{ path }}),url_dec(1)] if { var(txn.backend_name),map({{ path }}) -m found }
+```
+
+Three rules make the difference between a map that deploys without a reload and
+one that doesn't:
+
+- **Register it even when it has no entries.** Creating a map file on the first
+  entry, and deleting it with the last, both change `haproxy.cfg` and reload
+  HAProxy. Pass a header comment as the first line so an empty file is still
+  self-describing.
+- **Declare `ordered: false`** when the configuration reads the map with
+  `map_str`, `map_beg`, `map_ip` or `map_str_int`. Those find a key by its own
+  value, so a new entry can be appended over the runtime API. Leave the default
+  `true` for `map_reg`, `map_sub`, `map_dom`, `map_dir` and `map_end`, which
+  HAProxy evaluates as a first-match-wins list — an appended entry there would
+  silently never match. Declaring it wrong in either direction is silent, so a
+  static map declares it through [`spec.maps.<name>.ordered`](../crd-reference.md#maps)
+  instead and the two can never disagree about one file.
+- **URL-encode any value that can carry a space, a `;` or a `%`**, with
+  `queryEscape` on the way in and `url_dec(1)` on the way out. The runtime CLI
+  splits a map value at the first space and truncates it at a `;`, and a value
+  inlined into a `set-header` directive is re-read as a log-format string, where
+  a `%` fetches request state.
+
+The caller owns the order of `lines`, because only it knows whether that order is
+cosmetic — sort it, or the next render's Go map iteration produces a different
+file and costs a sync for a configuration nobody changed.
+
+### One line per header name: `HeaderModifierRules`
+
+`HeaderModifierRules(direction, keyExpr, mapPath, setNames, addNames, delNames)`
+emits one `set-header` / `add-header` / `del-header` line per distinct header
+*name*, each reading its value from a map keyed `<key>|<operation>|<name>`. A
+resource that modifies a header name some other resource already uses adds a map
+entry and no configuration line at all:
+
+```scriggo
+{%- import "util-header-modifier-rules" for HeaderModifierRules -%}
+{{- HeaderModifierRules("request", "var(txn.backend_name)", mapPath,
+      setNames, addNames, delNames) -}}
+```
+
+A name lands unquoted in the emitted directive, so the macro drops anything
+outside `[A-Za-z0-9!$&*+.^_~-]` rather than emitting it — a quote in a header
+name leaves the emitted directive unbalanced, and HAProxy refuses the whole
+configuration. Reject the name against the same charset in your own library and report it,
+or the tenant sees a header silently not applied.
+
+`direction` is `request` or `response`. `keyExpr` is the sample expression
+producing the key prefix; the macro appends `,concat(|<operation>|<name>)` to it,
+so a caller needing more in the key ends its own expression with a `concat` (the
+Gateway library's backendRef-level form passes
+`var(txn.gw_rule_id),concat(|,txn.backend_name,)`). The three name lists carry the
+spelling to emit, already deduplicated by lower-case name — the key always uses
+the lower-case form, because HTTP header names are case-insensitive and two
+resources spelling one header differently must share a line.
+
 ## HAProxy configuration structure
 
 The base library generates this configuration structure. The `global` and `defaults` sections are composed from individually overridable snippets:

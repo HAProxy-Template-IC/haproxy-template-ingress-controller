@@ -62,8 +62,9 @@ The Gateway API library hooks into these extension points from base.yaml. Snippe
 | `frontend-matchers-advanced-*` | `frontend-matchers-advanced-010-route-id-setup` | Sets up per-request route-ID variables before the 500-range matchers run |
 | `frontend-matchers-advanced-*` | `frontend-matchers-advanced-500-gateway` | Method, header, and query-parameter matchers |
 | `frontend-matchers-advanced-*` | `frontend-matchers-advanced-900-path-match` | Final path-match backend-selection logic |
-| `frontend-filters-*` | `frontend-filters-500-gateway-request-header` | `RequestHeaderModifier` filter |
-| `frontend-filters-*` | `frontend-filters-500-gateway-response-header` | `ResponseHeaderModifier` filter |
+| `frontend-filters-*` | `frontend-filters-500-gateway-headers` | `RequestHeaderModifier` and `ResponseHeaderModifier` filters, rule- and backendRef-level |
+| `frontend-filters-*` | `frontend-filters-495-gateway-prefix-length` | The per-match prefix length a multi-prefix `ReplacePrefixMatch` rule needs |
+| `features-*` | `features-500-gateway-route-maps` | Builds every per-route filter map |
 | `frontend-filters-*` | `frontend-filters-500-gateway-redirect` | `RequestRedirect` filter |
 | `frontend-filters-*` | `frontend-filters-500-gateway-urlrewrite` | `URLRewrite` filter |
 | `http-bind-extra-*` | `http-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port>` per non-default Gateway HTTP listener port (skips chart-static `httpPort` and `httpsPort` to avoid duplicate-bind errors) |
@@ -425,6 +426,19 @@ Under `# Advanced route matching`, the rule's provenance comment changes from `-
 
 ### `spec.rules[].filters`
 
+Every filter below is driven by a map file rather than by per-route directives:
+the rendered configuration holds one static block per filter type, and a route's
+own values live in a map entry keyed by its rule id. Adding, changing, or removing
+a route's filter is then a map update, which the controller applies over the
+HAProxy runtime API without reloading. The exception is a header modifier naming
+a header no other route uses yet — the first route to touch a given header name
+adds one line to the configuration, and every route after it's a map entry.
+
+Map values are URL-encoded and decoded at request time with `url_dec(1)`. That's
+what makes a value carrying a space, a `;`, or a `%` safe: the runtime CLI splits a
+map value at the first space, and HAProxy re-reads an inlined header value as a
+log-format string, where a `%` would fetch request state.
+
 | Filter Type | Conformance | Status | Notes |
 |-------------|-------------|--------|-------|
 | `RequestHeaderModifier` | Core | ✅ Supported | Add/Set/Remove request headers |
@@ -472,18 +486,33 @@ spec:
 
 **HAProxy Implementation:**
 
-Generates `http-request` directives with conditions based on route matching:
+The values land in `gw-reqhdr.map`, keyed `<rule id>|<operation>|<header name>`:
+
+```
+default_api-route_0|set|x-api-version v2
+default_api-route_0|add|x-request-id %25%5brand%5d
+default_api-route_0|del|authorization 1
+```
+
+The configuration holds one line per distinct header name per operation, whatever
+the number of routes using it:
 
 ```haproxy
-# Set header (replaces existing)
-http-request set-header X-API-Version "v2" if <route-conditions>
-
-# Add header (appends to existing)
-http-request add-header X-Request-ID "%[rand]" if <route-conditions>
-
-# Remove header
-http-request del-header Authorization if <route-conditions>
+http-request set-header X-API-Version %[var(txn.gw_rule_id),concat(|set|x-api-version),map(<gw-reqhdr.map>),url_dec(1)] if { var(txn.gw_rule_id),concat(|set|x-api-version),map(<gw-reqhdr.map>) -m found }
+http-request add-header X-Request-ID %[var(txn.gw_rule_id),concat(|add|x-request-id),map(<gw-reqhdr.map>),url_dec(1)] if { var(txn.gw_rule_id),concat(|add|x-request-id),map(<gw-reqhdr.map>) -m found }
+http-request del-header Authorization if { var(txn.gw_rule_id),concat(|del|authorization),map(<gw-reqhdr.map>) -m found }
 ```
+
+Header names are case-insensitive, so the map key uses the lower-case name and two
+routes spelling one header differently share a line. The line spells the header the
+lexicographically smallest of the spellings in use. A name outside the HTTP token charset, or
+one containing `|`, `%`, `#`, a quote or a backtick, is rejected: it would otherwise become
+part of a map key, where `|` is the delimiter.
+
+A `backendRef`-level header modifier uses the same maps with the key
+`<rule id>|<backend name>|<operation>|<header name>`, and its block is emitted
+after the rule-level one, so it overrides a rule-level modifier for the same
+header as the specification requires.
 
 #### `ResponseHeaderModifier` filter
 
@@ -519,17 +548,14 @@ spec:
 
 **HAProxy Implementation:**
 
-Generates `http-response` directives:
+The same shape as `RequestHeaderModifier`, against `gw-reshdr.map`:
+
+```
+default_api-route_0|set|strict-transport-security max-age%3D31536000%3B%20includeSubDomains
+```
 
 ```haproxy
-# Set response header (replaces existing)
-http-response set-header Strict-Transport-Security "max-age=31536000; includeSubDomains" if <route-conditions>
-
-# Add response header (appends to existing)
-http-response add-header X-Custom-Header "custom-value" if <route-conditions>
-
-# Remove response header
-http-response del-header Server if <route-conditions>
+http-response set-header Strict-Transport-Security %[var(txn.gw_rule_id),concat(|set|strict-transport-security),map(<gw-reshdr.map>),url_dec(1)] if { var(txn.gw_rule_id),concat(|set|strict-transport-security),map(<gw-reshdr.map>) -m found }
 ```
 
 #### `RequestRedirect` filter
@@ -582,18 +608,30 @@ spec:
 
 **HAProxy Implementation:**
 
-Generates `http-request redirect` directives:
+`gw-redirect.map` carries the whole redirect per rule id, as
+`<code>|<scheme>|<host>|<port>|<path mode>|<prefix length>|<path>`:
+
+```
+default_api-route_0 301|https|example.com||P|7|%2fapi%2fv2
+```
+
+An empty scheme keeps the request's own scheme, an empty host keeps the request's
+Host, and `L` in the port field means the Gateway listener's own port, resolved per
+request because one route can serve several listeners. The path mode is `F` for
+`ReplaceFullPath`, `P` for `ReplacePrefixMatch` (whose remainder starts at the
+prefix length) and empty when the path is unchanged.
+
+One static block decodes those fields into `txn.gw_redir_*` variables, and the
+status code — which HAProxy insists is a literal — gets one line per allowed
+value (301, 302, 303, 307, 308), whatever the routes actually use:
 
 ```haproxy
-# HTTPS redirect
-http-request redirect scheme https code 301 if <route-conditions>
-
-# Path prefix replacement
-http-request redirect prefix "/api/v2" code 308 if <route-conditions>
-
-# Full path replacement
-http-request redirect location "https://example.com/new/path" code 302 if <route-conditions>
+http-request redirect location "%[var(txn.gw_redir_scheme)]://%[var(txn.gw_redir_host)]%[var(txn.gw_redir_port)]%[var(txn.gw_redir_path)]%[var(txn.gw_redir_query)]" code 301 if { var(txn.gw_redir),field(1,|) -m str 301 }
+http-request redirect location "%[var(txn.gw_redir_scheme)]://%[var(txn.gw_redir_host)]%[var(txn.gw_redir_port)]%[var(txn.gw_redir_path)]%[var(txn.gw_redir_query)]" code 302 if { var(txn.gw_redir),field(1,|) -m str 302 }
 ```
+
+The redirect keeps the query string the request arrived with. Any other
+`statusCode` is rejected at render time.
 
 #### `URLRewrite` filter
 
@@ -649,34 +687,47 @@ spec:
 
 **HAProxy Implementation:**
 
-Generates `http-request` directives for header and path manipulation:
+`gw-urlrewrite.map` carries `<host>|<path mode>|<prefix length>|<path>` per rule id:
+
+```
+default_api-route_0 internal-api.example.svc.cluster.local|P|7|%2fv2
+```
 
 ```haproxy
-# Hostname rewrite
-http-request set-header Host "internal-api.example.svc.cluster.local" if <route-conditions>
-
-# Full path replacement
-http-request set-path "/new/path" if <route-conditions>
-
-# Prefix replacement (using regex)
-http-request replace-path "^/api/v1(.*)" "/\1" if <route-conditions>
+http-request set-header Host %[var(txn.gw_rw),field(1,|),url_dec(1)] if { var(txn.gw_rw) -m found } !{ var(txn.gw_rw),field(1,|) -m len 0 }
+http-request set-var(txn.gw_rw_rest) path,bytes(txn.gw_pfxlen) if { var(txn.gw_rw),field(2,|) -m str P }
+http-request set-path %[var(txn.gw_rw_path)] if { var(txn.gw_rw_path) -m found }
 ```
+
+A `ReplacePrefixMatch` takes the remainder of the path from the prefix length
+rather than a per-route regex, so it no longer mangles a rewrite against the `/`
+prefix. It needs a `PathPrefix` match to take that length from: combined with a
+`RegularExpression` match — which Gateway API leaves undefined — the rewrite is
+refused rather than stripping the regex source's byte count off the path.
 
 **Difference from RequestRedirect:**
 
 - **URLRewrite** rewrites the request and forwards to backend (transparent to client)
 - **RequestRedirect** sends HTTP redirect response to client (client sees new URL)
 
-Attach a filter to the demo route and watch the real directive compile — no `<route-conditions>` placeholder:
+Attach a filter to the demo route and watch both halves compile — the map entry that carries the value and the one static line that reads it:
 
-<div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.frontend-filters-500-gateway-request-header" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Filter → http-request directive" data-height="440">
+<div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.frontend-filters-500-gateway-headers" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Filter → http-request directive" data-height="440">
 
-<p class="pg-task" markdown>In the **Resources** panel, give the `api` HTTPRoute's rule a `filters:` list (a sibling of `backendRefs`) with a `RequestHeaderModifier` that sets a header — `set: [{name: X-API-Version, value: "v2"}]` — then find the generated `http-request set-header X-API-Version` line in the `haproxy.cfg` tab.</p>
+<p class="pg-task" markdown>In the **Resources** panel, give the `api` HTTPRoute's rule a `filters:` list (a sibling of `backendRefs`) with a `RequestHeaderModifier` that sets a header — `set: [{name: X-API-Version, value: "v2"}]` — then find the generated `http-request set-header X-API-Version` line in the `haproxy.cfg` tab, and its value in the `gw-reqhdr.map` tab.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-A `http-request set-header X-API-Version "v2"` directive appears under the filters, guarded by an `if` condition that matches the route's `gw_rule_id` — so it fires only for requests the `api` HTTPRoute selected, not for every request on the frontend. The `frontend-filters-500-gateway-request-header` snippet emits it; `add`/`remove` operations become `http-request add-header` / `http-request del-header` lines the same way. This is the real condition the engine writes, in place of the `<route-conditions>` placeholder shown in the static examples above.
+`gw-reqhdr.map` gains `default_api_0|set|x-api-version v2`, and one
+`http-request set-header X-API-Version` line appears under the filters, reading
+that entry through the route's `gw_rule_id` — so it fires only for requests the
+`api` HTTPRoute selected, not for every request on the frontend. The
+`frontend-filters-500-gateway-headers` snippet emits it; `add`/`remove`
+operations become `http-request add-header` / `http-request del-header` lines the
+same way. Add a second route setting the same header name and the map grows by one
+entry while the configuration stays byte-identical — that's what lets the change
+deploy without a reload.
 
 </details>
 
@@ -1135,6 +1186,13 @@ These headers are useful for:
 - Understanding precedence when multiple routes match
 - Debugging complex routing configurations
 
+Debug mode also sets `txn.filters_applied` to the name of the first filter that
+fired, which the `X-Gateway-Filters-Applied` response header carries. A filter that doesn't fire is nearly always
+a missing map entry: `txn.gw_rule_id` names the rule the request matched, and
+every filter map is keyed by it, so
+`echo "show map maps/gw-reqhdr.map" | socat stdio /etc/haproxy/haproxy-worker.sock`
+on the HAProxy pod tells you whether the entry the request needed is there.
+
 ---
 
 ## Per-Gateway Kubernetes Resources
@@ -1248,8 +1306,21 @@ TLSRoute and TCPRoute status is written on the `deployed` outcome only (see thei
 **Not implemented:**
 
 1. **ExtensionRef filter** — the general custom-filter extension mechanism (planned as the Gateway API equivalent of Ingress annotations). One narrow internal use exists: an `ExtensionRef` selecting SSL passthrough is honored.
-2. **Per-backend filters** (`backendRefs[].filters[]`) beyond the header modifiers — `RequestHeaderModifier` and `ResponseHeaderModifier` on a `backendRef` **are** emitted per-backend (rule-scoped via `gw_rule_id`; see `test-httproute-backend-request-header-modifier` and `test-httproute-backend-response-header-modifier`). The other filter types (RequestRedirect, URLRewrite, RequestMirror) apply at the rule level only.
+2. **Per-backend filters** (`backendRefs[].filters[]`) beyond the header modifiers — `RequestHeaderModifier` and `ResponseHeaderModifier` on a `backendRef` **are** honored, keyed by rule id and backend (see `test-httproute-backend-request-header-modifier` and `test-httproute-backend-response-header-modifier`). The other filter types (RequestRedirect, URLRewrite, RequestMirror) apply at the rule level only.
 3. **Listener-specific HTTP route isolation** — `sectionName` drives `attachedRoutes` status counting, but HTTP/HTTPS routing itself isn't isolated per listener. (TLSRoute and TCPRoute do route per listener; see their sections.)
+
+**Reloads even though the filter itself is map-driven:**
+
+- The first route in the cluster to name a given header in a `RequestHeaderModifier`
+  or `ResponseHeaderModifier`. Every later route using that header name is a map entry.
+- A rule whose `matches` carry several different path prefixes, combined with
+  `ReplacePrefixMatch`: one map value carries one prefix length, so that rule keeps a
+  configuration line per match.
+- A rule whose `RequestMirror` filters sample at different percentages: one map value
+  carries one percentage, so that rule keeps a line per mirror target.
+- Advanced matchers (method, header, query parameter, gRPC method), the `CORS` filter,
+  and `RegularExpression` path rewrites, which stay structural — see the zero-reload
+  table in [Supported configuration](../supported-configuration.md).
 
 **Implemented but not pinned by this library's `validationTests`:**
 
