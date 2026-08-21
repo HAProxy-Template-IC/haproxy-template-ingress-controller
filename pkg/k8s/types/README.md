@@ -20,7 +20,7 @@ This package exists to break import cycles. `pkg/k8s/watcher` needs to know abou
 | `OnResourceChangeCallback` | The `SingleWatcher` immediate-callback signature: `func(obj any) error` |
 | `ConfigError` | Typed error returned by the watchers when their config is malformed (`Field` + `Message`). Callers can `errors.As` / `errors.AsType[*ConfigError]` to recover the offending field name |
 
-`DefaultDebounceInterval` (2 s) lives in this package as the canonical default for `WatcherConfig.DebounceInterval` — referenced from both `pkg/k8s` callers and the user-facing performance docs. It is the only debounce default in the codebase: the reconciler fires immediately with no refractory window, so there is no longer a `pkg/core/config` counterpart to keep in sync.
+`DefaultDebounceInterval` (100 ms) lives in this package as the canonical default for `WatcherConfig.DebounceInterval` — referenced from both `pkg/k8s` callers and the user-facing performance docs. It is the only *watcher* debounce default in the codebase: the reconciler fires immediately with no refractory window, so there is no longer a `pkg/core/config` counterpart to keep in sync. `configchange.DefaultReinitDebounceInterval` is a separate, deliberately lenient constant for informer teardown.
 
 ## See Also
 

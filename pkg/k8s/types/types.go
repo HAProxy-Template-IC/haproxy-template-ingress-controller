@@ -24,18 +24,16 @@ const (
 	// (the watcher fires once when the window closes if anything was
 	// suppressed).
 	//
-	// 2s is deliberately lenient: it governs operator-initiated, structural
-	// kinds (Ingress, Gateway, HTTPRoute, Service spec edits) where a couple of
-	// seconds of coalescing is fine and reduces render/reload churn. The
-	// zero-downtime-critical kinds opt out — EndpointSlice watchers set
-	// `debounceInterval: "0"` (DebounceImmediate) so a pod-IP rotation reaches
-	// the deployer's runtime-eligible fast path with no debounce delay. There
-	// is intentionally NO reconciler-level refractory on top of this: the
-	// reconciler fires immediately, and reload throttling lives solely in the
-	// deployer (minDeploymentInterval), which the runtime-eligible fast path
-	// bypasses. Override via `debounceInterval` on a watched-resource entry to
-	// tune batching for a specific kind.
-	DefaultDebounceInterval = 2 * time.Second
+	// Kept near zero because it applies to every watched kind, including an
+	// operator's own CRDs, so it must not encode a guess about which kinds are
+	// latency-critical. Bursts are already coalesced downstream — the
+	// reconciler's coordinator drains queued triggers while a render is in
+	// flight — and reload pacing lives further down still (the agent, plus the
+	// deployer's minDeploymentInterval), so a longer refractory window buys
+	// nothing but propagation latency. Override via `debounceInterval` on a
+	// watched-resource entry to batch a specific kind harder; `"0"`
+	// (DebounceImmediate) removes the window entirely.
+	DefaultDebounceInterval = 100 * time.Millisecond
 
 	// DebounceImmediate is the sentinel WatcherConfig.DebounceInterval value
 	// for "no debounce — fire the callback on every change event." It exists
@@ -312,12 +310,12 @@ type WatcherConfig struct {
 	// Rapid resource changes within this interval are batched into a single callback
 	// with aggregated statistics.
 	//
-	// Default: DefaultDebounceInterval (2s) — applied in WatcherConfig.SetDefaults
+	// Default: DefaultDebounceInterval (100ms) — applied in WatcherConfig.SetDefaults
 	// when DebounceInterval is zero. With leading-edge triggering, the first
 	// change in a quiet period fires immediately; only subsequent changes
 	// within the window are batched. Override only when a specific resource
 	// needs slower batching (e.g. high-volume EndpointSlice churn on large
-	// clusters where 1s renders are too frequent) or near-zero latency.
+	// clusters where 1s renders are too frequent) or no window at all.
 	DebounceInterval time.Duration
 
 	// OnChange is called when resources in the store change.

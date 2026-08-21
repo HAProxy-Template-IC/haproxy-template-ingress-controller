@@ -32,7 +32,7 @@ go r.Start(ctx)
 | `DriftPreventionTriggeredEvent` | Immediate — periodic redeploy path |
 | `BecameLeaderEvent` | Immediate — bootstraps the new leader's pipeline so the (leader-only) renderer produces fresh `TemplateRenderedEvent` instead of relying on a stale replay |
 
-The Reconciler adds zero latency: every event it handles fires a reconciliation immediately. Coalescing of rapid changes is the per-watcher debounce window's job (default 2s, `pkg/k8s/types.DefaultDebounceInterval`; EndpointSlice watchers use `debounceInterval: "0"` so pod-IP rotations react instantly during rolling restarts). Reload throttling is the deployer's `minDeploymentInterval` (bypassed by the runtime-eligible fast path). This split keeps single ingress flips and rolling-restart endpoint rotations both fast without a reconciler-level refractory.
+The Reconciler adds zero latency: every event it handles fires a reconciliation immediately. Coalescing of rapid changes is the per-watcher debounce window's job (default 100ms, `pkg/k8s/types.DefaultDebounceInterval`; EndpointSlice watchers use `debounceInterval: "0"` so pod-IP rotations react instantly during rolling restarts). Reload throttling is the deployer's `minDeploymentInterval` (bypassed by the runtime-eligible fast path). This split keeps single ingress flips and rolling-restart endpoint rotations both fast without a reconciler-level refractory.
 
 The initial-sync filter exists because `ResourceIndexUpdatedEvent` fires for every object as stores hydrate. Early reconciliations there would run against an incomplete store, so `IndexSynchronizedEvent` (which fires once every watcher finishes its initial list) is the correct first-reconciliation trigger.
 

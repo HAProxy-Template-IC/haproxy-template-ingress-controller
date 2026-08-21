@@ -17,7 +17,7 @@ Work in this package when:
 
 ## Package Purpose
 
-Stage 5 component that triggers reconciliation events. It fires **immediately** on every resource/HTTP event — there is no reconciler-level debounce or refractory window. Batching happens entirely upstream in the per-watcher debounce window (default 2s, `pkg/k8s/types.DefaultDebounceInterval`; EndpointSlice watchers run with `debounceInterval: "0"` for instant rolling-restart reaction). Reload throttling happens entirely downstream in the deployer's `minDeploymentInterval` (which the runtime-eligible fast path bypasses).
+Stage 5 component that triggers reconciliation events. It fires **immediately** on every resource/HTTP event — there is no reconciler-level debounce or refractory window. Batching happens entirely upstream in the per-watcher debounce window (default 100ms, `pkg/k8s/types.DefaultDebounceInterval`; EndpointSlice watchers run with `debounceInterval: "0"` for instant rolling-restart reaction). Reload throttling happens entirely downstream in the deployer's `minDeploymentInterval` (which the runtime-eligible fast path bypasses).
 
 ## Architecture
 
@@ -64,7 +64,7 @@ reconciler := reconciler.New(bus, logger)
 go reconciler.Start(ctx)
 ```
 
-There is no `reconciler.Config`, no `DebounceInterval` field, and no `spec.controller.reconciliationDebounceInterval` CRD knob. Batching lives in the per-watcher debounce window (default 2s, `pkg/k8s/types.DefaultDebounceInterval`; EndpointSlice at `"0"`); reload throttling lives in the deployer's `minDeploymentInterval`.
+There is no `reconciler.Config`, no `DebounceInterval` field, and no `spec.controller.reconciliationDebounceInterval` CRD knob. Batching lives in the per-watcher debounce window (default 100ms, `pkg/k8s/types.DefaultDebounceInterval`; EndpointSlice at `"0"`); reload throttling lives in the deployer's `minDeploymentInterval`.
 
 ## Common Pitfalls
 
