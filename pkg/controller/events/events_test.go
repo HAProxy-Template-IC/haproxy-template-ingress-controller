@@ -610,7 +610,6 @@ func TestPublishingEvents(t *testing.T) {
 	t.Run("ConfigAppliedToPodEvent", func(t *testing.T) {
 		syncMetadata := &SyncMetadata{
 			ReloadTriggered: true,
-			ReloadID:        "reload-123",
 			SyncDuration:    100 * time.Millisecond,
 			OperationCounts: OperationCounts{
 				TotalAPIOperations: 10,
@@ -640,7 +639,6 @@ func TestPublishingEvents(t *testing.T) {
 		assert.False(t, event.IsDriftCheck)
 		assert.NotNil(t, event.SyncMetadata)
 		assert.True(t, event.SyncMetadata.ReloadTriggered)
-		assert.Equal(t, "reload-123", event.SyncMetadata.ReloadID)
 		assert.Equal(t, 10, event.SyncMetadata.OperationCounts.TotalAPIOperations)
 		assert.Equal(t, EventTypeConfigAppliedToPod, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())

@@ -382,6 +382,9 @@ func (c *Coordinator) handlePipelineSuccess(
 	// Cloned so the published event never aliases the pipeline result; set on
 	// the freshly-built local event before Publish (no subscriber holds it yet).
 	completed.Events = slices.Clone(result.Events)
+	if result.Plan != nil {
+		completed.ProfileCount = len(result.Plan.Profiles)
+	}
 	if context.Cause(ctx) != nil {
 		return
 	}

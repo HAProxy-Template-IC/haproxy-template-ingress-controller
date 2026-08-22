@@ -768,7 +768,6 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 	// Publish ConfigAppliedToPodEvent with SyncMetadata including operations and reload
 	syncMetadata := &events.SyncMetadata{
 		ReloadTriggered: true,
-		ReloadID:        "reload-123",
 		SyncDuration:    100 * time.Millisecond,
 		OperationCounts: events.OperationCounts{
 			TotalAPIOperations: 5,

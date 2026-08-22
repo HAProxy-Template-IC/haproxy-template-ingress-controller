@@ -140,6 +140,9 @@ func printAgentState(w io.Writer, state *api.State) error {
 	fmt.Fprintf(w, "agent %s, api v%d, plan schema %d\n",
 		orDash(state.AgentVersion), state.APIVersion, state.PlanSchemaVersion)
 	fmt.Fprintf(w, "haproxy %s, worker pid %d\n", orDash(state.HAProxy.Version), state.HAProxy.WorkerPID)
+	if state.InvariantViolation != "" {
+		fmt.Fprintf(w, "invariant violated: %s\n", state.InvariantViolation)
+	}
 
 	fmt.Fprintf(w, "\nplans (generation %d, token %d/%d)\n",
 		state.Generation, state.AppliedToken.LeaderEpoch, state.AppliedToken.RenderSeq)

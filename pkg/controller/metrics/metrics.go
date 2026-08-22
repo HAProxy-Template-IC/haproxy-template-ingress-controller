@@ -148,6 +148,12 @@ type Metrics struct {
 	// the last config HAProxy accepted, until the operator's input changes.
 	ConfigPinned prometheus.Gauge
 
+	// RenderProfiles is the number of distinct backend profiles the most recent
+	// reconcile render emitted (`defaults haptic-be-*`). Profile cardinality is
+	// what backends collapse onto, so it tracks the config's structural size
+	// independently of the raw backend count.
+	RenderProfiles prometheus.Gauge
+
 	// Build info metric
 	BuildInfo *prometheus.GaugeVec
 }
@@ -395,6 +401,12 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"1 while the render gate holds renders HAProxy refused: the fleet keeps serving the last accepted config and no new render reaches it until the input is fixed (leader-only; 0 on followers).",
 		),
 
+		RenderProfiles: pkgmetrics.NewGauge(
+			registry,
+			"haptic_render_profiles",
+			"Distinct backend profiles (defaults haptic-be-*) in the most recent reconcile render. Profile cardinality is what backends collapse onto, tracking the config's structural size (leader-only; 0 on followers).",
+		),
+
 		// Build info metric
 		BuildInfo: pkgmetrics.NewGaugeVec(
 			registry,
@@ -595,6 +607,12 @@ func (m *Metrics) RecordHAProxyPodRejected(reason string) {
 // validator (the one whose check failed).
 func (m *Metrics) RecordConfigRejected(validator string) {
 	m.ConfigRejectedTotal.WithLabelValues(validator).Inc()
+}
+
+// SetRenderProfiles records how many distinct backend profiles the most recent
+// reconcile render emitted.
+func (m *Metrics) SetRenderProfiles(count int) {
+	m.RenderProfiles.Set(float64(count))
 }
 
 // SetConfigPinned sets whether the render gate is holding renders.

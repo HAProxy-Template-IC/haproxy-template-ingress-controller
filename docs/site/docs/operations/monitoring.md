@@ -128,6 +128,7 @@ datadog:
 | `haptic_reconciliation_total` | Counter | Total reconciliation cycles triggered |
 | `haptic_reconciliation_duration_seconds` | Histogram | Time spent in reconciliation cycles |
 | `haptic_reconciliation_errors_total` | Counter | Failed reconciliation cycles |
+| `haptic_render_profiles` | Gauge | Distinct backend profiles (`defaults haptic-be-*`) in the most recent render. Backends of the same shape collapse onto one profile, so this tracks the config's structural size independently of the raw backend count. Leader-only; `0` on followers |
 
 **Key queries:**
 
@@ -284,6 +285,8 @@ The controller and the agents count the same applies from either end: `haptic_de
 | `haptic_runtime_fast_path_failures_total` | `haptic_agent_op_errors_total{kind}` on the pod, `haptic_apply_rejected_total{pod}` on the controller |
 | `haptic_runtime_fast_path_server_updates_total` | `haptic_runtime_server_ops_total{op}` |
 | `haptic_deploy_runtime_divergence_total` | `haptic_runtime_map_divergence_total{map}`, which now also covers what the agent reads back after its own ops |
+
+There is no `haptic_config_validation_skipped_total`, on purpose. The optimistic render gate defers the full `haproxy -c` off the reconcile wall clock (it runs concurrently with the apply), it never skips it, so a "skipped" counter would be misleading. Validation failures are counted by `haptic_config_rejected_total{validator="haproxy"}`.
 
 ### Validation metrics
 

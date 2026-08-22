@@ -208,7 +208,7 @@ func DurationBuckets() []float64 {
 
 // DeploymentDurationBuckets returns histogram buckets for HAProxy deployment duration.
 //
-// Deployments involve network calls to the dataplane API and may wait for HAProxy
+// Deployments involve network calls to the agent and may wait for HAProxy
 // to reload its configuration. Reloads can take several seconds on busy servers,
 // so buckets extend to 60s to capture the full tail distribution without capping.
 //

@@ -134,6 +134,11 @@ type ReconciliationCompletedEvent struct {
 	// cycle with the render gate's later verdict on it.
 	PlanID string
 
+	// ProfileCount is the number of distinct backend profiles this render
+	// emitted, harvested from the plan. The metrics component sets the
+	// haptic_render_profiles gauge from it. Zero when the render produced no plan.
+	ProfileCount int
+
 	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.

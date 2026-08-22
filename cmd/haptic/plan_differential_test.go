@@ -52,6 +52,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
@@ -787,32 +788,46 @@ func renderCorpus(t *testing.T, runner *testrunner.Runner, testNames []string) [
 	return renders
 }
 
+// bundledChartSetup renders the bundled chart with every template library
+// enabled and returns the converted config, the validation setup and the logger,
+// plus a cleanup. It takes testing.TB so both the differential tests and the
+// admission-render benchmark drive the same in-process chart render.
+func bundledChartSetup(tb testing.TB) (*coreconfig.Config, *ValidationSetup, *slog.Logger, func()) {
+	tb.Helper()
+	chartDir := repoPath(tb, "charts", "haptic")
+	values := filepath.Join(tb.TempDir(), "values.yaml")
+	require.NoError(tb, os.WriteFile(values, []byte(allLibrariesValues), 0o600))
+
+	manifests, err := renderChartManifests(chartDir, []string{values}, "", offlineCaps())
+	require.NoError(tb, err)
+	docs, err := collectConfigDocuments(manifests)
+	require.NoError(tb, err)
+
+	configFile := filepath.Join(tb.TempDir(), "config.yaml")
+	require.NoError(tb, os.WriteFile(configFile, []byte(docs), 0o600))
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	restoreFlags := setValidateFlags(tb, configFile, repoPath(tb, "tests", "schemas"))
+	schemas, err := newDirSchemaSource(validateSchemaDir, logger)
+	require.NoError(tb, err)
+	setup, err := setupValidation(context.Background(), validateConfigFiles, schemas, nil, logger)
+	require.NoError(tb, err)
+
+	cfg, err := conversion.ConvertSpec(setup.ConfigSpec)
+	require.NoError(tb, err)
+
+	return cfg, setup, logger, func() {
+		setup.Cleanup()
+		restoreFlags()
+	}
+}
+
 // bundledChartRunner renders the bundled chart with every template library
 // enabled and returns a runner over its validation tests, plus their names in a
 // stable order.
 func bundledChartRunner(t *testing.T) (runner *testrunner.Runner, testNames []string, cleanup func()) {
 	t.Helper()
-	chartDir := repoPath(t, "charts", "haptic")
-	values := filepath.Join(t.TempDir(), "values.yaml")
-	require.NoError(t, os.WriteFile(values, []byte(allLibrariesValues), 0o600))
-
-	manifests, err := renderChartManifests(chartDir, []string{values}, "", offlineCaps())
-	require.NoError(t, err)
-	docs, err := collectConfigDocuments(manifests)
-	require.NoError(t, err)
-
-	configFile := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(configFile, []byte(docs), 0o600))
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	restoreFlags := setValidateFlags(t, configFile, repoPath(t, "tests", "schemas"))
-	schemas, err := newDirSchemaSource(validateSchemaDir, logger)
-	require.NoError(t, err)
-	setup, err := setupValidation(context.Background(), validateConfigFiles, schemas, nil, logger)
-	require.NoError(t, err)
-
-	cfg, err := conversion.ConvertSpec(setup.ConfigSpec)
-	require.NoError(t, err)
+	cfg, setup, logger, cleanup := bundledChartSetup(t)
 	runner = testrunner.New(cfg, setup.Engine, setup.ValidationPaths, &testrunner.Options{
 		Logger:             logger,
 		Capabilities:       setup.Capabilities,
@@ -829,10 +844,7 @@ func bundledChartRunner(t *testing.T) (runner *testrunner.Runner, testNames []st
 	}
 	sort.Strings(testNames)
 
-	return runner, testNames, func() {
-		setup.Cleanup()
-		restoreFlags()
-	}
+	return runner, testNames, cleanup
 }
 
 // allLibrariesValues turns on every bundled template library, so the corpus is
@@ -854,8 +866,8 @@ const allLibrariesValues = `controller:
 
 // setValidateFlags points the command's package-level flags at this test's
 // inputs and restores them afterwards.
-func setValidateFlags(t *testing.T, configFile, schemaDir string) func() {
-	t.Helper()
+func setValidateFlags(tb testing.TB, configFile, schemaDir string) func() {
+	tb.Helper()
 	previousFiles, previousSchemaDir := validateConfigFiles, validateSchemaDir
 	validateConfigFiles, validateSchemaDir = []string{configFile}, schemaDir
 	return func() { validateConfigFiles, validateSchemaDir = previousFiles, previousSchemaDir }
@@ -863,9 +875,9 @@ func setValidateFlags(t *testing.T, configFile, schemaDir string) func() {
 
 // repoPath resolves a path relative to the repository root, which is two levels
 // above this package.
-func repoPath(t *testing.T, elements ...string) string {
-	t.Helper()
+func repoPath(tb testing.TB, elements ...string) string {
+	tb.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return filepath.Join(append([]string{root}, elements...)...)
 }

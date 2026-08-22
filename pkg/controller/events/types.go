@@ -92,7 +92,7 @@ const (
 	EventTypeTemplateRendered     = "template.rendered"
 	EventTypeTemplateRenderFailed = "template.render.failed"
 
-	// Validation event types (HAProxy dataplane API validation).
+	// Validation event types (the render gate's `haproxy -c`).
 	EventTypeValidationFailed = "validation.failed"
 
 	// Render gate verdict: the controller's own `haproxy -c` on a render,
