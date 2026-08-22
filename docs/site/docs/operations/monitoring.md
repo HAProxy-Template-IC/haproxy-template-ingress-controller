@@ -225,6 +225,7 @@ that are in the pod's status.
 |--------|------|--------|-------------|
 | `haptic_runtime_backend_ops_total` | Counter | `op` | Backend lifecycle operations the fleet applied at runtime, by op kind |
 | `haptic_runtime_server_ops_total` | Counter | `op` | Server lifecycle operations the fleet applied at runtime, by op kind |
+| `haptic_runtime_backend_fallback_total` | Counter | `reason` | Runtime backend batches a pod reloaded instead of running, by reason (`name_collision`: a fresh backend whose name a not-yet-deleted one still holds; `op_rejected`: any other refusal) |
 | `haptic_runtime_map_divergence_total` | Counter | `map` | Runtime maps whose post-apply read-back disagreed with the desired content, forcing a reload fallback. The `map` label names the file, so one map dominating the rate points at the template that builds it |
 
 **Key queries:**
@@ -235,6 +236,9 @@ sum by (op) (rate(haptic_runtime_server_ops_total[5m]))
 
 # Route adds and removes that stayed reload-free
 sum by (op) (rate(haptic_runtime_backend_ops_total[5m]))
+
+# Backend batches that fell back to a reload, by reason
+sum by (reason) (rate(haptic_runtime_backend_fallback_total[5m]))
 ```
 
 ### Agent metrics

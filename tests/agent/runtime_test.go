@@ -19,8 +19,11 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -284,4 +287,209 @@ func TestDynamicBackendLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, state.PendingDeletes.Servers)
 	assert.Empty(t, state.PendingDeletes.Backends)
+}
+
+// TestDynamicBackendRenameKeepsTraffic pins the A4 fixed ordering: a single
+// apply that both creates a backend and retires another — what a backend rename
+// composes — publishes and re-points the map at the new backend before it
+// unpublishes the old one, so a request in flight the whole time never 503s.
+// The agent's own Split runs the create/publish/map/unpublish half in one
+// worker session and defers only the drain+delete tail, which is what makes the
+// make-before-break hold.
+func TestDynamicBackendRenameKeepsTraffic(t *testing.T) {
+	if !haproxyAtLeast("3.4") {
+		t.Skipf("`add backend` arrived in HAProxy 3.4; this bracket runs %s", haproxyVersion())
+	}
+	e, s := converged(t)
+	worker := e.workerPID()
+
+	const host = "rename.example.com"
+	s.set(hostMapPath, hostMapContent+host+" be-old\n")
+	published := s.next(api.ModeAuto)
+	published.Ops = []api.Op{
+		{Kind: api.OpBackendAdd, Backend: "be-old", Profile: defaultsProfile, Mode: "http", GUID: "be:be-old"},
+		{Kind: api.OpServerAdd, Backend: "be-old", Server: "srv1", Address: "127.0.0.1", Port: upstreamPort,
+			Keywords: []api.KeywordArg{{Name: "check"}}},
+		{Kind: api.OpServerEnable, Backend: "be-old", Server: "srv1", Health: true},
+		{Kind: api.OpBackendPublish, Backend: "be-old"},
+		{Kind: api.OpMapAdd, Path: hostMapPath, Key: host, Value: "be-old"},
+	}
+	require.True(t, s.apply(published, s.allParts()).OK, "publishing the first backend was rejected")
+	status, _, body := e.requestWithHost(host, "/")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "upstream-ok", body)
+
+	// The rename in one apply, ops in the A4 order: create + publish the new
+	// backend and re-point the map at it, THEN unpublish and drain the old one.
+	s.set(hostMapPath, hostMapContent+host+" be-new\n")
+	rename := s.next(api.ModeAuto)
+	rename.Ops = []api.Op{
+		{Kind: api.OpBackendAdd, Backend: "be-new", Profile: defaultsProfile, Mode: "http", GUID: "be:be-new"},
+		{Kind: api.OpServerAdd, Backend: "be-new", Server: "srv1", Address: "127.0.0.1", Port: upstreamPort,
+			Keywords: []api.KeywordArg{{Name: "check"}}},
+		{Kind: api.OpServerEnable, Backend: "be-new", Server: "srv1", Health: true},
+		{Kind: api.OpBackendPublish, Backend: "be-new"},
+		{Kind: api.OpMapSet, Path: hostMapPath, Key: host, Value: "be-new"},
+		{Kind: api.OpBackendUnpublish, Backend: "be-old"},
+		{Kind: api.OpServerDisable, Backend: "be-old", Server: "srv1"},
+		{Kind: api.OpServerWaitRemovable, Backend: "be-old", Server: "srv1", TimeoutMs: 3000},
+		{Kind: api.OpServerDel, Backend: "be-old", Server: "srv1"},
+		{Kind: api.OpBackendWaitRemovable, Backend: "be-old", TimeoutMs: 3000},
+		{Kind: api.OpBackendDel, Backend: "be-old"},
+	}
+
+	probe := newHostProbe(e, host)
+	probe.waitLive(t, 3) // the apply is milliseconds; make sure traffic is flowing first
+	result := s.apply(rename, s.allParts())
+	observed := probe.stop()
+
+	require.True(t, result.OK, "the rename apply was rejected: %+v", result.Error)
+	assert.Equal(t, api.ResultRuntime, result.Mode)
+	assert.Equal(t, worker, e.workerPID(), "a runtime rename must not reload")
+	assert.Zero(t, observed.failures,
+		"%d of %d requests dropped during the rename (first: %s); create-and-publish must precede unpublish-and-delete",
+		observed.failures, observed.attempts, observed.first)
+	assert.Greater(t, observed.attempts, 3, "the probe stopped before the rename overlapped it")
+
+	// The old backend's drain runs off the apply path; the new one keeps serving.
+	waitFor(t, "the deferred delete of be-old", convergeBudget, func() error {
+		if _, present := e.statRow("be-old", "BACKEND"); present {
+			return errors.New("be-old is still in show stat")
+		}
+		return nil
+	})
+	status, _, body = e.requestWithHost(host, "/")
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, "upstream-ok", body, "the renamed-to backend must serve the host")
+	assert.Equal(t, worker, e.workerPID(), "the deferred delete must not reload")
+}
+
+// TestNameCollisionFallsBackToReload pins A5: `add backend` on a name HAProxy
+// already knows answers "already used by other proxy". No runtime command
+// reveals a backend's shape, so the agent cannot know the leftover is safe to
+// publish traffic onto — it stops and reloads the desired file set instead. The
+// apply is an ACK (mode reload), not a NACK, and its op results carry HAProxy's
+// own words so the controller can label the fallback.
+func TestNameCollisionFallsBackToReload(t *testing.T) {
+	if !haproxyAtLeast("3.4") {
+		t.Skipf("`add backend` arrived in HAProxy 3.4; this bracket runs %s", haproxyVersion())
+	}
+	e, s := converged(t)
+	worker := e.workerPID()
+
+	// be-1 is defined in the rendered config, so adding it again collides.
+	collide := s.next(api.ModeAuto)
+	collide.Ops = []api.Op{
+		{Kind: api.OpBackendAdd, Backend: "be-1", Profile: defaultsProfile, Mode: "http"},
+	}
+	// Read the first ACK directly: session.apply would follow the paced reload,
+	// whose fresh run carries no op results.
+	result, _ := s.timedApply(collide, nil)
+
+	require.True(t, result.OK, "a name collision must fall back to a reload, not a NACK: %+v", result.Error)
+	require.Nil(t, result.Error, "a fallback reload is an ACK with no error: the controller only counts the fallback when OK and Error is nil")
+	require.NotEqual(t, api.ResultRuntime, result.Mode, "the colliding op must not report a runtime success")
+
+	failed := failedOpResult(result.OpResults)
+	require.NotNil(t, failed, "the ACK carried no failed op result:\n%+v", result.OpResults)
+	assert.Equal(t, api.OpBackendAdd, failed.Kind)
+	assert.Contains(t, strings.ToLower(failed.Output), "already used by other proxy")
+
+	// The fallback reloads the desired set: the worker is re-executed.
+	waitFor(t, "the fallback reload", convergeBudget, func() error {
+		if e.workerPID() == worker {
+			return errors.New("the worker has not reloaded yet")
+		}
+		return nil
+	})
+	e.waitForReady(http.StatusOK)
+}
+
+func failedOpResult(results []api.OpResult) *api.OpResult {
+	for i := range results {
+		if !results[i].OK {
+			return &results[i]
+		}
+	}
+	return nil
+}
+
+// hostProbe keeps a request to one host in flight for the length of an apply,
+// so a test can prove the change dropped no traffic. A non-200 or a transport
+// error is a failure; it never calls t from its own goroutine.
+type hostProbe struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	mu     sync.Mutex
+	result probeResult
+}
+
+type probeResult struct {
+	attempts int
+	failures int
+	first    string
+}
+
+func newHostProbe(e *env, host string) *hostProbe {
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &hostProbe{cancel: cancel, done: make(chan struct{})}
+	go func() {
+		defer close(p.done)
+		// The request carries no context: a call already in flight when stop
+		// cancels still completes and is counted, so a dropped answer is never
+		// mistaken for the probe simply ending. The loop exits at the top.
+		for ctx.Err() == nil {
+			req, err := http.NewRequest(http.MethodGet, e.httpURL("/"), http.NoBody)
+			if err != nil {
+				return
+			}
+			req.Host = host
+			resp, err := e.http.Do(req)
+			p.mu.Lock()
+			p.result.attempts++
+			switch {
+			case err != nil:
+				p.result.failures++
+				if p.result.first == "" {
+					p.result.first = err.Error()
+				}
+			case resp.StatusCode != http.StatusOK:
+				p.result.failures++
+				if p.result.first == "" {
+					p.result.first = "status " + strconv.Itoa(resp.StatusCode)
+				}
+			}
+			p.mu.Unlock()
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+		}
+	}()
+	return p
+}
+
+// waitLive blocks until the probe has completed at least n requests, so a test
+// that follows with a millisecond-long apply is sure traffic is already flowing
+// when it starts.
+func (p *hostProbe) waitLive(t *testing.T, n int) {
+	t.Helper()
+	waitFor(t, fmt.Sprintf("%d probe requests", n), convergeBudget, func() error {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.result.failures > 0 {
+			return fmt.Errorf("the probe failed before the apply: %s", p.result.first)
+		}
+		if p.result.attempts < n {
+			return fmt.Errorf("only %d of %d probe requests so far", p.result.attempts, n)
+		}
+		return nil
+	})
+}
+
+func (p *hostProbe) stop() probeResult {
+	p.cancel()
+	<-p.done
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.result
 }

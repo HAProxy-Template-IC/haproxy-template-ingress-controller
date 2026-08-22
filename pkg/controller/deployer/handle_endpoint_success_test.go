@@ -179,3 +179,40 @@ func TestHandleEndpointSuccess_RecordsApplyAndOpCounters(t *testing.T) {
 	defer state.mu.Unlock()
 	assert.Equal(t, map[string]int{api.OpBackendAdd: 1, api.OpServerAdd: 2}, state.operationBreakdown)
 }
+
+// A backend_add HAProxy refused is A5: a leftover backend still holds the name,
+// the agent reloaded the desired set instead, and the fleet-level fallback
+// counter names why so an operator can tell a name collision from any other
+// refused op. A successful runtime apply carries no failed result and moves
+// nothing.
+func TestHandleEndpointSuccess_RecordsBackendFallback(t *testing.T) {
+	bus := testutil.NewTestBus()
+	bus.Start()
+	c := createTestDeployer(bus)
+
+	endpoint := &dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "haproxy-0"}
+
+	collision := ackOutcome(api.ResultReload, false, api.Op{Kind: api.OpBackendAdd})
+	collision.result.OpResults = []api.OpResult{
+		{Kind: api.OpBackendAdd, OK: false, Output: "Backend 'gtw_x' name is already used by other proxy."},
+	}
+	c.handleEndpointSuccess(endpoint, collision, 50, scheduledEvent("rt-cfg-1", "haptic", "corr-1"),
+		&deploymentState{operationBreakdown: map[string]int{}})
+
+	// A backend_add refused for a different reason is op_rejected, not a
+	// collision: the label comes from HAProxy's words, never the op kind.
+	other := ackOutcome(api.ResultReload, false, api.Op{Kind: api.OpBackendAdd})
+	other.result.OpResults = []api.OpResult{{Kind: api.OpBackendAdd, OK: false, Output: "unknown keyword 'frm' in backend"}}
+	c.handleEndpointSuccess(endpoint, other, 50, scheduledEvent("rt-cfg-1", "haptic", "corr-1"),
+		&deploymentState{operationBreakdown: map[string]int{}})
+
+	clean := ackOutcome(api.ResultRuntime, true, api.Op{Kind: api.OpServerSetWeight})
+	clean.result.OpResults = []api.OpResult{{Kind: api.OpServerSetWeight, OK: true}}
+	c.handleEndpointSuccess(endpoint, clean, 50, scheduledEvent("rt-cfg-1", "haptic", "corr-1"),
+		&deploymentState{operationBreakdown: map[string]int{}})
+
+	assert.Equal(t, 1.0, promtestutil.ToFloat64(
+		c.metrics.RuntimeBackendFallbackTotal.WithLabelValues("name_collision")))
+	assert.Equal(t, 1.0, promtestutil.ToFloat64(
+		c.metrics.RuntimeBackendFallbackTotal.WithLabelValues("op_rejected")))
+}

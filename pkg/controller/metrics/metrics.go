@@ -82,6 +82,14 @@ type Metrics struct {
 	RuntimeBackendOpsTotal *prometheus.CounterVec
 	RuntimeServerOpsTotal  *prometheus.CounterVec
 
+	// RuntimeBackendFallbackTotal counts runtime backend batches a pod could
+	// not run and reloaded instead, by reason. A `name_collision` is a leftover
+	// backend still holding the name a new one wants (A5): HAProxy exposes no
+	// way to read a backend's shape, so the apply reloads rather than risk
+	// publishing traffic onto the wrong section. Steady growth means deferred
+	// backend deletes are lagging behind fresh routes reusing their names.
+	RuntimeBackendFallbackTotal *prometheus.CounterVec
+
 	// RuntimeMapDivergence counts runtime maps whose post-apply read-back
 	// still disagreed with the desired content, each costing that sync its
 	// reload-free lane (issue #48). Labelled by map because which one
@@ -253,6 +261,12 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"haptic_runtime_server_ops_total",
 			"Server lifecycle operations the fleet applied at runtime, by op kind.",
 			[]string{"op"},
+		),
+		RuntimeBackendFallbackTotal: pkgmetrics.NewCounterVec(
+			registry,
+			"haptic_runtime_backend_fallback_total",
+			"Runtime backend batches a pod reloaded instead of running, by reason. `name_collision` is a fresh backend whose name a not-yet-deleted one still holds; the apply reloads because HAProxy cannot reveal a backend's shape.",
+			[]string{"reason"},
 		),
 
 		RuntimeMapDivergence: pkgmetrics.NewCounterVec(
@@ -501,6 +515,12 @@ func (m *Metrics) RecordRuntimeBackendOp(op string) {
 // RecordRuntimeServerOp records one server lifecycle op a pod executed.
 func (m *Metrics) RecordRuntimeServerOp(op string) {
 	m.RuntimeServerOpsTotal.WithLabelValues(op).Inc()
+}
+
+// RecordRuntimeBackendFallback records one runtime backend batch a pod
+// reloaded instead of running, by reason.
+func (m *Metrics) RecordRuntimeBackendFallback(reason string) {
+	m.RuntimeBackendFallbackTotal.WithLabelValues(reason).Inc()
 }
 
 // RecordRuntimeMapDivergence records one runtime map that failed its

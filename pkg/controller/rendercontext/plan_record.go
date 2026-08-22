@@ -66,6 +66,15 @@ func backendFromRecord(record map[string]any) (renderplan.Backend, error) {
 	if err := dec.err; err != nil {
 		return renderplan.Backend{}, err
 	}
+	// A dynamic backend is created with `add backend <name> from <profile> mode
+	// <mode>`, where the mode is mandatory. Its section carries no `mode` line —
+	// it inherits http, HAProxy's default, from its named defaults — so the
+	// record has to name that effective mode or the op is composed with an empty
+	// one and the agent refuses it, reloading the whole set. A structural
+	// backend never sees `add backend`, so its undeclared mode is left as-is.
+	if backend.Shape == renderplan.ShapeDynamic && backend.Mode == "" {
+		backend.Mode = "http"
+	}
 	if err := validateBackend(&backend); err != nil {
 		return renderplan.Backend{}, err
 	}
