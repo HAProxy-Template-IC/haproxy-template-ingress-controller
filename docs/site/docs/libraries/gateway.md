@@ -62,11 +62,8 @@ The Gateway API library hooks into these extension points from base.yaml. Snippe
 | `frontend-matchers-advanced-*` | `frontend-matchers-advanced-010-route-id-setup` | Sets up per-request route-ID variables before the 500-range matchers run |
 | `frontend-matchers-advanced-*` | `frontend-matchers-advanced-500-gateway` | Method, header, and query-parameter matchers |
 | `frontend-matchers-advanced-*` | `frontend-matchers-advanced-900-path-match` | Final path-match backend-selection logic |
-| `frontend-filters-*` | `frontend-filters-500-gateway-headers` | `RequestHeaderModifier` and `ResponseHeaderModifier` filters, rule- and backendRef-level |
-| `frontend-filters-*` | `frontend-filters-495-gateway-prefix-length` | The per-match prefix length a multi-prefix `ReplacePrefixMatch` rule needs |
-| `features-*` | `features-500-gateway-route-maps` | Builds every per-route filter map |
-| `frontend-filters-*` | `frontend-filters-500-gateway-redirect` | `RequestRedirect` filter |
-| `frontend-filters-*` | `frontend-filters-500-gateway-urlrewrite` | `URLRewrite` filter |
+| `features-*` | `features-500-gateway-route-maps` | Builds every per-route filter map (headers, redirect, URL-rewrite, prefix-length) |
+| `frontend-filters-*` | `frontend-filters-495-gateway-route-filters` | Emits the static lines that read those maps: `RequestHeaderModifier`/`ResponseHeaderModifier` (rule- and backendRef-level), `RequestRedirect`, `URLRewrite`, and the per-match prefix length a multi-prefix `ReplacePrefixMatch` rule needs |
 | `http-bind-extra-*` | `http-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port>` per non-default Gateway HTTP listener port (skips chart-static `httpPort` and `httpsPort` to avoid duplicate-bind errors) |
 | `https-bind-extra-*` | `https-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port> ssl crt-list ...` per non-default Gateway HTTPS listener port (skips chart-static `httpsPort` and `httpPort` to avoid duplicate-bind errors); reuses `util-ssl-bind-options` so the SSL handshake matches the chart-static HTTPS bind |
 | `frontends-*` | `frontends-600-gateway-tls-listener` | One `mode tcp` frontend per Gateway TLS listener port — SNI dispatch for TLSRoutes, with an `ssl crt-list` bind for `Terminate` listeners |
@@ -712,7 +709,7 @@ refused rather than stripping the regex source's byte count off the path.
 
 Attach a filter to the demo route and watch both halves compile — the map entry that carries the value and the one static line that reads it:
 
-<div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.frontend-filters-500-gateway-headers" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Filter → http-request directive" data-height="440">
+<div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.frontend-filters-495-gateway-route-filters" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Filter → http-request directive" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, give the `api` HTTPRoute's rule a `filters:` list (a sibling of `backendRefs`) with a `RequestHeaderModifier` that sets a header — `set: [{name: X-API-Version, value: "v2"}]` — then find the generated `http-request set-header X-API-Version` line in the `haproxy.cfg` tab, and its value in the `gw-reqhdr.map` tab.</p>
 
@@ -723,7 +720,7 @@ Attach a filter to the demo route and watch both halves compile — the map entr
 `http-request set-header X-API-Version` line appears under the filters, reading
 that entry through the route's `gw_rule_id` — so it fires only for requests the
 `api` HTTPRoute selected, not for every request on the frontend. The
-`frontend-filters-500-gateway-headers` snippet emits it; `add`/`remove`
+`frontend-filters-495-gateway-route-filters` snippet emits it; `add`/`remove`
 operations become `http-request add-header` / `http-request del-header` lines the
 same way. Add a second route setting the same header name and the map grows by one
 entry while the configuration stays byte-identical — that's what lets the change

@@ -896,8 +896,8 @@ templateSnippets:
 
 k8sResources:
   # Ingress status has no conditions field, so a Warning Event is the only
-  # operator-visible surface for a by-name backend left with placeholder-only
-  # slots. Its degradedBackendRef:<ns>/<svc>/<port> keys are written by
+  # operator-visible surface for a by-name backend left empty (no server
+  # lines). Its degradedBackendRef:<ns>/<svc>/<port> keys are written by
   # BackendServers (base.yaml) during the haproxy.cfg render, which precedes
   # every k8sResources render.
   ingress-degraded-backend-events:
@@ -1592,8 +1592,8 @@ validationTests:
       Service ... not found (needed to resolve port name 'http')") and
       blocked the entire haproxy.cfg render in the reconcile loop. Expected
       degraded output: the backend and its map entry exist with
-      placeholder-only server slots (503 for this route) until a later
-      reconcile converges. Because the degraded state is placeholder-only,
+      no server lines (an empty backend, 503 for this route) until a later
+      reconcile converges. Because the degraded state is an empty backend,
       the ingress-degraded-backend-events k8sResources template MUST emit a
       Warning Event on the owning Ingress (issue #66) so a permanent
       Service-name typo isn't a silent 503.
@@ -1653,10 +1653,10 @@ validationTests:
       already arrived (watch events per resource type are independently
       ordered). The named port MUST resolve from the slice's own ports
       list, producing real server lines (svc-fast). A slice that does NOT
-      carry the named port (svc-slow) must yield placeholder-only slots —
-      never an "addr:0" server line. Degraded-backend Events (issue #66)
+      carry the named port (svc-slow) must yield an empty backend (no server
+      lines) — never an "addr:0" server line. Degraded-backend Events (issue #66)
       must be precise: svc-fast serves traffic, so it gets NO Event;
-      svc-slow is placeholder-only, so it does.
+      svc-slow is empty, so it does.
     fixtures:
       endpoints:
         - apiVersion: discovery.k8s.io/v1

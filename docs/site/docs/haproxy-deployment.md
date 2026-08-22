@@ -253,7 +253,7 @@ Every frontend emits one JSON object per request (or per connection, for the
 TCP-mode frontends), using HAProxy's native JSON log encoding:
 
 ```json
-{"ts":"2026-07-25T19:05:19.615Z","req_id":"019f9ae9-3a61-7814-8601-774735249ecd","trace_id":"","client_ip":"10.244.0.1","frontend":"https","backend":"default_echo_echo_80","server":"SRV_1","method":"GET","host":"echo.example.com","listener_port":"443","path":"/api/v1","http_version":"HTTP/1.1","status":200,"bytes":73,"request_time_ms":0,"queue_time_ms":0,"connect_time_ms":1,"response_time_ms":3,"total_time_ms":4,"retries":0,"term":"----","resource":"default/echo","denied_by":"","tls_version":"TLSv1.3","tls_sni":"echo.example.com"}
+{"ts":"2026-07-25T19:05:19.615Z","req_id":"019f9ae9-3a61-7814-8601-774735249ecd","trace_id":"","client_ip":"10.244.0.1","frontend":"https","backend":"default_echo_echo_80","server":"echo-7c9d8b6f5-2xk9p","method":"GET","host":"echo.example.com","listener_port":"443","path":"/api/v1","http_version":"HTTP/1.1","status":200,"bytes":73,"request_time_ms":0,"queue_time_ms":0,"connect_time_ms":1,"response_time_ms":3,"total_time_ms":4,"retries":0,"term":"----","resource":"default/echo","denied_by":"","tls_version":"TLSv1.3","tls_sni":"echo.example.com"}
 ```
 
 The log target is `log /run/vector/haproxy.sock len 16384 format raw local0 info`
@@ -273,7 +273,7 @@ render.
 |-------|---------|
 | `ts` | Request accept time, Coordinated Universal Time (UTC), with milliseconds |
 | `req_id` | Identifies **one request through this proxy**. HAPTIC generates it and forwards it upstream as `X-Request-ID`, so it's the join key to your application's own logs. Always present. See [Request IDs](#request-ids) |
-| `server_pod` | Name of the backend **pod** that served the request. HAProxy picks a pre-allocated server slot (`SRV_1`), so the slot name in `server` can't identify the pod; this resolves the connection's destination address through a map instead. Empty when HAProxy answered the request itself. The map's content is updated over the runtime API, so pod churn doesn't reload HAProxy |
+| `server_pod` | Name of the backend **pod** that served the request. Servers are named after their pods (ADR-0011), so this is the server name itself — the same value as `server`. Empty when HAProxy answered the request itself. Pods are added and removed over the runtime API, so pod churn doesn't reload HAProxy |
 | `namespace` | Namespace of the Kubernetes Service behind the chosen backend. Separate from `service` so both read like `server_pod`, matching OpenTelemetry and Elastic Common Schema (ECS) conventions. A cross-namespace Gateway API route makes this differ from the routing resource's namespace, which `resource` carries |
 | `service` | The Kubernetes Service behind the chosen backend, as a bare name. Set by the backend that served the request, so it never depends on the backend *name* — a generated identifier that Ingress and Gateway API build differently. Empty when HAProxy answered the request itself |
 | `destination_ip` | The address the client connected **to** — which entry point served the request. What it resolves to depends on how traffic reaches the pod: the LoadBalancer's virtual IP address with MetalLB-style routing, the node IP behind `externalTrafficPolicy: Local`, the pod IP behind a load balancer that rewrites the destination |

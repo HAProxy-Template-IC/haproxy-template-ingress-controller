@@ -581,7 +581,7 @@ templateSnippets:
       http-request set-var(txn.gw_redir_port) str() if { var(txn.gw_redir_port) -m str L } { var(txn.gw_listener_port) -m int {{ httpsPort }} } { ssl_fc }
       http-request set-var(txn.gw_redir_port) str(:),concat(,txn.gw_listener_port,) if { var(txn.gw_redir_port) -m str L }
       {# A stored pfxlen of "M" defers to the per-match lines of
-         frontend-filters-495-gateway-prefix-length. #}
+         frontend-filters-495-gateway-route-filters. #}
       http-request set-var(txn.gw_pfxlen) var(txn.gw_redir),field(6,|),add(0) if { var(txn.gw_redir),field(5,|) -m str P } !{ var(txn.gw_redir),field(6,|) -m str M }
       http-request set-var(txn.gw_redir_rest) path,bytes(txn.gw_pfxlen) if { var(txn.gw_redir),field(5,|) -m str P }
       {# A prefix of "/" strips nothing, so the whole path is the remainder — but

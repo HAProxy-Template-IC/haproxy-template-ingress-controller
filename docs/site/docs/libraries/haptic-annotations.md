@@ -52,7 +52,7 @@ The reason strings on the Events are stable and machine-readable, so you can ale
 
 ## Annotation reference
 
-Every annotation below works. Most are **✅ Supported**; a few are marked **⚠️ Caveat** — they work too, but with the behavioural limitation described alongside. The library declares no inert annotations; nothing is silently ignored.
+Every annotation below works, except one marked **❌ Removed**. Most are **✅ Supported**; a few are marked **⚠️ Caveat** — they work too, but with the behavioural limitation described alongside. Nothing is silently ignored: a removed annotation emits a Warning Event, it's never dropped quietly.
 
 ### Path and host matching
 
@@ -88,14 +88,14 @@ Per-backend timeouts, load balancing, connection limits, health/agent checks, an
 | `haproxy-haptic.org/maxqueue-server` | ✅ Supported | Sets the per-server maximum queued connections via `maxqueue`. |
 | `haproxy-haptic.org/pod-maxconn` | ✅ Supported | Sets a cluster-wide connection budget, divided across the ready HAProxy pods and rounded up to a power of two, then applied as each server's `maxconn`. |
 | `haproxy-haptic.org/proxy-protocol` | ✅ Supported | Sends the PROXY protocol header to servers: `proxy`/`proxy-v1` emit `send-proxy`, and `proxy-v2`, `proxy-v2-ssl`, `proxy-v2-ssl-cn` emit the matching `send-proxy-v2` variant; any other value fails the render. |
-| `haproxy-haptic.org/scale-server-slots` | ✅ Supported | Sets the block size of the backend's reserved server-slot pool (a provisioning unit, not a cap: the pool grows by a block on the next reload when it fills). Without it the pool is sized to the endpoints plus headroom. |
+| `haproxy-haptic.org/scale-server-slots` | ❌ Removed | No longer has any effect. Servers are named after their pods (ADR-0011) and scale with no reserved slots and no reload, so there is nothing to size. Setting it emits a Warning Event; remove the annotation. |
 | `haproxy-haptic.org/timeout-check` | ✅ Supported | Sets the check timeout via `timeout check`. |
 | `haproxy-haptic.org/timeout-connect` | ✅ Supported | Sets the connect timeout via `timeout connect`. |
 | `haproxy-haptic.org/timeout-http-request` | ✅ Supported | Sets the request timeout via `timeout http-request`. |
 | `haproxy-haptic.org/timeout-keep-alive` | ✅ Supported | Sets the keep-alive timeout via `timeout http-keep-alive`. |
 | `haproxy-haptic.org/timeout-queue` | ✅ Supported | Sets the queue timeout via `timeout queue`. |
-| `haproxy-haptic.org/timeout-server` | ✅ Supported | Sets the server timeout via `timeout server`. |
-| `haproxy-haptic.org/timeout-tunnel` | ✅ Supported | Sets the tunnel timeout via `timeout tunnel`. |
+| `haproxy-haptic.org/timeout-server` | ✅ Supported | Sets the server timeout. Reload-free: the value moves into `backend-timeouts.map` (keyed on the backend), read by a uniform `http-request set-timeout server` line every backend carries. |
+| `haproxy-haptic.org/timeout-tunnel` | ✅ Supported | Sets the tunnel timeout. Reload-free: the value moves into `backend-timeouts.map` (keyed on the backend), read by a uniform `http-request set-timeout tunnel` line every backend carries. |
 | `haproxy-haptic.org/consistent-hash-by` | ✅ Supported | Configures consistent hashing on the backend, emitting a `balance` directive plus `hash-type consistent`. Accepts a hash key: `uri`, `source`, `$http_<name>`, `$arg_<name>`, or `$cookie_<name>`; any other value is used verbatim as a HAProxy fetch expression via `balance hash <value>`. |
 
 ### Backend TLS (to the upstream)
@@ -310,8 +310,8 @@ Request/response header manipulation, capture, CORS, source-IP allow/deny, and u
 | `haproxy-haptic.org/response-location-rewrite-to` | ✅ Supported | Supplies the replacement text for `response-location-rewrite-from`; required whenever a match pattern is set, or the render fails. |
 | `haproxy-haptic.org/request-capture` | ✅ Supported | Captures the named request headers (newline-separated) in the logs via `capture request header`, across the whole frontend. |
 | `haproxy-haptic.org/request-capture-len` | ✅ Supported | Sets the capture length for `request-capture` (default `128`). |
-| `haproxy-haptic.org/request-set-header` | ✅ Supported | Sets request headers sent to the upstream via `http-request set-header`, one `<name> <value>` per line. |
-| `haproxy-haptic.org/response-set-header` | ✅ Supported | Sets response headers via `http-response set-header`, one `<name> <value>` per line. |
+| `haproxy-haptic.org/request-set-header` | ✅ Supported | Sets request headers sent to the upstream, one `<name> <value>` per line. Reload-free: values move into `ing-reqhdr.map`, read by one static `http-request set-header` line per header name, keyed on the backend. |
+| `haproxy-haptic.org/response-set-header` | ✅ Supported | Sets response headers, one `<name> <value>` per line. Reload-free: values move into `ing-reshdr.map`, read by one static `http-response set-header` line per header name, keyed on the backend. |
 | `haproxy-haptic.org/src-ip-header` | ✅ Supported | Derives the client source IP from the named request header via `http-request set-src`. |
 
 ### Canary and traffic mirroring

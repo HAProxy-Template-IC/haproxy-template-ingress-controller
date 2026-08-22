@@ -178,10 +178,12 @@ annotations:
 
 ```haproxy
 backend my-backend
-    timeout server 60s
     timeout connect 10s
     timeout queue 30s
+    http-request set-timeout server var(txn.backend_name),concat(|server),map_str_int(maps/backend-timeouts.map) if { var(txn.backend_name),concat(|server),map_str_int(maps/backend-timeouts.map) -m found }
 ```
+
+`timeout-connect` and `timeout-queue` render as literal backend directives. `timeout-server` (and `timeout-tunnel`) are reload-free: the value moves into `backend-timeouts.map` as milliseconds keyed `<backend>|server` (here `my-backend|server 60000`), read by the uniform `set-timeout` line every backend carries.
 
 ---
 
@@ -267,10 +269,10 @@ annotations:
 backend my-backend
     option httpchk GET /healthz
     default-server check inter 5s port 8082 fall 3 rise 2
-    server SRV_1 10.0.0.1:8080 enabled
+    server my-app-pod-1 10.0.0.1:8080 guid srv:my-backend:my-app-pod-1  # Pod: my-app-pod-1
 ```
 
-`check` and its tuning (`inter`, `port`, `fall`, `rise`) live on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload.
+`check` and its tuning (`inter`, `port`, `fall`, `rise`) live on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload. Each server is named after its pod (ADR-0011) and carries a stable `guid`.
 
 ---
 
@@ -328,8 +330,12 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-server SRV_1 10.0.0.1:8080 send-proxy-v2
+backend my-backend
+    default-server check send-proxy-v2
+    server my-app-pod-1 10.0.0.1:8080 guid srv:my-backend:my-app-pod-1  # Pod: my-app-pod-1
 ```
+
+`send-proxy-v2` lives on `default-server`, not on individual server lines, so pods can be added or removed over the runtime API without a HAProxy reload.
 
 ---
 
@@ -364,10 +370,12 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-server SRV_1 10.0.0.1:8443 ssl alpn h2 ca-file /path/to/ca.pem crt /path/to/client.pem verify required ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256
+backend my-backend
+    default-server check ssl alpn h2 ca-file /path/to/ca.pem crt /path/to/client.pem verify required ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256
+    server my-app-pod-1 10.0.0.1:8443 guid srv:my-backend:my-app-pod-1  # Pod: my-app-pod-1
 ```
 
-`ssl-ciphers-backend` (HAProxy's `ciphers` server option) and `ssl-cipher-suites-backend` (`ciphersuites`) apply only when TLS to the backend is on — `secure-backends: "true"` or an `-ssl` `backend-protocol`. Without backend TLS they're ignored, because HAProxy rejects the keywords on a plaintext server line.
+The SSL keywords live on `default-server`, not on individual server lines, so pods can be added or removed over the runtime API without a HAProxy reload. `ssl-ciphers-backend` (HAProxy's `ciphers` server option) and `ssl-cipher-suites-backend` (`ciphersuites`) apply only when TLS to the backend is on — `secure-backends: "true"` or an `-ssl` `backend-protocol`. Without backend TLS they're ignored, because HAProxy rejects the keywords on a plaintext server line.
 
 ---
 
@@ -771,8 +779,10 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-response set-header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+http-response set-header Strict-Transport-Security %[var(txn.host),map(maps/hsts.map),url_dec(1)] if { ssl_fc } { var(txn.host),map(maps/hsts.map) -m found }
 ```
+
+One shared rule for all hosts; each host's value (here `max-age=31536000; includeSubDomains; preload`) lives in `hsts.map` keyed by host, so adding or changing an HSTS value is a map-only, reload-free update.
 
 ---
 

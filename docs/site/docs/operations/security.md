@@ -189,6 +189,10 @@ Most annotation values reach the config as validated or escaped data: CIDR-list 
 
 The `*-config-snippet` annotations (`haproxy.org/backend-config-snippet`, `nginx.ingress.kubernetes.io/configuration-snippet`, and the like) are the deliberate exception: their value is inserted into the rendered config verbatim. Anyone who can create or edit an Ingress in a watched namespace can therefore inject arbitrary HAProxy directives. Treat Ingress edit permission in watched namespaces as equivalent to HAProxy config access, and restrict it with RBAC accordingly.
 
+## Admission validation coverage
+
+The Gateway API resources — `Gateway`, `GatewayClass`, `BackendTLSPolicy`, `TLSRoute`, and `TCPRoute` — aren't yet checked by the admission webhook, so the API server accepts a malformed one. It still can't reach the fleet: the startup and config-load gate re-validates the whole rendered configuration and fails closed, so a bad object surfaces as a rejected config load reported on the `HAProxyTemplateConfig` status, not at admission time. Closing this gap is tracked in [issue #171](https://gitlab.com/haproxy-haptic/haptic/-/issues/171).
+
 ## Audit trail
 
 A minimal audit policy that records who touched `HAProxyTemplateConfig` and which Secrets the controller reads:

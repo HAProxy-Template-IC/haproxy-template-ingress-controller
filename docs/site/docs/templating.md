@@ -941,50 +941,43 @@ items:
 
 `ingress.metadata.annotations` is a typed `map[string]string`, so indexing an absent key returns `""` — the `algo != ""` check covers both a missing annotation and an empty one. Pick an annotation prefix you own (here `haptic.example.com/`) so it can't collide with another controller's. The same read-and-branch pattern drives rate limits, header rewrites, custom ACLs — anything HAProxy can express. In the chart, place the snippet under a `features-*` or `backend-directives-*` extension point so the bundled libraries pick it up (see [Template Libraries](template-libraries.md#injecting-custom-configuration)).
 
-### Reserved server slots (avoid reloads)
+### Servers named after their pods (avoid reloads)
 
-Pre-allocate server slots so endpoint changes update server addresses through the runtime API instead of triggering a reload. Run this to watch the active endpoints fill the low-numbered slots while the spares stay `disabled`:
+Each endpoint becomes one `server` line named after its pod, so adding or removing a pod is an add or remove of a named server over the runtime API — no reload, and no pre-allocated slot pool (ADR-0011). Run this, then add a third endpoint and re-run to watch a new server line appear:
 
-<div class="pg-embed" markdown data-scriggo data-title="Reserved server slots" data-height="360">
+<div class="pg-embed" markdown data-scriggo data-title="Servers named after pods" data-height="360">
 
 ```go
-{# Reserved slots: real endpoints fill the low-numbered slots; the spare
-   slots stay `disabled` so HAProxy can enable them at runtime — no reload.
-   Add a third endpoint and re-run to watch a spare slot light up. #}
-{%- var initial_slots = 5 %}
+{# One server per endpoint, named after its pod. Adding or removing a pod is
+   an add/remove of a named server at runtime — no reload, no reserved slots.
+   Add a third endpoint and re-run to watch a new server line appear. #}
 {%- var active_endpoints = []any{
-    map[string]any{"address": "10.244.1.10", "port": 8080},
-    map[string]any{"address": "10.244.2.11", "port": 8080},
+    map[string]any{"pod": "echo-pod-1", "address": "10.244.1.10", "port": 8080},
+    map[string]any{"pod": "echo-pod-2", "address": "10.244.2.11", "port": 8080},
 } %}
 default-server check
-{%- for i := 1; i <= initial_slots; i++ %}
-  {%- if i-1 < len(active_endpoints) %}
-    {%- var ep = active_endpoints[i-1] %}
-server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }} enabled
-  {%- else %}
-server SRV_{{ i }} 192.0.2.1:1 disabled
-  {%- end %}
+{%- for _, ep := range active_endpoints %}
+server {{ ep["pod"] }} {{ ep["address"] }}:{{ ep["port"] }}  # Pod: {{ ep["pod"] }}
 {%- end %}
 ```
 
 </div>
 
-**Benefit**: Endpoint changes update server addresses via runtime API without dropping connections.
+**Benefit**: A rolling update or scale event changes only the set of named servers at runtime; established connections to unaffected pods keep flowing.
 
-In this hand-written example the slot count is a hard cap: a third endpoint beyond `initial_slots` would get no server line. The bundled libraries' `BackendServers` macro doesn't cap — it sizes the pool to the endpoints plus headroom and grows it by a block (one reload) when it fills — so copy that pattern rather than a fixed count when you write your own backends: `slots = max(initial_slots, len(active_endpoints) + spare)`.
+The bundled libraries' `BackendServers` macro does exactly this — one server per endpoint, named after the pod and keyed by a stable `guid` — so a real backend needs no hand-written loop. See [Reload-free updates](libraries/reload-free.md).
 
 !!! tip "Maximize Runtime API Usage"
-    Keep server lines minimal - only `address:port` plus `enabled` or `disabled`. Place all other options (`check`, `proto h2`, SSL settings) in the `default-server` directive:
+    Keep server lines minimal — only `address:port` plus the pod name and its `guid`. Place all other options (`check`, `proto h2`, SSL settings) on the `default-server` directive:
 
     ```haproxy
     backend my-backend
         default-server check proto h2
-        server SRV_1 10.0.0.1:8080 enabled
-        server SRV_2 10.0.0.2:8080 enabled
-        server SRV_3 192.0.2.1:1 disabled
+        server api-pod-1 10.0.0.1:8080 guid srv:my-backend:api-pod-1  # Pod: api-pod-1
+        server api-pod-2 10.0.0.2:8080 guid srv:my-backend:api-pod-2  # Pod: api-pod-2
     ```
 
-    HAProxy's runtime API can update Address, Port, and enabled/disabled state without reloading. Both `enabled` and `disabled` are runtime-supported, enabling the reserved slots pattern. Options like `check` on individual server lines trigger reloads on any change.
+    HAProxy's runtime API can add and remove named servers and update their address and port without reloading. Options like `check` on individual server lines trigger reloads on any change, so they belong on `default-server`.
 
 ### Cross-Resource Lookups
 
@@ -1447,9 +1440,9 @@ The built-in Ingress and Gateway API libraries already include status patch snip
 
 ## Complete example
 
-Full ingress → service → endpoints chain with reserved slots, using typed access throughout. Press **Run live**, open the **maps** tab for the host map, and edit the resources to add or remove endpoints:
+Full ingress → service → endpoints chain with servers named after their pods, using typed access throughout. Press **Run live**, open the **maps** tab for the host map, and edit the resources to add or remove endpoints:
 
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress → endpoints, with reserved slots" data-height="560">
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress → endpoints, pod-named servers" data-height="560">
 
 ```yaml
 watchedResources:
@@ -1474,20 +1467,11 @@ maps:
 templateSnippets:
   backend-servers:
     template: |
-      {%- var initial_slots = 10 %}
-      {%- var active_endpoints = []map[string]any{} %}
       {%- for _, es := range resources.endpoints.Fetch(service_name) %}
         {%- for _, ep := range es.endpoints %}
           {%- for _, addr := range ep.addresses %}
-            {%- active_endpoints = append(active_endpoints, map[string]any{"addr": addr}) %}
+      server {{ fallback(ep.targetRef.name, addr) }} {{ addr }}:{{ port }} check
           {%- end %}
-        {%- end %}
-      {%- end %}
-      {%- for i := 1; i <= initial_slots; i++ %}
-        {%- if i-1 < len(active_endpoints) %}
-      server SRV_{{ i }} {{ active_endpoints[i-1]["addr"] }}:{{ port }} check
-        {%- else %}
-      server SRV_{{ i }} 192.0.2.1:1 disabled
         {%- end %}
       {%- end %}
 
@@ -1549,7 +1533,9 @@ items:
         kubernetes.io/service-name: shop-svc
     endpoints:
       - addresses: ["10.244.1.10"]
+        targetRef: {name: shop-pod-1}
       - addresses: ["10.244.1.11"]
+        targetRef: {name: shop-pod-2}
     ports:
       - port: 8080
 ```

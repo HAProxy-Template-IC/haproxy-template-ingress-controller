@@ -367,16 +367,15 @@ Backends are generated with:
 ```haproxy
 backend default_my-app_svc_api-service_http
     default-server check
-    server SRV_1 10.0.0.1:8080 enabled    # Pod: api-pod-1
-    server SRV_2 10.0.0.2:8080 enabled    # Pod: api-pod-2
-    server SRV_3 192.0.2.1:1 disabled     # Reserved slot for future scale-up
+    server api-pod-1 10.0.0.1:8080 guid srv:default_my-app_svc_api-service_http:api-pod-1  # Pod: api-pod-1
+    server api-pod-2 10.0.0.2:8080 guid srv:default_my-app_svc_api-service_http:api-pod-2  # Pod: api-pod-2
 ```
 
-`check` lives on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload. Reserved `disabled` slots get filled in at runtime when the backend scales up.
+Each server is named after its pod (ADR-0011) and carries a stable `guid`, so a rolling update is an add/remove of named servers over the runtime API — no reload and no reserved slot pool. `check` lives on `default-server`, not on individual server lines. A not-yet-ready pod's line carries a `disabled` keyword until it passes its checks; a backend with no ready endpoints renders empty and serves 503.
 
 #### Backend namespace scope
 
-An Ingress backend references a Service by name only — the Kubernetes API has no per-backend namespace field. HAPTIC therefore always resolves the Service, its EndpointSlices, and any `spec.tls` Secret in the Ingress's own namespace. A Service that doesn't exist in that namespace renders as a placeholder backend that serves 503 (and, for a port referenced by name, raises the `BackendUnresolved` Warning Event — see [Degraded backend events](#degraded-backend-events)). To route to a Service in a different namespace, use a Gateway API HTTPRoute with a `backendRef.namespace` and a matching ReferenceGrant — see [Cross-namespace routes](gateway.md#cross-namespace-routes-referencegrant); Ingress can't express a cross-namespace backend.
+An Ingress backend references a Service by name only — the Kubernetes API has no per-backend namespace field. HAPTIC therefore always resolves the Service, its EndpointSlices, and any `spec.tls` Secret in the Ingress's own namespace. A Service that doesn't exist in that namespace renders as an empty backend that serves 503 (and, for a port referenced by name, raises the `BackendUnresolved` Warning Event — see [Degraded backend events](#degraded-backend-events)). To route to a Service in a different namespace, use a Gateway API HTTPRoute with a `backendRef.namespace` and a matching ReferenceGrant — see [Cross-namespace routes](gateway.md#cross-namespace-routes-referencegrant); Ingress can't express a cross-namespace backend.
 
 ### WebSocket backends
 

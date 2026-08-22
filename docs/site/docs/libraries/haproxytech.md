@@ -618,9 +618,11 @@ spec:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-request set-header X-Forwarded-Proto "https"
-http-request set-header X-Custom-Header "custom-value"
+http-request set-header X-Forwarded-Proto %[var(txn.backend_name),concat(|set|x-forwarded-proto),map(maps/ing-reqhdr.map),url_dec(1)] if { var(txn.backend_name),concat(|set|x-forwarded-proto),map(maps/ing-reqhdr.map) -m found }
+http-request set-header X-Custom-Header %[var(txn.backend_name),concat(|set|x-custom-header),map(maps/ing-reqhdr.map),url_dec(1)] if { var(txn.backend_name),concat(|set|x-custom-header),map(maps/ing-reqhdr.map) -m found }
 ```
+
+One static line per header **name**, shared across every Ingress that sets it. The per-backend value lives in `ing-reqhdr.map` keyed `<backend>|set|<name>`, so adding or changing a header value is a map-only, reload-free update.
 
 **Dependencies**: None
 
@@ -663,10 +665,12 @@ spec:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-response set-header Strict-Transport-Security "max-age=31536000; includeSubDomains"
-http-response set-header X-Frame-Options "DENY"
-http-response set-header X-Content-Type-Options "nosniff"
+http-response set-header Strict-Transport-Security %[var(txn.backend_name),concat(|set|strict-transport-security),map(maps/ing-reshdr.map),url_dec(1)] if { var(txn.backend_name),concat(|set|strict-transport-security),map(maps/ing-reshdr.map) -m found }
+http-response set-header X-Frame-Options %[var(txn.backend_name),concat(|set|x-frame-options),map(maps/ing-reshdr.map),url_dec(1)] if { var(txn.backend_name),concat(|set|x-frame-options),map(maps/ing-reshdr.map) -m found }
+http-response set-header X-Content-Type-Options %[var(txn.backend_name),concat(|set|x-content-type-options),map(maps/ing-reshdr.map),url_dec(1)] if { var(txn.backend_name),concat(|set|x-content-type-options),map(maps/ing-reshdr.map) -m found }
 ```
+
+One static line per header **name**, shared across every Ingress that sets it. The per-backend value lives in `ing-reshdr.map` keyed `<backend>|set|<name>`, so adding or changing a header value is a map-only, reload-free update.
 
 **Dependencies**: None
 
@@ -689,8 +693,10 @@ haproxy.org/set-host: "internal-api.example.svc.cluster.local"
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-request set-header Host "internal-api.example.svc.cluster.local"
+http-request set-header Host %[var(txn.backend_name),map(maps/reqhdr-host.map),url_dec(1)] if { var(txn.backend_name),map(maps/reqhdr-host.map) -m found }
 ```
+
+The override value lives in `reqhdr-host.map` keyed on the backend, so changing the upstream Host is a map-only, reload-free update.
 
 **Dependencies**: None
 
@@ -1014,7 +1020,7 @@ frontend ssl-https
 backend ssl-passthrough-default-ssl-passthrough-ingress
     mode tcp
     balance roundrobin
-    server SRV_1 10.0.1.30:8443 check
+    server secure-app-0 10.0.1.30:8443 guid srv:ssl-passthrough-default-ssl-passthrough-ingress:secure-app-0  # Pod: secure-app-0
 
 # Loopback backend for SSL termination
 backend ssl-loopback
@@ -1322,7 +1328,7 @@ Generated HAProxy configuration (1 ready HAProxy pod):
 ```haproxy
 # pod-maxconn: 100 total / 1 ready pods (effective: 1) = 100 per pod
 default-server check maxconn 100
-server SRV_1 10.0.1.5:8080 enabled
+server api-pod-1 10.0.1.5:8080 guid srv:default_api_svc_api-service_http:api-pod-1  # Pod: api-pod-1
 ```
 
 **Multiple HAProxy pods**: Value divided with power-of-2 quantization
@@ -1340,7 +1346,7 @@ Generated HAProxy configuration (2 ready HAProxy pods, quantized to 2):
 ```haproxy
 # pod-maxconn: 100 total / 2 ready pods (effective: 2) = 50 per pod
 default-server check maxconn 50
-server SRV_1 10.0.1.5:8080 enabled
+server api-pod-1 10.0.1.5:8080 guid srv:default_api_svc_api-service_http:api-pod-1  # Pod: api-pod-1
 ```
 
 Generated HAProxy configuration (3 ready HAProxy pods, quantized to 4):
@@ -1348,10 +1354,10 @@ Generated HAProxy configuration (3 ready HAProxy pods, quantized to 4):
 ```haproxy
 # pod-maxconn: 100 total / 3 ready pods (effective: 4) = 25 per pod
 default-server check maxconn 25
-server SRV_1 10.0.1.5:8080 enabled
+server api-pod-1 10.0.1.5:8080 guid srv:default_api_svc_api-service_http:api-pod-1  # Pod: api-pod-1
 ```
 
-`maxconn` and `check` live on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload. Individual server lines carry only `address:port` plus `enabled` (active) or `disabled` (reserved slot).
+`maxconn` and `check` live on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload. Each server is named after its pod (ADR-0011) and carries a stable `guid`; a not-yet-ready pod's line carries a `disabled` keyword until it passes its checks.
 
 **Quantization reference** (for `pod-maxconn: 200`):
 
@@ -1371,52 +1377,11 @@ server SRV_1 10.0.1.5:8080 enabled
 
 ### `haproxy.org/scale-server-slots`
 
-**Status**: ✅ Supported
+**Status**: ❌ Removed
 
-**Description**: Set the block size the backend's server-slot pool is provisioned in. HAProxy keeps spare `server` lines (`disabled` placeholders) so endpoints can be added or removed through the runtime API without a reload; when the pool fills, HAPTIC grows it by another block on the next reload — the annotation is a provisioning unit, not a cap, and no endpoint is ever left without a `server` line. Same semantics as the haproxytech controller's annotation (whose default block is 42). Must be a positive integer — other values fail the render.
+**Description**: No longer has any effect. Servers are named after their pods (ADR-0011): a backend always holds exactly its current pods as named `server` lines, added and removed over the runtime API with no reserved slot pool and no reload. There is nothing to provision, so the annotation is inert.
 
-**Default**: no fixed count. Without the annotation the pool is sized to fit: `endpoints + max(2, ceil(endpoints / 4))` slots (the headroom covers a default rolling update with `maxSurge: 25%` and small scale-ups without a reload), and HAPTIC keeps the current pool while the endpoints still fit and it's smaller than twice the size it would create from scratch, so a scale-down shrinks the pool only once it's mostly idle. Change the chart-wide defaults with `controller.config.templatingSettings.extraContext.serverSlots.increment` (block size, default `1`) and `.serverSlots.minFree` (minimum spare slots, default `2`).
-
-**Usage**:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: scaled-backend
-  annotations:
-    haproxy.org/scale-server-slots: "5"
-spec:
-  rules:
-    - host: api.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: api-service
-                port:
-                  number: 8080
-```
-
-**Generated HAProxy Configuration**:
-
-With `scale-server-slots: "5"` and one ready pod, the backend provisions one block of five slots (`SRV_1`–`SRV_5`); active endpoints fill the leading slots and the rest stay reserved as disabled placeholders (RFC 5737 `192.0.2.1:1`). A sixth pod grows the pool to ten slots on the next reload:
-
-```haproxy
-default-server check
-server SRV_1 10.0.1.5:8080 enabled
-server SRV_2 192.0.2.1:1 disabled
-server SRV_3 192.0.2.1:1 disabled
-server SRV_4 192.0.2.1:1 disabled
-server SRV_5 192.0.2.1:1 disabled
-```
-
-!!! note "When a reload happens"
-    Endpoint changes that fit the pool are runtime-only (no reload). Growing the pool — the block is full and another pod became ready — is one HAProxy reload, as is shrinking it after a large scale-down. Set the annotation to your usual replica ceiling if you want scale-ups to stay reload-free up to that count from the start.
-
-There's no fixed maximum — any positive integer is accepted. In practice the count is bounded by total config size and, when the shared-memory stats file is enabled (`haproxy.shmStats.maxObjects`, default 50000, shared across the whole config), the shm-stats object budget.
+**Migration**: Remove the annotation. Setting it emits an `UnsupportedAnnotation` Warning Event on the Ingress and changes no configuration.
 
 **Dependencies**: None
 
@@ -1577,8 +1542,10 @@ haproxy.org/timeout-server: "30s"
 **Generated HAProxy Configuration**:
 
 ```haproxy
-timeout server 30s
+http-request set-timeout server var(txn.backend_name),concat(|server),map_str_int(maps/backend-timeouts.map) if { var(txn.backend_name),concat(|server),map_str_int(maps/backend-timeouts.map) -m found }
 ```
+
+Every backend carries this one uniform line; the value moves into `backend-timeouts.map` as milliseconds keyed `<backend>|server` (here `<backend>|server 30000`), so changing the timeout is a map-only, reload-free update.
 
 **Dependencies**: None
 
@@ -1679,8 +1646,10 @@ haproxy.org/timeout-tunnel: "2h"
 **Generated HAProxy Configuration**:
 
 ```haproxy
-timeout tunnel 2h
+http-request set-timeout tunnel var(txn.backend_name),concat(|tunnel),map_str_int(maps/backend-timeouts.map) if { var(txn.backend_name),concat(|tunnel),map_str_int(maps/backend-timeouts.map) -m found }
 ```
+
+Every backend carries this one uniform line; the value moves into `backend-timeouts.map` as milliseconds keyed `<backend>|tunnel` (here `<backend>|tunnel 7200000`), so changing the timeout is a map-only, reload-free update.
 
 **Dependencies**: None
 
@@ -2060,11 +2029,15 @@ The library supports **50** `haproxy.org/*` annotations, grouped by category bel
 | Connection management | 1 | `pod-maxconn` |
 | Backend server options | 4 | `server-ssl`, `server-proto`, `server-crt`, `server-ca` |
 | Proxy protocol | 1 | `send-proxy-protocol` |
-| Advanced backend config | 2 | `backend-config-snippet`, `scale-server-slots` |
+| Advanced backend config | 1 | `backend-config-snippet` |
 
 **Supported deprecated aliases** (honoured only when the canonical key is absent on the same Ingress):
 
 - `whitelist` → `allow-list`, `blacklist` → `deny-list`
+
+**Removed:**
+
+- `scale-server-slots` — servers are named after their pods (ADR-0011), so there is no slot pool to size; the annotation is inert and setting it emits a Warning Event
 
 **Not implemented in the `haproxy.org/*` namespace:**
 

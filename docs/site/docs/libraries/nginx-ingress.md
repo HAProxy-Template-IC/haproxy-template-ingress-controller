@@ -100,7 +100,7 @@ The Nginx Ingress library implements these extension points:
     Nginx-ingress timeout values are plain seconds (for example, `"60"`). The library automatically appends the `s` suffix for HAProxy.
 
 !!! note "Server Timeout Mapping"
-    Both `proxy-read-timeout` and `proxy-send-timeout` map to HAProxy's single `timeout server` directive. If both are set, the larger value is used.
+    Both `proxy-read-timeout` and `proxy-send-timeout` collapse into HAProxy's server timeout, stored as a reload-free `backend-timeouts.map` entry. If both are set, the larger value is used.
 
 **Usage**:
 
@@ -116,8 +116,10 @@ annotations:
 ```haproxy
 backend my-backend
     timeout connect 10s
-    timeout server 60s
+    http-request set-timeout server var(txn.backend_name),concat(|server),map_str_int(maps/backend-timeouts.map) if { var(txn.backend_name),concat(|server),map_str_int(maps/backend-timeouts.map) -m found }
 ```
+
+`proxy-connect-timeout` renders as a literal `timeout connect`. The server timeout is reload-free: its value moves into `backend-timeouts.map` as milliseconds keyed `<backend>|server` (here `my-backend|server 60000`), read by the uniform `set-timeout` line every backend carries.
 
 ---
 
@@ -233,8 +235,12 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-server SRV_1 10.0.0.1:8080 send-proxy-v2
+backend my-backend
+    default-server check send-proxy-v2
+    server my-app-pod-1 10.0.0.1:8080 guid srv:my-backend:my-app-pod-1  # Pod: my-app-pod-1
 ```
+
+`send-proxy-v2` lives on `default-server`, not on individual server lines, so pods can be added or removed over the runtime API without a HAProxy reload.
 
 ---
 
@@ -1004,7 +1010,7 @@ example.com/ BACKEND:default_my-ingress_default-backend_error-pages
 ```haproxy
 backend default_my-ingress_default-backend_error-pages
     default-server check
-    server SRV_1 10.0.0.9:8080 enabled
+    server error-pages-pod-1 10.0.0.9:8080 guid srv:default_my-ingress_default-backend_error-pages:error-pages-pod-1  # Pod: error-pages-pod-1
 ```
 
 ---

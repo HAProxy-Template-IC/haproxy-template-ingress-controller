@@ -72,7 +72,7 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `sort_strings(items)` | Sort a `[]any` lexicographically, returning `[]string` | `sort_strings(keys(m))` |
 | `sort_ints(items)` | Sort a `[]any` numerically, returning `[]int` — use for ports and IDs, where `sort_strings` would put `"10"` before `"2"`. Non-integer entries coerce through `toint()` and sort to the front | `sort_ints(ports)` |
 | `ceil(f)` | Round a float up | `ceil(tofloat(total) / 4)` |
-| `seq(n)` | `[]int{0, 1, …, n-1}`, for fixed-count loops such as reserved server slots | `{% for _, i := range seq(slots) %}` |
+| `seq(n)` | `[]int{0, 1, …, n-1}`, for fixed-count loops | `{% for _, i := range seq(count) %}` |
 | `append(slice, item)` | Go's builtin, type-preserving; `append(dst, src...)` spreads a slice of the **same** type. Widening into `[]any` is a compile error — box per element in a loop. A slice reached through `any` is asserted at the boundary | `append(gf["hosts"].([]any), h)` |
 | `dig_string(obj, default, keys...)` | `dig` + `fallback` + `tostring` in one call, for annotation and metadata lookups | `ing \| dig_string("", "metadata", "annotations", key)` |
 | `join_key(sep, parts...)` | Join any values into one composite key string | `join_key("_", ns, name, port)` |
