@@ -90,27 +90,27 @@ annotations:
   # License
   artifacthub.io/license: Apache-2.0
 
-  # Changelog — summary of the most recently shipped release (0.2.0-alpha.1).
-  # See CHANGELOG.md at the repo root for the full record (chart changes live
-  # under each release's "Helm chart" subsection), including the [Unreleased]
-  # entries that will land in the next release.
+  # Changelog — hand-curated summary of the changes staged for the next release
+  # (the [Unreleased] section of CHANGELOG.md). Updated during release curation
+  # ahead of the version bump. See CHANGELOG.md at the repo root for the full
+  # record; chart changes live under each release's "Helm chart" subsection.
   artifacthub.io/changes: |
     - kind: added
-      description: HAProxy 3.4 support; a runtime fast path applies endpoint, map, and TLS-certificate changes to live HAProxy workers without a reload
+      description: The HAPTIC agent runs as each HAProxy pod's agent container and applies map entries, certificates, crt-lists and server address/weight/state to the running worker with no reload
     - kind: added
-      description: nginx-ingress template library for nginx.ingress.kubernetes.io annotation compatibility
+      description: On HAProxy 3.4, adding or removing a route (Ingress, HTTPRoute or custom CRD) with a dynamic-shaped backend and map-driven per-route logic deploys without a reload; on 3.0-3.3 servers are still added and removed at runtime
     - kind: added
-      description: SPOA hub sidecar with eight plugins (API gateway, WAF, external auth, request mirroring, fingerprinting, MaxMind, rate limiting, SSO)
+      description: Per-route logic (header modifiers, redirects, URL rewrites, timeouts, mirrors) is driven by map files, so changing it is a runtime map update rather than a reload
     - kind: added
-      description: Extended Gateway API support (TLSRoute, TCPRoute, RequestMirror, static addresses, ListenerSet, session persistence)
-    - kind: added
-      description: The config's embedded validationTests are enforced at admission, at startup, and on every config change
+      description: "haptic diff predicts whether a change will reload before it is applied; haptic agent state prints one pod's applied, running and last-known-good plan"
     - kind: changed
-      description: "BREAKING: ingressClass/gatewayClass default names change from haproxy to haptic, pod-spec values move under podSpec blocks, and routing.regexMatchOrder replaces the path-regex-last library"
+      description: "BREAKING: the HAProxy pod's dataplane container is now the agent (haproxy.dataplane.* values move to haproxy.agent.*), and the controller binary is haptic (was haptic-controller)"
     - kind: changed
-      description: The gateway library resolves Gateway API versions at runtime — installing or upgrading Gateway API CRDs activates support without helm upgrade
-    - kind: security
-      description: Annotation values interpolated into the HAProxy config are validated against strict charsets, closing a config-injection vector
+      description: Backends hold one server per endpoint named after the pod, and hash-family load balancing defaults to hash-type consistent so pod churn stays reload-free
+    - kind: changed
+      description: The watcher debounce default is 100ms (was 2s), since reload pacing now lives in the agent
+    - kind: removed
+      description: "BREAKING: the HAProxy Data Plane API and its per-version clients, plus the SRV_N server-slot pool, pod-names.map and the serverSlots/scale-server-slots knobs"
 
   # Links
   artifacthub.io/links: |
