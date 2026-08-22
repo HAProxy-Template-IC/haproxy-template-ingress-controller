@@ -237,19 +237,13 @@ func runSingleTestBenchmark(
 
 	httpStore := createHTTPStoreForBenchmark(httpFixtures, logger)
 
-	bctx := buildBenchmarkContext(cfg, storeMap, validationPaths, httpStore, typedResourceTypes, logger)
-	renderCtx := bctx.Context
-
-	// Fold in the _global + per-test extraContext baseline so the benchmark
-	// renders each test exactly as the load gate does (e.g. against the isolated
-	// synthetic default certificate) instead of the deployment's production
-	// extraContext alone — otherwise a custom defaultSSLCertificate name makes
-	// the render fail here just as it did at the load gate.
-	testrunner.ApplyTestExtraContext(renderCtx, cfg, test.ExtraContext)
-
-	// Warm up (one render to eliminate any JIT effects)
-	_, err = renderAllFiles(engine, cfg, bctx)
-	if resourceErr := bctx.Err(context.Background()); resourceErr != nil {
+	// Warm up (one render to eliminate any JIT effects). Every render — warm-up
+	// and each iteration — gets its own context via freshBenchmarkContext so its
+	// first_seen() dedup cache and PlanRegistry start empty, as a production
+	// reconcile does.
+	warmupCtx := freshBenchmarkContext(cfg, test.ExtraContext, storeMap, validationPaths, httpStore, typedResourceTypes, logger)
+	_, err = renderAllFiles(engine, cfg, warmupCtx)
+	if resourceErr := warmupCtx.Err(context.Background()); resourceErr != nil {
 		return nil, resourceErr
 	}
 	if err != nil {
@@ -263,8 +257,9 @@ func runSingleTestBenchmark(
 	}
 
 	for i := 0; i < benchmarkIterations; i++ {
-		iterResult, err := renderAllFiles(engine, cfg, bctx)
-		if resourceErr := bctx.Err(context.Background()); resourceErr != nil {
+		iterCtx := freshBenchmarkContext(cfg, test.ExtraContext, storeMap, validationPaths, httpStore, typedResourceTypes, logger)
+		iterResult, err := renderAllFiles(engine, cfg, iterCtx)
+		if resourceErr := iterCtx.Err(context.Background()); resourceErr != nil {
 			return nil, resourceErr
 		}
 		if err != nil {
