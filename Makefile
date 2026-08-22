@@ -199,12 +199,18 @@ lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kube
 	@echo ""
 	@echo "All chart linting passed!"
 
-# The worst-case library profile, shared by BOTH size gates. Defined once
-# because they drifted: chart-size-check enabled two of these four while its
-# comment claimed "every bundled library enabled", so CI never measured the
-# real worst case. nginxIngress/haproxytech/haproxyIngress are default-disabled;
-# spoaHub already merges by default via its OR-helper, and the flag guards
-# against a future change to that.
+# The heaviest REALISTIC release-Secret profile: the default install plus the
+# single heaviest vendor annotation-compat layer. An operator enables at most
+# one of these three (the one matching their existing controller), never all
+# three at once — see scripts/check-chart-release-size.py's header for the
+# full default+vendor measurement table that picked nginxIngress as heaviest.
+REALISTIC_MAX_LIBS := --set controller.templateLibraries.nginxIngress.enabled=true
+
+# The worst-case library profile: every bundled library enabled at once.
+# BLOCKING for cr-size-check (the etcd per-object limit genuinely cares about
+# the largest object any operator could ever produce). INFORMATIONAL ONLY for
+# chart-size-check — no operator runs this combination; that gate uses
+# REALISTIC_MAX_LIBS above instead (see check-chart-release-size.py's header).
 WORST_CASE_LIBS := \
 	--set controller.templateLibraries.nginxIngress.enabled=true \
 	--set controller.templateLibraries.haproxytech.enabled=true \
@@ -212,17 +218,22 @@ WORST_CASE_LIBS := \
 	--set controller.templateLibraries.customCrdExample.enabled=true \
 	--set controller.templateLibraries.spoaHub.enabled=true
 
-chart-size-check: ## Estimate the Helm release-Secret size; fail if it nears the 1 MiB Secret limit
-	@# Renders the WORST-CASE profile (every bundled library enabled, Gateway
-	@# CRDs present) and estimates the base64(gzip(json(release))) payload Helm
-	@# stores in its release Secret. The hard 1,048,576-byte Secret limit caused
-	@# a silent e2e/install failure once the chart approached it (chart MR !1105);
-	@# this gate catches a regression in `make`/CI BEFORE an install fails. The
-	@# estimator reconstructs Helm's release object offline (subchart source is
-	@# NOT stored), accurate to ~2% against real installs — see the script header.
-	@# Renders $(WORST_CASE_LIBS) — the same profile as cr-size-check, so the two
-	@# gates cannot disagree about what "worst case" means.
-	@python3 scripts/check-chart-release-size.py charts/haptic $(WORST_CASE_LIBS)
+chart-size-check: ## Estimate the Helm release-Secret size against realistic install profiles; fail if one nears the 1 MiB Secret limit
+	@# Estimates the base64(gzip(json(release))) payload Helm stores in its
+	@# release Secret (reconstruction method + full profile table + threshold
+	@# rationale: scripts/check-chart-release-size.py's header). The hard
+	@# 1,048,576-byte Secret limit caused a silent e2e/install failure once the
+	@# chart approached it (chart MR !1105); this gate catches a regression in
+	@# `make`/CI BEFORE an install fails.
+	@#
+	@# BLOCKING: the default install and the realistic max (default +
+	@# heaviest vendor lib) — the configs an operator can actually end up
+	@# running. INFORMATIONAL: every bundled library at once — nobody runs
+	@# that config, so it never fails the build, but stays visible so a big
+	@# regression there doesn't go unnoticed.
+	@python3 scripts/check-chart-release-size.py charts/haptic --label "default install"
+	@python3 scripts/check-chart-release-size.py charts/haptic $(REALISTIC_MAX_LIBS) --label "realistic max: default + nginxIngress"
+	@python3 scripts/check-chart-release-size.py charts/haptic $(WORST_CASE_LIBS) --informational --label "all libraries (unrealistic, high-water mark)"
 
 vector-config-check: build ## Assert the chart renders a vector.yaml that vector can load
 	@# Regex assertions and the span harness both look at fragments; neither
