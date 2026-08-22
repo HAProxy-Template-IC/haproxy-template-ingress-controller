@@ -208,6 +208,44 @@ func TestPlanRegistryBackendDefaultsAndDigests(t *testing.T) {
 	assert.Empty(t, backend.TextDigest, "the text digest only exists once the section is assembled")
 }
 
+// A dynamic backend inherits http from its profile and carries no `mode` line,
+// but `add backend … mode <mode>` needs one: the record has to name the
+// effective mode or the composed op is refused and the fleet reloads.
+func TestPlanRegistryDynamicBackendModeDefaultsToHTTP(t *testing.T) {
+	registry := NewPlanRegistry(nil)
+
+	_, err := registry.Backend(map[string]any{
+		"name":    "gtw_app",
+		"profile": "haptic-be-1",
+		"shape":   renderplan.ShapeDynamic,
+		"servers": []any{map[string]any{"name": "pod-a", "address": "10.0.0.1", "port": 8080}},
+	}, "backend gtw_app from haptic-be-1\n    server pod-a 10.0.0.1:8080\n")
+	require.NoError(t, err)
+	assert.Equal(t, "http", registry.backends["gtw_app"].Mode,
+		"a dynamic backend's effective mode must be recorded for add backend")
+
+	// An explicit mode is kept, never overwritten — a dynamic tcp backend
+	// (ssl-passthrough, TCPRoute, a custom-CRD tcp Route) records tcp.
+	_, err = registry.Backend(map[string]any{
+		"name":    "gtw_tcp",
+		"profile": "haptic-be-2",
+		"shape":   renderplan.ShapeDynamic,
+		"mode":    "tcp",
+		"servers": []any{map[string]any{"name": "pod-b", "address": "10.0.0.2", "port": 8080}},
+	}, "backend gtw_tcp from haptic-be-2\n    server pod-b 10.0.0.2:8080\n")
+	require.NoError(t, err)
+	assert.Equal(t, "tcp", registry.backends["gtw_tcp"].Mode)
+
+	// A structural backend never sees add backend, so an undeclared mode is
+	// left as-is rather than guessed.
+	_, err = registry.Backend(map[string]any{
+		"name": "be_static",
+		"body": []string{"    stick-table type ip size 1m"},
+	}, "backend be_static\n    stick-table type ip size 1m\n")
+	require.NoError(t, err)
+	assert.Empty(t, registry.backends["be_static"].Mode, "a structural backend's undeclared mode stays undeclared")
+}
+
 func TestPlanRegistryBackendConflict(t *testing.T) {
 	registry := NewPlanRegistry(nil)
 	record := map[string]any{"name": "be_app", "mode": "http"}

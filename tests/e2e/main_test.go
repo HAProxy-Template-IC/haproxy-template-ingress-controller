@@ -687,12 +687,39 @@ func preInstallParallel(ctx context.Context) (string, error) {
 	g.Go(func() error {
 		return setupDefaultSSLCert(gctx)
 	})
+	// The custom-CRD example library is enabled in the e2e install (see
+	// helmInstallChart) so the reload-free suite can prove the runtime lane is
+	// resource-agnostic. Its Route CRD ships with no chart schema, so install it
+	// before the controller starts watching `routes`.
+	g.Go(func() error {
+		return kubectlApplyStdin(gctx, []byte(customRouteCRD))
+	})
 
 	if err := g.Wait(); err != nil {
 		return "", err
 	}
 	return caBundleB64, nil
 }
+
+// customRouteCRD is the schema for the custom-crd-example library's Route kind.
+// The library reads it untyped, so a permissive spec schema is enough.
+const customRouteCRD = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: routes.haptic-example.org
+spec:
+  group: haptic-example.org
+  scope: Namespaced
+  names: {plural: routes, singular: route, kind: Route}
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+`
 
 // helmInstallChart installs the chart from charts/haptic with dev-values.yaml
 // as the base, layering a controller.image.tag=test override to point at the local
@@ -768,6 +795,11 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		// Every other matrix entry hits ImagePullBackOff.
 		"--set", "haproxyVersion=" + ChartHAProxyVersion,
 		"--set", "controller.webhook.caBundle=" + caBundleB64,
+		// Enable the custom-CRD example library so ingress_reloadfree_test's
+		// custom-CRD cycle can watch its Route kind. With no Route objects it
+		// renders an empty map and no static lines — benign for other suites —
+		// and its own validationTest passes in the load gate (test-templates.sh).
+		"--set", "controller.templateLibraries.customCrdExample.enabled=true",
 		// LoadBalancer for the haproxy frontend service so MetalLB
 		// (installed in the install-metallb phase above) assigns a
 		// real reachable IP. The Gateway API conformance suite uses

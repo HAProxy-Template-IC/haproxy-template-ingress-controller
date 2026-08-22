@@ -16,6 +16,7 @@ package deployer
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -103,6 +104,7 @@ func (c *Component) handleEndpointSuccess(
 
 	c.clearBaselineInvalidation(endpoint)
 	c.recordAppliedOps(endpoint, result.Mode, outcome.sent)
+	c.recordRuntimeFallback(result.OpResults)
 	state.noteRunning(endpoint, result.RunningPlanID)
 
 	c.publishPodStatus(endpoint, event, applyResultToMetadata(outcome))
@@ -148,6 +150,38 @@ func (c *Component) recordAppliedOps(endpoint *dataplane.Endpoint, mode string, 
 			api.OpServerWaitRemovable, api.OpShutdownSessions, api.OpServerDel:
 			c.metrics.RecordRuntimeServerOp(ops[i].Kind)
 		}
+	}
+}
+
+// nameCollisionOutput is HAProxy's own words when `add backend` hits a name
+// that is already registered — the A5 leftover a deferred delete has not yet
+// retired. It is matched, not the op kind, because a backend_add can be refused
+// for other reasons too and only this one is the reload-free lane losing to a
+// name it will get back.
+const nameCollisionOutput = "already used by other proxy"
+
+// recordRuntimeFallback counts a runtime batch a pod could not run: a failed
+// op result means HAProxy refused a command and the agent reloaded the desired
+// set instead. The reason is read from HAProxy's own message — a name collision
+// (A5) versus any other refusal — so a backend_add refused for a different
+// reason is not mislabelled. A successful runtime apply carries no failed
+// result, so nothing is counted on the reload-free path. The agent stops at the
+// first rejected op and reloads the desired set, so a batch carries at most one
+// failed result — the early return counts each fallback once.
+func (c *Component) recordRuntimeFallback(results []api.OpResult) {
+	if c.metrics == nil {
+		return
+	}
+	for i := range results {
+		if results[i].OK {
+			continue
+		}
+		reason := "op_rejected"
+		if strings.Contains(strings.ToLower(results[i].Output), nameCollisionOutput) {
+			reason = "name_collision"
+		}
+		c.metrics.RecordRuntimeBackendFallback(reason)
+		return
 	}
 }
 

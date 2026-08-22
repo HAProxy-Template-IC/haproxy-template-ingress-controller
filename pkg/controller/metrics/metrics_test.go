@@ -137,6 +137,18 @@ func TestMetrics_RecordRuntimeOps(t *testing.T) {
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeServerOpsTotal.WithLabelValues("server_add")))
 }
 
+func TestMetrics_RecordRuntimeBackendFallback(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	metrics.RecordRuntimeBackendFallback("name_collision")
+	metrics.RecordRuntimeBackendFallback("name_collision")
+	metrics.RecordRuntimeBackendFallback("op_rejected")
+
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeBackendFallbackTotal.WithLabelValues("name_collision")))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeBackendFallbackTotal.WithLabelValues("op_rejected")))
+}
+
 func TestMetrics_RecordValidation(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
