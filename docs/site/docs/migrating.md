@@ -399,7 +399,7 @@ generated from the library's declared migration coverage. Anything not listed is
 fully supported.
 
 <!-- BEGIN generated: migration-coverage haproxytech -->
-The library classifies 56 `haproxy.org/*` annotations: 38 supported, 14 with behaviour differences, 4 not carried over, 0 failing.
+The library classifies 56 `haproxy.org/*` annotations: 37 supported, 14 with behaviour differences, 5 not carried over, 0 failing.
 
 | Annotation | Status | What to check |
 |------------|--------|---------------|
@@ -412,6 +412,7 @@ The library classifies 56 `haproxy.org/*` annotations: 38 supported, 14 with beh
 | `haproxy.org/deny-list` | Behaviour differs | Host-scoped source-IP denylist — only gates rules with an explicit host; invalid CIDRs fail the render. |
 | `haproxy.org/pod-maxconn` | Behaviour differs | Divided across the number of ready HAProxy pods (quantized to a power of two) rather than applied per-server verbatim; must be a positive integer. |
 | `haproxy.org/request-redirect-code` | Behaviour differs | Default 302; an invalid code fails the render. |
+| `haproxy.org/scale-server-slots` | Not carried over | Inert; servers are named after their pods (ADR-0011), so there is no slot pool to size. Setting it emits an UnsupportedAnnotation Warning Event. |
 | `haproxy.org/send-proxy-protocol` | Behaviour differs | proxy, proxy-v1, proxy-v2, proxy-v2-ssl and proxy-v2-ssl-cn map to the matching send-proxy flags; any other value is silently ignored. |
 | `haproxy.org/server-ca` | Behaviour differs | Verifies the upstream certificate against the Secret's ca.crt; a missing Secret or missing ca.crt renders a warning comment and silently skips verification instead of failing. |
 | `haproxy.org/server-crt` | Behaviour differs | Presents a client certificate to the upstream from the Secret; a missing Secret or missing tls.crt/tls.key renders a warning comment and skips the client cert instead of failing. |

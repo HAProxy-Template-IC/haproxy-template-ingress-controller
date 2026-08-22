@@ -98,6 +98,26 @@ The bundled libraries build the identical shape from their own inputs:
 Because all three call the same macros, the reload behaviour below is the same
 whichever resource you watch.
 
+### See both macros live
+
+The bundled Ingress library builds every render from the same two macros:
+`Backend()` assembles each `backend` section, and `RegisterMap()` writes the
+host and path maps that route to them. Run this render, then edit a resource and
+watch both follow — reload-free.
+
+<div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.templateSnippets.backends-500-ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Backend() and RegisterMap() in one render" data-height="480">
+
+<p class="pg-task" markdown>Press **Run live**. In the **haproxy.cfg** tab, find the `backend storefront_shop_svc_shop_http` section that `Backend()` assembled from the `shop` Ingress, with one pod-named `server` line per endpoint. Switch to the **maps** tab to see the `host.map` and `path-prefix.map` entries that `RegisterMap()` wrote to route to it. Then, in the **Resources** panel, change the `shop` Ingress's host to `store.example.com` and Run again — the map entry follows, with no new `backend` and no reload.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+`backends-500-ingress` calls `Backend()` once per unique `(namespace, ingress, service, port)`, so `haproxy.cfg` carries one `backend storefront_shop_svc_shop_http`. `map-host-500-ingress` and `map-path-prefix-500-ingress` call `RegisterMap()` to write `host.map` and `path-prefix.map`; changing the host rewrites one unordered map entry — a runtime map update, not a config-section change, so HAProxy keeps serving without a reload.
+
+</details>
+
+</div>
+
 ## When a backend is static
 
 A backend is *dynamic-eligible* — created, deleted, and repopulated at runtime —

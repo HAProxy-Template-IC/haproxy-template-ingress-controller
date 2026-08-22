@@ -215,13 +215,13 @@ Templates calling `http.Fetch()` for unmocked URLs fail with an error. Define sh
 
 ### Current servers
 
-`currentServers` gives the render a previous deployment to reason about, keyed by backend name and then by server name. Templates read it as `currentConfig.ServerIndex`, so it's what you use to test that a rolling deployment keeps existing pods in their server slots:
+`currentServers` gives the render a previous deployment to reason about, keyed by backend name and then by server name (the pod name, ADR-0011). Templates read it as `currentConfig.ServerIndex`, so it's what you use to test that a rolling deployment keeps existing pods on their named server lines:
 
 ```yaml
 currentServers:
   default_api_svc_api_80:
-    SRV_1: {address: 192.0.2.1, port: 1}
-    SRV_2: {address: 10.0.0.1, port: 8080}
+    api-pod-1: {address: 10.0.0.1, port: 8080}
+    api-pod-2: {address: 10.0.0.2, port: 8080}
 ```
 
 Without `currentServers`, `currentConfig` is nil — the first-deployment case.

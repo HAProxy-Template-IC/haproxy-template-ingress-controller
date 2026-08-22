@@ -116,7 +116,7 @@ controller:
       level: DEBUG  # Runtime log level (overrides env var if set)
 
     # Moderately-fast timings preset for the e2e suite (parallel
-    # ingress-create tests). Production defaults (5s refractory, 2s
+    # ingress-create tests). Production defaults (2s
     # minDeploymentInterval, 30s configPublishInterval, 60s
     # driftPreventionInterval) target steady-state load on real
     # clusters; in CI they only add latency. Safety ceilings
@@ -157,7 +157,7 @@ controller:
     #
     # No reconciler-level refractory knob exists any more: the Reconciler
     # fires immediately on every event (spec.controller.reconciliationDebounceInterval
-    # was removed). Batching is per-watcher (default 2s; EndpointSlice "0")
+    # was removed). Batching is per-watcher (default 100ms; EndpointSlice "0")
     # and reload throttling is the deployer's minDeploymentInterval — both
     # apply here via the chart defaults, so there is nothing to override.
     dataplane:

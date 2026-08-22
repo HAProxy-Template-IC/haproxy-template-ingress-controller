@@ -1,4 +1,4 @@
 apiVersion: v2
 name: custom-crd-example
-description: Worked example of a resource-agnostic HAPTIC library for a custom Route CRD, driving Backend()/BackendServers()/RegisterMap()/HeaderModifierRules() end to end. Default-disabled; enable only to exercise or learn the reload-free author contract. Carries only library YAML; the parent chart merges it into the HAProxyTemplateConfig.
+description: Worked example of a resource-agnostic HAPTIC library for a custom Route CRD, driving Backend()/RegisterMap()/HeaderModifierRules() end to end. Default-disabled; enable only to exercise or learn the reload-free author contract. Carries only library YAML; the parent chart merges it into the HAProxyTemplateConfig.
 version: 0.1.0

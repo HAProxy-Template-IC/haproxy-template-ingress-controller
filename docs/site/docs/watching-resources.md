@@ -324,7 +324,7 @@ watchedResources:
     debounceInterval: "30s"     # absorb endpoint churn on large clusters
 ```
 
-Empty / invalid strings fall back to the `2s` default silently — the validating webhook doesn't reject unparseable values, so a typo just leaves you with the default. Format is any Go duration string (`"500ms"`, `"10s"`, `"1m30s"`, …); `"0"` disables debouncing so every change fires immediately.
+Empty / invalid strings fall back to the `100ms` default silently — the validating webhook doesn't reject unparseable values, so a typo just leaves you with the default. Format is any Go duration string (`"500ms"`, `"10s"`, `"1m30s"`, …); `"0"` disables debouncing so every change fires immediately.
 
 ## Troubleshooting
 

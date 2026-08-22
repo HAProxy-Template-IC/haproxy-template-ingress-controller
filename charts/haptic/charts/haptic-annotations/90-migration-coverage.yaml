@@ -3,7 +3,8 @@
 # haptic-annotations is a best-of-breed SUPERSET of the three vendor
 # libraries — one clean haproxy-haptic.org/* annotation per capability,
 # adopting whichever vendor's semantics is best. Every key is `supported`
-# or `different` (works but diverges, see note); nothing is inert. This
+# or `different` (works but diverges, see note), except one `dropped` key
+# that is inert and only warns (scale-server-slots, removed by ADR-0011). This
 # block is pinned against the annotation keys the fragments actually read
 # by scripts/check-migration-coverage.sh, and documented on the library's
 # page by scripts/check-annotation-{docs,status}.sh.
@@ -476,8 +477,8 @@ _migrationCoverage:
         status: supported
         note: "\"any\" OR-combines allowlist-source-range and basic auth into one backend gate, suppressing both the standalone allowlist deny and the standalone auth challenge so an allow-listed OR authenticated request passes."
       haproxy-haptic.org/scale-server-slots:
-        status: supported
-        note: "Positive int overrides reserved server-slot count via serverOpts.serverSlotsValue."
+        status: dropped
+        note: "Inert: servers are named after their pods (ADR-0011), so there is no slot pool to size. Setting it emits an UnsupportedAnnotation Warning Event."
       haproxy-haptic.org/host-alias:
         status: supported
         note: "Adds extra exact hostnames (comma- or space-separated) that route to the same backends as the Ingress's primary host. Each hostname becomes a host-map entry pointing at the primary host's normalized routing key, so no backends or path-map entries are duplicated. Each hostname is injection-guarded (control characters and spaces rejected)."

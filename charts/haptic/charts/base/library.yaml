@@ -1201,9 +1201,9 @@ templateSnippets:
             validation; name backfill is best-effort (name="" if unknown).
           - portRef.name given: resolves to "0 <name>". BackendServers skips
             endpoints without a resolvable port, so the backend renders with
-            placeholder slots only (503 for this route) and converges on a
-            later reconcile once the Service and its EndpointSlices arrive.
-            When that leaves a backend placeholder-only, BackendServers
+            no server lines (an empty backend, 503 for this route) and converges
+            on a later reconcile once the Service and its EndpointSlices arrive.
+            When that leaves a backend empty, BackendServers
             records the reference under shared "degradedBackendRef:*" keys;
             the ingress library reads those back to emit Warning Events on
             the owning Ingresses (issue #66) so a permanent Service-name
@@ -1277,8 +1277,8 @@ templateSnippets:
               // entire haproxy.cfg render until the Service appeared).
               // Tolerate: resolve to port 0 with the requested name.
               // BackendServers skips endpoints without a resolvable port, so
-              // the backend renders with placeholder slots only (503 for this
-              // route) and converges once the Service arrives. A Service that
+              // the backend renders with no server lines (an empty backend, 503
+              // for this route) and converges once the Service arrives. A Service that
               // EXISTS but lacks the named port still fails below — that is a
               // real config error (typo), not a propagation race.
               serviceMissing = true
