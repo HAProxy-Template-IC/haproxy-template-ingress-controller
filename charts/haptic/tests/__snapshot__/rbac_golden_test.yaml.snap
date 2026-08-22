@@ -1,0 +1,775 @@
+pins the ClusterRole rules on chart defaults:
+  1: |
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - backendtlspolicies
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - configmaps
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - services
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - discovery.k8s.io
+      resources:
+        - endpointslices
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - gatewayclasses
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - gateways
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - grpcroutes
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - httproutes
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - networking.k8s.io
+      resources:
+        - ingresses
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - listenersets
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - namespaces
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - referencegrants
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - secrets
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - services
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - tcproutes
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - tlsroutes
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - configmaps
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - backendtlspolicies/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - gatewayclasses/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - gateways/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - grpcroutes/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - httproutes/status
+      verbs:
+        - patch
+    - apiGroups:
+        - networking.k8s.io
+      resources:
+        - ingresses/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - listenersets/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - tcproutes/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - tlsroutes/status
+      verbs:
+        - patch
+    - apiGroups:
+        - coordination.k8s.io
+      resources:
+        - leases
+      verbs:
+        - get
+        - create
+        - update
+    - apiGroups:
+        - apiextensions.k8s.io
+      resources:
+        - customresourcedefinitions
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxytemplateconfigs
+        - haproxytemplatelibraries
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxytemplatelibraries
+      verbs:
+        - patch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxytemplateconfigs/status
+      verbs:
+        - update
+        - patch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxycfgs
+        - haproxygeneralfiles
+        - haproxycrtlistfiles
+        - haproxymapfiles
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxycfgs/status
+        - haproxygeneralfiles/status
+        - haproxycrtlistfiles/status
+        - haproxymapfiles/status
+      verbs:
+        - update
+        - patch
+    - apiGroups:
+        - ""
+      resources:
+        - events
+      verbs:
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - ""
+      resources:
+        - services
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - gatewayclasses
+      verbs:
+        - create
+        - update
+        - patch
+        - delete
+pins the ClusterRole rules with every rule-adding feature enabled:
+  1: |
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - backendtlspolicies
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - configmaps
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - services
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - discovery.k8s.io
+      resources:
+        - endpointslices
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - gatewayclasses
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - gateways
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - grpcroutes
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - httproutes
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - networking.k8s.io
+      resources:
+        - ingresses
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - listenersets
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - namespaces
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - referencegrants
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - haptic-example.org
+      resources:
+        - routes
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - secrets
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - services
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - tcproutes
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - tlsroutes
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - configmaps
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - backendtlspolicies/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - gatewayclasses/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - gateways/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - grpcroutes/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - httproutes/status
+      verbs:
+        - patch
+    - apiGroups:
+        - networking.k8s.io
+      resources:
+        - ingresses/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - listenersets/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - tcproutes/status
+      verbs:
+        - patch
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - tlsroutes/status
+      verbs:
+        - patch
+    - apiGroups:
+        - coordination.k8s.io
+      resources:
+        - leases
+      verbs:
+        - get
+        - create
+        - update
+    - apiGroups:
+        - apiextensions.k8s.io
+      resources:
+        - customresourcedefinitions
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxytemplateconfigs
+        - haproxytemplatelibraries
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxytemplatelibraries
+      verbs:
+        - patch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxytemplateconfigs/status
+      verbs:
+        - update
+        - patch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxycfgs
+        - haproxygeneralfiles
+        - haproxycrtlistfiles
+        - haproxymapfiles
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxycfgs/status
+        - haproxygeneralfiles/status
+        - haproxycrtlistfiles/status
+        - haproxymapfiles/status
+      verbs:
+        - update
+        - patch
+    - apiGroups:
+        - ""
+      resources:
+        - events
+      verbs:
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - ""
+      resources:
+        - services
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - gateway.networking.k8s.io
+      resources:
+        - gatewayclasses
+      verbs:
+        - create
+        - update
+        - patch
+        - delete
+pins the Role rules on chart defaults:
+  1: |
+    - apiGroups:
+        - ""
+      resources:
+        - pods
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - secrets
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxycfgs
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxycfgs/status
+      verbs:
+        - get
+        - update
+        - patch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxymapfiles
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxymapfiles/status
+      verbs:
+        - get
+        - update
+        - patch
+    - apiGroups:
+        - ""
+      resources:
+        - services
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+pins the Role rules with every rule-adding feature enabled:
+  1: |
+    - apiGroups:
+        - ""
+      resources:
+        - pods
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - secrets
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxycfgs
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxycfgs/status
+      verbs:
+        - get
+        - update
+        - patch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxymapfiles
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxymapfiles/status
+      verbs:
+        - get
+        - update
+        - patch
+    - apiGroups:
+        - ""
+      resources:
+        - services
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - ""
+      resources:
+        - configmaps
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - apps
+      resources:
+        - statefulsets
+        - deployments
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - policy
+      resources:
+        - poddisruptionbudgets
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+    - apiGroups:
+        - autoscaling
+      resources:
+        - horizontalpodautoscalers
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete

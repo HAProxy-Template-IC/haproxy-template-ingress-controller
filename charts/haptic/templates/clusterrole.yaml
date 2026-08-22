@@ -39,10 +39,10 @@ rules:
     verbs: ["patch"]
   {{- end }}
   {{- end }}
-  # Additional core resources
-  - apiGroups: [""]
-    resources: ["namespaces", "pods"]
-    verbs: ["get", "list", "watch"]
+  # No cluster-wide pods or namespaces grant here by design: the haproxy-pods
+  # watcher is namespace-pinned (get/list/watch on pods lives in role.yaml),
+  # and namespaces is watched only by the gateway library, so it flows through
+  # the watched-resources rules above rather than a hardcoded core grant.
   # Leader election (coordination.k8s.io/v1)
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
