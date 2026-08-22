@@ -304,6 +304,41 @@ func TestDiffServerAddedMergesDefaultServer(t *testing.T) {
 	}, got.Ops[0].Keywords)
 }
 
+// TestDiffServerAddedCarriesWeight guards weighted routing: an add server must
+// carry the server's structured weight, including weight 0, or the runtime
+// collapses the distribution to equal and a zero-weight backend takes traffic.
+func TestDiffServerAddedCarriesWeight(t *testing.T) {
+	tests := []struct {
+		name   string
+		weight *int
+		want   *api.KeywordArg // the weight keyword add server must carry, nil for none
+	}{
+		{name: "weight 70", weight: ptr(70), want: &api.KeywordArg{Name: "weight", Args: []string{"70"}}},
+		{name: "weight 30", weight: ptr(30), want: &api.KeywordArg{Name: "weight", Args: []string{"30"}}},
+		{name: "weight 0 gets no traffic", weight: ptr(0), want: &api.KeywordArg{Name: "weight", Args: []string{"0"}}},
+		{name: "no weight leaves HAProxy's default", weight: nil, want: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			added := srv("SRV_2", "10.0.0.2", 8080)
+			added.Weight = tt.weight
+			before := dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080))
+			after := dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080), added)
+
+			got := deployplan.Diff(basePlan(withBackend(after)), on34(basePlan(withBackend(before))))
+
+			require.Equal(t, deployplan.VerdictRuntime, got.Verdict, got.Reasons)
+			require.Equal(t, []string{api.OpServerAdd, api.OpServerEnable}, kinds(got.Ops))
+			if tt.want == nil {
+				assert.Empty(t, got.Ops[0].Keywords, "a weightless server must not carry a weight keyword")
+				return
+			}
+			assert.Contains(t, got.Ops[0].Keywords, *tt.want)
+		})
+	}
+}
+
 func TestDiffServerRemoved(t *testing.T) {
 	prev := basePlan(withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080), srv("SRV_2", "10.0.0.2", 8080))))
 	next := basePlan(withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080))))
