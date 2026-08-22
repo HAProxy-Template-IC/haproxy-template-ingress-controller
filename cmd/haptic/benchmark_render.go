@@ -186,3 +186,26 @@ func buildBenchmarkContext(
 
 	return builder.Build()
 }
+
+// freshBenchmarkContext builds a render context for one render. Each render must
+// get its own: a reused context keeps the first_seen() dedup cache, so a sharded
+// section emitted once is skipped as "already seen" on the next render (#165).
+// Matches production, which builds a fresh context per reconcile. Stores are
+// reused; only render-scoped state (SharedContext, PlanRegistry, collectors) resets.
+func freshBenchmarkContext(
+	cfg *config.Config,
+	testExtra map[string]any,
+	storeMap map[string]stores.Store,
+	validationPaths *dataplane.ValidationPaths,
+	httpStore *testrunner.FixtureHTTPStoreWrapper,
+	typedResourceTypes map[string]reflect.Type,
+	logger *slog.Logger,
+) *rendercontext.BuildResult {
+	bctx := buildBenchmarkContext(cfg, storeMap, validationPaths, httpStore, typedResourceTypes, logger)
+	// Fold in the _global + per-test extraContext baseline so the benchmark
+	// renders each test exactly as the load gate does (against the isolated
+	// synthetic default certificate), not the deployment's production
+	// extraContext — otherwise a custom defaultSSLCertificate name fails here.
+	testrunner.ApplyTestExtraContext(bctx.Context, cfg, testExtra)
+	return bctx
+}
