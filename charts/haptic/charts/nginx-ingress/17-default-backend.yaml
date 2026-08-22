@@ -65,9 +65,8 @@ templateSnippets:
         entries that route unmatched requests here.
       #}
       {%- import "util-nginx-ingress-default-backend" for ResolveDefaultBackend -%}
-      {%- import "util-backend" for Backend, AppendLines -%}
+      {%- import "util-backend" for Backend, AppendLines, DefaultServerArgs -%}
       {%- import "util-backend-servers" for BackendServers -%}
-      {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var info = map[string]any{} -%}
         {{- ResolveDefaultBackend(ingress, info) -}}
@@ -78,16 +77,31 @@ templateSnippets:
           {%- var portName = tostring(info["portName"]) -%}
           {%- var backendName = tostring(info["backendName"]) -%}
           {%- if first_seen("nginx_default_backend", backendName) -%}
-          {%- var serverOpts = map[string]any{"flags": []any{}} -%}
-          {%- var body = AppendLines([]any{}, render_glob "backend-directives-*" inherit_context) -%}
-          {%- body = append(body, "default-server check" + BuildServerOptions(serverOpts)) -%}
+          {%- var serverOpts = map[string]any{"flags": []any{}, "profile": []any{}, "body": []any{}} -%}
+          {%- var directives = AppendLines([]any{}, render_glob "backend-directives-*" inherit_context) -%}
+          {#- The per-server keywords (check + snippet flags) go in the structured
+              defaultServer so they sit on the profile's default-server line AND in
+              the plan record — the deploy side composes `add server` from the
+              record. A snippet's profile lines join the profile; its structural
+              directives stay in the body, so a plain default-backend's body is
+              empty (dynamic-eligible). -#}
+          {%- var profile = []any{} -%}
+          {%- for _, l := range toSlice(serverOpts["profile"]) -%}{%- profile = append(profile, l) -%}{%- end -%}
+          {%- var body = []any{} -%}
+          {%- for _, l := range toSlice(serverOpts["body"]) -%}{%- body = append(body, l) -%}{%- end -%}
+          {%- for _, l := range directives -%}{%- body = append(body, l) -%}{%- end -%}
       {{ "\n" }}{{ Backend(map[string]any{
            "name": backendName,
            "guid": make_guid("be", backendName),
            "comments": []any{"# nginx-ingress/default-backend: Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name +
              " → Service " + svcNs + "/" + svcName + ":" + tostring(port)},
+           "balance": serverOpts | dig("balance") | fallback(nil),
+           "hashType": serverOpts | dig("hashType") | fallback(nil),
+           "shape": serverOpts | dig("shape") | fallback(nil),
+           "defaultServer": DefaultServerArgs(serverOpts),
+           "profile": profile,
            "body": body,
-           "servers": BackendServers(svcName, 0, port, nil, portName, backendName, svcNs),
+           "servers": BackendServers(svcName, 0, port, serverOpts, portName, backendName, svcNs),
          }) }}
           {%- end -%}
         {%- end -%}

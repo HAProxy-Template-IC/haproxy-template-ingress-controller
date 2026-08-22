@@ -385,7 +385,7 @@ version):
     form rather than Jinja's `is defined`. -#}
 {%- var perPod, ok = serverOpts["podMaxconnValue"] %}
 {%- if ok %}
-  server SRV_1 {{ endpoint.address }}:{{ endpoint.port }} maxconn {{ perPod }}
+  server {{ endpoint.pod }} {{ endpoint.address }}:{{ endpoint.port }} maxconn {{ perPod }}
 {%- end %}
 ```
 
@@ -1231,7 +1231,7 @@ To enable HAProxy runtime API updates without reloads, server options must be in
 - `Maintenance` (`enabled`/`disabled`) - Server state
 - `AgentCheck`, `AgentAddr`, `AgentSend`, `HealthCheckPort` - Agent checks
 
-**Important:** The `disabled` and `enabled` options do NOT cause reloads. This is essential for the reserved slots pattern where unused slots are `disabled` and enabled at runtime when pods scale up.
+**Important:** The `disabled`/`enabled` state does NOT cause a reload — a not-ready endpoint renders as a `disabled` server and a readiness flip is a runtime `set server state`.
 
 **All other options trigger reloads** including: `check`, `proto`, `ssl`, `verify`, `ca-file`, `crt`
 
@@ -1239,10 +1239,10 @@ To enable HAProxy runtime API updates without reloads, server options must be in
 
 ```scriggo
 {{ Backend(map[string]any{
-     "name":    backendKey,
-     "guid":    make_guid("be", backendKey),
-     "body":    []any{"default-server check" + BuildServerOptions(serverOpts)},
-     "servers": BackendServers(serviceName, 10, port, nil, nil, backendKey, ns),
+     "name":          backendKey,
+     "guid":          make_guid("be", backendKey),
+     "defaultServer": []any{map[string]any{"name": "check"}},
+     "servers":       BackendServers(serviceName, 0, port, serverOpts, nil, backendKey, ns),
    }) }}
 ```
 
@@ -1250,24 +1250,27 @@ Every backend goes through base's `Backend()` (`util-backend`): it builds the
 section text from the record it declares to the render plan, so a change to a
 backend is data the controller can act on instead of text it has to re-read. A
 hand-written `backend` section still renders, but any change to it forces a
-reload.
+reload. `mode`/`balance`/`hash-type`/`default-server` and the shared `profile`
+lines go into a content-addressed `defaults haptic-be-<hash> from haptic-base`
+the backend inherits with `from`; keep `body` empty for a dynamic-eligible
+backend.
 
-`BackendServers` returns server records — `name`, `address`, `port`,
-`disabled`, `weight`, `guid`, `comment` — and `Backend()` formats them into
-lines carrying only `address:port` plus `enabled`/`disabled`, while all other
-options go in `default-server`.
+`BackendServers` returns one server record per endpoint — `name` (the pod),
+`address`, `port`, `disabled`, `weight`, `guid`, `comment`, `extra` — and
+`Backend()` formats them into `server <pod> <ip>:<port>` lines. There is no
+slot pool: the file always equals the current pod set.
 
 **Example output:**
 
 ```haproxy
-backend default_my-ingress_svc_my-service_http
-    default-server check proto h2
-    server SRV_1 10.0.0.1:8080 enabled
-    server SRV_2 10.0.0.2:8080 enabled
-    server SRV_3 192.0.2.1:1 disabled
+backend default_my-ingress_svc_my-service_http from haptic-be-ef46db3751d8
+    guid be:default_my-ingress_svc_my-service_http
+    server my-app-6d4b-abc 10.0.0.1:8080
+    server my-app-6d4b-def 10.0.0.2:8080
+    server my-app-6d4b-ghi 10.0.0.3:8080 disabled
 ```
 
-**Why this matters:** When pods scale up/down, only the server's Address, Port, and enabled/disabled state change. If these are the only fields on server lines, the controller updates them via runtime API (no reload, no connection drops). If options like `check` are on server lines, any change requires a reload.
+**Why this matters:** When pods scale up/down, servers are added and removed by pod name over the runtime API (no reload). Because `default-server` lives in the profile, keeping per-backend options there (not on the server line) keeps the backend dynamic-eligible.
 
 ### Optimizing Expensive Computations with Utility Snippets
 
@@ -2244,9 +2247,10 @@ macro, with any return type (`map[string][]T` included).
 **When NOT to chain.** Anything with side effects — `fail()`, `gf[…] =`,
 `fileRegistry.Register`, `WebhookRejectOrWarn`, `recordEvent`, `statusPatch` —
 or that needs `break`. Those stay `{%% %%}` blocks with typed accumulators.
-Chains longer than ~5 stages should also drop to a block. `map-pod-names-500-endpoints`
-in `base/library.yaml` is the worked hybrid: pipeline for the flatten and
-filter, loop for the part that needs two values at once.
+Chains longer than ~5 stages should also drop to a block. `features-075-address-discovery`
+in `base/library.yaml` is the worked example: a `flat_map | reject | unique_by | map`
+pipeline for the LoadBalancer address list, then a plain block for the fallback
+that needs the whole list at once.
 
 ### Whitespace Control
 

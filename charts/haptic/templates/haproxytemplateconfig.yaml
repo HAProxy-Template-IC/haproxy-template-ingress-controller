@@ -438,6 +438,16 @@ spec:
   {{- /* HAProxy version (used by version-gated features such as shm-stats-file) */ -}}
   {{- $_ := set $extraContext "haproxyVersion" .Values.haproxyVersion }}
 
+  {{- /* Session-persistence dynamic-cookie-key: shared across same-shape cookie
+         backends so they dedup into one profile, but per-installation so a pod's
+         address→cookie hash can't be forged from a world-known salt. Derived from
+         release identity (stable across upgrades, no `lookup` — safe on
+         template/dry-run/GitOps); an operator can override with
+         extraContext.dynamicCookieKey. */ -}}
+  {{- if not (hasKey $extraContext "dynamicCookieKey") -}}
+    {{- $_ := set $extraContext "dynamicCookieKey" (printf "%s/%s" .Release.Namespace .Release.Name | sha256sum | trunc 32) }}
+  {{- end -}}
+
   {{- /* Vector sidecar: project only the render-facing settings (the root-level
          vector.* value also builds a container and a ConfigMap, which is what
          justifies it living at the root — see charts/CLAUDE.md). */ -}}

@@ -83,9 +83,8 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "option httpchk GET /healthz"}
-      # backend-check-interval / health-check-port / -fall-count / -rise-count
-      # land on the default-server line (runtime-static check tuning), not on
-      # individual server lines.
+      # backend-check-interval / health-check-port / -fall-count / -rise-count land
+      # on the profile's default-server line (check tuning), read by add-server.
       - {type: contains, target: haproxy.cfg, pattern: "default-server check.* inter 7s"}
       - {type: contains, target: haproxy.cfg, pattern: "default-server check.* port 8082"}
       - {type: contains, target: haproxy.cfg, pattern: "default-server check.* fall 4"}

@@ -17,9 +17,6 @@ tests:
           path: spec.maps["host.map"].ordered
           value: false
       - equal:
-          path: spec.maps["pod-names.map"].ordered
-          value: false
-      - equal:
           path: spec.maps["path-exact.map"].ordered
           value: false
       - equal:

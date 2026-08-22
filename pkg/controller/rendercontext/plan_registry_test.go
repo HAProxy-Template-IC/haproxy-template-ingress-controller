@@ -125,7 +125,7 @@ func TestPlanRegistryBackendStrictKeys(t *testing.T) {
 		{
 			name:    "unrelated key lists the valid ones",
 			record:  map[string]any{"name": "be_app", "frontendish": true},
-			wantErr: "valid keys are name, mode, guid",
+			wantErr: "valid keys are name, profile, mode, guid",
 		},
 		{
 			name:    "wrong type for name",
@@ -238,7 +238,7 @@ func TestPlanRegistryMapMeta(t *testing.T) {
 
 func TestPlanRegistryPlan(t *testing.T) {
 	registry := NewPlanRegistry(nil)
-	profileToken, err := registry.Section("profile", "haptic-be-1", "defaults haptic-be-1\n")
+	profileToken, err := registry.Section("profile", "haptic-be-1", "defaults haptic-be-1\n    mode http\n")
 	require.NoError(t, err)
 	backendToken, err := registry.Backend(map[string]any{
 		"name":    "be_app",
@@ -263,7 +263,8 @@ func TestPlanRegistryPlan(t *testing.T) {
 		[]string{plan.Files[0].Path, plan.Files[1].Path, plan.Files[2].Path})
 
 	require.Contains(t, plan.Profiles, "haptic-be-1")
-	assert.Equal(t, renderplan.DigestString("defaults haptic-be-1\n"), plan.Profiles["haptic-be-1"].BodyDigest)
+	// BodyDigest is over the profile body, not the `defaults …` header line.
+	assert.Equal(t, renderplan.DigestString("    mode http\n"), plan.Profiles["haptic-be-1"].BodyDigest)
 
 	require.Contains(t, plan.Backends, "be_app")
 	assert.Equal(t, renderplan.DigestString("backend be_app\n    server SRV_1 10.0.0.1:8080\n"),
@@ -274,7 +275,7 @@ func TestPlanRegistryPlan(t *testing.T) {
 	assert.Len(t, plan.Maps["host.map"].Entries, 2, "duplicate keys are kept")
 	assert.Empty(t, plan.Maps["other.map"].Entries)
 
-	assert.Equal(t, "global\n    daemon\ndefaults haptic-be-1\nbackend be_app\n    server SRV_1 10.0.0.1:8080\n", config)
+	assert.Equal(t, "global\n    daemon\ndefaults haptic-be-1\n    mode http\nbackend be_app\n    server SRV_1 10.0.0.1:8080\n", config)
 }
 
 // Every plan path is the base-relative string the config references the file

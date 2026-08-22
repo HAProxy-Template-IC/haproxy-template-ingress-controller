@@ -171,11 +171,27 @@ func NewEchoServerBackend(ctx context.Context, t *testing.T, client klient.Clien
 func NewNamedEchoServerBackend(ctx context.Context, t *testing.T, client klient.Client, namespace, name string) BackendRef {
 	t.Helper()
 	ref := BackendRef{Service: name, Port: 80}
-	if err := applyNamedEchoServerBackend(ctx, client, namespace, ref); err != nil {
+	if err := applyNamedEchoServerBackend(ctx, client, namespace, ref, 1); err != nil {
 		t.Fatalf("%v", err)
 	}
 	if err := waitForServiceEndpointReady(ctx, client, namespace, ref.Service); err != nil {
 		t.Fatalf("echo-server %q endpoint not ready: %v", name, err)
+	}
+	return ref
+}
+
+// NewEchoServerBackendWithReplicas deploys an echo-server backend with a
+// caller-chosen replica count and waits until that many endpoints are ready.
+// Several ready endpoints let a test observe HAPTIC's pod-named backend
+// servers scaling — one server per pod, no reserved slot pool.
+func NewEchoServerBackendWithReplicas(ctx context.Context, t *testing.T, client klient.Client, namespace, name string, replicas int32) BackendRef {
+	t.Helper()
+	ref := BackendRef{Service: name, Port: 80}
+	if err := applyNamedEchoServerBackend(ctx, client, namespace, ref, replicas); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if err := waitForServiceEndpointsReady(ctx, client, namespace, ref.Service, int(replicas)); err != nil {
+		t.Fatalf("echo-server %q endpoints not ready: %v", name, err)
 	}
 	return ref
 }
@@ -187,15 +203,14 @@ func NewNamedEchoServerBackend(ctx context.Context, t *testing.T, client klient.
 // can fan the creates out first and wait for readiness across all namespaces
 // in a single condition instead of paying a sequential per-namespace wait.
 func applyEchoServerBackend(ctx context.Context, client klient.Client, namespace string) error {
-	return applyNamedEchoServerBackend(ctx, client, namespace, EchoServerBackend)
+	return applyNamedEchoServerBackend(ctx, client, namespace, EchoServerBackend, 1)
 }
 
 // applyNamedEchoServerBackend is applyEchoServerBackend parameterised by the
-// BackendRef, so callers can deploy additional echo backends under distinct
-// Service names in the same namespace.
-func applyNamedEchoServerBackend(ctx context.Context, client klient.Client, namespace string, ref BackendRef) error {
+// BackendRef and replica count, so callers can deploy additional echo backends
+// under distinct Service names in the same namespace, optionally multi-replica.
+func applyNamedEchoServerBackend(ctx context.Context, client klient.Client, namespace string, ref BackendRef, replicas int32) error {
 	labels := map[string]string{"app": ref.Service}
-	replicas := int32(1)
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -327,6 +342,41 @@ func serviceHasReadyEndpoint(ctx context.Context, client klient.Client, namespac
 		}
 	}
 	return fmt.Errorf("no ready endpoints in %d slices", len(slices.Items))
+}
+
+// waitForServiceEndpointsReady blocks until the Service has at least minReady
+// ready endpoints across its EndpointSlices — the property a multi-replica
+// backend needs before HAPTIC renders one pod-named server per pod.
+func waitForServiceEndpointsReady(ctx context.Context, client klient.Client, namespace, serviceName string, minReady int) error {
+	cfg := testutil.FastWaitConfig()
+	cfg.Timeout = DefaultPerTestSetupTimeout
+
+	return testutil.WaitForConditionWithDescription(ctx, cfg,
+		fmt.Sprintf("service %s/%s has %d ready endpoints", namespace, serviceName, minReady),
+		func(ctx context.Context) (bool, error) {
+			ready, err := countReadyEndpoints(ctx, client, namespace, serviceName)
+			if err != nil {
+				return false, err
+			}
+			return ready >= minReady, nil
+		})
+}
+
+func countReadyEndpoints(ctx context.Context, client klient.Client, namespace, serviceName string) (int, error) {
+	var slices discoveryv1.EndpointSliceList
+	if err := client.Resources(namespace).List(ctx, &slices,
+		resources.WithLabelSelector("kubernetes.io/service-name="+serviceName)); err != nil {
+		return 0, err
+	}
+	ready := 0
+	for _, sl := range slices.Items {
+		for _, ep := range sl.Endpoints {
+			if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
+				ready++
+			}
+		}
+	}
+	return ready, nil
 }
 
 // IngressSpec captures the minimum a routing test needs to declare.

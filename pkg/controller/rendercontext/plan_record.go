@@ -29,9 +29,12 @@ import (
 // record under-describing the section text it was emitted from.
 var (
 	backendRecordKeys = []string{
-		"name", "mode", "guid", "balance", "hashType",
+		"name", "profile", "mode", "guid", "balance", "hashType",
 		"shape", "shapeReason", "servers", "defaultServer", "body", "comments",
 	}
+	// profileRecordKeys are the shape values a profile is content-addressed
+	// over. `profile` is the directive lines that go inside the named defaults.
+	profileRecordKeys = []string{"mode", "balance", "hashType", "defaultServer", "profile"}
 	serverRecordKeys  = []string{"name", "address", "port", "weight", "disabled", "guid", "comment", "extra"}
 	keywordRecordKeys = []string{"name", "args"}
 )
@@ -48,6 +51,7 @@ func backendFromRecord(record map[string]any) (renderplan.Backend, error) {
 	dec := newRecordDecoder("planRegistry.Backend", record, backendRecordKeys)
 	backend := renderplan.Backend{
 		Name:          dec.str("name"),
+		Profile:       dec.str("profile"),
 		Mode:          dec.str("mode"),
 		GUID:          dec.str("guid"),
 		Balance:       dec.str("balance"),

@@ -287,7 +287,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "backend haptic_rl_tbl_default_cached-rps\\n\\s+stick-table type ip size 200k expire 5s store http_req_rate\\(5s\\) peers localinstance"
+        pattern: "backend haptic_rl_tbl_default_cached-rps from haptic-be-\\w+\\n\\s+stick-table type ip size 200k expire 5s store http_req_rate\\(5s\\) peers localinstance"
       - type: contains
         target: haproxy.cfg
         pattern: "http-request track-sc0 src table haptic_rl_tbl_default_cached-rps if \\{ var\\(txn\\.resource_id\\) -m str default/cached-rps \\}"
@@ -296,7 +296,7 @@ validationTests:
         pattern: "http-request deny deny_status 403 if \\{ var\\(txn\\.resource_id\\) -m str default/cached-rps \\} \\{ sc_http_req_rate\\(0\\) gt 10 \\} !\\{ src 10\\.0\\.0\\.0/8 \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "backend haptic_rl_tbl_default_cached-conn\\n\\s+stick-table type ip size 100k expire 30s store conn_cur peers localinstance"
+        pattern: "backend haptic_rl_tbl_default_cached-conn from haptic-be-\\w+\\n\\s+stick-table type ip size 100k expire 30s store conn_cur peers localinstance"
       - type: contains
         target: haproxy.cfg
         pattern: "if \\{ var\\(txn\\.resource_id\\) -m str default/cached-conn \\} \\{ sc_conn_cur\\(0\\) gt 100 \\}"
@@ -411,7 +411,7 @@ validationTests:
         pattern: "filter bwlim-in haptic_bwlim_in_default_cached-bw-client limit 1m key src table haptic_bwlim_tbl_default_cached-bw-client"
       - type: contains
         target: haproxy.cfg
-        pattern: "backend haptic_bwlim_tbl_default_cached-bw-client\\n\\s+stick-table type ip size 100k expire 60s store bytes_in_rate\\(1s\\),bytes_out_rate\\(1s\\)"
+        pattern: "backend haptic_bwlim_tbl_default_cached-bw-client from haptic-be-\\w+\\n\\s+stick-table type ip size 100k expire 60s store bytes_in_rate\\(1s\\),bytes_out_rate\\(1s\\)"
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-bandwidth-limit haptic_bwlim_out_default_cached-bw-client if \\{ var\\(txn\\.resource_id\\) -m str default/cached-bw-client \\}"

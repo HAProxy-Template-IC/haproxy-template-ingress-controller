@@ -50,6 +50,12 @@ type EchoBody struct {
 	// echo-server (no ENVIRONMENT) from echo-server-v2 (ENVIRONMENT=v2)
 	// for weighted-routing tests.
 	Environment string `json:"-"`
+
+	// PodHostname is the serving pod's hostname — the container HOSTNAME env,
+	// which Kubernetes sets to the pod name. Distinct values across requests
+	// identify distinct backend pods; Host is the request Host header (constant
+	// across requests to one Ingress), so use this to tell pods apart.
+	PodHostname string `json:"-"`
 }
 
 // parseEchoBody unmarshals an echo-server response. Returns nil if the body
@@ -114,6 +120,9 @@ func parseEchoBody(body []byte) *EchoBody {
 	if env, ok := raw["environment"].(map[string]any); ok {
 		if v, ok := env["ENVIRONMENT"].(string); ok {
 			echo.Environment = v
+		}
+		if v, ok := env["HOSTNAME"].(string); ok {
+			echo.PodHostname = v
 		}
 	}
 

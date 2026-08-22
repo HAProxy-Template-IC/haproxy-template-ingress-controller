@@ -67,7 +67,7 @@ Backends support these child component types with individual Create/Update/Delet
 
 | Component | Description |
 |-----------|-------------|
-| **Servers** | Backend server definitions |
+| **Servers** | Backend server definitions — one per endpoint, named after the pod. Endpoint add/remove and readiness/weight changes apply at runtime without a reload; a backend using a hash-family `balance` (`source`/`uri`/`hdr`/`url_param`/`rdp-cookie`/`hash`) gets `hash-type consistent` so pod churn stays reload-free (only `static-rr` and an explicit `hashType: map-based` reload on a pod change) |
 | **Server Templates** | Dynamic server templates |
 | **ACLs** | Access control lists |
 | **HTTP Request Rules** | HTTP request processing rules |

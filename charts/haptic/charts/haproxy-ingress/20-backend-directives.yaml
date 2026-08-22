@@ -91,8 +91,9 @@ templateSnippets:
           {%- if !isValid %}
             {{- fail("Invalid value '" + lb + "' for annotation 'haproxy-ingress.github.io/balance-algorithm' on Ingress '" + key + "'. Valid values: " + (valid | join(", "))) -}}
           {%- end %}
-      # haproxy-ingress/backend-directives-load-balance
-      balance {{ lb }}
+          {#- Structured Backend() arg (profile), so the macro adds
+              `hash-type consistent` for a hash-family algorithm. -#}
+          {%- serverOpts["balance"] = lb %}
         {%- end %}
       {%- end -%}
 
@@ -261,7 +262,8 @@ templateSnippets:
         {#- secure-backends -#}
         {%- var secureBackends = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-backends"] %}
         {%- if secureBackends == "true" %}
-          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl") %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify none") %}
           {%- sslEnabled = true %}
         {%- end %}
 
@@ -273,10 +275,13 @@ templateSnippets:
           {%- else if backendProto == "h2" %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "proto h2") %}
           {%- else if backendProto == "h1-ssl" %}
-            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl") %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify none") %}
             {%- sslEnabled = true %}
           {%- else if backendProto == "h2-ssl" %}
-            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none proto h2") %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl") %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify none") %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "proto h2") %}
             {%- sslEnabled = true %}
           {%- else %}
             {{- fail("Invalid value '" + backendProto + "' for annotation 'haproxy-ingress.github.io/backend-protocol' on Ingress '" + key + "'. Valid values: h1, h2, h1-ssl, h2-ssl") -}}
@@ -318,9 +323,12 @@ templateSnippets:
             {%- var caContent = caSecret.Data["ca.crt"] | b64decode() %}
             {%- if caContent != "" %}
               {%- var caFilename = caNs + "-" + caName + "-ca.pem" %}
-              {%- var caPath, caRegErr = fileRegistry.Register("file", caFilename, caContent) -%}
+              {#- "ca-file": a content-only CA rotation applies at runtime, no reload on v3.2+. -#}
+              {%- var caPath, caRegErr = fileRegistry.Register("ca-file", caFilename, caContent) -%}
               {%- if caRegErr != nil -%}{{ fail("failed to register CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
-              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify required ca-file " + caPath) %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl") %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify required") %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ca-file " + caPath) %}
             {%- else %}
             # Warning: Secret {{ caNs }}/{{ caName }} missing 'ca.crt' key
             {%- end %}
@@ -348,8 +356,11 @@ templateSnippets:
               {%- var crtFilename = crtNs + "-" + crtName + "-client.pem" %}
               {%- var _, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
               {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
-              {#- Use just filename - HAProxy's crt-base directive resolves the full path -#}
+              {#- Bare filename: `crt` resolves against crt-base, so the arg can't
+                  match the runtime store ident and add server can't carry it —
+                  structural. -#}
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "crt " + crtFilename) %}
+              {%- serverOpts["shape"] = "structural-crt" %}
             {%- else %}
             # Warning: Secret {{ crtNs }}/{{ crtName }} missing 'tls.crt' or 'tls.key' keys
             {%- end %}
@@ -746,17 +757,19 @@ templateSnippets:
           {%- if agentInj != "" %}
             {{- WebhookRejectOrWarn(ingress, "InvalidAgentCheck", "Ingress " + key + " has an agent-check annotation value containing " + agentInj + "; the agent check is not applied. Remove whitespace, quotes and control characters.") -}}
           {%- else %}
-            {%- var agentFlags = "agent-check agent-port " + aPort %}
+            {#- One keyword per flag entry so the plan record carries each as a
+                structured KeywordArg (see FlagsToKeywordArgs). -#}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "agent-check") %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "agent-port " + aPort) %}
             {%- if aAddr != "" %}
-              {%- agentFlags = agentFlags + " agent-addr " + aAddr %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "agent-addr " + aAddr) %}
             {%- end %}
             {%- if aInter != "" %}
-              {%- agentFlags = agentFlags + " agent-inter " + aInter %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "agent-inter " + aInter) %}
             {%- end %}
             {%- if aSend != "" %}
-              {%- agentFlags = agentFlags + " agent-send " + aSendStripped %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "agent-send " + aSendStripped) %}
             {%- end %}
-            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), agentFlags) %}
           {%- end %}
         {%- end %}
       {%- end -%}

@@ -775,44 +775,18 @@ templateSnippets:
           } -%}
       {{- "\n  log-format \"%{+json}o " + join(items, " ") + "\"" -}}
 
-  map-pod-names-500-endpoints:
-    requires: [endpoints]
-    template: |
-      {%%
-        // A pod in several Services appears once per EndpointSlice. map() returns
-        // the first match, so repeats are inert here — but the runtime API rejects
-        // a duplicate `add`, so a repeated key can only be rebuilt by a reload.
-        type EP = resources.endpoints.Endpoints
-        var seen = map[string]bool{}
-        var lines []string
-        // The address→pod pairing needs both values at once, which a pipeline
-        // cannot carry until template-local struct types survive the native
-        // boundary; the flatten and the filter are the parts that do chain.
-        for _, ep := range resources.endpoints.List() |
-            flat_map(s => s.Endpoints) |
-            reject(e => e.TargetRef.Name == "") {
-          for _, addr := range ep.Addresses {
-            if seen[addr] { continue }
-            seen[addr] = true
-            lines = append(lines, addr + " " + ep.TargetRef.Name)
-          }
-        }
-      %%}
-      {{- join(lines, "\n") }}
-
   log-fields-106-service:
     template: |-
-      {# Set by the backend that was chosen, which is where they are known.
-          Deriving them from the backend NAME would make the log depend on a
-          generated identifier that libraries are free to change. Empty when
-          HAProxy answered the request itself, so the fields drop out.
-
-          Bare names with the namespace separate, as OTel semconv and ECS both
-          have it — and so `service` and `server_pod` read the same way. This is
-          the SERVICE's namespace, which a cross-namespace route makes different
-          from the routing resource's; `resource` keeps its own ns/name. #}
-      %(namespace)[var(txn.namespace)]
-      %(service)[var(txn.service)]
+      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
+      {# namespace/service of the chosen backend's Service, from backend-service.map
+          keyed by the selected backend name (var(txn.backend_name)). The pairing
+          lives in a map, not `set-var` lines in the backend, so the backend section
+          stays empty (dynamic) and a re-key is reload-free; the value is still the
+          Service's ns/svc, not the generated backend name. Empty when no backend was
+          chosen, so the fields drop out. Bare names, namespace separate, as OTel
+          semconv and ECS have it — and so `service` and `server_pod` read the same. #}
+      %(namespace)[var(txn.backend_name),map({{ mapPath("backend-service.map") }}),field(1,/)]
+      %(service)[var(txn.backend_name),map({{ mapPath("backend-service.map") }}),field(2,/)]
 
   util-want-route:
     template: |-
@@ -843,12 +817,10 @@ templateSnippets:
 
   log-fields-105-server-pod:
     template: |-
-      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
-      {# bc_dst is the backend connection's destination — the pod actually
-          talked to, after runtime address updates. Empty when no backend was
-          contacted, and an unmatched lookup yields empty too, so the field
-          drops out rather than reading "-". #}
-      %(server_pod)[bc_dst,map({{ mapPath("pod-names.map") }})]
+      {# The server name is the pod name (pod-named servers, ADR-0011), so `%s`
+          is the pod the request was served by — no address→name map needed.
+          `<NOSRV>` when HAProxy answered the request itself. #}
+      %(server_pod)s
 
   log-fields-100-core:
     template: |-
@@ -1152,23 +1124,27 @@ templateSnippets:
     template: |
       {#
         Helper macros for BackendServers. Import these using:
-          {% import "util-backend-servers-helpers" for BuildServerOptions %}
+          {% import "util-backend-servers-helpers" for ServerName %}
       #}
 
-      {# Builds the HAProxy server options string (flags, maxconn).
-          Called inline in server line output.
-      #}
-      {% macro BuildServerOptions(serverOpts map[string]any) %}
-        {%- var opts = "" -%}
-        {%- var flags = serverOpts | dig("flags") | toSlice() -%}
-        {%- if len(flags) > 0 -%}
-          {%- opts = " " + join(toStringSlice(flags), " ") -%}
-        {%- end -%}
-        {%- if maxconn := serverOpts | dig("podMaxconnValue"); maxconn != nil -%}
-          {%- opts = opts + " maxconn " + tostring(maxconn) -%}
-        {%- end -%}
-        {{- opts -}}
-      {% end %}
+      {# Sanitises a pod (or `<service>-<pod>`) name into an HAProxy server name:
+          the CLI splits on whitespace and `;` and uses `/` itself, so anything
+          outside [A-Za-z0-9_.-] becomes `-`. Pod and Service names are already
+          DNS-1123, so this only guards custom-CRD libraries that pass arbitrary
+          names. Capped at 59, not the 63-byte server-name limit: BackendServers'
+          de-collision loop may append a `-<n>` suffix (up to `-999`), and the
+          final name must still fit 63 bytes. A func var (not a macro) so it is
+          callable from BackendServers' func body. #}
+      {%- var ServerName = func(podName string) string {
+        var clean = regexp("[^A-Za-z0-9_.-]").ReplaceAll(podName, "-")
+        if clean == "" {
+          clean = "srv"
+        }
+        if len(clean) > 59 {
+          clean = clean[:59]
+        }
+        return clean
+      } -%}
 
   # ----------------------------------------------------------------------------
   # Service Port Resolution
@@ -1372,17 +1348,19 @@ templateSnippets:
                           own list of {name, address, port, weight, disabled,
                           guid, comment}
           defaultServer - `default-server` keyword records {name, args}, formatted
-                          into the `default-server` line
+                          into the profile's `default-server` line (use
+                          DefaultServerArgs(opts) to build them from serverOpts)
           comments      - provenance lines emitted above the section header
-          shape         - "structural" (default) or "dynamic"
+          shape         - derived from body: "dynamic" when empty, "structural"
+                          otherwise; set explicitly to override
           shapeReason   - what forced the shape
 
         Example:
           {{ Backend(map[string]any{
-               "name":    beKey,
-               "guid":    make_guid("be", beKey),
-               "body":    []any{"default-server check"},
-               "servers": BackendServers(svcName, 0, port, opts, portName, beKey, ns),
+               "name":          beKey,
+               "guid":          make_guid("be", beKey),
+               "defaultServer": DefaultServerArgs(opts),
+               "servers":       BackendServers(svcName, 0, port, opts, portName, beKey, ns),
              }) }}
       #}
       {#- Adds the directive lines of a rendered block (an extension point's
@@ -1425,46 +1403,119 @@ templateSnippets:
         }
         return line
       } -%}
+      {#- Turns a list of ONE-keyword strings ("maxconn 100", "ssl", "ca-file p")
+          into structured KeywordArg records ({name, args}). Each entry must be a
+          single server keyword — a multi-keyword string would need an HAProxy
+          grammar to split (RULE #1), so emitters append one keyword per entry.
+          The split is first-space only, exactly how client-native parses a server
+          keyword, so the record reconstructs the line the differential test reads.
+          Building the args structurally (not a raw default-server string) is what
+          lets the deploy side compose a correct, secure `add server` for a
+          pod-named server at runtime. -#}
+      {%- var FlagsToKeywordArgs = func(flags []any) []any {
+        var out = []any{}
+        for _, f := range flags {
+          var parts = splitN(tostring(f), " ", 2)
+          var kw = map[string]any{"name": parts[0]}
+          if len(parts) > 1 {
+            kw["args"] = []any{parts[1]}
+          }
+          out = append(out, kw)
+        }
+        return out
+      } -%}
+      {#- The structured `default-server` args for a backend: the check directive
+          (check|no-check), the per-server keyword flags, and the per-pod maxconn.
+          Passed to Backend() as `defaultServer` so the keywords are both on the
+          profile's default-server line AND visible in the plan record. -#}
+      {%- var DefaultServerArgs = func(serverOpts map[string]any) []any {
+        var ds = []any{map[string]any{"name": tostring(serverOpts | dig("checkDirective") | fallback("check"))}}
+        for _, kw := range FlagsToKeywordArgs(toSlice(serverOpts["flags"])) {
+          ds = append(ds, kw)
+        }
+        if m := serverOpts | dig("podMaxconnValue"); m != nil {
+          ds = append(ds, map[string]any{"name": "maxconn", "args": []any{tostring(m)}})
+        }
+        return ds
+      } -%}
       {% macro Backend(spec map[string]any) %}
         {%%
           var name = tostring(spec | dig("name") | fallback(""))
+
+          // A hash-family balance (source/uri/url_param/hdr/rdp-cookie/hash)
+          // refuses `add server` unless `hash-type consistent` is set, so a
+          // pod-named server can't be added at runtime without it — the backend
+          // would reload on every pod change. Inject it by default so pod churn
+          // stays reload-free everywhere except static-rr and an explicit
+          // `hashType: map-based` opt-out (documented: "pod churn will reload").
+          var balance = tostring(spec | dig("balance") | fallback(""))
+          var hashType = tostring(spec | dig("hashType") | fallback(""))
+          if balance != "" && hashType == "" {
+            var algo = split(split(balance, "(")[0], " ")[0]
+            for _, h := range []string{"source", "uri", "url_param", "hdr", "rdp-cookie", "hash"} {
+              if algo == h {
+                hashType = "consistent"
+              }
+            }
+          }
+          spec["hashType"] = hashType
+
+          // mode / balance / hash-type / default-server and the shared directive
+          // lines live in a content-addressed `defaults haptic-be-<hash>`; two
+          // backends of the same shape get the same profile and one section,
+          // which is what lets a route be added at runtime without a reload.
+          var profileName, perr = planRegistry.Profile(map[string]any{
+            "mode":          spec["mode"],
+            "balance":       spec["balance"],
+            "hashType":      hashType,
+            "defaultServer": spec["defaultServer"],
+            "profile":       spec["profile"],
+          })
+          if perr != nil {
+            fail(perr.Error())
+          }
+
+          // The section is `from <profile>` + guid + body + servers. `body`
+          // (stick-table, filter, raw injections) keeps the backend structural;
+          // an empty body is dynamic-eligible. The author may force the shape
+          // (unix-socket servers, base's own backends).
+          var body = toSlice(spec["body"])
           if spec["shape"] == nil {
+            if len(body) == 0 {
+              spec["shape"] = "dynamic"
+            } else {
+              spec["shape"] = "structural"
+            }
+          }
+          // Shape code "structural-crt": a backend carrying an mTLS `crt` (resolved
+          // via crt-base, so its arg can't match the runtime cert store). Expand it
+          // to a structural shape plus the reason, defined once here rather than
+          // duplicated at every crt call site.
+          if spec["shape"] == "structural-crt" {
             spec["shape"] = "structural"
+            spec["shapeReason"] = "mTLS client cert (crt) is crt-base-relative and can't match add server, so pod churn reloads"
           }
 
           var lines = []any{}
           for _, comment := range toSlice(spec["comments"]) {
             lines = append(lines, tostring(comment))
           }
-          lines = append(lines, "backend " + name)
+          lines = append(lines, "backend " + name + " from " + profileName)
           if guid := tostring(spec | dig("guid") | fallback("")); guid != "" {
             lines = append(lines, "    guid " + guid)
           }
-          if mode := tostring(spec | dig("mode") | fallback("")); mode != "" {
-            lines = append(lines, "    mode " + mode)
-          }
-          if balance := tostring(spec | dig("balance") | fallback("")); balance != "" {
-            lines = append(lines, "    balance " + balance)
-          }
-          if hashType := tostring(spec | dig("hashType") | fallback("")); hashType != "" {
-            lines = append(lines, "    hash-type " + hashType)
-          }
-          var defaultServer = []any{}
-          for _, keyword := range toSlice(spec["defaultServer"]) {
-            var arg = keyword.(map[string]any)
-            defaultServer = append(defaultServer,
-              join(append([]any{arg["name"]}, toSlice(arg["args"])...), " "))
-          }
-          if len(defaultServer) > 0 {
-            lines = append(lines, "    default-server " + join(defaultServer, " "))
-          }
-          for _, line := range toSlice(spec["body"]) {
+          for _, line := range body {
             lines = append(lines, "    " + tostring(line))
           }
           for _, server := range toSlice(spec["servers"]) {
             lines = append(lines, "    " + ServerLine(server.(map[string]any)))
           }
 
+          // The record keeps mode/balance/hash-type/default-server as metadata
+          // (the deploy side composes `add backend from <profile>` and
+          // `add server` from them); `profile` becomes the resolved name, no
+          // longer the input lines.
+          spec["profile"] = profileName
           var token, err = planRegistry.Backend(spec, join(lines, "\n") + "\n")
           if err != nil {
             fail(err.Error())
@@ -1480,128 +1531,77 @@ templateSnippets:
   util-backend-servers:
     template: |
       {#
-        BackendServers - Resolves Kubernetes EndpointSlices into server records
-        for Backend(), which formats them into the server lines.
+        BackendServers — resolves a Service's EndpointSlices into one server
+        record per endpoint address for Backend(), which formats them into
+        `server` lines. Servers are named after their pod (ADR-0011: the file
+        always equals the current pod set), so a rolling update is add/remove of
+        named servers at runtime, not slot reuse.
 
-        This helper handles the complete flow:
-        1. Resolve the slot block size from parameters or defaults
-        2. Look up the Service to find port name (for targetPort resolution)
-        3. Fetch EndpointSlices and resolve actual pod ports
-        4. Size the slot pool: fit the endpoints plus headroom, keep the current
-           pool when it still fits (no reload), grow or shrink otherwise
-        5. Assign endpoints to slots, preserving existing assignments
-        6. Return one record per slot
+        Parameters (signature unchanged so every call site is untouched — RULE #1):
+          serviceName    - Service to resolve endpoints for
+          maxServerSlots - ignored (no slot pool); kept for signature stability
+          port           - Service port number (may differ from the pod port
+                           via targetPort)
+          serverOpts     - options map:
+                             .weight     - per-server `weight` (weighted TCPRoute)
+                             .namePrefix - prepended to each server name so pods
+                                           from different Services sharing one
+                                           backend (weighted TCPRoute) never
+                                           collide (`<service>-<pod>`)
+          portName       - port name for targetPort resolution (nil = auto-lookup)
+          backendName    - backend name, for the per-server guid (nil = none)
+          namespace      - Service namespace
 
-        Slot Preservation (Zero-Reload Updates):
-        When currentConfig is available, the helper looks up the existing backend
-        and preserves server slot assignments during rolling deployments. This
-        enables zero-reload updates via HAProxy runtime API by keeping the same
-        SRV_N slot for each pod IP:port combination across config changes.
-
-        Slot Pool Sizing:
-        Endpoints beyond the pool are never dropped. desired = endpoints +
-        max(extraContext.serverSlots.minFree, ceil(endpoints/4)), rounded up to a
-        multiple of the block size; the current pool is kept while it still fits
-        and is smaller than twice desired (hysteresis), so a rolling update or a
-        scale-up within the headroom is reload-free and a scale-down doesn't flap.
-
-        Parameters:
-          serviceName    - Service name to look up endpoints
-          maxServerSlots - Slot block size (0 = serverOpts.serverSlotsValue, else
-                           extraContext.serverSlots.increment, default 1). Not a cap:
-                           a pool that outgrows its block is grown by another block.
-          port           - Service port number (may differ from pod port via targetPort)
-          serverOpts     - Options map:
-                             .serverSlotsValue - slot block size (scale-server-slots)
-                             .flags[]          - server flags (e.g., "backup", "weight 10")
-                             .podMaxconnValue  - per-server maxconn
-          portName       - Port name for targetPort resolution (nil = auto-lookup)
-          backendName    - HAProxy backend name for slot preservation (nil = disabled)
-
-        Example:
-          "servers": BackendServers("my-service", 0, 80, serverOpts, nil, "default_my-ingress_svc_my-service_http", "default")
-
-        Output (one record per slot, in slot order):
-          {"name": "SRV_1", "address": "10.0.0.1", "port": 8080, "comment": "Pod: my-pod-abc"}
-          {"name": "SRV_2", "address": "192.0.2.1", "port": 1, "disabled": true, "comment": "Placeholder"}
-          ...
+        Not-ready / terminating endpoints are emitted as `disabled` servers, not
+        dropped: a readiness flip is then a runtime `set server state`, not an
+        add/remove. Records are ordered by pod name then address so the render is
+        deterministic regardless of EndpointSlice ordering.
       #}
+      {%- import "util-backend-servers-helpers" for ServerName -%}
       {%- var BackendServers = func(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any, backendName any, namespace string) []any {
-          // ── 1. Resolve the slot block size ────────────────────────────────
-          // Priority: maxServerSlots param > serverOpts.serverSlotsValue >
-          // extraContext.serverSlots.increment > 1. haproxytech
-          // scale-server-slots semantics: the pool is provisioned in blocks
-          // of this size and grown by a block (one reload) when it fills.
-          var block = 0
-          if maxServerSlots > 0 {
-            block = maxServerSlots
-          } else if v := serverOpts | dig("serverSlotsValue"); v != nil {
-            block = toint(v)
-          }
-          if block <= 0 {
-            block = toint(extraContext | dig("serverSlots", "increment") | fallback(1))
-          }
-          if block < 1 { block = 1 }
-          var minFree = toint(extraContext | dig("serverSlots", "minFree") | fallback(2))
-          if minFree < 0 { minFree = 0 }
-
-          // ── 1b. Optional slot prefix + weight ─────────────────────────────
-          // slotPrefix (default "SRV_") lets ONE backend host servers from
-          // several Services in disjoint, independently-preserved slot ranges
-          // (weighted TCPRoute: `balance roundrobin` across backendRefs). Each
-          // Service is emitted with its own prefix so the reload-free slot
-          // preservation reads back only its own slots. weight (optional)
-          // appends ` weight N` for proportional load-balancing. Both default
-          // to the current behaviour, so existing single-Service callers are
-          // byte-for-byte unchanged.
-          var slotPrefix = "SRV_"
-          if v := serverOpts | dig("slotPrefix"); v != nil && tostring(v) != "" {
-            slotPrefix = tostring(v)
+          var namePrefix = ""
+          if v := serverOpts | dig("namePrefix"); v != nil {
+            namePrefix = tostring(v)
           }
           var weight any = nil
           if v := serverOpts | dig("weight"); v != nil {
             weight = toint(v)
           }
+          var bkName = ""
+          if backendName != nil {
+            bkName = tostring(backendName)
+          }
 
-          // ── 2. Get port name for targetPort resolution ────────────────────
-          // If provided as parameter, use it. Otherwise, look it up below.
+          // Resolve the port name for targetPort translation: use the given one,
+          // else look it up from the Service.
           var pn = ""
           if portName != nil && tostring(portName) != "" {
             pn = tostring(portName)
           }
-
-          // ── 3. Fetch EndpointSlices for the service ───────────────────────
           var allSlices = resources.endpoints.Fetch(namespace, serviceName)
-
-          // ── 4. Look up port name from Service if not provided ─────────────
-          // This enables targetPort resolution (service port → pod port)
-          if pn == "" && len(allSlices) > 0 {
-            if namespace != "" {
-              var svc = resources.services.GetSingle(namespace, serviceName)
-              if svc != nil {
-                for _, sp := range svc.Spec.Ports {
-                  if toint(sp.Port) == port {
-                    pn = sp.Name
-                    break
-                  }
+          if pn == "" && len(allSlices) > 0 && namespace != "" {
+            var svc = resources.services.GetSingle(namespace, serviceName)
+            if svc != nil {
+              for _, sp := range svc.Spec.Ports {
+                if toint(sp.Port) == port {
+                  pn = sp.Name
+                  break
                 }
               }
             }
           }
 
-          // ── 5. Collect endpoints with resolved ports ──────────────────────
-          var endpoints = []any{}
+          // Collect one entry per endpoint address, keyed for a deterministic
+          // order (pod|address). Dual-stack lists a pod under two addresses, so
+          // the address is part of the key. Not-ready/terminating endpoints are
+          // kept (marked notReady) so they become disabled servers.
+          var byKey = map[string]any{}
           for _, slice := range allSlices {
-            // Resolve pod port from EndpointSlice's ports array
             var slicePorts = slice.Ports
             var resolvedPort = 0
-
             if pn != "" {
-              // A Service selector may match pods that do not expose the
-              // requested named targetPort. Kubernetes represents those pods
-              // in a separate EndpointSlice whose ports list omits that name
-              // (and may be empty). Never fall back to the Service port for
-              // such a slice: the endpoint is not valid for this Service port.
+              // A slice whose ports omit the named targetPort is not valid for
+              // this Service port; never fall back to the Service port for it.
               for _, p := range slicePorts {
                 if p.Name == pn {
                   resolvedPort = toint(p.Port)
@@ -1609,9 +1609,6 @@ templateSnippets:
                 }
               }
             } else {
-              // Without a port name, retain the resolved Service port as the
-              // compatibility fallback. A single concrete EndpointSlice port
-              // is more precise and wins when present.
               resolvedPort = port
               if len(slicePorts) == 1 {
                 var endpointPort = toint(slicePorts[0].Port)
@@ -1620,236 +1617,71 @@ templateSnippets:
                 }
               }
             }
-            // Note: If multiple ports exist but no name available,
-            // we use the service port as fallback.
-
             if resolvedPort <= 0 {
-              // No resolvable port for this slice: the referenced Service is
-              // not in the store yet (ResolveServicePort returned 0 for a
-              // by-name reference) and this slice doesn't carry the named
-              // port either. An `addr:0` server line would be meaningless —
-              // leave the slots as placeholders and let a later reconcile
-              // converge once the Service arrives.
+              // Service not in the store yet and no named port on this slice — an
+              // addr:0 line is meaningless. Skip it; a later reconcile converges
+              // once the Service arrives.
               continue
             }
-
-            // Collect addresses from this slice. Filter on the
-            // EndpointSlice conditions so endpoints whose pods aren't
-            // actually serving don't end up in the backend:
-            //
-            //   - Ready=false: the pod is in the slice but the
-            //     container isn't listening yet (kubelet adds new
-            //     pods at PodReadyToStartContainers, well before
-            //     the readiness probe flips Ready=true). Including
-            //     it puts a dead IP in the SRV slot → HAProxy
-            //     returns 503 SC-- on dispatch until the next
-            //     reconcile catches up.
-            //
-            //   - Terminating=true: kubelet has sent SIGTERM and
-            //     most apps stop accepting new connections on
-            //     SIGTERM, well before the terminationGracePeriod
-            //     elapses. Including it lets HAProxy keep dispatching
-            //     to a draining/dead pod → 503 SC-- during the
-            //     rolling-restart drain window.
-            //
-            // Per the K8s EndpointSlice spec, a nil Conditions.Ready
-            // means "ready" (the producer didn't set it), so only
-            // skip when explicitly false. Conditions.Terminating
-            // defaults to nil/false; only skip when explicitly true.
-            // Tested by validationTests test-ingress-endpoint-conditions-filter
-            // in libraries/ingress.yaml.
             for _, ep := range slice.Endpoints {
-              if ep.Conditions.Ready != nil && !*ep.Conditions.Ready {
-                continue
-              }
-              if ep.Conditions.Terminating != nil && *ep.Conditions.Terminating {
-                continue
-              }
+              // K8s EndpointSlice: nil Ready means ready; Terminating defaults to
+              // nil/false. A not-ready or terminating pod still gets a server
+              // line, marked disabled, so a readiness flip is a runtime state
+              // change instead of a del+add.
+              var notReady = (ep.Conditions.Ready != nil && !*ep.Conditions.Ready) ||
+                (ep.Conditions.Terminating != nil && *ep.Conditions.Terminating)
               for _, addr := range ep.Addresses {
-                var name = ep.TargetRef.Name
-                if name == "" { name = addr }
-                endpoints = append(endpoints, map[string]any{
-                  "name": name, "address": addr, "port": resolvedPort,
-                })
+                var podName = ep.TargetRef.Name
+                if podName == "" {
+                  podName = addr
+                }
+                byKey[podName + "|" + addr] = map[string]any{
+                  "pod": podName, "address": addr, "port": resolvedPort, "notReady": notReady,
+                }
               }
             }
           }
 
-          // ── 5b. Record degraded by-name references for visibility ─────────
-          // port <= 0 is only reachable when ResolveServicePort degraded a
-          // by-NAME reference because the Service is absent from the store
-          // (issue #66). If on top of that no EndpointSlice carried the named
-          // port, this backend renders placeholder-only slots and serves 503 —
-          // correct during a propagation race, but a Service-name typo would
-          // stay silent forever. Mark the reference in the shared context so
-          // post-config visibility surfaces (the ingress library's
-          // `ingress-degraded-backend-events` k8sResources template) can map
-          // it back to the owning resources after the render. When a slice
-          // DOES resolve the named port, real servers were emitted and traffic
-          // flows — no signal. ComputeIfAbsent is goroutine-safe (backends
-          // render in shards) and dedups repeated references.
-          if port <= 0 && pn != "" && len(endpoints) == 0 {
+          // Degraded by-name reference (issue #66): a by-name ref whose Service
+          // is absent AND no slice carried the named port yields no endpoints.
+          // Record it so the ingress library can surface a Warning Event.
+          if port <= 0 && pn != "" && len(byKey) == 0 {
             shared.ComputeIfAbsent("degradedBackendRef:"+namespace+"/"+serviceName+"/"+pn,
               func() any { return true })
           }
 
-          // ── 6. Size the slot pool ─────────────────────────────────────────
-          // Never fewer slots than endpoints. Headroom covers a default
-          // rolling update (maxSurge 25%) and small scale-ups without a
-          // reload; the current pool is kept while it still fits and is under
-          // twice the desired size, so growth is a single reload per block and
-          // a scale-down only shrinks (one reload) once the pool is mostly idle.
-          var bkName = ""
-          if backendName != nil {
-            bkName = tostring(backendName)
-          }
-          var currentSlots = 0
-          if bkName != "" && !isNil(currentConfig) {
-            var bkServers = currentConfig.ServerIndex[bkName]
-            if bkServers != nil {
-              for serverName, _ := range bkServers {
-                if hasPrefix(serverName, slotPrefix) && toint(serverName[len(slotPrefix):]) > 0 {
-                  currentSlots++
-                }
-              }
-            }
-          }
-          var headroom = (len(endpoints) + 3) / 4
-          if headroom < minFree { headroom = minFree }
-          var desired = len(endpoints) + headroom
-          if desired % block != 0 { desired = desired + block - (desired % block) }
-          if desired < block { desired = block }
-          var slots = desired
-          if currentSlots > 0 && len(endpoints) <= currentSlots && currentSlots < 2*desired {
-            slots = currentSlots
-          }
-
-          // ── 6b. Build slot assignment map from current config ─────────────
-          // Servers come from currentConfig.ServerIndex[bkName], which the
-          // controller projects out of the plan the fleet last ACKed.
-          // highestUsedSlot is used by step 7's second pass to allocate new
-          // endpoints AFTER all currently-used slots — never reusing a slot
-          // freshly vacated in the same render. Required for option redispatch
-          // to have a healthy fallback under merged rolling-restart EPS events.
-          var existingSlots = map[string]int{}
-          var usedSlots = map[int]bool{}
-          var highestUsedSlot = 0
-          if bkName != "" && !isNil(currentConfig) {
-            var bkServers = currentConfig.ServerIndex[bkName]
-            if bkServers != nil {
-              for serverName, server := range bkServers {
-                // Extract slot number from server name (e.g., "SRV_1" → 1)
-                if hasPrefix(serverName, slotPrefix) {
-                  var slotStr = serverName[len(slotPrefix):]
-                  var slotNum = toint(slotStr)
-                  if slotNum > 0 && slotNum <= slots {
-                    // Skip placeholders (the unroutable sentinel on port 1) and
-                    // any server without a resolvable port — we can't form an
-                    // address:port slot key without one, and dereferencing a nil
-                    // Port would panic. Both the current sentinel (192.0.2.1) and
-                    // the legacy one (127.0.0.1) are skipped so slot preservation
-                    // is correct across a rolling chart upgrade, where the live
-                    // pod config still carries 127.0.0.1:1 placeholders until its
-                    // first post-upgrade reload.
-                    if server.Port != nil && !(*server.Port == 1 && (server.Address == "192.0.2.1" || server.Address == "127.0.0.1")) {
-                      var key = server.Address + ":" + tostring(*server.Port)
-                      existingSlots[key] = slotNum
-                      usedSlots[slotNum] = true
-                      if slotNum > highestUsedSlot {
-                        highestUsedSlot = slotNum
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-
-          // ── 7. Assign endpoints to slots with preservation ────────────────
-          // First pass: endpoints already in the prior config keep their slot.
-          // Second pass: NEW endpoints take slots AFTER all currently-used
-          // ones (highestUsedSlot+1, wrap at slots+1 → 1). Never reuse a
-          // freshly-vacated slot — keeps the old slot as a drained
-          // placeholder so option redispatch has a healthy fallback when a
-          // rolling-restart's old-pod-terminating + new-pod-ready EPS events
-          // are merged into one render.
-          var slotAssignments = map[int]map[string]any{}  // slot → endpoint
-          var unassignedEndpoints = []any{}
-
-          // First pass: preserve existing slot assignments
-          for _, ep := range endpoints {
-            var epMap = ep.(map[string]any)
-            var key = tostring(epMap["address"]) + ":" + tostring(epMap["port"])
-            if slot, ok := existingSlots[key]; ok {
-              slotAssignments[slot] = epMap
-            } else {
-              unassignedEndpoints = append(unassignedEndpoints, ep)
-            }
-          }
-
-          // Second pass: allocate AFTER highestUsedSlot (wrap when needed).
-          var nextFreeSlot = highestUsedSlot + 1
-          if nextFreeSlot > slots {
-            nextFreeSlot = 1
-          }
-          for _, ep := range unassignedEndpoints {
-            var attempts = 0
-            for slotAssignments[nextFreeSlot] != nil {
-              nextFreeSlot++
-              if nextFreeSlot > slots {
-                nextFreeSlot = 1
-              }
-              attempts++
-              if attempts > slots {
-                break
-              }
-            }
-            if slotAssignments[nextFreeSlot] == nil {
-              slotAssignments[nextFreeSlot] = ep.(map[string]any)
-              nextFreeSlot++
-              if nextFreeSlot > slots {
-                nextFreeSlot = 1
-              }
-            }
-          }
-
-          // ── 8. One record per slot ────────────────────────────────────────
-          // Server addresses are CONFIG-DRIVEN across reloads. HAProxy does NOT
-          // restore an IP-literal server's address from the server-state-file: the
-          // state-file address is only stashed in `srv->lastaddr` and applied via
-          // the `init-addr` resolution chain, which `srv_init_addr()` runs ONLY for
-          // FQDN / DNS-SRV servers (`if (srv->hostname || srv->srvrq)` in
-          // src/server.c). Pod servers are IP literals, so the parsed config
-          // address always wins on reload — `init-addr last` + the server-state
-          // machinery were a no-op for our address and have been removed. The full
-          // analysis and the alternatives we rejected (DNS/server-template) are in
-          // docs/adr/0011-no-haproxy-server-state-file.md. Correctness relies on the
-          // deploy pipeline rendering the CURRENT endpoints into the config (the
-          // single deploy-loop keeps it fresh) plus the runtime fast path for live,
-          // reload-free convergence.
-          //
-          // Placeholders use 192.0.2.1 (RFC 5737 TEST-NET-1, guaranteed unroutable),
-          // NOT 127.0.0.1 — defense in depth. If anything ever produced a slot with
-          // a placeholder address but an active port, 127.0.0.1:<bind-port> would
-          // point back at this proxy's own `bind *:80` and loop the request through
-          // the h2c loopback until `tune.http.maxhdr` trips → 400. 192.0.2.1 can
-          // never reach the bind, so the worst case is a fast `timeout connect` +
-          // `option redispatch` failover instead of an unbounded self-loop.
           var servers = []any{}
-          for i := 1; i <= slots; i++ {
-            var slotName = slotPrefix + tostring(i)
-            var record = map[string]any{
-              "name": slotName, "address": "192.0.2.1", "port": 1,
-              "disabled": true, "comment": "Placeholder",
+          var seen = map[string]bool{}
+          // keys() returns the map keys sorted, so the server order is stable.
+          for _, k := range keys(byKey) {
+            var c = byKey[k].(map[string]any)
+            var base = ServerName(namePrefix + tostring(c["pod"]))
+            // Two servers can sanitise to the same name: a dual-stack pod listed
+            // under two addresses, or two distinct source names that clean alike
+            // (a custom-CRD list may hold `foo/bar` and `foo:bar`, both →
+            // `foo-bar`). Key `seen` on the FINAL sanitised name and suffix
+            // `-<n>` until unused, so neither case silently drops a server and a
+            // suffix can't collide with a real `<name>-<n>`. ServerName reserved
+            // the suffix room, so the result stays within 63 bytes.
+            var srvName = base
+            var n = 1
+            for seen[srvName] {
+              n = n + 1
+              srvName = base + "-" + tostring(n)
             }
-            if ep := slotAssignments[i]; ep != nil {
-              record = map[string]any{
-                "name": slotName, "address": ep["address"], "port": ep["port"],
-                "disabled": false, "comment": "Pod: " + tostring(ep["name"]),
-              }
+            seen[srvName] = true
+            var record = map[string]any{
+              "name": srvName, "address": c["address"], "port": c["port"],
+              "comment": "Pod: " + tostring(c["pod"]),
+            }
+            // Only a not-ready endpoint prints a state keyword (`disabled`); a
+            // ready server needs none (`enabled` is the default), which keeps the
+            // line shorter and a readiness flip a single `set server state`.
+            if c["notReady"] == true {
+              record["disabled"] = true
             }
             if bkName != "" {
-              record["guid"] = make_guid("srv", bkName, slotName)
+              record["guid"] = make_guid("srv", bkName, srvName)
             }
             if weight != nil {
               record["weight"] = weight
@@ -1858,6 +1690,17 @@ templateSnippets:
           }
           return servers
       } -%}
+  # A removed operator knob: servers are named after pods (no slot pool,
+  # ADR-0011), so there is nothing to size. Operator input, so it fails the
+  # render (the config-load gate reports it); `haptic preflight` catches it
+  # before an upgrade. The scale-server-slots annotations (tenant input) only
+  # warn — see the backend-directives handlers.
+  features-005-removed-server-slots:
+    template: |
+      {%- if (extraContext | dig("serverSlots")) != nil %}
+      {{- fail("extraContext.serverSlots is no longer supported: servers are named after their pods (no slot pool), so there is nothing to size. Remove controller.config.templatingSettings.extraContext.serverSlots from your values.") -}}
+      {%- end -%}
+
   # ============================================================================
   # Address Discovery
   # ============================================================================
@@ -2911,19 +2754,6 @@ maps:
       # a wildcard listener). See https://haproxy-haptic.org/docs/latest/libraries/base/#frontend-routing-logic
       {{ render_glob "map-hostregex-*" -}}
 
-  pod-names.map:
-    ordered: false
-    template: |
-      # Backend pod IP -> pod name, for the access log and the upstream span.
-      # HAProxy has no pod concept, and the chosen SERVER is a pre-allocated slot
-      # (SRV_1), so the name has to come from the connection's destination.
-      #
-      # This file always renders, header included: a map that exists only when
-      # pods exist would be CREATED on the first endpoint and DELETED with the
-      # last, and both force a reload. Content-only changes go over the runtime
-      # API instead, so pod churn never reloads HAProxy.
-      {{ render_glob "map-pod-names-*" -}}
-
   path-exact.map:
     ordered: false
     template: |
@@ -3008,6 +2838,16 @@ maps:
       # map-only, reload-free change. The non-settable timeouts (connect/queue/http-request/
       # http-keep-alive/check) stay as per-value backend directives.
       {{ render_glob "map-backend-timeout-*" -}}
+
+  backend-service.map:
+    ordered: false
+    template: |
+      # <backend> -> <namespace>/<service>, read at log time for the `namespace`
+      # and `service` access-log fields via var(txn.backend_name). Keeping the
+      # namespace/service out of the backend section (they were `set-var` lines)
+      # is what lets an ingress/gateway backend be dynamic — its body stays empty.
+      # Populated by resource libraries (map-backend-service-*).
+      {{ render_glob "map-backend-service-*" -}}
 
 files:
   400.http:
@@ -3267,9 +3107,12 @@ haproxyConfig:
     global
         {{ render "global-settings" | indent(2, true) }}
 
-    defaults
+    {# haptic-base: the rule-free parent every backend profile inherits from (`defaults haptic-be-<hash> from haptic-base`). Carries defaults-settings; keep it rule-free (a defaults with http-request/tcp-request rules can't be inherited). Go name: rendercontext.baseProfileName — keep the two in step. #}
+    defaults haptic-base
         {{ render "defaults-settings" | indent(2, true) }}
     {{ planRegistry.ProfileGroup() }}
+    {# haptic-implicit: the trailing, never-referenced defaults every proxy without an explicit `from` inherits. After the profiles so nothing inherits a named profile another proxy references with `from` (the warning `haproxy -c` raises otherwise, spike (c)). #}
+    defaults haptic-implicit from haptic-base
     {#- Phase 1: Feature Registration (side effects only, output discarded) -#}
     {#- Initialize SSL features first (if SSL library is loaded) -#}
     {%- _ = render_glob "features-ssl-initialization" -%}
@@ -3380,6 +3223,7 @@ haproxyConfig:
          "name": "http-h1-loopback",
          "guid": "be:http-h1-loopback",
          "mode": "tcp",
+         "shape": "structural",
          "body": []any{"# send-proxy-v2 preserves the original client IP/port across the unix-socket hop."},
          "servers": []any{map[string]any{"name": "loopback", "address": "unix@/etc/haproxy/http-h1-frontend.sock",
            "extra": []any{map[string]any{"name": "send-proxy-v2"}}}},
@@ -3388,6 +3232,7 @@ haproxyConfig:
          "name": "http-h2c-loopback",
          "guid": "be:http-h2c-loopback",
          "mode": "tcp",
+         "shape": "structural",
          "servers": []any{map[string]any{"name": "loopback", "address": "unix@/etc/haproxy/http-h2c-frontend.sock",
            "extra": []any{map[string]any{"name": "send-proxy-v2"}}}},
        }) }}
@@ -3765,6 +3610,83 @@ validationTests:
         target: rendering_error
         pattern: 'excludeMetrics\.inert has no `enabled`'
 
+  test-backend-profiles-dedup-and-order:
+    description: >-
+      Backends of the same shape share one content-addressed profile
+      (defaults haptic-be-<hash>); the profiles sit between haptic-base and the
+      trailing, never-referenced haptic-implicit; tune.defaults.purge is never
+      emitted (it would make named defaults un-inheritable by add backend).
+    fixtures:
+      services:
+        - {apiVersion: v1, kind: Service, metadata: {name: svc-a, namespace: default}, spec: {ports: [{port: 80, targetPort: 8080}]}}
+        - {apiVersion: v1, kind: Service, metadata: {name: svc-b, namespace: default}, spec: {ports: [{port: 80, targetPort: 8080}]}}
+      ingresses:
+        - {apiVersion: networking.k8s.io/v1, kind: Ingress, metadata: {name: prof-a, namespace: default}, spec: {ingressClassName: haproxy, rules: [{host: a.example.com, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: svc-a, port: {number: 80}}}}]}}]}}
+        - {apiVersion: networking.k8s.io/v1, kind: Ingress, metadata: {name: prof-b, namespace: default}, spec: {ingressClassName: haproxy, rules: [{host: b.example.com, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: svc-b, port: {number: 80}}}}]}}]}}
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: 'tune\.defaults\.purge'}
+      # Two plain ingress backends of the same shape are dynamic (from a profile)
+      # and share ONE profile section: the ingress profile carries default-server
+      # and the two uniform set-timeout lines, and appears exactly once.
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend default_prof-a_svc_svc-a_80 from haptic-be-\w+$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend default_prof-b_svc_svc-b_80 from haptic-be-\w+$'}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$\n\s+default-server check\n\s+http-request set-timeout server ', expected: "1"}
+      # Profiles sit between haptic-base and the trailing haptic-implicit.
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^defaults haptic-base$.*?^defaults haptic-be-\w+ from haptic-base$.*?^defaults haptic-implicit from haptic-base$'}
+
+  test-backend-dynamic-body-only-from-guid-servers:
+    description: >-
+      A dynamic-shaped backend's section is only `from`/guid/servers — mode,
+      balance and default-server live in its profile, so it can be created and
+      populated at runtime without a reload.
+    extraContext:
+      defaultBackendService: {namespace: default, name: db-svc, port: 80}
+    fixtures:
+      services:
+        - {apiVersion: v1, kind: Service, metadata: {name: db-svc, namespace: default}, spec: {ports: [{name: http, port: 80, targetPort: 8080}]}}
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata: {name: db-svc-abc, namespace: default, labels: {kubernetes.io/service-name: db-svc}}
+          addressType: IPv4
+          endpoints:
+            - {addresses: ["10.5.0.1"], targetRef: {kind: Pod, name: db-pod-1}}
+          ports: [{name: http, port: 8080, protocol: TCP}]
+    assertions:
+      - type: haproxy_valid
+      # The section carries only from/guid/servers: body lines emit between guid
+      # and the server lines, so guid immediately followed by the server proves
+      # the body is empty (a dynamic shape).
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^backend default_backend from haptic-be-\w+$\n\s+guid be:default_backend$\n\s+server db-pod-1 10\.5\.0\.1:8080 '
+      # default-server rode into the profile, not the backend section.
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$\n\s+default-server check$'}
+
+  test-ingress-profile-budget:
+    description: >-
+      Profile budget: four plain ingress backends (four Services) are all the
+      same shape, so they share ONE ingress profile — a per-route value sneaking
+      into a profile would show up as extra profile sections.
+    fixtures:
+      services:
+        - {apiVersion: v1, kind: Service, metadata: {name: b1, namespace: default}, spec: {ports: [{port: 80, targetPort: 8080}]}}
+        - {apiVersion: v1, kind: Service, metadata: {name: b2, namespace: default}, spec: {ports: [{port: 80, targetPort: 8080}]}}
+        - {apiVersion: v1, kind: Service, metadata: {name: b3, namespace: default}, spec: {ports: [{port: 80, targetPort: 8080}]}}
+        - {apiVersion: v1, kind: Service, metadata: {name: b4, namespace: default}, spec: {ports: [{port: 80, targetPort: 8080}]}}
+      ingresses:
+        - {apiVersion: networking.k8s.io/v1, kind: Ingress, metadata: {name: pb1, namespace: default}, spec: {ingressClassName: haproxy, rules: [{host: b1.example.com, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: b1, port: {number: 80}}}}]}}]}}
+        - {apiVersion: networking.k8s.io/v1, kind: Ingress, metadata: {name: pb2, namespace: default}, spec: {ingressClassName: haproxy, rules: [{host: b2.example.com, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: b2, port: {number: 80}}}}]}}]}}
+        - {apiVersion: networking.k8s.io/v1, kind: Ingress, metadata: {name: pb3, namespace: default}, spec: {ingressClassName: haproxy, rules: [{host: b3.example.com, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: b3, port: {number: 80}}}}]}}]}}
+        - {apiVersion: networking.k8s.io/v1, kind: Ingress, metadata: {name: pb4, namespace: default}, spec: {ingressClassName: haproxy, rules: [{host: b4.example.com, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: b4, port: {number: 80}}}}]}}]}}
+    assertions:
+      - type: haproxy_valid
+      # Four dynamic backends…
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^backend default_pb[1-4]_svc_b[1-4]_80 from haptic-be-\w+$', expected: "4"}
+      # …one shared ingress profile.
+      - {type: match_count, target: haproxy.cfg, pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$\n\s+default-server check\n\s+http-request set-timeout server ', expected: "1"}
+
   test-render-plan-no-route-backends:
     description: >-
       With no routing resource the config still carries base's own registered
@@ -3775,7 +3697,7 @@ validationTests:
       - {type: not_contains, target: haproxy.cfg, pattern: "@haptic:"}
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^backend default_backend$.*?^\s+guid be:default_backend$'
+        pattern: '(?ms)^backend default_backend from haptic-be-\w+$.*?^\s+guid be:default_backend$'
 
   test-guid-directives:
     description: GUIDs are present on frontends, backends, and default_backend
@@ -3805,8 +3727,8 @@ validationTests:
       - {type: not_contains, target: haproxy.cfg, pattern: "@haptic:"}
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^backend http-h1-loopback$.*?^\s+mode tcp$.*?^\s+server loopback unix@/etc/haproxy/http-h1-frontend\.sock send-proxy-v2$'
-        description: The loopback backends are registered sections, spliced back where the token stood.
+        pattern: '(?ms)^backend http-h1-loopback from haptic-be-\w+$.*?^\s+server loopback unix@/etc/haproxy/http-h1-frontend\.sock send-proxy-v2$'
+        description: The loopback backends are registered sections, spliced back where the token stood; `mode tcp` moves to the profile.
       - {type: not_contains, target: haproxy.cfg, pattern: "tune\\.ssl\\.default-dh-param"}
       - type: contains
         target: haproxy.cfg
@@ -3910,8 +3832,8 @@ validationTests:
             - {name: http, port: 8080, protocol: TCP}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10.1.0.1:8080"}
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_2 10.1.0.2:8080"}
+      - {type: contains, target: haproxy.cfg, pattern: "server default-backend-pod-1 10.1.0.1:8080"}
+      - {type: contains, target: haproxy.cfg, pattern: "server default-backend-pod-2 10.1.0.2:8080"}
       - {type: not_contains, target: haproxy.cfg, pattern: "http-request return status 404"}
 
   test-default-backend-named-port:
@@ -3941,8 +3863,8 @@ validationTests:
             - {name: api, port: 9000, protocol: TCP}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10.2.0.1:9000 "}
-      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_1 10.2.0.1:80 "}
+      - {type: contains, target: haproxy.cfg, pattern: "server api-pod-0 10.2.0.1:9000 "}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server api-pod-0 10.2.0.1:80 "}
 
   test-default-backend-same-namespace:
     description: Default backend works with explicit namespace
@@ -3972,7 +3894,7 @@ validationTests:
             - {name: http, port: 8080, protocol: TCP}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10.2.0.1:8080"}
+      - {type: contains, target: haproxy.cfg, pattern: "server fallback-pod-1 10.2.0.1:8080"}
       - {type: not_contains, target: haproxy.cfg, pattern: "http-request return status 404"}
 
   # ==========================================================================
@@ -4007,43 +3929,9 @@ validationTests:
         pattern: '%\(span_id\)'
         description: The span fields are absent, not empty, when nothing mints them
 
-  test-pod-names-map-one-line-per-address:
+  test-server-named-after-pod:
     requires: [endpoints]
-    description: >-
-      A pod in two Services renders one pod-names line, not one per EndpointSlice.
-      The runtime API rejects a duplicate add, so a repeated key can only be
-      rebuilt by a full reload — which resets rate-limit stick-table state.
-    fixtures:
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata: {namespace: default, name: dup-a, labels: { kubernetes.io/service-name: dup-a }}
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.9"]
-              targetRef: { kind: Pod, name: dup-pod }
-          ports:
-            - port: 8080
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata: {namespace: default, name: dup-b, labels: { kubernetes.io/service-name: dup-b }}
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.9"]
-              targetRef: { kind: Pod, name: dup-pod }
-          ports:
-            - port: 8080
-    assertions:
-      - type: haproxy_valid
-      - {type: contains, target: map:pod-names.map, pattern: '(?m)^10\.0\.0\.9 dup-pod$'}
-      - type: not_contains
-        target: map:pod-names.map
-        pattern: '(?m)^10\.0\.0\.9 dup-pod\n10\.0\.0\.9 dup-pod$'
-        description: The address appears once even though two EndpointSlices carry it
-
-  test-server-pod-name-via-runtime-map:
-    requires: [endpoints]
-    description: The backend pod name reaches the log through a map, not through a config line
+    description: The server IS the pod (pod-named servers) and the log reads its name
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -4061,43 +3949,25 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - type: contains
-        target: map:pod-names.map
-        pattern: '(?m)^10\.0\.0\.1 echo-pod-1$'
-        description: The pod name lives in map CONTENT, which the orchestrator applies over the runtime API
-      - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+http-request set-var\(txn\.namespace\) str\(default\)$'
+        pattern: '(?m)^\s+server echo-pod-1 10\.0\.0\.1:8080 .*# Pod: echo-pod-1$'
         description: >-
-          Namespace and Service are separate bare values, as OTel semconv and ECS
-          both have them — and so `service` reads like `server_pod`
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+http-request set-var\(txn\.service\) str\(echo\)$'
-        description: >-
-          The backend states its own Service. Deriving it from the backend NAME
-          would make the log depend on a generated identifier that any library is
-          free to change
-      - {type: contains, target: haproxy.cfg, pattern: '%\(service\)\[var\(txn\.service\)\]'}
-      - type: contains
-        target: haproxy.cfg
-        pattern: '%\(server_pod\)\[bc_dst,map\('
-        description: >-
-          Resolved from the connection destination at log time. The chosen
-          server is a pre-allocated slot, so its name cannot identify the pod
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+server SRV_1 10\.0\.0\.1:8080 .*# Pod: echo-pod-1$'
-        description: >-
-          The slot keeps its generated name and the pod rides along as a trailing
-          comment. models.Server carries no comment field, so this text never
-          reaches the structured diff and cannot force a reload
+          The server IS the pod: its name is the pod name (ADR-0011), so a
+          rolling update is an add/remove of named servers over the runtime API.
       - type: not_contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+server echo-pod-1'
-        description: >-
-          The pod must never BE the server name. That is a structural field, so
-          every pod replacement would diff as a config change and reload HAProxy
-          instead of taking the runtime address update
+        pattern: '(?m)^\s+server SRV_[0-9]'
+        description: No slot pool — no SRV_N placeholders.
+      - {type: contains, target: haproxy.cfg, pattern: '%\(server_pod\)s'}
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'bc_dst,map\('
+        description: server_pod reads the server name directly, no pod-names.map.
+      # namespace/service come from backend-service.map (keyed on the backend),
+      # not per-backend set-var lines, so the backend body stays empty (dynamic).
+      - {type: contains, target: haproxy.cfg, pattern: '%\(service\)\[var\(txn\.backend_name\),map\([^)]*backend-service\.map\),field\(2,/\)\]'}
+      - {type: contains, target: 'map:backend-service.map', pattern: '(?m)^default_pn_svc_echo_80 default/echo$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.service\)'}
 
   test-tracing-route-key-marks-prefix-matches:
     _helm_skip_test: '{{ if not (dig "tracing" "enabled" false (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end }}'
@@ -4558,7 +4428,7 @@ validationTests:
         pattern: '(?ms)^global$.*?^  log stdout len 16384 format raw local0 info$'
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^defaults$.*?^  log stdout len 16384 format raw local0 info$'
+        pattern: '(?ms)^defaults haptic-base$.*?^  log stdout len 16384 format raw local0 info$'
       - type: not_contains
         target: haproxy.cfg
         pattern: '(?m)^  log global$'
@@ -4578,7 +4448,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^defaults$.*?^  log ring@accesslog len 16384 format rfc5424 local0 info$'
+        pattern: '(?ms)^defaults haptic-base$.*?^  log ring@accesslog len 16384 format rfc5424 local0 info$'
         description: >-
           The framing defaults to rfc5424 for a non-stdout target: a collector
           parses the syslog envelope and the JSON record inside it.
@@ -4592,7 +4462,7 @@ validationTests:
         description: Process/alert messages are unaffected — kubectl logs still works.
       - type: not_contains
         target: haproxy.cfg
-        pattern: '(?ms)^defaults$.*?^  log stdout'
+        pattern: '(?ms)^defaults haptic-base$.*?^  log stdout'
         description: No access-log copy on stdout, which is the whole point.
 
   test-access-log-target-remote-and-fanout:
@@ -4613,12 +4483,12 @@ validationTests:
         pattern: '(?m)^  log 10\.0\.0\.5:514 len 16384 format rfc5424 local6 debug$'
       - type: match_count
         target: haproxy.cfg
-        pattern: '(?ms)^defaults$.*?^  log '
+        pattern: '(?ms)^defaults haptic-base$.*?^  log '
         expected: "1"
         description: match_count anchors on the first line only; the fan-out pair is asserted individually.
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^defaults$.*?^  log stdout len 16384 format raw local0 info$'
+        pattern: '(?ms)^defaults haptic-base$.*?^  log stdout len 16384 format raw local0 info$'
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^  log 10\.0\.0\.5:514 len 16384 format rfc5424 local6 debug\n  log stdout len 16384 format raw local0 info$'
@@ -4720,7 +4590,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^defaults$.*?^  log /var/run/log:99999 len 16384 format rfc5424 local0 info$'
+        pattern: '(?ms)^defaults haptic-base$.*?^  log /var/run/log:99999 len 16384 format rfc5424 local0 info$'
 
   test-access-log-target-rejects-out-of-range-port:
     description: >-
@@ -4831,10 +4701,10 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^defaults$.*?^  log stdout len 16384 format raw local0 info$'
+        pattern: '(?ms)^defaults haptic-base$.*?^  log stdout len 16384 format raw local0 info$'
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^defaults$.*?^  log stdout len 16384 format raw local1 info$'
+        pattern: '(?ms)^defaults haptic-base$.*?^  log stdout len 16384 format raw local1 info$'
 
   test-access-log-targets-rejects-empty-map:
     description: >-

@@ -2,7 +2,7 @@ templateSnippets:
   util-generate-httproute-backends-gateway:
     requires: [gateways, httproutes, referencegrants]
     template: |
-      {%- import "util-backend" for Backend -%}
+      {%- import "util-backend" for Backend, FlagsToKeywordArgs -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
@@ -248,37 +248,52 @@ templateSnippets:
           }
         }
 
-        var body = []any{
-          "http-request set-var(txn.namespace) str(" + tostring(backendNs) + ")",
-          "http-request set-var(txn.service) str(" + tostring(backendName) + ")",
-        }
+        // namespace/service go into backend-service.map (map-backend-service-*),
+        // not set-var body lines, so the backend section stays empty (dynamic).
+        // Every defaults-legal directive (default-server, the fail-closed 503,
+        // retries, cookie, set-timeout) goes into the profile, not the body.
+        var body = []any{}
+        var profile = []any{}
 
-        var defaultServer = "default-server check"
+        // default-server keywords, one per entry so the plan record carries each
+        // as a structured KeywordArg (FlagsToKeywordArgs). The deploy side
+        // composes `add server` from the record, so a BackendTLS backend keeps
+        // its ssl/ca-file/verify/sni on a runtime-added pod (no silent bypass).
+        var dsFlags = []any{}
         if resolvedProtoFlag != "" {
-          defaultServer = defaultServer + " proto " + resolvedProtoFlag
+          dsFlags = append(dsFlags, "proto " + resolvedProtoFlag)
         }
         if btlsCaPath != "" && btlsCaPath != "@system-ca" {
-          defaultServer = defaultServer + " ssl ca-file " + btlsCaPath + " verify required"
+          dsFlags = append(dsFlags, "ssl", "ca-file " + btlsCaPath, "verify required")
         } else if btlsCaPath == "@system-ca" {
-          defaultServer = defaultServer + " ssl verify required"
+          dsFlags = append(dsFlags, "ssl", "verify required")
         } else if gwClientCertPath != "" {
-          defaultServer = defaultServer + " ssl verify none"
+          dsFlags = append(dsFlags, "ssl", "verify none")
         }
         if btlsCaPath != "" {
           if btlsHostname != "" {
-            defaultServer = defaultServer + " sni str(" + btlsHostname + ")"
+            dsFlags = append(dsFlags, "sni str(" + btlsHostname + ")")
           }
           if btlsVerifyHost != "" {
-            defaultServer = defaultServer + " verifyhost " + btlsVerifyHost
+            dsFlags = append(dsFlags, "verifyhost " + btlsVerifyHost)
           }
         }
         if gwClientCertPath != "" {
-          defaultServer = defaultServer + " crt " + gwClientCertPath
+          dsFlags = append(dsFlags, "crt " + gwClientCertPath)
         }
-        body = append(body, defaultServer)
+        // crt is crt-base-relative, so add server can't match it: structural (Backend
+        // records why). Reload-free needs a crt-base-free absolute reference (follow-up).
+        var beShape any = nil
+        if gwClientCertPath != "" {
+          beShape = "structural-crt"
+        }
+        var defaultServer = []any{map[string]any{"name": "check"}}
+        for _, kw := range FlagsToKeywordArgs(dsFlags) {
+          defaultServer = append(defaultServer, kw)
+        }
 
         if btlsBroken {
-          body = append(body,
+          profile = append(profile,
             "# BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading",
             "# to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/",
             "http-request return status 503")
@@ -319,15 +334,14 @@ templateSnippets:
             if len(codeParts) > 0 {
               retryCodes = join(codeParts, " ")
             }
-            body = append(body, "retries " + tostring(attempts), "retry-on " + retryCodes)
+            profile = append(profile, "retries " + tostring(attempts), "retry-on " + retryCodes)
           }
         }
 
         // GEP-1619 session persistence. Backends are deduplicated per
         // (route, service, port), so the first rule declaring Cookie persistence
-        // for this backend wins. dynamic-cookie-key is seeded from beKey:
-        // stable across reloads, unforgeable. type: Header is not implemented
-        // (no stick-table key for a dynamically-named header).
+        // for this backend wins. type: Header is not implemented (no stick-table
+        // key for a dynamically-named header).
         var spCookieEmitted = false
         for _, rl := range route.Spec.Rules {
           if spCookieEmitted {
@@ -353,10 +367,13 @@ templateSnippets:
           var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic"
           if absTimeout != "" { cookieDir = cookieDir + " maxlife " + absTimeout }
           if idleTimeout != "" { cookieDir = cookieDir + " maxidle " + idleTimeout }
-          body = append(body,
+          // dynamic-cookie-key is shared per installation (not sha256(beKey) per
+          // backend) so two backends with the same cookie config share one
+          // profile. It salts the address→cookie hash; override for a secret salt.
+          profile = append(profile,
             "# GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity",
             cookieDir,
-            "dynamic-cookie-key " + sha256(beKey))
+            "dynamic-cookie-key " + tostring(extraContext | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie")))
           spCookieEmitted = true
         }
 
@@ -368,7 +385,7 @@ templateSnippets:
         if toErr != nil {
           fail("failed to resolve gw-timeout.map: " + tostring(toErr))
         }
-        body = append(body, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
+        profile = append(profile, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
           tostring(toMap) + ") if { var(txn.gw_rule_id),map_str_int(" + tostring(toMap) + ") -m found }")
       %%}
       {{ Backend(map[string]any{
@@ -376,6 +393,9 @@ templateSnippets:
            "guid": make_guid("be", beKey),
            "comments": []any{"# Backend for: " + routeTypeLabel + " " + tostring(routeNs) + "/" + tostring(routeName) +
              " → Service " + tostring(backendName) + ":" + tostring(backendPort)},
+           "shape": beShape,
+           "defaultServer": defaultServer,
+           "profile": profile,
            "body": body,
            "servers": BackendServers(backendName, 0, backendPort, nil, nil, beKey, backendNs),
          }) }}
@@ -389,7 +409,7 @@ templateSnippets:
   util-generate-grpcroute-backends-gateway:
     requires: [gateways, grpcroutes, referencegrants]
     template: |
-      {%- import "util-backend" for Backend -%}
+      {%- import "util-backend" for Backend, FlagsToKeywordArgs -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
@@ -610,37 +630,52 @@ templateSnippets:
           }
         }
 
-        var body = []any{
-          "http-request set-var(txn.namespace) str(" + tostring(backendNs) + ")",
-          "http-request set-var(txn.service) str(" + tostring(backendName) + ")",
-        }
+        // namespace/service go into backend-service.map (map-backend-service-*),
+        // not set-var body lines, so the backend section stays empty (dynamic).
+        // Every defaults-legal directive (default-server, the fail-closed 503,
+        // retries, cookie, set-timeout) goes into the profile, not the body.
+        var body = []any{}
+        var profile = []any{}
 
-        var defaultServer = "default-server check"
+        // default-server keywords, one per entry so the plan record carries each
+        // as a structured KeywordArg (FlagsToKeywordArgs). The deploy side
+        // composes `add server` from the record, so a BackendTLS backend keeps
+        // its ssl/ca-file/verify/sni on a runtime-added pod (no silent bypass).
+        var dsFlags = []any{}
         if resolvedProtoFlag != "" {
-          defaultServer = defaultServer + " proto " + resolvedProtoFlag
+          dsFlags = append(dsFlags, "proto " + resolvedProtoFlag)
         }
         if btlsCaPath != "" && btlsCaPath != "@system-ca" {
-          defaultServer = defaultServer + " ssl ca-file " + btlsCaPath + " verify required"
+          dsFlags = append(dsFlags, "ssl", "ca-file " + btlsCaPath, "verify required")
         } else if btlsCaPath == "@system-ca" {
-          defaultServer = defaultServer + " ssl verify required"
+          dsFlags = append(dsFlags, "ssl", "verify required")
         } else if gwClientCertPath != "" {
-          defaultServer = defaultServer + " ssl verify none"
+          dsFlags = append(dsFlags, "ssl", "verify none")
         }
         if btlsCaPath != "" {
           if btlsHostname != "" {
-            defaultServer = defaultServer + " sni str(" + btlsHostname + ")"
+            dsFlags = append(dsFlags, "sni str(" + btlsHostname + ")")
           }
           if btlsVerifyHost != "" {
-            defaultServer = defaultServer + " verifyhost " + btlsVerifyHost
+            dsFlags = append(dsFlags, "verifyhost " + btlsVerifyHost)
           }
         }
         if gwClientCertPath != "" {
-          defaultServer = defaultServer + " crt " + gwClientCertPath
+          dsFlags = append(dsFlags, "crt " + gwClientCertPath)
         }
-        body = append(body, defaultServer)
+        // crt is crt-base-relative, so add server can't match it: structural (Backend
+        // records why). Reload-free needs a crt-base-free absolute reference (follow-up).
+        var beShape any = nil
+        if gwClientCertPath != "" {
+          beShape = "structural-crt"
+        }
+        var defaultServer = []any{map[string]any{"name": "check"}}
+        for _, kw := range FlagsToKeywordArgs(dsFlags) {
+          defaultServer = append(defaultServer, kw)
+        }
 
         if btlsBroken {
-          body = append(body,
+          profile = append(profile,
             "# BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading",
             "# to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/",
             "http-request return status 503")
@@ -673,10 +708,13 @@ templateSnippets:
           var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic"
           if absTimeout != "" { cookieDir = cookieDir + " maxlife " + absTimeout }
           if idleTimeout != "" { cookieDir = cookieDir + " maxidle " + idleTimeout }
-          body = append(body,
+          // dynamic-cookie-key is shared per installation (not sha256(beKey) per
+          // backend) so two backends with the same cookie config share one
+          // profile. It salts the address→cookie hash; override for a secret salt.
+          profile = append(profile,
             "# GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity",
             cookieDir,
-            "dynamic-cookie-key " + sha256(beKey))
+            "dynamic-cookie-key " + tostring(extraContext | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie")))
           spCookieEmitted = true
         }
 
@@ -685,7 +723,7 @@ templateSnippets:
         if toErr != nil {
           fail("failed to resolve gw-timeout.map: " + tostring(toErr))
         }
-        body = append(body, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
+        profile = append(profile, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
           tostring(toMap) + ") if { var(txn.gw_rule_id),map_str_int(" + tostring(toMap) + ") -m found }")
       %%}
       {{ Backend(map[string]any{
@@ -693,6 +731,9 @@ templateSnippets:
            "guid": make_guid("be", beKey),
            "comments": []any{"# Backend for: " + routeTypeLabel + " " + tostring(routeNs) + "/" + tostring(routeName) +
              " → Service " + tostring(backendName) + ":" + tostring(backendPort)},
+           "shape": beShape,
+           "defaultServer": defaultServer,
+           "profile": profile,
            "body": body,
            "servers": BackendServers(backendName, 0, backendPort, nil, nil, beKey, backendNs),
          }) }}
@@ -743,6 +784,71 @@ templateSnippets:
       # gateway/backends-gateway
       {{ ShardedHTTPRouteBackends(resources.httproutes.List(), "gatewayBackends_http") }}
       {{- ShardedGRPCRouteBackends(resources.grpcroutes.List(), "gatewayBackends_grpc") -}}
+
+  # Feed backend-service.map (<backend> -> <ns>/<svc>) for the namespace/service
+  # log fields, so the gateway backend needs no per-backend set-var lines and its
+  # section stays empty (dynamic). Mirrors the generators' backend naming + dedup.
+  map-backend-service-200-gateway-http:
+    requires: [gateways, httproutes, referencegrants]
+    template: |-
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-backend-ref-valid" for BackendRefValid -%}
+      {%%
+        var lines = []string{}
+        for _, route := range resources.httproutes.List() {
+          var routeNs = route.Metadata.Namespace
+          for _, rule := range route.Spec.Rules {
+            for _, backendRef := range rule.BackendRefs {
+              if BackendRefValid("HTTPRoute", routeNs, backendRef) != "true" {
+                continue
+              }
+              var backendName = backendRef.Name
+              var backendPort = toint(backendRef.Port)
+              if backendPort == 0 { backendPort = 80 }
+              var backendNs = backendRef.Namespace
+              if backendNs == "" { backendNs = routeNs }
+              var beKey = BackendNameGateway(route, map[string]any{"name": backendName, "port": backendPort})
+              if first_seen("map-backend-service-gw", beKey) {
+                lines = append(lines, beKey + " " + backendNs + "/" + backendName)
+              }
+            }
+          }
+        }
+        if len(lines) > 0 {
+          show "\n" + join(lines, "\n")
+        }
+      %%}
+
+  map-backend-service-210-gateway-grpc:
+    requires: [gateways, grpcroutes, referencegrants]
+    template: |-
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-backend-ref-valid" for BackendRefValid -%}
+      {%%
+        var lines = []string{}
+        for _, route := range resources.grpcroutes.List() {
+          var routeNs = route.Metadata.Namespace
+          for _, rule := range route.Spec.Rules {
+            for _, backendRef := range rule.BackendRefs {
+              if BackendRefValid("GRPCRoute", routeNs, backendRef) != "true" {
+                continue
+              }
+              var backendName = backendRef.Name
+              var backendPort = toint(backendRef.Port)
+              if backendPort == 0 { backendPort = 80 }
+              var backendNs = backendRef.Namespace
+              if backendNs == "" { backendNs = routeNs }
+              var beKey = BackendNameGateway(route, map[string]any{"name": backendName, "port": backendPort})
+              if first_seen("map-backend-service-gw", beKey) {
+                lines = append(lines, beKey + " " + backendNs + "/" + backendName)
+              }
+            }
+          }
+        }
+        if len(lines) > 0 {
+          show "\n" + join(lines, "\n")
+        }
+      %%}
 
   backends-501-gateway-invalid:
     template: |

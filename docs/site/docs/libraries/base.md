@@ -163,7 +163,6 @@ This table is the authoritative registry of every `render_glob` extension point 
 | Connection Header Map | `map-reqhdr-connection-*` | reqhdr-connection.map file | Per-backend `Connection` header override, applied by `frontend-filters-262-request-set-connection` |
 | Path Rewrite Map | `map-path-rewrite-*` | path-rewrite.map file | Per-backend literal full-path rewrite, applied by `frontend-filters-400-path-rewrite` (capture/regex rewrites stay in the backend) |
 | Request Buffering Map | `map-request-buffering-*` | request-buffering.map file | Per-backend request-buffering override (`on`/`off`), applied by `frontend-filters-090-request-buffering` |
-| Pod Names Map | `map-pod-names-*` | pod-names.map file | Backend pod IP → pod name, read at log time for the `server_pod` access-log field |
 | Status Patches | `status-patches-*` | After features, before backends | Resource status patch registration (side effects only) |
 | Status Extra | `status-extra-*` | Inside the status frontend | Extra status-frontend directives (Prometheus exporter, custom endpoints) |
 
@@ -283,7 +282,7 @@ http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_
 
 The defaults section is tuned for a Kubernetes ingress workload, where backends are pod IPs from EndpointSlices reached directly over the cluster's Container Network Interface (CNI) fabric.
 
-**`timeout connect` defaults to `100ms`** (most controllers ship HAProxy's `5s`). Same-node connects are sub-millisecond, cross-node overlay networking (flannel/calico/cilium) is typically under `30ms`, and even AWS cross-AZ stays under ~`10ms` p99 — so `100ms` is already several times the normal case. The case it deliberately fails fast on is a TCP `SYN` to a pod IP whose pod just terminated: during the brief window between an EndpointSlice update and HAPTIC's runtime update landing, a server slot can still point at a dying pod. A request already dispatched into HAProxy is committed to that slot and must wait out `timeout connect` before `option redispatch` retries it elsewhere. At `5s` that surfaces as a client-visible 504; at `100ms` the full failover (original attempt + retry) completes within ~`200ms`.
+**`timeout connect` defaults to `100ms`** (most controllers ship HAProxy's `5s`). Same-node connects are sub-millisecond, cross-node overlay networking (flannel/calico/cilium) is typically under `30ms`, and even AWS cross-AZ stays under ~`10ms` p99 — so `100ms` is already several times the normal case. The case it deliberately fails fast on is a TCP `SYN` to a pod IP whose pod just terminated: during the brief window between an EndpointSlice update and HAPTIC's runtime update landing, a server can still point at a dying pod. A request already dispatched into HAProxy is committed to that server and must wait out `timeout connect` before `option redispatch` retries it elsewhere. At `5s` that surfaces as a client-visible 504; at `100ms` the full failover (original attempt + retry) completes within ~`200ms`.
 
 Override it for genuinely slow networks (multi-region, satellite, constrained CPU):
 
@@ -295,7 +294,7 @@ controller:
         timeout_connect: "5000"   # ms; also timeout_client / timeout_server / timeout_http_request / timeout_http_keep_alive
 ```
 
-**`option redispatch`** lets a failed TCP connect be retried against a *different* server in the backend rather than the same dead one. Combined with HAProxy's default `retries 3`, the retry lands on a healthy slot instead of hanging on the dead IP until the client times out. See HAProxy's [retries documentation](https://www.haproxy.com/documentation/hapee/latest/service-reliability/retries/retries/).
+**`option redispatch`** lets a failed TCP connect be retried against a *different* server in the backend rather than the same dead one. Combined with HAProxy's default `retries 3`, the retry lands on a healthy server instead of hanging on the dead IP until the client times out. See HAProxy's [retries documentation](https://www.haproxy.com/documentation/hapee/latest/service-reliability/retries/retries/).
 
 **`retry-on conn-failure empty-response response-timeout`** covers the rest of the pod-termination race. A connect failure is only half of it: a terminating pod usually still has its listening socket bound after the application has stopped, so the kernel completes the handshake and the application then resets the connection. HAProxy logs that as a 502 with termination state `SH--`, `t_connect 0` and `retries 0` — the default `retry-on conn-failure` doesn't match it, because the connection *succeeded*. `empty-response` is the condition that does, which is what makes `option redispatch` and `retries 3` engage. Override the condition list with `extraContext.retryOn`.
 
@@ -313,7 +312,7 @@ The `default_backend` returns a gRPC-aware fallback for unmatched requests. For 
 
 ### Request buffering
 
-HAProxy waits for the request body before it takes a backend connection, so a client that trickles its upload holds an HAProxy buffer instead of a backend server slot. This is the standard defence against the slow POST attack, where an attacker declares a large body and sends it a byte at a time to exhaust the application's worker pool.
+HAProxy waits for the request body before it takes a backend connection, so a client that trickles its upload holds an HAProxy buffer instead of a backend connection. This is the standard defence against the slow POST attack, where an attacker declares a large body and sends it a byte at a time to exhaust the application's worker pool.
 
 Buffering is on by default. Turn it off fleet-wide, or change how long HAProxy waits:
 
@@ -381,8 +380,9 @@ The base library provides reusable macros across several `util-*` snippets, impo
 | `CalculateShardCount(resourceCount, itemsPerShard)` | Computes `clamp(count / itemsPerShard, 1, 2*GOMAXPROCS)` |
 | `HostMatchCondition(hosts)` | Builds a host-match ACL condition (in `util-ingress-helpers`) |
 | `BuildServerOptions(serverOpts)` | Renders server-line option flags (in `util-backend-servers-helpers`) |
-| `Backend(spec)` | Emits one `backend` section from a record (in `util-backend`) |
-| `BackendServers(serviceName, slotBlock, port, opts, portName, backendName, namespace)` | Resolves a Service into the server records `Backend()` formats (in `util-backend-servers`); `slotBlock` is the provisioning block size, `0` = chart default |
+| `Backend(spec)` | Emits one `backend` section (`from` a content-addressed profile) from a record (in `util-backend`) |
+| `BackendServers(serviceName, _, port, opts, portName, backendName, namespace)` | Resolves a Service into one server record per endpoint, named after the pod (in `util-backend-servers`); the second argument is unused (kept for signature stability) |
+| `ServerName(podName)` | Sanitises a pod name into an HAProxy server name (in `util-backend-servers-helpers`) |
 
 Usage:
 
@@ -402,29 +402,40 @@ record it declares to the controller, which is how the controller knows what a
 config change actually changed. A `backend` section written by hand still
 renders, but the controller can only treat it as opaque text.
 
+`mode`, `balance`, `hash-type`, `default-server` and the `profile` directive
+lines don't go in the backend section — they go in a shared, content-addressed
+`defaults haptic-be-<hash> from haptic-base` that the backend inherits with
+`from`. Two backends of the same shape share one profile section, which is what
+lets a route of an existing shape be added at runtime without a reload. The
+backend section itself is then only `from`/`guid`/`body`/servers; keep `body`
+empty (put per-backend values in `profile`, per-server values on the server
+line's `extra`) for a dynamic-eligible backend.
+
 `Backend()` accepts these keys, and fails the render on any other:
 
 | Key | Purpose |
 |-----|---------|
 | `name` | Backend name (required) |
 | `guid` | Value of the `guid` line |
-| `mode` | `mode` line — `http`, `tcp` or `spop`; omit to inherit `http` from `defaults` |
-| `balance`, `hashType` | `balance` and `hash-type` lines |
-| `body` | Directive lines that stay in this section |
-| `servers` | Server records: `name`, `address`, `port`, `weight`, `disabled`, `guid`, `comment` |
-| `defaultServer` | `default-server` keyword records (`name`, `args`) |
+| `mode` | `http`, `tcp` or `spop`; carried by the profile; omit to inherit `http` from `haptic-base` |
+| `balance`, `hashType` | `balance` and `hash-type`, carried by the profile |
+| `profile` | Directive lines shared by same-shape backends (timeouts, retries, cookie, `http-request` rules) — go into the named `defaults`; comments and blank lines are dropped |
+| `defaultServer` | `default-server` keyword records (`name`, `args`), formatted into the profile's `default-server` line |
+| `body` | Directive lines that must stay in this section (stick-table, filter, raw injections) — a non-empty `body` makes the backend structural (reloads on create/delete/body change) |
+| `servers` | Server records: `name`, `address`, `port`, `weight`, `disabled`, `guid`, `comment`, `extra` |
 | `comments` | Provenance lines emitted above the section header |
+| `shape` | `dynamic` (default when `body` is empty) or `structural`; set it to force structural (a unix-socket loopback backend) |
 
 A library that routes to something other than a Kubernetes Service passes its
 own `servers` list instead of calling `BackendServers()`.
 
-### Backend server pool
+### Backend servers
 
-The `util-backend-servers` snippet resolves endpoints into server records with:
+The `util-backend-servers` snippet resolves endpoints into server records:
 
-- Pre-allocated server slots for dynamic scaling — sized to the ready endpoints plus headroom (`max(2, ceil(n/4))` spare, tunable via `extraContext.serverSlots.minFree`/`.increment`), kept while they still fit, grown by a block on the next reload when they fill, shrunk once mostly idle; no endpoint is ever left without a `server` line
-- Health check configuration
-- Support for per-server options (`maxconn`, SSL, etc.)
+- One `server` per endpoint, named after its pod (`server <pod> <ip>:<port>`) — no slot pool, no placeholders. The rendered file always equals the current pod set, so a rolling update is an add/remove of named servers over the runtime API (see [ADR-0011](https://github.com/haproxy-haptic/haptic/blob/main/docs/adr/0011-no-haproxy-server-state-file.md)).
+- Not-ready and terminating endpoints render as `disabled` servers (they take no traffic), so a readiness flip is a runtime `set server state` rather than a del+add.
+- Per-server options (`maxconn`, SSL, weight, health-check params) via `serverOpts` / the server record's `extra`.
 
 The snippet holds only the `BackendServers` helper, so import it and call it — rendering the snippet emits nothing. It returns records, so pass the result to `Backend()` rather than showing it:
 
@@ -621,7 +632,6 @@ The base library generates these map files for routing:
 | path-prefix.map | Prefix path matching | `map_beg()` |
 | path-regex.map | Regex path matching | `map_reg()` |
 | weighted-multi-backend.map | Weighted backend selection | `map()` |
-| pod-names.map | Backend pod IP to pod name, for the access log's `server_pod` field and the upstream span | `map()` |
 
 And these per-backend feature maps, all keyed by backend name and looked up with `map()`:
 
@@ -634,6 +644,7 @@ And these per-backend feature maps, all keyed by backend name and looked up with
 | reqhdr-connection.map | `Connection` header override (URL-encoded) |
 | path-rewrite.map | Literal full-path rewrite (URL-encoded) |
 | backend-timeouts.map | Settable server/tunnel timeouts, keyed `<backend>\|server` / `<backend>\|tunnel`, integer milliseconds |
+| backend-service.map | `<backend>` to `<namespace>/<service>`, read at log time (keyed by `var(txn.backend_name)`) for the `namespace`/`service` access-log fields — keeps them off the backend section so it stays dynamic |
 | ing-reqhdr.map | Ingress request-header modifiers, keyed `<backend>\|<op>\|<name>` (op ∈ set/add/del), value URL-encoded (`1` for del) |
 | ing-reshdr.map | Ingress response-header modifiers, keyed `<backend>\|<op>\|<name>`, value URL-encoded (`1` for del) |
 

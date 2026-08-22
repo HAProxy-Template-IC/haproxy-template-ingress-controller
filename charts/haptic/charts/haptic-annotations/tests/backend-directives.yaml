@@ -9,6 +9,45 @@ _fx:
         backend: {service: {name: echo, port: {number: 80}}}
 
 validationTests:
+  test-haptic-load-balance-hash-type-consistent:
+    description: >-
+      A hash-family balance (source/uri/hdr/url_param/rdp-cookie/hash) gets
+      `hash-type consistent` injected into its profile so pod-named servers can
+      be added at runtime without a reload; the servers stay pod-named. A
+      non-hash algorithm (leastconn) gets no hash-type.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lb-source
+            annotations: {haproxy-haptic.org/load-balance: source}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: src.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lb-least
+            annotations: {haproxy-haptic.org/load-balance: leastconn}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: least.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      # The hash-family backend's profile carries balance source + hash-type consistent.
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$\n\s+balance source\n\s+hash-type consistent$'}
+      # It is still pod-named (add-server eligible now that hash-type is consistent).
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^backend default_lb-source_svc_echo_80 from haptic-be-\w+$.*?^\s+server echo-pod-1 10\.0\.0\.1:8080'}
+      # leastconn is not hash-family, so no hash-type is injected for it.
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$\n\s+balance leastconn\n\s+hash-type'}
+
   test-haptic-timeouts:
     description: haproxy-haptic.org timeout annotations render timeout directives
     fixtures:
@@ -132,8 +171,10 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "balance uri"}
-      - {type: contains, target: haproxy.cfg, pattern: "hash-type consistent"}
+      # balance + hash-type land in the backend's PROFILE (dynamic-eligible), not
+      # the backend body — anchored so a move back to the body fails the test.
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$\n\s+balance uri\n\s+hash-type consistent$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend default_hash-ingress_svc_echo_80 from haptic-be-\w+$'}
 
   test-haptic-health-checks:
     description: haproxy-haptic.org health-check annotations render httpchk and default-server flags
@@ -164,7 +205,7 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "rise 5"}
 
   test-haptic-server-tuning:
-    description: maxconn/maxqueue/weight/proxy-protocol/scale-server-slots/fullconn render together
+    description: maxconn/maxqueue/weight/proxy-protocol/fullconn render together; scale-server-slots is tolerated (warned, no effect)
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -191,4 +232,4 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "weight 50"}
       - {type: contains, target: haproxy.cfg, pattern: "send-proxy-v2"}
       - {type: contains, target: haproxy.cfg, pattern: "fullconn 300"}
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_5"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_[0-9]"}
