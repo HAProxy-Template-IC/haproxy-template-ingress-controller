@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -166,13 +167,12 @@ func TestIngressAnnotations(t *testing.T) {
 				"haproxy.org/backend-config-snippet": "option httplog\noption http-keep-alive\nhttp-reuse safe",
 			},
 		},
-		{
-			name: "scale-slots",
-			host: "ingress-scale-slots.localdev.me",
-			annotations: map[string]string{
-				"haproxy.org/scale-server-slots": "20",
-			},
-		},
+		// haproxy.org/scale-server-slots is intentionally NOT a row here: the
+		// slot pool is gone (servers are pod-named), and the admission webhook
+		// now deprecates the annotation, so an Ingress carrying it is rejected
+		// at create rather than served. The chart validationTests cover that
+		// rejection; TestIngressPodNamedServerScaling covers the behaviour that
+		// replaced it (one server per pod, scaling with no reserved slots).
 		{
 			name: "cookie-persistence-no-dynamic",
 			host: "ingress-cookie-no-dynamic.localdev.me",
@@ -526,4 +526,80 @@ func TestIngressAnnotations(t *testing.T) {
 			testEnv.Test(t, feature)
 		})
 	}
+}
+
+// TestIngressPodNamedServerScaling verifies the behaviour that replaced the
+// haproxy.org/scale-server-slots pool: a multi-endpoint Ingress backend gets
+// one HAProxy server per pod (named after the pod, no reserved slots), and
+// every ready pod receives traffic. It stands in for the removed scale-slots
+// smoke row, whose annotation the admission webhook now deprecates — the chart
+// validationTests cover that rejection, this covers the replacement.
+func TestIngressPodNamedServerScaling(t *testing.T) {
+	t.Parallel()
+
+	const host = "ingress-pod-named-scaling.localdev.me"
+
+	feature := features.New("Ingress: pod-named server scaling").
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client, err := cfg.NewClient()
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			ns := NamespaceForTest(ctx, t, client)
+			DumpLogsOnFailure(t, ns)
+			// Two replicas → two ready endpoints → two pod-named servers.
+			backend := NewEchoServerBackendWithReplicas(ctx, t, client, ns, "echo-scale", 2)
+			NewIngress(ctx, t, client, ns, IngressSpec{
+				Name:           "echo-scale",
+				Host:           host,
+				Path:           "/",
+				BackendService: backend.Service,
+				BackendPort:    backend.Port,
+			})
+			return ctx
+		}).
+		Assess("every backend pod receives traffic (one server per pod, no slot pool)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			// The default backend balance is round-robin, so requests from one
+			// client still fan across both servers. Poll rather than send a
+			// fixed count so a single still-converging reload doesn't flake;
+			// echo-server reports its serving pod's name in Echo.PodHostname (the
+			// container HOSTNAME = pod name), so distinct values prove distinct
+			// pod-named servers took traffic. Echo.Host is the request Host header
+			// and is constant, so it cannot tell pods apart.
+			// Record the last failure so a systemic problem (ingress not
+			// admitted, DNS not resolving, all 503s) surfaces as the real reason
+			// rather than a bare "reached 0 pods" timeout.
+			seen := map[string]bool{}
+			const maxRequests = 40
+			var lastErr error
+			lastStatus := 0
+			lastBody := ""
+			for i := 0; i < maxRequests && len(seen) < 2; i++ {
+				resp, err := httpclient.New(t).GET(host, "/").Do(ctx)
+				if err != nil {
+					lastErr = err
+					continue
+				}
+				lastStatus = resp.Status
+				if resp.Status != http.StatusOK || resp.Echo == nil || resp.Echo.PodHostname == "" {
+					lastBody = string(resp.Body)
+					if len(lastBody) > 200 {
+						lastBody = lastBody[:200] + "..."
+					}
+					continue
+				}
+				seen[resp.Echo.PodHostname] = true
+			}
+			if len(seen) < 2 {
+				t.Fatalf("expected traffic to reach both backend pods (pod-named servers, no reserved slots); reached %d distinct pod(s) after %d attempts: %v; last error: %v; last status: %d; last body: %q",
+					len(seen), maxRequests, seen, lastErr, lastStatus, lastBody)
+			}
+			return ctx
+		}).
+		Feature()
+
+	t.Run("pod-named-scaling", func(t *testing.T) {
+		t.Parallel()
+		testEnv.Test(t, feature)
+	})
 }

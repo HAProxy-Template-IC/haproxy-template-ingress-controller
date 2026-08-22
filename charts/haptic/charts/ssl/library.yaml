@@ -655,6 +655,7 @@ templateSnippets:
            "name": "ssl-loopback",
            "guid": "be:ssl-loopback",
            "mode": "tcp",
+           "shape": "structural",
            "comments": []any{"# ssl/backends-ssl-loopback"},
            "servers": []any{map[string]any{"name": "loopback", "address": "unix@/etc/haproxy/ssl-frontend.sock",
              "extra": []any{map[string]any{"name": "send-proxy-v2"}}}},

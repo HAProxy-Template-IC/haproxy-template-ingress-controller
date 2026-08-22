@@ -149,8 +149,9 @@ templateSnippets:
           {%- else %}
             {{- fail("Invalid value '" + lb + "' for annotation 'nginx.ingress.kubernetes.io/load-balance' on Ingress '" + key + "'. Valid values: round_robin, least_conn, ip_hash, random, ewma") -}}
           {%- end %}
-      # nginx-ingress/backend-directives-load-balance
-      balance {{ algo }}
+          {#- Structured Backend() arg (profile), so the macro adds
+              `hash-type consistent` for a hash-family algorithm (ip_hash → source). -#}
+          {%- serverOpts["balance"] = algo %}
         {%- end %}
       {%- end -%}
 
@@ -291,11 +292,16 @@ templateSnippets:
           {%- if proto == "HTTP" %}
             {#- HTTP/1.1 needs no server flag -#}
           {%- else if proto == "HTTPS" %}
-            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
+            {#- One keyword per flag entry so the plan record carries each as a
+                structured KeywordArg (FlagsToKeywordArgs). -#}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl") %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify none") %}
           {%- else if proto == "GRPC" %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "proto h2") %}
           {%- else if proto == "GRPCS" %}
-            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none proto h2") %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl") %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify none") %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "proto h2") %}
           {%- else if proto == "AJP" %}
             {{- fail("Backend protocol 'AJP' is not supported by HAProxy. Annotation 'nginx.ingress.kubernetes.io/backend-protocol' on Ingress '" + key + "'.") -}}
           {%- else if proto == "FCGI" %}
@@ -510,9 +516,9 @@ templateSnippets:
             {#- Not an nginx variable: passed through unvalidated as a raw HAProxy fetch -#}
             {%- expr = hashBy %}
           {%- end %}
-      # nginx-ingress/backend-directives-upstream-hash ({{ key }})
-      balance hash {{ expr }}
-      hash-type consistent
+          {#- Structured Backend() arg; the macro adds `hash-type consistent`
+              (this is a hash-family balance). -#}
+          {%- serverOpts["balance"] = "hash " + expr %}
         {%- end %}
       {%- end -%}
 

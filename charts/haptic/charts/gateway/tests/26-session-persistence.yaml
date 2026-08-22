@@ -163,9 +163,10 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "(?s)backend gtw_default_sp-route3_sticky-a_80.*?cookie STICKY insert"
+      # The cookie rides in the backend's profile (a named defaults), so the
+      # backend is dynamic (from a profile) and the profile carries the cookie.
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^backend gtw_default_sp-route3_sticky-a_80 from haptic-be-\\w+$"}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^  cookie STICKY insert"}
 
       - {type: match_count, target: haproxy.cfg, pattern: "(?m)^  cookie .* insert ", expected: "1"}
 
@@ -211,6 +212,6 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: "(?s)backend gtw_default_spg-route_grpc-sticky_9090.*?cookie GRPCSESSION insert indirect nocache dynamic"
+      # Cookie in the backend's profile; the backend is dynamic (from a profile).
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^backend gtw_default_spg-route_grpc-sticky_9090 from haptic-be-\\w+$"}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^  cookie GRPCSESSION insert indirect nocache dynamic"}

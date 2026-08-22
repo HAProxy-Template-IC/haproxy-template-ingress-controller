@@ -21,20 +21,27 @@ the base library and see only strings and lists — never a resource kind.
 ```
 {{ Backend({
      "name":     beName,            # required; the backend section name
-     "mode":     "http",            # http|tcp, default http
+     "mode":     "http",            # http|tcp, default http; carried by the profile
      "balance":  "roundrobin",      # roundrobin|leastconn|random|hash-consistent keep servers dynamic
-     "body":     bodyLines,         # []string: directives that must stay in THIS section → structural
+     "profile":  profileLines,      # []string: directives shared by same-shape backends (timeouts, retries, cookie, http-request rules) → a named defaults
+     "body":     bodyLines,         # []string: directives that must stay in THIS section (stick-table, filter, raw injections) → structural
      "servers":  BackendServers(serviceName, 0, port, serverOpts, portName, beName, namespace),
    }) }}
 {{ RegisterMap("my-route.map", entries, {"ordered": false}) }}
 ```
 
-`Backend()` is strict: it accepts `name`, `mode`, `balance`, `hashType`, `body`,
-`servers`, `defaultServer`, `guid`, `comments`, `shape` and `shapeReason`, and
-fails the render on any other key. The `profile` and `serverLines` slots the
-tables below describe arrive with the named-defaults profiles in a later change
-(MR 2) and aren't accepted yet — until then, shared directives go in `body`
-(which keeps the backend structural).
+Every backend inherits a content-addressed named `defaults haptic-be-<hash> from
+haptic-base` (`backend <name> from haptic-be-<hash>`); `mode`, `balance`,
+`hash-type`, `default-server` and the `profile` lines live there, so two
+backends of the same shape share one profile section and a route of an existing
+shape is added at runtime without a reload. The backend section itself is only
+`from`/`guid`/`body`/servers — keep `body` empty for a dynamic-eligible backend.
+
+`Backend()` is strict: it accepts `name`, `mode`, `balance`, `hashType`,
+`profile`, `body`, `servers`, `defaultServer`, `guid`, `comments`, `shape` and
+`shapeReason`, and fails the render on any other key. (The `serverLines` escape
+hatch the table below mentions isn't accepted yet — a library needing raw
+server lines passes `servers` records, or `body` for a structural section.)
 
 ## Custom CRD first
 
@@ -126,14 +133,32 @@ put it in.
 
 | Put it in | For | Change behaviour |
 |---|---|---|
-| `profile` *(MR 2, not yet accepted)* | Value-free or per-value directives shared by every backend of one shape: timeouts, cookies, retries, `http-request`/`http-check` rules, health-check specs | A new profile reloads once; from then on every backend on it becomes dynamic, and changing a profile value reloads that one profile |
+| `profile` | Value-free or per-value directives shared by every backend of one shape: timeouts, cookies, retries, `http-request`/`http-check` rules, health-check specs | A new profile reloads once; from then on every backend on it becomes dynamic, and changing a profile value reloads that one profile |
 | a map + one static line | Per-route/per-backend values read at request time: header modifiers, path rewrites, redirect targets, timeouts (via `map_str_int`) | Adding or editing an entry is a map-only change — no reload |
-| server `Extra` (via `serverOpts`) | Per-server keywords in the verified `add server` set: `weight`, `maxconn`, `check`, `ssl`, `sni`, `send-proxy`, agent-check | Applied to the running server or added with the server — no reload |
+| the profile's `default-server` line | Per-server keywords in the verified `add server` set: `weight`, `maxconn`, `check` + params, `ssl`/`sni`/`ca-file`, `send-proxy`, agent-check | Read by `add server` when a pod joins — no reload (unless the keyword is outside the add-server set — `ca-file`/`crt` for instance — which then reloads) |
 | `body` | Directives that must stay in this section: `stick-table`, `filter`, `use-server`, raw operator injections | Makes the backend structural — create/delete/body change reload |
-| `serverLines` *(MR 2, not yet accepted)* | Raw server lines (Unix sockets, loopbacks, `ring` servers) | Always structural |
 
-Until the `profile` and `serverLines` slots land (MR 2), `Backend()` rejects both
-keys and shared directives go in `body`, which keeps the backend structural.
+Per-server keywords ride the profile's `default-server` line rather than a
+per-server `extra` list: splitting a free-form annotation flag into structured
+server keywords would need an HAProxy keyword grammar the chart must not carry
+(the resource-agnostic rule). `default-server` reaches every server and
+`add server` at once, at the cost of a profile per distinct `default-server`
+combination.
+
+The bundled ingress and gateway backends move their defaults-legal directives
+(`default-server`, timeouts, retries, cookie, the fail-closed 503, `balance` with
+`hash-type consistent`) into `profile`, and their namespace/service into
+`backend-service.map`, so a plain backend's body is empty and it's
+dynamic-eligible. Rate limiting (`stick-table`), bandwidth/compression `filter`s
+and raw operator injections keep their backends in `body` (structural).
+
+Session persistence (`cookie … dynamic`) needs a `dynamic-cookie-key`. It's
+shared per installation so same-shape cookie backends share one profile, and
+derived from the release identity so it's stable across upgrades yet not the same
+across installs — a world-known key would let anyone who learns a pod's address
+forge the affinity cookie and pin traffic to one replica. Override it with
+`controller.config.templatingSettings.extraContext.dynamicCookieKey` (for a
+hand-written CR without the chart, set it explicitly to a per-install secret).
 
 HAProxy validates placement: `haproxy -c` (in the admission webhook, the
 config-load gate, and the asynchronous render gate) rejects a directive that's

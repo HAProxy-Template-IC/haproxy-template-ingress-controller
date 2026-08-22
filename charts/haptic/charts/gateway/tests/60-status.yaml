@@ -21,19 +21,12 @@ _fx:
     - path: {type: PathPrefix, value: /}
 
 validationTests:
-  test-gateway-slot-preservation:
+  test-gateway-servers-named-after-pods:
     requires: [httproutes]
-    description: |
-      Gateway-side mirror of test-ingress-slot-preservation. Existing pod
-      parked at SRV_3 for assertion sensitivity to actual preservation.
-    currentServers:
-      gtw_default_slot-route_slot-svc_80:
-        SRV_1: {address: 192.0.2.1, port: 1}
-        SRV_2: {address: 192.0.2.1, port: 1}
-        SRV_3: {address: 10.0.0.1, port: 8080}
-        SRV_4: {address: 10.0.0.2, port: 8080}
-        SRV_5: {address: 192.0.2.1, port: 1}
-        SRV_6: {address: 192.0.2.1, port: 1}
+    description: >-
+      Gateway-side mirror of test-ingress-servers-named-after-pods: endpoints
+      become one server each, named after the pod (no slot pool, no
+      placeholders).
     fixtures:
       services:
         - apiVersion: v1
@@ -73,71 +66,31 @@ validationTests:
                   - {name: slot-svc, port: 80}
     assertions:
       - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_slot-route_slot-svc_80 from haptic-be-\\w+"}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^\\s+server slot-pod-1 10\\.0\\.0\\.1:8080 "}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^\\s+server slot-pod-3 10\\.0\\.0\\.3:8080 "}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_[0-9]"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "192\\.0\\.2\\.1:1"}
 
-      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_slot-route_slot-svc_80"}
-
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_3 10\\.0\\.0\\.1:8080"}
-      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_1 10\\.0\\.0\\.1:8080"}
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"}
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_5 10\\.0\\.0\\.3:8080"}
-      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_[12] 10\\.0\\.0\\.3:8080"}
-
-  test-gateway-slot-preservation-lower-ip:
+  test-gateway-profile-budget:
     requires: [httproutes]
-    description: Gateway-side mirror of test-ingress-slot-preservation-lower-ip.
-    # SRV_3=10.0.0.5 kept; SRV_4=10.0.0.6 vacated; 10.0.0.2 → SRV_5.
-    currentServers:
-      gtw_default_slot-lower_slot-svc_80:
-        SRV_1: {address: 192.0.2.1, port: 1}
-        SRV_2: {address: 192.0.2.1, port: 1}
-        SRV_3: {address: 10.0.0.5, port: 8080}
-        SRV_4: {address: 10.0.0.6, port: 8080}
-        SRV_5: {address: 192.0.2.1, port: 1}
-        SRV_6: {address: 192.0.2.1, port: 1}
+    description: >-
+      Profile budget: three plain HTTPRoute backends (three Services) are the
+      same shape and share ONE gateway profile (default-server + the GEP-1742
+      set-timeout line); a per-route value in a profile would add sections.
     fixtures:
       services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {name: slot-svc, namespace: default}
-          spec:
-            ports:
-              - {port: 80, targetPort: 8080}
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: slot-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: slot-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.5"]
-              targetRef: {kind: Pod, name: slot-pod-5}
-            - addresses: ["10.0.0.2"]
-              targetRef: {kind: Pod, name: slot-pod-2}
-          ports:
-            - {port: 8080, protocol: TCP}
+        - {apiVersion: v1, kind: Service, metadata: {name: g1, namespace: default}, spec: {ports: [{port: 80, targetPort: 8080}]}}
+        - {apiVersion: v1, kind: Service, metadata: {name: g2, namespace: default}, spec: {ports: [{port: 80, targetPort: 8080}]}}
+        - {apiVersion: v1, kind: Service, metadata: {name: g3, namespace: default}, spec: {ports: [{port: 80, targetPort: 8080}]}}
       httproutes:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: HTTPRoute
-          metadata: {name: slot-lower, namespace: default}
-          spec:
-            parentRefs:
-              - {name: gateway, namespace: default}
-            hostnames:
-              - slot-lower.example.com
-            rules:
-              - matches: *matchesPathprefixRoot
-                backendRefs:
-                  - {name: slot-svc, port: 80}
+        - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, metadata: {name: pg1, namespace: default}, spec: {parentRefs: [{name: gateway, namespace: default}], hostnames: [g1.example.com], rules: [{matches: *matchesPathprefixRoot, backendRefs: [{name: g1, port: 80}]}]}}
+        - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, metadata: {name: pg2, namespace: default}, spec: {parentRefs: [{name: gateway, namespace: default}], hostnames: [g2.example.com], rules: [{matches: *matchesPathprefixRoot, backendRefs: [{name: g2, port: 80}]}]}}
+        - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, metadata: {name: pg3, namespace: default}, spec: {parentRefs: [{name: gateway, namespace: default}], hostnames: [g3.example.com], rules: [{matches: *matchesPathprefixRoot, backendRefs: [{name: g3, port: 80}]}]}}
     assertions:
       - type: haproxy_valid
-
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_3 10\\.0\\.0\\.5:8080"}
-      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_[12] 10\\.0\\.0\\.2:8080"}
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"}
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_5 10\\.0\\.0\\.2:8080"}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^backend gtw_default_pg[1-3]_g[1-3]_80 from haptic-be-\w+$', expected: "3"}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$\n\s+default-server check\n\s+http-request set-timeout server ', expected: "1"}
 
   test-gateway-status-patches:
     requires: [gateways, httproutes]

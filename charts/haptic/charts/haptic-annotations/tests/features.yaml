@@ -217,7 +217,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_db-ingress_default-backend_errors-service"
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10\\.0\\.0\\.9:9000"}
+      - {type: contains, target: haproxy.cfg, pattern: "server 10\\.0\\.0\\.9 10\\.0\\.0\\.9:9000"}
       - type: contains
         target: map:path-prefix.map
         pattern: "db\\.example\\.com/ BACKEND:default_db-ingress_default-backend_errors-service"

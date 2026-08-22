@@ -784,8 +784,8 @@ templateSnippets:
                 {"key":"haproxy.retries","value":{"intValue": to_string(to_int(o.retries) ?? 0)}}]
               sv = string(o.server) ?? ""
               if sv != "" { upstream_attrs = push(upstream_attrs, {"key":"haproxy.server","value":{"stringValue": sv}}) }
-              # haproxy.server is the pre-allocated SLOT (SRV_1); the pod
-              # behind it comes from the connection destination.
+              # haproxy.server is the pod name (pod-named servers), so
+              # server_pod is the same value; kept as its own attribute.
               pod = string(o.server_pod) ?? ""
               if pod != "" { upstream_attrs = push(upstream_attrs, {"key":"k8s.pod.name","value":{"stringValue": pod}}) }
               kns = string(o.namespace) ?? ""

@@ -115,8 +115,10 @@ templateSnippets:
           {%- if !isValid %}
             {{- fail("Invalid value '" + lb + "' for annotation 'haproxy-haptic.org/load-balance' on Ingress '" + key + "'. Valid algorithms: " + (exactValid | join(", ")) + ", or parameterized: " + (prefixValid | join("(...), ")) + "(...)") -}}
           {%- end %}
-      # haptic/load-balance ({{ key }})
-      balance {{ ValidateConfigValue(lb, "haproxy-haptic.org/load-balance", key, true) }}
+          {#- Pass balance as a structured Backend() arg, not a raw body line, so
+              the macro carries it in the profile and adds `hash-type consistent`
+              for a hash-family algorithm (keeps pod churn reload-free). -#}
+          {%- serverOpts["balance"] = ValidateConfigValue(lb, "haproxy-haptic.org/load-balance", key, true) %}
         {%- end %}
       {%- end -%}
 
@@ -168,9 +170,10 @@ templateSnippets:
           {%- else %}
             {%- expr = "hash " + hashBy %}
           {%- end %}
-      # haptic/consistent-hash-by ({{ key }})
-      balance {{ ValidateConfigValue(expr, "haproxy-haptic.org/consistent-hash-by", key, true) }}
-      hash-type consistent
+          {#- Pass balance as the structured Backend() arg so it lands in the
+              profile and the macro adds `hash-type consistent` (every expr here is
+              a hash-family algorithm), keeping pod churn reload-free. -#}
+          {%- serverOpts["balance"] = ValidateConfigValue(expr, "haproxy-haptic.org/consistent-hash-by", key, true) %}
         {%- end %}
       {%- end -%}
 
@@ -284,27 +287,19 @@ templateSnippets:
   backend-directives-830-haptic-scale-server-slots:
     template: |
       {#
-        HAPTIC Scale Server Slots
-
-        Best-of-breed source: haproxytech haproxy.org/scale-server-slots.
-        Overrides the pre-allocated (reserved) server-slot count for the backend
-        via serverOpts["serverSlotsValue"], which base.yaml's BackendServers macro
-        reads. More slots = more headroom for reload-free scale-up; fewer = a
-        leaner config.
-
-        Annotation: haproxy-haptic.org/scale-server-slots (positive integer)
+        haproxy-haptic.org/scale-server-slots no longer has any effect: servers
+        are named after their pods (no slot pool, ADR-0011), so a backend always
+        holds exactly the current pods and scaling never reserves slots or
+        reloads. The annotation is rejected at admission and warned at reconcile
+        (WebhookRejectOrWarn) — a chart fail() on a tenant Ingress value would
+        abort the whole render.
       #}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var serverSlots = ingress.Metadata.Annotations["haproxy-haptic.org/scale-server-slots"] %}
-        {%- if serverSlots != "" %}
-          {%- var val = toint(serverSlots) %}
-          {%- if val <= 0 %}
-            {{- fail("Invalid value '" + serverSlots + "' for annotation 'haproxy-haptic.org/scale-server-slots' on Ingress '" + key + "'. Must be a positive integer.") -}}
-          {%- end %}
-          {%- serverOpts["serverSlotsValue"] = val %}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/scale-server-slots"] != "" && first_seen("haptic-scale-server-slots-removed", ns, name) %}
+          {%- _ = WebhookRejectOrWarn(ingress, "UnsupportedAnnotation", "Ingress " + ns + "/" + name + " sets 'haproxy-haptic.org/scale-server-slots', which no longer has any effect: servers are named after pods and scale with no reserved slots and no reload. Remove the annotation.") %}
         {%- end %}
       {%- end -%}
 
@@ -496,17 +491,19 @@ templateSnippets:
           {%- if val <= 0 || val > 65535 %}
             {{- fail("Invalid value '" + aPort + "' for annotation 'haproxy-haptic.org/agent-check-port' on Ingress '" + key + "'. Must be 1-65535.") -}}
           {%- end %}
-          {%- var agentFlags = "agent-check agent-port " + tostring(val) %}
+          {#- One keyword per flag entry so the plan record carries each as a
+              structured KeywordArg (see FlagsToKeywordArgs). -#}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "agent-check") %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "agent-port " + tostring(val)) %}
           {%- if aAddr != "" %}
-            {%- agentFlags = agentFlags + " agent-addr " + ValidateConfigValue(aAddr, "haproxy-haptic.org/agent-check-addr", key, false) %}
+            {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "agent-addr " + ValidateConfigValue(aAddr, "haproxy-haptic.org/agent-check-addr", key, false)) %}
           {%- end %}
           {%- if aInter != "" %}
-            {%- agentFlags = agentFlags + " agent-inter " + ValidateConfigValue(aInter, "haproxy-haptic.org/agent-check-interval", key, false) %}
+            {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "agent-inter " + ValidateConfigValue(aInter, "haproxy-haptic.org/agent-check-interval", key, false)) %}
           {%- end %}
           {%- if aSend != "" %}
-            {%- agentFlags = agentFlags + " agent-send " + ValidateConfigValue(strip(aSend), "haproxy-haptic.org/agent-check-send", key, true) %}
+            {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "agent-send " + ValidateConfigValue(strip(aSend), "haproxy-haptic.org/agent-check-send", key, true)) %}
           {%- end %}
-          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), agentFlags) %}
         {%- end %}
       {%- end -%}
 

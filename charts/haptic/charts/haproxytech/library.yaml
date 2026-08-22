@@ -458,8 +458,9 @@ templateSnippets:
           {%- if lbInj != "" %}
             {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value for annotation 'haproxy.org/load-balance' on Ingress '" + key + "': contains " + lbInj + ", which would split the backend directive; load-balancing is left at the default.") -}}
           {%- else %}
-      # haproxytech/backend-directives-haproxytech-load-balance
-      balance {{ lb }}
+          {#- Structured Backend() arg (profile), not a body line, so the macro
+              adds `hash-type consistent` for a hash-family algorithm. -#}
+          {%- serverOpts["balance"] = lb %}
           {%- end %}
         {%- end %}
       {%- end -%}
@@ -739,7 +740,10 @@ templateSnippets:
 
         {%- var serverSsl = ingress.Metadata.Annotations["haproxy.org/server-ssl"] %}
         {%- if serverSsl == "true" %}
-          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl alpn h2,http/1.1 verify none") %}
+          {#- One keyword per entry so the plan record carries each structurally. -#}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl") %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "alpn h2,http/1.1") %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify none") %}
         {%- end %}
 
         {%- var serverProto = ingress.Metadata.Annotations["haproxy.org/server-proto"] %}
@@ -766,9 +770,12 @@ templateSnippets:
             {%- var caContent = caSecret.Data["ca.crt"] | b64decode() %}
             {%- if caContent != "" %}
               {%- var caFilename = caNs + "-" + caName + "-ca.pem" %}
-              {%- var caPath, caRegErr = fileRegistry.Register("file", caFilename, caContent) -%}
+              {#- "ca-file": a content-only CA rotation applies at runtime, no reload on v3.2+. -#}
+              {%- var caPath, caRegErr = fileRegistry.Register("ca-file", caFilename, caContent) -%}
               {%- if caRegErr != nil -%}{{ fail("failed to register CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
-              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify required ca-file " + caPath) %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl") %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify required") %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ca-file " + caPath) %}
             {%- else %}
               {#- Name-free comment: the tenant-controlled Secret name goes only into the
                   Kubernetes Event, never into the rendered config, so a newline in it can't
@@ -800,8 +807,11 @@ templateSnippets:
               {%- var crtFilename = crtNs + "-" + crtName + "-client.pem" %}
               {%- var _, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
               {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
-              {#- Bare filename, not the registry path: HAProxy resolves `crt` against crt-base. -#}
+              {#- Bare filename: `crt` resolves against crt-base, so the arg can't
+                  match the runtime store ident and add server can't carry it —
+                  structural. -#}
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "crt " + crtFilename) %}
+              {%- serverOpts["shape"] = "structural-crt" %}
             {%- else %}
               {{- recordEvent(ingress, "ServerCrtSecretIncomplete", "Ingress " + key + " references Secret '" + serverCrt + "' in 'haproxy.org/server-crt', but it has no tls.crt/tls.key. No client certificate is presented upstream.") -}}
             # haproxy.org/server-crt: referenced Secret missing tls.crt/tls.key; no client certificate presented
@@ -812,13 +822,11 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {%- var serverSlots = ingress.Metadata.Annotations["haproxy.org/scale-server-slots"] %}
-        {%- if serverSlots != "" %}
-          {%- var val = toint(serverSlots) %}
-          {%- if val <= 0 %}
-            {{- fail("Invalid value '" + serverSlots + "' for annotation 'haproxy.org/scale-server-slots' on Ingress '" + key + "'. Must be a positive integer.") -}}
-          {%- end %}
-          {%- serverOpts["serverSlotsValue"] = val %}
+        {#- haproxy.org/scale-server-slots no longer has any effect: servers are
+            named after their pods (no slot pool, ADR-0011), so a backend always
+            holds the current pods and scaling never reserves slots or reloads. -#}
+        {%- if ingress.Metadata.Annotations["haproxy.org/scale-server-slots"] != "" && first_seen("haproxytech-scale-server-slots-removed", key) %}
+          {%- _ = WebhookRejectOrWarn(ingress, "UnsupportedAnnotation", "Ingress " + key + " sets 'haproxy.org/scale-server-slots', which no longer has any effect: servers are named after pods and scale with no reserved slots and no reload. Remove the annotation.") %}
         {%- end %}
 
         {%- var snippet = ingress.Metadata.Annotations["haproxy.org/backend-config-snippet"] %}
@@ -1699,8 +1707,8 @@ validationTests:
                       backend: {service: {name: unifi, port: {name: https-gui}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10.0.0.42:8443 "}
-      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_1 10.0.0.42:80 "}
+      - {type: contains, target: haproxy.cfg, pattern: "server unifi-0 10.0.0.42:8443 "}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server unifi-0 10.0.0.42:80 "}
 
   test-haproxytech-check-disable:
     description: haproxy.org/check=false disables health checks via default-server no-check
@@ -1731,7 +1739,7 @@ validationTests:
       # happened to be disabled, and a load-gate crash-loop once it wasn't.
       - type: not_contains
         target: haproxy.cfg
-        pattern: 'backend default_nocheck-ingress_svc_echo_80\n  guid [^\n]*\n  default-server check'
+        pattern: 'backend default_nocheck-ingress_svc_echo_80 from haptic-be-\w+\n\s+guid [^\n]*\n\s+default-server check'
 
   test-haproxytech-check-interval:
     description: haproxy.org/check-interval sets the inter parameter on default-server
@@ -1757,14 +1765,12 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "default-server check inter 10s"}
 
-  test-haproxytech-scale-server-slots:
-    description: haproxy.org/scale-server-slots overrides the pre-allocated slot count
-    # `server SRV_6 ` cannot be anchored to one backend the way a
-    # `default-server` line can, so this test pins the config surface its
-    # absence assertion depends on: any other backend with more slots — the
-    # Varnish cache tier has them — would otherwise falsify it, and the load
-    # gate turns that into a crash-loop.
-    extraContext: {cache: { varnish: { enabled: false } }}
+  test-haproxytech-scale-server-slots-tolerated:
+    description: >-
+      haproxy.org/scale-server-slots no longer has any effect (servers are named
+      after pods, no slot pool). The annotation is tolerated — the render
+      succeeds and emits no slot placeholders — and warned (a chart fail on a
+      tenant value would abort the whole render).
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1785,8 +1791,8 @@ validationTests:
                       backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_5 "}
-      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_6 "}
+      - {type: contains, target: haproxy.cfg, pattern: "backend default_slots-ingress_svc_echo_80 from haptic-be-"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_[0-9]"}
 
   # ---------------------------------------------------------------------------
   # Config-injection guards (#157, phase 2). The centralized utilities are behavior-

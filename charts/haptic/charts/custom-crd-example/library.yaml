@@ -116,7 +116,7 @@ validationTests:
             requestHeaders: [{name: x-env, value: "prod us"}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend default_r1$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend default_r1 from haptic-be-\w+$'}
       - {type: contains, target: haproxy.cfg, pattern: 'server primary 10\.0\.0\.1:8080'}
       - {type: contains, target: map:route-reqhdr.map, pattern: 'default_r1\|set\|x-env prod%20eu'}
       - {type: contains, target: map:route-reqhdr.map, pattern: 'default_r2\|set\|x-env prod%20us'}

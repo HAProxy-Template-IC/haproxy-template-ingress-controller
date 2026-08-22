@@ -68,25 +68,22 @@ templateSnippets:
               the backend-protocol default (`ssl verify none`) stands as-is. -#}
           {%- var hasProxySsl = sslSecret != "" || sslVerify != "" || sslName != "" || sslCiphers != "" || sslProtocols != "" %}
           {%- if hasProxySsl %}
-            {#- Strip the SSL portion that backend-protocol-730 added so we can
-                re-emit a single, coherent SSL flag set. We keep any non-SSL
-                flags (e.g. `proto h2` for GRPCS) and the bare `ssl` token. -#}
+            {#- Strip the SSL keywords backend-protocol-730 added so we can
+                re-emit a coherent set; keep non-SSL flags (`proto h2` for GRPCS,
+                send-proxy). Flags are one keyword per entry, so match by the first
+                word — no full HAProxy grammar. -#}
+            {%- var sslKw = map[string]bool{"ssl": true, "verify": true, "ca-file": true, "crt": true, "sni": true, "verifyhost": true, "ciphers": true, "ciphersuites": true, "ssl-min-ver": true, "ssl-max-ver": true, "alpn": true} %}
             {%- var keptFlags = []any{} %}
-            {%- var hadProtoH2 = false %}
             {%- for _, f := range serverOpts["flags"].([]any) %}
-              {%- var fs = tostring(f) %}
-              {%- if fs == "ssl verify none" %}
-                {#- drop — replaced below -#}
-              {%- else if fs == "ssl verify none proto h2" %}
-                {%- hadProtoH2 = true %}
-              {%- else %}
+              {%- if !sslKw[splitN(tostring(f), " ", 2)[0]] %}
                 {%- keptFlags = append(keptFlags, f) %}
               {%- end %}
             {%- end %}
             {%- serverOpts["flags"] = keptFlags %}
 
-            {#- Begin assembling the SSL flag string. -#}
-            {%- var sslFlag = "ssl" %}
+            {#- Re-emit the SSL keywords, one per serverOpts["flags"] entry, so the
+                plan record carries each as a structured KeywordArg. -#}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl") %}
 
             {#- CA bundle + client cert from the referenced Secret. Resolve this
                 FIRST: HAProxy rejects `verify required` without a `ca-file`, so
@@ -110,7 +107,8 @@ templateSnippets:
                 {%- var caContent = secret.Data["ca.crt"] | b64decode() %}
                 {%- if caContent != "" %}
                   {%- var caFilename = secNs + "-" + secName + "-proxy-ssl-ca.pem" %}
-                  {%- var caPath, caRegErr = fileRegistry.Register("file", caFilename, caContent) -%}
+                  {#- "ca-file": a content-only CA rotation applies at runtime, no reload on v3.2+. -#}
+                  {%- var caPath, caRegErr = fileRegistry.Register("ca-file", caFilename, caContent) -%}
                   {%- if caRegErr != nil -%}{{ fail("failed to register proxy-ssl CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
                   {%- caFilePart = " ca-file " + caPath %}
                   {%- caAdded = true %}
@@ -122,10 +120,9 @@ templateSnippets:
                   {%- var crtFilename = secNs + "-" + secName + "-proxy-ssl-client.pem" %}
                   {%- var _, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
                   {%- if crtRegErr != nil -%}{{ fail("failed to register proxy-ssl client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
-                  {#- `crt` is resolved by HAProxy against `crt-base` (the ssl dir),
-                      so pass the BARE filename. The Register()-returned ssl/-prefixed
-                      path would double to ssl/ssl/<name> and fail `haproxy -c` on a
-                      real deploy. Matches haproxytech/haproxy-ingress. -#}
+                  {#- BARE filename: `crt` resolves against crt-base (ssl/-prefixed would
+                      double to ssl/ssl/<name> and fail `haproxy -c`). The bare arg then
+                      can't match the runtime store ident, so the backend is structural. -#}
                   {%- crtPart = " crt " + crtFilename %}
                 {%- end %}
               {%- end %}
@@ -153,24 +150,28 @@ templateSnippets:
             {%- end %}
             {#- ca-file only matters when verifying; the client cert (crt) is
                 presented to the upstream regardless of verify mode. -#}
-            {%- sslFlag = sslFlag + " verify " + effVerify %}
-            {%- if effVerify == "required" %}{%- sslFlag = sslFlag + caFilePart %}{%- end %}
-            {%- sslFlag = sslFlag + crtPart %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify " + effVerify) %}
+            {%- if effVerify == "required" && caFilePart != "" %}{%- serverOpts["flags"] = append(serverOpts["flags"].([]any), trimSpace(caFilePart)) %}{%- end %}
+            {%- if crtPart != "" %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), trimSpace(crtPart)) %}
+              {#- crt is crt-base-relative, so add server can't match it: structural (Backend records why). -#}
+              {%- serverOpts["shape"] = "structural-crt" %}
+            {%- end %}
 
             {#- proxy-ssl-name → SNI (valid in any verify mode). verifyhost is
                 emitted only when verify is `required`. Both are
                 config-injection-guarded (single host token). -#}
             {%- if sslName != "" %}
               {%- var nameTok = ValidateConfigValue(sslName, "nginx.ingress.kubernetes.io/proxy-ssl-name", key, false) %}
-              {%- sslFlag = sslFlag + " sni str(" + nameTok + ")" %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "sni str(" + nameTok + ")") %}
               {%- if effVerify == "required" %}
-                {%- sslFlag = sslFlag + " verifyhost " + nameTok %}
+                {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verifyhost " + nameTok) %}
               {%- end %}
             {%- end %}
 
             {#- ciphers (single token; injection-guarded) -#}
             {%- if sslCiphers != "" %}
-              {%- sslFlag = sslFlag + " ciphers " + ValidateConfigValue(sslCiphers, "nginx.ingress.kubernetes.io/proxy-ssl-ciphers", key, false) %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ciphers " + ValidateConfigValue(sslCiphers, "nginx.ingress.kubernetes.io/proxy-ssl-ciphers", key, false)) %}
             {%- end %}
 
             {#- proxy-ssl-protocols → ssl-min-ver / ssl-max-ver. nginx accepts a
@@ -191,14 +192,12 @@ templateSnippets:
                 {%- end %}
               {%- end %}
               {%- if minVer != "" %}
-                {%- sslFlag = sslFlag + " ssl-min-ver " + minVer %}
+                {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl-min-ver " + minVer) %}
               {%- end %}
               {%- if maxVer != "" %}
-                {%- sslFlag = sslFlag + " ssl-max-ver " + maxVer %}
+                {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl-max-ver " + maxVer) %}
               {%- end %}
             {%- end %}
-
-            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), sslFlag) %}
           {%- end %}
         {%- end %}
       {%- end -%}

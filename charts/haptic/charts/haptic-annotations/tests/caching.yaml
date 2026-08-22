@@ -122,7 +122,7 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "timeout server 2000ms"}
       - type: contains
         target: haproxy.cfg
-        pattern: "(?ms)^backend varnish_cache$.*?timeout server 0$"
+        pattern: "(?ms)^backend varnish_cache from haptic-be-\\w+$.*?timeout server 0$"
       - {type: contains, target: haproxy.cfg, pattern: "retries 1"}
       - {type: contains, target: haproxy.cfg, pattern: "retry-on conn-failure empty-response response-timeout 425"}
       - {type: contains, target: haproxy.cfg, pattern: "option redispatch 1"}
@@ -145,7 +145,7 @@ validationTests:
         pattern: "http-after-response set-status 425 if \\{ res.hdr\\(X-Haptic-Cache-Failure\\) -m str 1 \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "(?ms)^backend varnish_cache$.*?http-after-response del-header X-Haptic-Cache-Origin-Transport-Failure\\s+http-after-response del-header X-Haptic-Cache-Failure"
+        pattern: "(?ms)^backend varnish_cache from haptic-be-\\w+$.*?http-after-response del-header X-Haptic-Cache-Origin-Transport-Failure\\s+http-after-response del-header X-Haptic-Cache-Failure"
       - {type: contains, target: haproxy.cfg, pattern: "http-after-response set-var\\(txn.cache_degraded\\) str\\(1\\) if \\{ srv_name -m str ORIGIN_FALLBACK \\}"}
       # Dedicated internal origin Service for the backend-fetch port (ClusterIP,
       # never a LoadBalancer; targets the HAProxy fleet on the loopback port).

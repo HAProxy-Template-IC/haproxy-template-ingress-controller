@@ -12,9 +12,8 @@
 #       bind *:<port>
 #       default_backend gtw_tcp_<routeNs>_<routeName>_<ruleIdx>
 #
-#   backend gtw_tcp_<routeNs>_<routeName>_<ruleIdx>
-#       mode tcp
-#       server SRV_1 <pod-ip>:<pod-port> ...
+#   backend gtw_tcp_<routeNs>_<routeName>_<ruleIdx> from haptic-be-<hash>
+#       server <pod> <pod-ip>:<pod-port> ...
 #
 # Layout mirrors the TLSRoute passthrough path (22-ssl-passthrough.yaml +
 # backends-501-gateway-ssl-passthrough + frontends-600-gateway-tls-
@@ -353,15 +352,15 @@ templateSnippets:
               servers = BackendServers(refName, 0, refPort, nil, nil, beName, refNs)
             } else {
               // Weighted TCPRoute: several routable backendRefs. `balance
-              // roundrobin` honours per-server weights; each Service gets its
-              // own slotPrefix so the reload-free slot preservation tracks each
-              // independently within the one backend. A weight-0 ref stays in
-              // the config (emitted `weight 0`) so it takes no traffic.
+              // roundrobin` honours per-server weights; each Service's servers
+              // are named `<service>-<pod>` so pods from different Services in
+              // this one backend never collide. A weight-0 ref stays in the
+              // config (emitted `weight 0`) so it takes no traffic.
               balance = "roundrobin"
-              for ri, r := range refs {
+              for _, r := range refs {
                 var rm = r.(map[string]any)
                 var opts = map[string]any{
-                  "slotPrefix": "SRV" + tostring(ri) + "_",
+                  "namePrefix": tostring(rm["name"]) + "-",
                   "weight":     toint(rm["weight"]),
                 }
                 for _, server := range BackendServers(tostring(rm["name"]), 0, toint(rm["port"]), opts, nil, beName, tostring(rm["ns"])) {
@@ -507,11 +506,12 @@ validationTests:
         target: haproxy.cfg
         pattern: '(?ms)^frontend gateway-tcp-port-9100$.*?^\s+mode tcp$.*?^\s+log-format "%\{\+json\}o '
       - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+default_backend gtw_tcp_default_tcp-app_0$'}
-      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend gtw_tcp_default_tcp-app_0$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend gtw_tcp_default_tcp-app_0 from haptic-be-\w+$'}
+      # mode tcp lives in the backend's profile (a named defaults).
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^backend gtw_tcp_default_tcp-app_0$.*?^\s+mode tcp$'
-      - {type: contains, target: haproxy.cfg, pattern: 'server SRV_1 10\.0\.0\.42:9100'}
+        pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$.*?^\s+mode tcp$'
+      - {type: contains, target: haproxy.cfg, pattern: 'server tcp-backend-pod-1 10\.0\.0\.42:9100'}
 
   test-tcproute-oldest-route-wins-port:
     requires: [gateways, tcproutes]
@@ -561,10 +561,10 @@ validationTests:
     requires: [gateways, tcproutes]
     description: >
       A TCPRoute rule with multiple weighted backendRefs becomes one
-      mode-tcp backend with `balance roundrobin`, each Service's servers in
-      a disjoint slot range (SRV0_/SRV1_/SRV2_) carrying its weight; a
-      weight-0 backend is emitted with `weight 0` (no traffic). Mirrors the
-      TCPRouteWeightedRouting conformance test.
+      mode-tcp backend with `balance roundrobin`, each Service's pods named
+      `<service>-<pod>` carrying its weight; a weight-0 backend is emitted
+      with `weight 0` (no traffic). Mirrors the TCPRouteWeightedRouting
+      conformance test.
     extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       gateways:
@@ -628,18 +628,18 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+balance roundrobin$'}
-      # v1 weight 70 in slot range SRV0_
+      # v1 weight 70, named <service>-<pod>
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+server SRV0_1 10\.0\.0\.1:9100 .*enabled weight 70'
-      # v2 weight 30 in slot range SRV1_
+        pattern: '(?m)^\s+server tcp-v1-tcp-v1-pod 10\.0\.0\.1:9100 .*weight 70'
+      # v2 weight 30
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+server SRV1_1 10\.0\.0\.2:9100 .*enabled weight 30'
-      # v3 weight 0 in slot range SRV2_
+        pattern: '(?m)^\s+server tcp-v2-tcp-v2-pod 10\.0\.0\.2:9100 .*weight 30'
+      # v3 weight 0 (no traffic)
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+server SRV2_1 10\.0\.0\.3:9100 .*enabled weight 0'
+        pattern: '(?m)^\s+server tcp-v3-tcp-v3-pod 10\.0\.0\.3:9100 .*weight 0'
 
   test-tcproute-multi-listener-single-backend:
     requires: [gateways, tcproutes]
@@ -689,7 +689,7 @@ validationTests:
       # ...forwarding to the one shared backend.
       - type: match_count
         target: haproxy.cfg
-        pattern: '(?m)^backend gtw_tcp_default_tcp-multi_0$'
+        pattern: '(?m)^backend gtw_tcp_default_tcp-multi_0 from haptic-be-\w+$'
         expected: "1"
 
   test-tcproute-unattached-no-frontend:

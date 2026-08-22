@@ -36,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -54,6 +55,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -102,12 +104,12 @@ func parseBackendServers(t *testing.T, config string) map[string]parsedBackend {
 	backends := make(map[string]parsedBackend, len(sections))
 	for _, name := range sections {
 		var backend parsedBackend
-		if data, err := p.Get(cnparser.Backends, name, "default-server"); err == nil {
-			lines, ok := data.([]cntypes.DefaultServer)
-			require.Truef(t, ok, "backend %q: default-server data is %T", name, data)
-			require.Lenf(t, lines, 1, "backend %q: one default-server line expected", name)
-			backend.DefaultServer = keywordOptions(lines[0].Params)
-		}
+		// A dynamic backend carries `default-server` in its profile (`from
+		// <defaults>`), not in the section, so resolve the profile chain — the
+		// same inheritance HAProxy applies. A structural backend carries it in a
+		// section too (its profile, or its own body when hand-built); either way
+		// those bytes are covered by that section's TextDigest.
+		backend.DefaultServer = resolveDefaultServer(t, p, cnparser.Backends, name)
 		// No server line in this backend — an empty backend is legal.
 		if data, err := p.Get(cnparser.Backends, name, "server"); err == nil {
 			lines, ok := data.([]cntypes.Server)
@@ -124,6 +126,39 @@ func parseBackendServers(t *testing.T, config string) map[string]parsedBackend {
 		backends[name] = backend
 	}
 	return backends
+}
+
+// resolveDefaultServer returns the `default-server` keywords in effect for a
+// section: its own line, or the first one found walking the `from <defaults>`
+// chain (a dynamic backend's default-server lives in its profile). nil when
+// neither the section nor any ancestor declares one.
+func resolveDefaultServer(t *testing.T, p cnparser.Parser, sectionType cnparser.Section, name string) map[string]string {
+	t.Helper()
+	if ds := readDefaultServer(t, p, sectionType, name); ds != nil {
+		return ds
+	}
+	from, err := p.SectionsDefaultsFromGet(sectionType, name)
+	seen := map[string]bool{}
+	for err == nil && from != "" && !seen[from] {
+		seen[from] = true
+		if ds := readDefaultServer(t, p, cnparser.Defaults, from); ds != nil {
+			return ds
+		}
+		from, err = p.SectionsDefaultsFromGet(cnparser.Defaults, from)
+	}
+	return nil
+}
+
+func readDefaultServer(t *testing.T, p cnparser.Parser, sectionType cnparser.Section, name string) map[string]string {
+	t.Helper()
+	data, err := p.Get(sectionType, name, "default-server")
+	if err != nil {
+		return nil
+	}
+	lines, ok := data.([]cntypes.DefaultServer)
+	require.Truef(t, ok, "%s %q: default-server data is %T", sectionType, name, data)
+	require.Lenf(t, lines, 1, "%s %q: one default-server line expected", sectionType, name)
+	return keywordOptions(lines[0].Params)
 }
 
 func keywordOptions(params []cnparams.ServerOption) map[string]string {
@@ -172,7 +207,7 @@ func declaredServerMismatches(parsed map[string]parsedBackend, plan *renderplan.
 			mismatches = append(mismatches, fmt.Sprintf("backend %q is in the plan but not in the config", name))
 			continue
 		}
-		mismatches = append(mismatches, defaultServerMismatches(name, &record, backend.DefaultServer)...)
+		mismatches = append(mismatches, defaultServerMismatches(name, record.Shape, record.DefaultServer, backend.DefaultServer)...)
 		if len(record.Servers) != len(backend.Servers) {
 			mismatches = append(mismatches, fmt.Sprintf("backend %q declares %d servers, the config has %d",
 				name, len(record.Servers), len(backend.Servers)))
@@ -185,14 +220,24 @@ func declaredServerMismatches(parsed map[string]parsedBackend, plan *renderplan.
 	return mismatches
 }
 
-// defaultServerMismatches holds a declared `defaultServer` against the parsed
-// line. A record without one is not compared: in this step most emitters still
-// carry `default-server` as a body line, which the body digest covers.
-func defaultServerMismatches(backend string, record *renderplan.Backend, parsed map[string]string) []string {
-	if len(record.DefaultServer) == 0 {
+// defaultServerMismatches holds a dynamic backend's declared `defaultServer`
+// against the parsed line, both ways. It does NOT skip an empty declaration: a
+// `default-server` carrying keywords the record cannot reconstruct is exactly how
+// per-server keywords could hide in the profile text, where the deploy side
+// (which reads only the record) can't compose a correct `add server`.
+// optionMismatches reports every parsed keyword the record fails to declare, so a
+// hidden keyword fails CI. A dynamic backend with no default-server anywhere has
+// both sides empty and passes.
+//
+// A structural backend is exempt: it never gets `add server` (create/delete/body
+// change reload), so its default-server — in its profile, or its own body when
+// hand-built — is covered by that section's TextDigest, not by the structured
+// field.
+func defaultServerMismatches(backend, shape string, declared []renderplan.KeywordArg, parsed map[string]string) []string {
+	if shape != renderplan.ShapeDynamic {
 		return nil
 	}
-	return optionMismatches(fmt.Sprintf("backend %q default-server", backend), keywordArgs(record.DefaultServer), parsed)
+	return optionMismatches(fmt.Sprintf("backend %q default-server", backend), keywordArgs(declared), parsed)
 }
 
 // optionMismatches compares two keyword → argument maps both ways.
@@ -616,6 +661,83 @@ func TestPlanDifferentialCorpus(t *testing.T) {
 	}
 	assert.Greater(t, compared, len(testNames)/2, "most of the corpus must actually render")
 }
+
+// TestPlanDifferentialDefaultServerKeywordsAreStructured proves the per-server
+// keywords reach the plan record (Backend.DefaultServer), not only the profile
+// text: the deploy side composes `add server` from the record, so a BackendTLS
+// backend must record ssl/verify/ca-file and every checked backend must record
+// `check` — otherwise a runtime-added pod loses its TLS control or health check.
+func TestPlanDifferentialDefaultServerKeywordsAreStructured(t *testing.T) {
+	restoreHAProxy := dataplanetest.InstallFakeHAProxy()
+	t.Cleanup(restoreHAProxy)
+
+	runner, testNames, cleanup := bundledChartRunner(t)
+	t.Cleanup(cleanup)
+	require.NotEmpty(t, testNames)
+
+	sawCheck, sawBTLS := false, false
+	for _, rendered := range renderCorpus(t, runner, testNames) {
+		for _, backend := range rendered.plan.Backends {
+			kws := make(map[string]bool, len(backend.DefaultServer))
+			for _, kw := range backend.DefaultServer {
+				kws[kw.Name] = true
+			}
+			if kws["check"] {
+				sawCheck = true
+			}
+			if kws["ssl"] && kws["verify"] && kws["ca-file"] {
+				sawBTLS = true
+			}
+		}
+	}
+	assert.True(t, sawCheck, "no backend records `check` in DefaultServer — a runtime-added server would have no health check")
+	assert.True(t, sawBTLS, "no backend records ssl+verify+ca-file in DefaultServer — a BackendTLS add server would drop the TLS control")
+}
+
+// TestPlanDifferentialBackendTLSShapes proves the two BackendTLS reload-free
+// properties MR 2 depends on. First, a CA bundle is registered as a
+// runtime-rotatable ca-file (FileKindCA), so a new verify-BackendTLS route and a
+// CA rotation apply over the runtime API instead of reloading. Second, an mTLS
+// client cert — whose `crt` arg is crt-base-relative and can never equal the
+// runtime cert-store ident — makes its backend structural, so the deploy side
+// reloads it (hitless) rather than composing an `add server` the worker refuses.
+func TestPlanDifferentialBackendTLSShapes(t *testing.T) {
+	restoreHAProxy := dataplanetest.InstallFakeHAProxy()
+	t.Cleanup(restoreHAProxy)
+
+	runner, testNames, cleanup := bundledChartRunner(t)
+	t.Cleanup(cleanup)
+	require.NotEmpty(t, testNames)
+
+	sawCA, sawCrtBackend := false, false
+	for _, rendered := range renderCorpus(t, runner, testNames) {
+		for i := range rendered.plan.Files {
+			f := &rendered.plan.Files[i]
+			if f.Kind == renderplan.FileKindCA && strings.Contains(f.Path, "backend-tls-ca") {
+				sawCA = true
+			}
+		}
+		certs := deployplan.InventoryOf(rendered.plan).Certs
+		for name, backend := range rendered.plan.Backends {
+			for _, kw := range backend.DefaultServer {
+				// A crt whose arg is not a loaded cert can never ride `add server`,
+				// so the backend must be structural or pod churn silently reloads it.
+				if kw.Name == keywordCrt && len(kw.Args) == 1 && !slices.Contains(certs, kw.Args[0]) {
+					sawCrtBackend = true
+					assert.Equalf(t, renderplan.ShapeStructural, backend.Shape,
+						"backend %q carries an unmatched crt %q but is %q, not structural",
+						name, kw.Args[0], backend.Shape)
+					assert.NotEmptyf(t, backend.ShapeReason,
+						"backend %q is structural for an unmatched crt but records no ShapeReason", name)
+				}
+			}
+		}
+	}
+	assert.True(t, sawCA, "no backend-tls CA registered as a runtime-rotatable ca-file (FileKindCA)")
+	assert.True(t, sawCrtBackend, "no mTLS backend with an unmatched crt keyword — the finding-2 guard exercised nothing")
+}
+
+const keywordCrt = "crt"
 
 // corpusRender is one fixture's rendered output with the plan it declared.
 type corpusRender struct {

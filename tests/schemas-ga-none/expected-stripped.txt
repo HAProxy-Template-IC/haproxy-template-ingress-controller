@@ -62,14 +62,14 @@ test-gateway-pod-port-allocator-churn-keeps-incumbent-ports-after-delete
 test-gateway-pod-port-allocator-custom-base
 test-gateway-pod-port-allocator-multi-gateway
 test-gateway-pod-port-allocator-oldest-wins-contested-slot
+test-gateway-profile-budget
 test-gateway-redirect-control-char-rejected
 test-gateway-redirect-hostname-rejected
 test-gateway-redirect-multi-prefix-fallback
 test-gateway-redirect-single-prefix-has-no-fallback
 test-gateway-redirect-status-code-rejected
 test-gateway-route-maps-always-present
-test-gateway-slot-preservation
-test-gateway-slot-preservation-lower-ip
+test-gateway-servers-named-after-pods
 test-gateway-static-addresses-name-fits-rfc1123-label
 test-gateway-static-addresses-per-ip-services
 test-gateway-status-listeners-typed-shape

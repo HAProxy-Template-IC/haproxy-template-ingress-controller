@@ -126,7 +126,8 @@ templateSnippets:
               {%- var caContent = caSecret.Data["ca.crt"] | b64decode() %}
               {%- if caContent != "" %}
                 {%- var caFilename = caNs + "-" + caName + "-backend-tls-ca.pem" %}
-                {%- var caPath, caRegErr = fileRegistry.Register("file", caFilename, caContent) -%}
+                {#- "ca-file" (not "file"): a content-only CA rotation applies at runtime, no reload on v3.2+. -#}
+                {%- var caPath, caRegErr = fileRegistry.Register("ca-file", caFilename, caContent) -%}
                 {%- if caRegErr != nil -%}{{ fail("failed to register CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
                 {%- caFilePart = " ca-file " + caPath %}
                 {%- caAdded = true %}
@@ -158,11 +159,11 @@ templateSnippets:
                 {%- var crtFilename = crtNs + "-" + crtName + "-backend-tls-client.pem" %}
                 {%- var _, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
                 {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
-                {#- `crt` is resolved by HAProxy relative to `crt-base` (the ssl dir,
-                    set in base.yaml), so pass the BARE filename. Passing the
-                    Register()-returned ssl/-prefixed path would double the prefix
-                    to ssl/ssl/<name> and fail `haproxy -c`. Matches the
-                    haproxy-ingress secure-crt-secret pattern. -#}
+                {#- BARE filename: `crt` resolves against crt-base, so the ssl/-prefixed
+                    path would double to ssl/ssl/<name> and fail `haproxy -c`. The bare
+                    arg then can't match the runtime store ident (ssl/<name>), so the
+                    backend is marked structural below. Reload-free needs a
+                    crt-base-free absolute reference; tracked as a follow-up. -#}
                 {%- crtPart = " crt " + crtFilename %}
               {%- else %}
       # Warning: Secret {{ crtNs }}/{{ crtName }} referenced by haproxy-haptic.org/backend-crt-secret on Ingress {{ key }} is missing the 'tls.crt' or 'tls.key' key
@@ -212,32 +213,42 @@ templateSnippets:
       http-request deny deny_status 503
           {%- end %}
 
-          {#- Assemble the single, coherent SSL flag string. -#}
-          {%- var sslFlag = "ssl verify " + effVerify %}
-          {%- if effVerify == "required" %}{%- sslFlag = sslFlag + caFilePart %}{%- end %}
-          {%- sslFlag = sslFlag + crtPart %}
+          {#- One SSL server keyword per serverOpts["flags"] entry, so the plan
+              record carries each as a structured KeywordArg (FlagsToKeywordArgs
+              splits on the first space) and the deploy side can compose a secure
+              `add server`. A multi-keyword string would need an HAProxy grammar. -#}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl") %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify " + effVerify) %}
+          {%- if effVerify == "required" && caFilePart != "" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), trimSpace(caFilePart)) %}
+          {%- end %}
+          {%- if crtPart != "" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), trimSpace(crtPart)) %}
+            {#- crt is crt-base-relative, so add server can't match it: structural (Backend records why). -#}
+            {%- serverOpts["shape"] = "structural-crt" %}
+          {%- end %}
 
           {#- backend-sni: host keyword forwards the request Host; a literal is
               guarded (single host token) and sent verbatim. -#}
           {%- if sni != "" %}
             {%- if sni == "host" || sni == "sni" %}
-              {%- sslFlag = sslFlag + " sni req.hdr(host)" %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "sni req.hdr(host)") %}
             {%- else %}
-              {%- sslFlag = sslFlag + " sni str(" + ValidateConfigValue(sni, "haproxy-haptic.org/backend-sni", key, false) + ")" %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "sni str(" + ValidateConfigValue(sni, "haproxy-haptic.org/backend-sni", key, false) + ")") %}
             {%- end %}
           {%- end %}
 
           {#- verifyhost (single host token; injection-guarded). -#}
           {%- if verifyHost != "" %}
-            {%- sslFlag = sslFlag + " verifyhost " + ValidateConfigValue(verifyHost, "haproxy-haptic.org/backend-verify-host", key, false) %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verifyhost " + ValidateConfigValue(verifyHost, "haproxy-haptic.org/backend-verify-host", key, false)) %}
           {%- end %}
 
           {#- ciphers / ciphersuites (single colon-list tokens; injection-guarded). -#}
           {%- if ciphers != "" %}
-            {%- sslFlag = sslFlag + " ciphers " + ValidateConfigValue(ciphers, "haproxy-haptic.org/backend-ciphers", key, false) %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ciphers " + ValidateConfigValue(ciphers, "haproxy-haptic.org/backend-ciphers", key, false)) %}
           {%- end %}
           {%- if ciphersuites != "" %}
-            {%- sslFlag = sslFlag + " ciphersuites " + ValidateConfigValue(ciphersuites, "haproxy-haptic.org/backend-ciphersuites", key, false) %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ciphersuites " + ValidateConfigValue(ciphersuites, "haproxy-haptic.org/backend-ciphersuites", key, false)) %}
           {%- end %}
 
           {#- backend-ssl-protocols → ssl-min-ver / ssl-max-ver span. HAProxy
@@ -254,12 +265,10 @@ templateSnippets:
                 {%- if maxVer == "" || pv > maxVer %}{%- maxVer = pv %}{%- end %}
               {%- end %}
             {%- end %}
-            {%- if minVer != "" %}{%- sslFlag = sslFlag + " ssl-min-ver " + minVer %}{%- end %}
-            {%- if maxVer != "" %}{%- sslFlag = sslFlag + " ssl-max-ver " + maxVer %}{%- end %}
+            {%- if minVer != "" %}{%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl-min-ver " + minVer) %}{%- end %}
+            {%- if maxVer != "" %}{%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl-max-ver " + maxVer) %}{%- end %}
           {%- end %}
-
       # haptic/backend-tls ({{ ns }}/{{ name }})
-          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), sslFlag) %}
         {%- else if hasSslOnly %}
       # Warning: haproxy-haptic.org/backend-* TLS annotations on Ingress {{ key }} are ignored — the backend-protocol is plaintext (set backend-protocol to h1-ssl/https/h2-ssl/grpcs to enable TLS to the upstream).
         {%- end %}

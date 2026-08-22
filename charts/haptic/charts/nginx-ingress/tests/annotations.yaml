@@ -1281,8 +1281,8 @@ validationTests:
                       backend: {service: {name: secure-app, port: {name: https}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "server SRV_1 10.0.0.50:8443 "}
-      - {type: not_contains, target: haproxy.cfg, pattern: "server SRV_1 10.0.0.50:80 "}
+      - {type: contains, target: haproxy.cfg, pattern: "server secure-app-0 10.0.0.50:8443 "}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server secure-app-0 10.0.0.50:80 "}
 
   # ==========================================================================
   # Upstream request headers (upstream-vhost / x-forwarded-prefix / connection-proxy-header)

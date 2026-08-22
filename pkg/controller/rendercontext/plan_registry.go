@@ -210,6 +210,9 @@ func (r *PlanRegistry) Plan(config string, aux *dataplane.AuxiliaryFiles) (*rend
 }
 
 // profiles derives the profile records from the assembled profile sections.
+// BodyDigest is over the section BODY (the lines after the `defaults <name> from
+// …` header), matching the field name and the Backend record's body-digest
+// semantics — not the whole-section digest, which also covers the header.
 // Caller holds the lock.
 func (r *PlanRegistry) profiles() map[string]renderplan.Profile {
 	profiles := make(map[string]renderplan.Profile)
@@ -217,7 +220,11 @@ func (r *PlanRegistry) profiles() map[string]renderplan.Profile {
 		if section.Kind != renderplan.SectionKindProfile {
 			continue
 		}
-		profiles[section.Name] = renderplan.Profile{Name: section.Name, BodyDigest: section.TextDigest}
+		var body string
+		if text, ok := r.sections[sectionKey{Kind: renderplan.SectionKindProfile, Name: section.Name}]; ok {
+			_, body, _ = strings.Cut(text, "\n")
+		}
+		profiles[section.Name] = renderplan.Profile{Name: section.Name, BodyDigest: renderplan.DigestString(body)}
 	}
 	return profiles
 }

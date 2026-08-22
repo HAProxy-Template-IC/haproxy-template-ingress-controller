@@ -40,6 +40,7 @@ type FileRegistrar interface {
 //
 // Templates use it through the `planRegistry` global:
 //
+//	{%- var name, err = planRegistry.Profile(record) -%}
 //	{%- var token, err = planRegistry.Section("profile", name, body) -%}
 //	{%- var token, err = planRegistry.Backend(record, text) -%}
 //	{{ planRegistry.ProfileGroup() }}
@@ -52,6 +53,15 @@ type PlanRegistrar interface {
 	// and a name, and returns its placeholder line. Registering the same
 	// (kind, name) twice is fine while the text is identical.
 	Section(kind, name, text string) (string, error)
+
+	// Profile content-addresses a named `defaults` section from the shape
+	// values a backend shares with every backend of the same shape (mode,
+	// balance, hash-type, default-server keywords and the profile directive
+	// lines), registers it, and returns its name (`haptic-be-<hash>`). Two
+	// backends with the same shape get the same name and one section, which is
+	// what makes them dynamic-eligible. The name is what Backend() writes after
+	// `from` and records as the backend's `profile`.
+	Profile(record map[string]any) (string, error)
 
 	// Backend records a backend as data and registers its section text.
 	// Unknown keys and a missing name are errors — a typo must not silently
