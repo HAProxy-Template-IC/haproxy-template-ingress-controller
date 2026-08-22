@@ -33,7 +33,7 @@ const guidHashLen = 8
 // Usage in Scriggo templates:
 //
 //	guid {{ make_guid("be", backendKey) }}
-//	guid {{ make_guid("srv", bkName, "SRV_" + tostring(i)) }}
+//	guid {{ make_guid("srv", bkName, srvName) }}
 func scriggoMakeGUID(parts ...any) string {
 	strs := make([]string, len(parts))
 	for i, p := range parts {
