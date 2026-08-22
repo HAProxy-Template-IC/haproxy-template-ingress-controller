@@ -1,4 +1,4 @@
-# cmd/controller - Main Entry Point
+# cmd/haptic - Main Entry Point
 
 Development context for the controller application entry point.
 

@@ -76,10 +76,6 @@ type SyncMetadata struct {
 	// Reload path triggers a reload; runtime path doesn't.
 	ReloadTriggered bool
 
-	// ReloadID is the reload identifier from HAProxy dataplane API.
-	// Only populated when ReloadTriggered is true.
-	ReloadID string
-
 	// SyncDuration is how long the sync operation took.
 	SyncDuration time.Duration
 

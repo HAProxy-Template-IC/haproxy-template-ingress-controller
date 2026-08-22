@@ -138,6 +138,10 @@ parsing": the config text is parsed only by HAProxy in production.
 - Metrics migrate (`haptic_dataplane_api_operations_total` →
   `haptic_deploy_apply_total{pod,mode}`, …); the full table is the
   "Where the old metrics went" section of the Monitoring page.
+- No `haptic_config_validation_skipped_total` is added. The optimistic render
+  gate defers `haproxy -c` off the reconcile wall clock — it runs concurrently
+  with the apply — but never skips it, so a "skipped" counter would misreport.
+  Refusals are already counted by `haptic_config_rejected_total{validator="haproxy"}`.
 
 ### The Enterprise coverage gap
 

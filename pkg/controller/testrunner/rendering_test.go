@@ -8,7 +8,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 )
 
-// TestApplyTestExtraContext pins the helper the benchmark path (cmd/controller)
+// TestApplyTestExtraContext pins the helper the benchmark path (cmd/haptic)
 // uses to render each test with the same isolated baseline as the load gate:
 // production < _global < per-test, applied to an already-built render context.
 func TestApplyTestExtraContext(t *testing.T) {

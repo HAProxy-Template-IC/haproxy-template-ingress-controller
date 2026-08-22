@@ -109,7 +109,7 @@ const (
 // Port Handling Strategy:
 //   - A value of 0 for production ports (healthz, metrics, dataplane) means "uninitialized"
 //     and will be replaced with the default value
-//   - Debug ports may intentionally be 0 to indicate "disabled" (see cmd/controller/main.go)
+//   - Debug ports may intentionally be 0 to indicate "disabled" (see cmd/haptic/main.go)
 //   - After defaults are applied, production ports MUST NOT be 0 (validation will catch this)
 func SetDefaults(cfg *Config) {
 	// Leader election defaults

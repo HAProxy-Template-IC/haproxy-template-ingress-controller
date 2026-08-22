@@ -148,6 +148,7 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.handleReconciliationStarted(e)
 	case *events.ReconciliationCompletedEvent:
 		c.metrics.RecordReconciliation(msToSeconds(e.DurationMs), true)
+		c.metrics.SetRenderProfiles(e.ProfileCount)
 	case *events.ReconciliationFailedEvent:
 		delete(c.triggeredAt, e.CorrelationID()) // cleanup to prevent map growth
 		c.metrics.RecordReconciliation(0, false)

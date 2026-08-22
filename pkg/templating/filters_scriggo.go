@@ -60,7 +60,7 @@ func scriggoRandBytes(n int) string {
 // Example:
 //
 //	additionalDecls := map[string]any{
-//	    "currentConfig": (*parserconfig.StructuredConfig)(nil),
+//	    "currentConfig": (*renderplan.CurrentConfig)(nil),
 //	}
 //	globals := buildScriggoGlobals(filters, funcs, additionalDecls)
 func buildScriggoGlobals(customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, additionalDeclarations map[string]any) native.Declarations {

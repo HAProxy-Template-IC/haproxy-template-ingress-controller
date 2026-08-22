@@ -175,6 +175,10 @@ type State struct {
 	ReloadPendingAt   string            `json:"reload_pending_at,omitempty"` // RFC 3339
 	PendingDeletes    PendingDeletes    `json:"pending_deletes"`
 	LastApply         *ApplyResult      `json:"last_apply,omitempty"`
+	// InvariantViolation is the name of the invariant that failed most recently,
+	// empty if none has. The agent never takes itself down over a violation, so
+	// this is the only place a silent one surfaces.
+	InvariantViolation string `json:"invariant_violation,omitempty"`
 }
 
 // HAProxyInfo is what the agent learned from the worker (`show info`).

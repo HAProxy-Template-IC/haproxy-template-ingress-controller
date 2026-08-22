@@ -85,7 +85,7 @@ func (b *EventBus) SubscribeTypes(name string, bufferSize int, eventTypes ...str
 //	// In a leader-only component's constructor (after BecameLeaderEvent)
 //	eventChan := bus.SubscribeTypesLeaderOnly("scheduler", 50,
 //	    events.EventTypeTemplateRendered,
-//	    events.EventTypeValidationCompleted,
+//	    events.EventTypeRenderGateCompleted,
 //	    events.EventTypeLostLeadership)
 //	defer bus.UnsubscribeTyped(eventChan)
 func (b *EventBus) SubscribeTypesLeaderOnly(name string, bufferSize int, eventTypes ...string) <-chan Event {

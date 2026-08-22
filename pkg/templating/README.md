@@ -124,7 +124,7 @@ Scriggo needs to know the *type* of each runtime variable at compile time even t
 | `extraContext` | `*map[string]any` | User-defined variables from `templatingSettings.extraContext` |
 | typed-resource globals | `*[]*resources.<name>.T` | One per `watchedResources` entry when a schema is loaded — same name as the watched-resource key (e.g. `gateways`, `httproutes`). The `resources.<name>.T` selector chain is also a usable type expression in macro signatures, type assertions, and type-switch case clauses. |
 
-Callers can inject additional per-render declarations through `Options.Declarations` — for example, the renderer and template validator both add `currentConfig` (`*parserconfig.StructuredConfig`, nil on first deployment) so slot-preserving templates can guard with `{% if !isNil(currentConfig) %}`. The typegen-derived typed globals are injected via the same mechanism — `pkg/k8s/typegen` builds the `reflect.Type` declarations the engine merges in before compile.
+Callers can inject additional per-render declarations through `Options.Declarations` — for example, the renderer and template validator both add `currentConfig` (`*renderplan.CurrentConfig`, nil on first deployment) so slot-preserving templates can guard with `{% if !isNil(currentConfig) %}`. The typegen-derived typed globals are injected via the same mechanism — `pkg/k8s/typegen` builds the `reflect.Type` declarations the engine merges in before compile.
 
 To add a new runtime variable, declare it in `buildScriggoGlobals` with a nil pointer of the right type, then pass the value via the render context map — there's a walkthrough in `pkg/templating/CLAUDE.md`.
 

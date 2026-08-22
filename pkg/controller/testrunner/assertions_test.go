@@ -17,6 +17,7 @@ package testrunner
 import (
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -728,12 +729,104 @@ func TestRunner_ResolveTarget_MissingArtefactIsAnError(t *testing.T) {
 		"crt-list:does-not-exist.txt",
 		"k8s:does-not-exist",
 		"status:default/nope:rendered",
+		"backend:does-not-exist",
 	} {
 		t.Run(target, func(t *testing.T) {
 			got, err := runner.resolveTarget(target, haproxyConfig, auxFiles, map[string]string{}, map[string]string{}, "", "")
 			require.Error(t, err)
 			assert.Empty(t, got)
 			assert.Contains(t, err.Error(), target)
+		})
+	}
+}
+
+// backend:<name> resolves to the backend section plus its whole profile `from`
+// chain, so a test asserts on inherited and own directives at once without a
+// (?ms) regex or the generated haptic-be-<hash> name.
+func TestRunner_ResolveTarget_Backend(t *testing.T) {
+	runner := createTestRunner(t)
+
+	haproxyConfig := strings.Join([]string{
+		"global",
+		"  maxconn 1000",
+		"",
+		"defaults haptic-base",
+		"  timeout connect 5s",
+		"",
+		"defaults haptic-be-abc123 from haptic-base",
+		"  balance source",
+		"  hash-type consistent",
+		"",
+		"backend default_svc_echo_80 from haptic-be-abc123",
+		"  guid be:default_svc_echo_80",
+		"  server echo-pod-1 10.0.0.1:8080 check",
+		"",
+		"backend other_svc from haptic-be-abc123",
+		"  server other-1 10.0.0.2:80",
+	}, "\n")
+
+	got, err := runner.resolveTarget("backend:default_svc_echo_80", haproxyConfig, nil, nil, nil, "", "")
+	require.NoError(t, err)
+
+	// The backend's own directives.
+	assert.Contains(t, got, "backend default_svc_echo_80 from haptic-be-abc123")
+	assert.Contains(t, got, "server echo-pod-1 10.0.0.1:8080 check")
+	// The immediate profile it inherits, and the base at the chain's root.
+	assert.Contains(t, got, "balance source")
+	assert.Contains(t, got, "hash-type consistent")
+	assert.Contains(t, got, "timeout connect 5s")
+	// Never another backend that happens to share the profile.
+	assert.NotContains(t, got, "server other-1 10.0.0.2:80")
+}
+
+// A backend that declares no profile resolves to just its own section.
+func TestRunner_ResolveTarget_BackendWithoutProfile(t *testing.T) {
+	runner := createTestRunner(t)
+
+	haproxyConfig := "backend plain_be\n  server s1 10.0.0.9:80"
+
+	got, err := runner.resolveTarget("backend:plain_be", haproxyConfig, nil, nil, nil, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "backend plain_be\n  server s1 10.0.0.9:80", got)
+}
+
+// A `from` parent the render did not emit — whether the backend's immediate
+// profile or a deeper ancestor — must error, never resolve to a truncated
+// chain: silently dropping the missing profile would let an assertion pass
+// against a regression that stopped emitting it.
+func TestRunner_ResolveTarget_BackendBrokenProfileChain(t *testing.T) {
+	runner := createTestRunner(t)
+
+	tests := map[string]struct {
+		haproxyConfig string
+		wantProfile   string
+	}{
+		"immediate profile missing": {
+			haproxyConfig: strings.Join([]string{
+				"backend default_svc_echo_80 from haptic-be-gone",
+				"  guid be:default_svc_echo_80",
+				"  server echo-pod-1 10.0.0.1:8080 check",
+			}, "\n"),
+			wantProfile: "haptic-be-gone",
+		},
+		"deeper ancestor missing": {
+			haproxyConfig: strings.Join([]string{
+				"defaults haptic-be-abc123 from haptic-base-gone",
+				"  balance source",
+				"",
+				"backend default_svc_echo_80 from haptic-be-abc123",
+				"  server echo-pod-1 10.0.0.1:8080 check",
+			}, "\n"),
+			wantProfile: "haptic-base-gone",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := runner.resolveTarget("backend:default_svc_echo_80", tt.haproxyConfig, nil, nil, nil, "", "")
+			require.Error(t, err)
+			assert.Empty(t, got)
+			assert.Contains(t, err.Error(), tt.wantProfile)
 		})
 	}
 }

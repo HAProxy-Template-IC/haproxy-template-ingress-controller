@@ -63,10 +63,11 @@ func (s *Server) stateResponse(verify bool) (api.State, error) {
 		LKGPlanID:         s.state.LKGPlanID,
 		// Cloned: the apply path mutates the tree in place and the answer is
 		// marshalled after this lock is released.
-		Files:          maps.Clone(s.tree),
-		Inventory:      s.inventory,
-		PendingDeletes: s.deferrals.Pending(),
-		LastApply:      s.state.LastApply,
+		Files:              maps.Clone(s.tree),
+		Inventory:          s.inventory,
+		PendingDeletes:     s.deferrals.Pending(),
+		LastApply:          s.state.LastApply,
+		InvariantViolation: s.metrics.LastViolation(),
 	}
 	if s.state.PlanBlobPlanID != "" && s.state.PlanBlobPlanID == s.state.AppliedPlanID {
 		out.AppliedPlan = s.appliedPlan
