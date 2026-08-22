@@ -1,0 +1,101 @@
+suite: RBAC golden — the rendered grants are pinned to the verbs the controller issues
+# Snapshots the rendered ClusterRole + Role rules (default and all-features profiles)
+# so any grant that appears or disappears is a deliberate, reviewed change.
+# The expected set is derived from the controller's issued client-go verbs (see #146).
+# Regenerate after an intentional RBAC change with: helm unittest -u charts/haptic
+templates:
+  - clusterrole.yaml
+  - role.yaml
+tests:
+  - it: pins the ClusterRole rules on chart defaults
+    template: clusterrole.yaml
+    asserts:
+      - matchSnapshot:
+          path: rules
+
+  - it: pins the Role rules on chart defaults
+    template: role.yaml
+    asserts:
+      - matchSnapshot:
+          path: rules
+
+  # Maximal profile: every feature that adds a rule turned on, so a change to any
+  # conditional grant (gateway, vendor annotation libraries, the custom-CRD example,
+  # varnish + its HPA/PDB, shared rate-limit managed store + its PDB) is caught.
+  - it: pins the ClusterRole rules with every rule-adding feature enabled
+    template: clusterrole.yaml
+    set:
+      controller.templateLibraries.customCrdExample.enabled: true
+      controller.templateLibraries.haproxytech.enabled: true
+      controller.templateLibraries.haproxyIngress.enabled: true
+      controller.templateLibraries.nginxIngress.enabled: true
+      cache.varnish.enabled: true
+      cache.varnish.autoscaling.enabled: true
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+    asserts:
+      - matchSnapshot:
+          path: rules
+
+  - it: pins the Role rules with every rule-adding feature enabled
+    template: role.yaml
+    set:
+      controller.templateLibraries.customCrdExample.enabled: true
+      controller.templateLibraries.haproxytech.enabled: true
+      controller.templateLibraries.haproxyIngress.enabled: true
+      controller.templateLibraries.nginxIngress.enabled: true
+      cache.varnish.enabled: true
+      cache.varnish.autoscaling.enabled: true
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+    asserts:
+      - matchSnapshot:
+          path: rules
+
+  # Part A invariants, asserted directly so the intent survives even if a snapshot is
+  # ever regenerated carelessly. The pod watcher is namespace-pinned, so pods must be
+  # granted in the Role and never cluster-wide.
+  - it: grants pods get/list/watch in the namespaced Role
+    template: role.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods"]
+            verbs: ["get", "list", "watch"]
+
+  - it: never grants pods in the ClusterRole
+    template: clusterrole.yaml
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods"]
+            verbs: ["get", "list", "watch"]
+
+  # namespaces is granted only through the gateway library's watched-resources rule,
+  # so it is present when gateway is on and gone when gateway is off — never as a
+  # standalone hardcoded core grant.
+  - it: grants namespaces via the watched-resources rule when the gateway library is on
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["namespaces"]
+            verbs: ["get", "list", "watch"]
+
+  - it: drops the namespaces grant entirely when the gateway library is off
+    template: clusterrole.yaml
+    set:
+      controller.templateLibraries.gateway.enabled: false
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["namespaces"]
+            verbs: ["get", "list", "watch"]

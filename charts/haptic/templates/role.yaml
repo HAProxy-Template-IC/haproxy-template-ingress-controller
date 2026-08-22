@@ -17,6 +17,13 @@ metadata:
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
 rules:
+  # HAProxy pods (namespace-scoped). The auto-injected haproxy-pods watcher is
+  # pinned to the controller's own namespace (resourcewatcher determineNamespace),
+  # so this stays a Role — a cluster-wide grant would be privilege the watcher
+  # never exercises. Keep it namespace-scoped if you touch it.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
   # Secrets (namespace-scoped)
   # - Credentials: HAPTIC agent credentials (read-only)
   # - SSL Certificates: Published as Secrets for HAProxy runtime config (read-write)
