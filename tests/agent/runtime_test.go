@@ -149,12 +149,21 @@ func TestServerOpsRunAtRuntime(t *testing.T) {
 			Keywords: []api.KeywordArg{{Name: "check"}, {Name: "weight", Args: []string{"10"}}},
 		},
 		{Kind: api.OpServerEnable, Backend: "be-1", Server: "srv2", Health: true},
+		{
+			Kind: api.OpServerAdd, Backend: "be-1", Server: "srv0",
+			Address: "127.0.0.1", Port: upstreamPort,
+			Keywords: []api.KeywordArg{{Name: "weight", Args: []string{"0"}}},
+		},
+		{Kind: api.OpServerEnable, Backend: "be-1", Server: "srv0"},
 	}
 	result := s.apply(added, nil)
 	require.True(t, result.OK, "server_add was rejected: %+v", result.Error)
 	assert.Equal(t, api.ResultRuntime, result.Mode)
 	assert.Equal(t, worker, e.workerPID(), "adding a server must not reload")
 	assert.Equal(t, "10", e.mustStatRow("be-1", "srv2")["weight"])
+	// weight 0 must survive as a real weight: a zero-weighted backend takes no
+	// traffic, and HAProxy would default a weightless add server to 1.
+	assert.Equal(t, "0", e.mustStatRow("be-1", "srv0")["weight"])
 
 	weight := 5
 	reweighted := s.next(api.ModeAuto)

@@ -17,6 +17,7 @@ package deployplan
 import (
 	"fmt"
 	"slices"
+	"strconv"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
@@ -58,7 +59,7 @@ func (c *composer) addServer(be *renderplan.Backend, srv *renderplan.Server) (op
 	if bad := c.ineligibleKeyword(keywords); bad != "" {
 		return nil, fmt.Sprintf("keyword %s cannot be set on a dynamic server", bad)
 	}
-	keywords = c.withRuntimeKeywords(keywords, srv.GUID)
+	keywords = c.withRuntimeKeywords(keywords, srv)
 	add := api.Op{
 		Kind:     api.OpServerAdd,
 		Backend:  be.Name,
@@ -146,10 +147,15 @@ func (c *composer) removeServer(backend string, srv *renderplan.Server) (ops []a
 }
 
 // withRuntimeKeywords adds what the record expresses outside the keyword list:
-// the server's GUID and, where HAProxy takes it, an immediately usable server.
-func (c *composer) withRuntimeKeywords(keywords []api.KeywordArg, guid string) []api.KeywordArg {
-	if guid != "" && !hasKeyword(keywords, keywordGUID) {
-		keywords = append(keywords, api.KeywordArg{Name: keywordGUID, Args: []string{guid}})
+// the server's weight and GUID and, where HAProxy takes it, an immediately
+// usable server. add server inherits no default-server, so a nil weight leaves
+// HAProxy's default of 1; a weight of 0 is a real weight that must be emitted.
+func (c *composer) withRuntimeKeywords(keywords []api.KeywordArg, srv *renderplan.Server) []api.KeywordArg {
+	if srv.Weight != nil && !hasKeyword(keywords, keywordWeight) {
+		keywords = append(keywords, api.KeywordArg{Name: keywordWeight, Args: []string{strconv.Itoa(*srv.Weight)}})
+	}
+	if srv.GUID != "" && !hasKeyword(keywords, keywordGUID) {
+		keywords = append(keywords, api.KeywordArg{Name: keywordGUID, Args: []string{srv.GUID}})
 	}
 	if c.caps.ServerInitState && hasKeyword(keywords, keywordCheck) && !hasKeyword(keywords, keywordInitState) {
 		keywords = append(keywords, api.KeywordArg{Name: keywordInitState, Args: []string{"up"}})

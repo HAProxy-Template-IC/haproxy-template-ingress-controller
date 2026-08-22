@@ -28,6 +28,7 @@ const (
 	keywordCheck     = "check"
 	keywordGUID      = "guid"
 	keywordInitState = "init-state"
+	keywordWeight    = "weight"
 	keywordCAFile    = "ca-file"
 	keywordCRT       = "crt"
 	keywordCRLFile   = "crl-file"
@@ -39,7 +40,7 @@ const (
 // server, and therefore its backend, structural.
 var addServerKeywords = map[string]bool{
 	keywordCheck: true, "inter": true, "fastinter": true, "downinter": true,
-	"rise": true, "fall": true, "port": true, "addr": true, "weight": true,
+	"rise": true, "fall": true, "port": true, "addr": true, keywordWeight: true,
 	"maxconn": true, "maxqueue": true, "minconn": true, "backup": true,
 	"cookie": true, keywordGUID: true, "ssl": true, "sni": true, "verify": true,
 	"verifyhost": true, keywordCAFile: true, keywordCRT: true, keywordCRLFile: true,
