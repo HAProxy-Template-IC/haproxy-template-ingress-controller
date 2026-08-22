@@ -296,7 +296,7 @@ production because a connection that never drains can otherwise retain an old
 worker until its pod restarts. If you replace `haproxy.initialConfig` entirely,
 include your own `hard-stop-after` directive in that custom bootstrap config.
 
-Resource deletions take the same path as any structural change: the watch delete fires, the leading-edge debouncer forwards it (the first change in a quiet window fires immediately, so an isolated delete isn't held for the refractory window), the reconciler re-renders without the resource, and the deployer pushes a reload paced by `minDeploymentInterval`. Unlike EndpointSlice pod-IP rotations, a deletion isn't runtime-fast-path eligible — that path covers only server weight, address, port, and admin-state updates — so it always reloads. An isolated deletion typically converges in about one to a few seconds.
+A resource deletion follows the same front end as any change: the watch delete fires, the leading-edge debouncer forwards it (the first change in a quiet window fires immediately, so an isolated delete isn't held for the refractory window), and the reconciler re-renders without the resource. Whether that re-render reloads HAProxy depends on the route, exactly as adding one does — see [Reload-free route changes](#reload-free-route-changes) below. On HAProxy 3.4, deleting a plain route drains and removes its backend over the runtime API with no reload; a route whose backend carries a filter, and any route on HAProxy 3.0-3.3, reloads paced by `minDeploymentInterval`. An isolated deletion converges in well under a second when it's reload-free, or in about one to a few seconds when it reloads.
 
 **Tuning guidelines:**
 
@@ -625,6 +625,26 @@ histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
 
 - Average deployment: <1 s per HAProxy pod
 - P95 deployment: <3 s
+
+### Reload-free route changes
+
+Adding or removing a route can update the running HAProxy worker over the runtime API instead of forking a new process, so the change takes effect without dropping in-flight connections and without a reload. Whether a given route qualifies depends on the HAProxy version and the route's backend:
+
+| HAProxy version | Plain route (empty backend body, map-driven logic) | Route whose backend carries a filter |
+|---|---|---|
+| 3.4 | Add and remove are reload-free — the backend is created and published, or drained and deleted, over the runtime API | Reloads on add and remove |
+| 3.0-3.3 | Reloads on add and remove; the backend's servers are still added and removed at runtime | Reloads on add and remove |
+
+A backend is *plain* when its section is only `from`/`guid`/`server` lines. A `filter` keeps it structural — most commonly **response compression, which is on by default for Ingress** (`haproxy-haptic.org/compress-enable`), and also a stick-table rate limit or a raw operator injection. Set `compress-enable: "false"` on a route to make its add and remove reload-free on 3.4. Server (pod) churn within an existing backend is always reload-free on every supported version.
+
+Watch the fleet's reload rate to confirm route churn isn't reloading:
+
+```promql
+# Reloads across the fleet — flat while plain routes are added and removed on 3.4
+rate(haptic_haproxy_reloads_total[5m])
+```
+
+The `tests/e2e` reload-free suites (`gateway_reloadfree_test.go`, `ingress_reloadfree_test.go`) assert a zero reload delta across route add/remove cycles on 3.4, and `TestScale` records `haproxy_reloads_total_delta` over its single-change churn as a trend. For latency at scale, run [`make bench-gateway-api`](#gateway-api-implementation-benchmark) — its `routechange` scenario measures availability while a route is repeatedly changed.
 
 ### Parallel Deployment
 
