@@ -104,7 +104,7 @@ func TestGatewayRouteAddRemoveIsReloadFree(t *testing.T) {
 			http := httpclient.ForForwarded(t, fwd.HTTPPort, 0)
 			// Drain the anchor's first-appearance reload and any sibling-test
 			// teardown before measuring, so a cycle is charged only its own work.
-			waitFleetQuiescent(ctx, t, cs)
+			waitFleetQuiescent(ctx, t, client, cs)
 			startReloads := captureReloadFingerprint(ctx, t, cs)
 			var latencies []time.Duration
 

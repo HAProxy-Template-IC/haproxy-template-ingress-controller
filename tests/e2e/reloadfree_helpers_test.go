@@ -24,9 +24,12 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/e2e-framework/klient"
 
+	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
@@ -106,24 +109,39 @@ func assertReloadFree(t *testing.T, before, after reloadFingerprint, what string
 	}
 }
 
-// waitFleetQuiescent blocks until no HAProxy worker has re-executed for a
-// sustained window, so a reload-free measurement starts from steady state. The
-// suites share one fleet: a sibling test's teardown (deleting a Gateway is
-// structural), the anchor route's own first-appearance reload, or a
-// capabilities change all reload the fleet, and any of them in flight would be
-// charged to a cycle it did not cause. Draining them first is what makes the
-// per-cycle assertion about the cycle, not the neighbourhood.
-func waitFleetQuiescent(ctx context.Context, t *testing.T, cs kubernetes.Interface) {
+// waitFleetQuiescent blocks until the fleet is a safe baseline for a reload-free
+// measurement: the render gate has accepted the published render (it is not
+// holding after a refusal) AND no HAProxy worker has re-executed for a sustained
+// window. The suites share one fleet: a sibling test's teardown (deleting a
+// Gateway is structural), the anchor route's own first-appearance reload, a
+// capabilities change, or — the case issue #170 hit — apply_rollback driving the
+// render gate PESSIMISTIC all leave work in flight that would be charged to a
+// cycle it did not cause. Draining both the reloads and the gate first is what
+// makes the per-cycle assertion about the cycle, not the neighbourhood.
+//
+// The gate check reads the HAProxyCfg conditions rather than a port-forwarded
+// debug endpoint, so it needs no tunnel of its own — the very thing whose stalls
+// #170 also hardens.
+func waitFleetQuiescent(ctx context.Context, t *testing.T, client klient.Client, cs kubernetes.Interface) {
 	t.Helper()
 	const stableFor = 8 * time.Second
+	hc, err := hapticclient.NewForConfig(client.RESTConfig())
+	if err != nil {
+		t.Fatalf("build haptic clientset: %v", err)
+	}
 	var last map[string]float64
 	stableSince := time.Now()
-	err := testutil.WaitForConditionWithDescription(ctx, testutil.WaitConfig{
+	err = testutil.WaitForConditionWithDescription(ctx, testutil.WaitConfig{
 		InitialInterval: time.Second,
 		MaxInterval:     time.Second,
 		Timeout:         2 * time.Minute,
 		Multiplier:      1,
-	}, fmt.Sprintf("HAProxy worker start times stable for %s", stableFor), func(ctx context.Context) (bool, error) {
+	}, fmt.Sprintf("render gate open and HAProxy worker start times stable for %s", stableFor), func(ctx context.Context) (bool, error) {
+		if err := renderGateOpen(ctx, hc); err != nil {
+			last = nil
+			stableSince = time.Now()
+			return false, err
+		}
 		now := haproxyWorkerStartTimes(ctx, t, cs)
 		if last == nil || !sameStartTimes(last, now) {
 			last = now
@@ -133,8 +151,35 @@ func waitFleetQuiescent(ctx context.Context, t *testing.T, cs kubernetes.Interfa
 		return time.Since(stableSince) >= stableFor, nil
 	})
 	if err != nil {
-		t.Fatalf("fleet never went quiescent before the reload-free cycles: %v", err)
+		t.Fatalf("fleet never reached a gate-open, quiescent baseline before the reload-free cycles: %v", err)
 	}
+}
+
+// renderGateOpen reports nil when the render gate has accepted the published
+// render — ConfigValidated=True and not ConfigPinned — meaning it is OPTIMISTIC
+// and will not hold the next render for a synchronous verdict. A refusal (a
+// sibling test's broken input) leaves ConfigValidated=False until a passing
+// render reopens it, which is exactly what a reload-free measurement must wait
+// out. It reads the same conditions `kubectl describe haproxycfg` shows, so no
+// port-forward is involved.
+func renderGateOpen(ctx context.Context, hc hapticclient.Interface) error {
+	cfgName := HAProxyConfigName + "-haproxycfg"
+	obj, err := hc.HaproxyTemplateICV1alpha1().HAProxyCfgs(ControllerNamespace).Get(ctx, cfgName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get HAProxyCfg %s: %w", cfgName, err)
+	}
+	validated := meta.FindStatusCondition(obj.Status.Conditions, "ConfigValidated")
+	if validated == nil || validated.Status != metav1.ConditionTrue {
+		status := "absent"
+		if validated != nil {
+			status = string(validated.Status)
+		}
+		return fmt.Errorf("render gate has not accepted the published render (ConfigValidated=%s)", status)
+	}
+	if pinned := meta.FindStatusCondition(obj.Status.Conditions, "ConfigPinned"); pinned != nil && pinned.Status == metav1.ConditionTrue {
+		return fmt.Errorf("render gate is pinned, holding renders")
+	}
+	return nil
 }
 
 // firstHAProxyPod names one HAProxy pod, for the socat runtime queries that need

@@ -104,7 +104,7 @@ func TestIngressRouteAddRemoveIsReloadFree(t *testing.T) {
 			http := httpclient.New(t)
 			// Drain the anchor's first-appearance reload and any sibling-test
 			// teardown before measuring, so a cycle is charged only its own work.
-			waitFleetQuiescent(ctx, t, cs)
+			waitFleetQuiescent(ctx, t, client, cs)
 			startReloads := captureReloadFingerprint(ctx, t, cs)
 
 			for cycle := 1; cycle <= reloadFreeCycles; cycle++ {
@@ -192,7 +192,7 @@ func TestCustomCRDRouteAddRemoveIsReloadFree(t *testing.T) {
 		Assess("each cycle adds and removes the Route's backend, reload-free on 3.4", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			dynamicBE := dynamicBackendsSupported()
 			backend := namespace + "_" + cycleName
-			waitFleetQuiescent(ctx, t, cs)
+			waitFleetQuiescent(ctx, t, client, cs)
 			startReloads := captureReloadFingerprint(ctx, t, cs)
 
 			for cycle := 1; cycle <= reloadFreeCycles; cycle++ {

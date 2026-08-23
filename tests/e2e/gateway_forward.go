@@ -61,6 +61,17 @@ type GatewayForward struct {
 
 var forwardLineRe = regexp.MustCompile(`Forwarding from 127\.0\.0\.1:(\d+) -> (\d+)`)
 
+// Recovery budget for a kubectl port-forward that stalls or exits mid-test. The
+// watchdog tears a stalled tunnel down; these bound how long the supervisor
+// re-opens it before the failure is attributed rather than retried forever.
+const (
+	tunnelRecoveryMinBackoff = 250 * time.Millisecond
+	tunnelRecoveryMaxBackoff = 5 * time.Second
+	tunnelInitialBudget      = 60 * time.Second
+	tunnelRestartBudget      = 90 * time.Second
+	tunnelRestartCooldown    = 500 * time.Millisecond
+)
+
 // ForwardGateway starts a kubectl port-forward to the per-Gateway Service
 // of the given Gateway and returns the local port mapping. servicePorts
 // lists the Service ports to forward (80 for HTTP listeners, 443 for
@@ -124,10 +135,26 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 	for i, p := range servicePorts {
 		portArgs[i] = ":" + strconv.Itoa(p) // random local port
 	}
-	cmd, locals, err := startForwardTunnel(fwdCtx, svc, portArgs, len(servicePorts))
-	if err != nil {
+	// A stall or a transient apiserver hiccup during setup must recover, not
+	// fail the job: retry the first handshake within a budget before giving up.
+	var cmd *exec.Cmd
+	var locals []int
+	if tunnel.Reestablish(fwdCtx, func(ctx context.Context) error {
+		c, l, startErr := startForwardTunnel(ctx, svc, portArgs, len(servicePorts))
+		if startErr != nil {
+			return startErr
+		}
+		cmd, locals = c, l
+		return nil
+	}, tunnel.RecoveryConfig{
+		MinBackoff: tunnelRecoveryMinBackoff,
+		MaxBackoff: tunnelRecoveryMaxBackoff,
+		Budget:     tunnelInitialBudget,
+	}, func(msg string) {
+		t.Logf("ForwardGateway %s: %s", svc, msg)
+	}) != tunnel.RecoveryRecovered {
 		stop()
-		t.Fatalf("kubectl port-forward %s: %v", svc, err)
+		t.Fatalf("kubectl port-forward %s: tunnel not established within %s", svc, tunnelInitialBudget)
 	}
 
 	var fwd GatewayForward
@@ -153,6 +180,18 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 	}
 	var mu sync.Mutex // guards current: written by the supervisor, read by the watchdog
 	current := cmd
+	// establishPinned re-opens the tunnel on the pinned local ports and swaps it
+	// in for the watchdog to probe. Used for every recovery after the first.
+	establishPinned := func(ctx context.Context) error {
+		next, _, err := startForwardTunnel(ctx, svc, pinned, len(servicePorts))
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		current = next
+		mu.Unlock()
+		return nil
+	}
 	supervisorDone := make(chan struct{})
 	go func() {
 		defer close(supervisorDone)
@@ -164,31 +203,27 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 			if fwdCtx.Err() != nil {
 				return // torn down via t.Cleanup
 			}
-			t.Logf("ForwardGateway %s: tunnel exited unexpectedly (%v); restarting on pinned ports %v", svc, waitErr, pinned)
-			for {
-				next, _, restartErr := startForwardTunnel(fwdCtx, svc, pinned, len(servicePorts))
-				if restartErr == nil {
-					mu.Lock()
-					current = next
-					mu.Unlock()
-					// Cooldown so a forward-then-immediately-die loop
-					// can't churn kubectl processes for the whole budget.
-					select {
-					case <-fwdCtx.Done():
-						return
-					case <-time.After(500 * time.Millisecond):
-					}
-					break
-				}
-				if fwdCtx.Err() != nil {
-					return
-				}
-				t.Logf("ForwardGateway %s: tunnel restart failed (%v); retrying", svc, restartErr)
-				select {
-				case <-fwdCtx.Done():
-					return
-				case <-time.After(500 * time.Millisecond):
-				}
+			t.Logf("ForwardGateway %s: tunnel exited unexpectedly (%v); re-establishing on pinned ports %v", svc, waitErr, pinned)
+			switch tunnel.Reestablish(fwdCtx, establishPinned, tunnel.RecoveryConfig{
+				MinBackoff: tunnelRecoveryMinBackoff,
+				MaxBackoff: tunnelRecoveryMaxBackoff,
+				Budget:     tunnelRestartBudget,
+			}, func(msg string) {
+				t.Logf("ForwardGateway %s: %s", svc, msg)
+			}) {
+			case tunnel.RecoveryCtxDone:
+				return
+			case tunnel.RecoveryBudgetExceeded:
+				t.Errorf("ForwardGateway %s: port-forward could not be re-established within %s; "+
+					"the apiserver port-forward path is unhealthy", svc, tunnelRestartBudget)
+				return
+			}
+			// Cooldown so a forward-then-immediately-die loop can't churn
+			// kubectl processes for the whole budget.
+			select {
+			case <-fwdCtx.Done():
+				return
+			case <-time.After(tunnelRestartCooldown):
 			}
 		}
 	}()
