@@ -19,9 +19,21 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
 )
+
+// perResourceStoreTypeCache memoises BuildPerResourceStoreType by its sole
+// input, elemType. The store struct type is a pure function of elemType, but
+// buildResourcesValue calls it once per watched resource on EVERY render, and
+// reflect.StructOf allocates a fresh candidate type on every call even though
+// its own internal cache then returns the same *rtype — so under render churn
+// this was ~46% of the StructOf allocation (issue #178). elemType is a stable
+// pointer for the process's lifetime (built once at bootstrap), so a plain
+// keyed cache is safe: a schema reload produces new elemType pointers and new
+// entries, and the handful of stale entries per reload are negligible.
+var perResourceStoreTypeCache sync.Map // reflect.Type (or nil) -> reflect.Type
 
 // anyType is the canonical reflect.Type for an empty interface. Used
 // as the slice element / return type for watched resources whose
@@ -161,6 +173,15 @@ func BuildEngineDeclarations(result *Result, extraResourceNames ...string) map[s
 // `[]any` — used for watched resources whose schema bootstrap
 // failed.
 func BuildPerResourceStoreType(elemType reflect.Type) reflect.Type {
+	if cached, ok := perResourceStoreTypeCache.Load(elemType); ok {
+		return cached.(reflect.Type)
+	}
+	t := buildPerResourceStoreType(elemType)
+	perResourceStoreTypeCache.Store(elemType, t)
+	return t
+}
+
+func buildPerResourceStoreType(elemType reflect.Type) reflect.Type {
 	var (
 		listReturn      reflect.Type
 		fetchReturn     reflect.Type
