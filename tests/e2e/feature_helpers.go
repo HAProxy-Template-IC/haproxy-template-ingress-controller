@@ -212,6 +212,12 @@ func RunSimpleIngressTest(t *testing.T, sit SimpleIngressTest) {
 				NewTLSSecret(ctx, t, client, ns, sit.TLSSecretName, []string{sit.Host})
 			}
 			NewIngress(ctx, t, client, ns, spec)
+			// Wait for the Ingress to actually deploy before asserting, instead
+			// of racing the deploy with the HTTP client's flat retry budget. The
+			// waiter returns as soon as the config is live and fails loud if the
+			// deploy stalls — so an unusually slow deploy surfaces as a clear
+			// failure here, not as a confusing HTTP timeout in every assertion.
+			waitForIngressDeployed(ctx, t, client, ns, spec.Name)
 			return ctx
 		})
 
