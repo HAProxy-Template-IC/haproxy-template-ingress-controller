@@ -29,18 +29,31 @@
 # rate-limit SPOE args. The deny status is always 429 (the standard); the
 # per-route rate-limit-status-code applies to the per-pod limiter only.
 templateSnippets:
-  map-rate-limit-820-haptic:
+  # The rate-limit.map producer below runs only when the spoa-hub library
+  # declares that map (render_glob "map-rate-limit-*" in spoa-hub/_index.yaml),
+  # i.e. only when the hub is loaded. The opt-in guard must fire even when it is
+  # not — otherwise rate-limit-requests on an Ingress is silently ignored on a
+  # hub-less install (fail-open on a rate limit). features-* always renders, so
+  # the guard lives here; the producer assumes the opt-in once it runs.
+  features-806-haptic-shared-rate-limit-optin:
     template: |-
       {%- var sharedEnabled = extraContext | dig("rateLimit", "shared", "enabled") | fallback("false") | tostring() -%}
+      {%- if sharedEnabled != "true" -%}
+        {%- for _, ingress := range resources.ingresses.List() -%}
+          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] != "" -%}
+            {{- fail("Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " sets annotation 'haproxy-haptic.org/rate-limit-requests' but shared rate limiting is not enabled. Set rateLimit.shared.enabled=true, or remove the annotation.") -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  map-rate-limit-820-haptic:
+    template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var requests = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] -%}
         {%- if requests != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
           {%- var name = ingress.Metadata.Name -%}
           {%- var key = ns + "/" + name -%}
-          {%- if sharedEnabled != "true" -%}
-            {{- fail("Ingress " + key + " sets annotation 'haproxy-haptic.org/rate-limit-requests' but shared rate limiting is not enabled. Set rateLimit.shared.enabled=true, or remove the annotation.") -}}
-          {%- end -%}
           {#- requests: positive integer, the limit N. -#}
           {%- var n = toint(requests) -%}
           {%- if n <= 0 -%}

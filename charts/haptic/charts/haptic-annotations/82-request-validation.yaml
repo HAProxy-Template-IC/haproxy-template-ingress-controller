@@ -18,6 +18,27 @@
 # bodies over the configured cap before the SPOE roundtrip, and waits for
 # request bodies only on routes that actually opted into validation.
 templateSnippets:
+  # The schema scan below (and its opt-in guard) runs only when the spoa-hub
+  # library declares the request-schema map/config, i.e. only when the hub is
+  # loaded. This guard must fire even when it is not — otherwise a
+  # request-schema-* annotation is silently ignored on a hub-less install
+  # (fail-open on request validation). features-* always renders, so the opt-in
+  # check lives here; util-821 keeps its own guard for the enabled-type check.
+  features-806-haptic-request-validation-optin:
+    template: |-
+      {%- var enabled = extraContext | dig("apiGateway", "requestSchemaValidation", "enabled") | fallback(false) | tostring() -%}
+      {%- if enabled != "true" -%}
+        {%- for _, ingress := range resources.ingresses.List() -%}
+          {%%
+            var a = ingress.Metadata.Annotations
+            var hasAny = a["haproxy-haptic.org/request-schema-configmap"] != "" || a["haproxy-haptic.org/request-schema-secret"] != "" || a["haproxy-haptic.org/request-schema-content-types"] != "" || a["haproxy-haptic.org/request-schema-max-body-size"] != "" || a["haproxy-haptic.org/request-schema-fail-open"] != ""
+          %%}
+          {%- if hasAny -%}
+            {{- fail("Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " sets haproxy-haptic.org/request-schema-* annotations but request validation is not enabled. Set controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true, or remove the annotations.") -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
   # Public entry point for the schema scan. The body below mutates the shared
   # `globalFeatures` map in place, and SharedContext's mutex guards only its own
   # top-level map — not writes into a value it handed out. This wrapper routes
