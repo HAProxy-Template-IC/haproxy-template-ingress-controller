@@ -34,7 +34,6 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // reloadFreeCycles is how many create/delete rounds each reload-free suite
@@ -96,7 +95,7 @@ func TestGatewayRouteAddRemoveIsReloadFree(t *testing.T) {
 			// map entries move.
 			applyGatewayFilteredRoute(ctx, t, namespace, "gw-anchor-route", gatewayName, anchorHost, anchorSvc, "rf-anchor")
 			fwd = ForwardGateway(ctx, t, namespace, gatewayName, 80)
-			waitForRouteServing(ctx, t, httpclient.ForForwarded(t, fwd.HTTPPort, 0), anchorHost, "/app/ping", respHeader, "rf-anchor")
+			waitForRouteServing(ctx, t, cs, httpclient.ForForwarded(t, fwd.HTTPPort, 0), anchorHost, "/app/ping", respHeader, "rf-anchor")
 			return ctx
 		}).
 		Assess("each cycle serves the route and, on 3.4, never reloads", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -114,7 +113,7 @@ func TestGatewayRouteAddRemoveIsReloadFree(t *testing.T) {
 				divBefore := mapDivergenceTotal(ctx, t, cs)
 
 				applyGatewayFilteredRoute(ctx, t, namespace, cycleRoute, gatewayName, cycleHost, cycleSvc, want)
-				latency := waitForRouteServing(ctx, t, http, cycleHost, "/app/ping", respHeader, want)
+				latency := waitForRouteServing(ctx, t, cs, http, cycleHost, "/app/ping", respHeader, want)
 				latencies = append(latencies, latency)
 
 				// The response-header value the route just set must be in the
@@ -123,7 +122,7 @@ func TestGatewayRouteAddRemoveIsReloadFree(t *testing.T) {
 				assertMapHasValue(t, entries, want, "maps/gw-reshdr.map")
 
 				deleteRouteByName(ctx, t, dyn, httpRouteGVR, namespace, cycleRoute)
-				waitForRouteGone(ctx, t, http, cycleHost, "/app/ping")
+				waitForRouteGone(ctx, t, cs, http, cycleHost, "/app/ping")
 
 				after := captureReloadFingerprint(ctx, t, cs)
 				if dynamicBE {
@@ -202,62 +201,47 @@ spec:
 	}
 }
 
-// waitForRouteServing polls until the host+path answers 200 with the expected
-// response-header value and returns how long that took, which is the
-// create→first-200 latency the plan budgets.
+// waitForRouteServing polls until host+path answers 200 with header=want, returning
+// the create→first-200 latency (convergence-bounded via reloadFreeReaction).
 func waitForRouteServing(
-	ctx context.Context, t *testing.T, client *httpclient.Client, host, path, header, want string,
+	ctx context.Context, t *testing.T, cs kubernetes.Interface, client *httpclient.Client, host, path, header, want string,
 ) time.Duration {
 	t.Helper()
 	start := time.Now()
-	err := testutil.WaitForConditionWithDescription(ctx, testutil.WaitConfig{
-		InitialInterval: 100 * time.Millisecond,
-		MaxInterval:     time.Second,
-		Timeout:         convergenceTimeout(),
-		Multiplier:      1.5,
-	}, fmt.Sprintf("%s%s answers 200 with %s: %s", host, path, header, want), func(ctx context.Context) (bool, error) {
-		resp, err := client.GET(host, path).Do(ctx)
-		if err != nil {
-			return false, err
-		}
-		if resp.Status != 200 {
-			return false, fmt.Errorf("status %d", resp.Status)
-		}
-		if got := resp.Header.Get(header); got != want {
-			return false, fmt.Errorf("%s is %q, want %q", header, got, want)
-		}
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("route never served %s%s with %s=%s: %v", host, path, header, want, err)
-	}
+	reloadFreeReaction(ctx, t, cs,
+		fmt.Sprintf("%s%s answers 200 with %s: %s", host, path, header, want),
+		func(ctx context.Context) (bool, error) {
+			resp, err := client.GET(host, path).Do(ctx)
+			if err != nil {
+				return false, err
+			}
+			if resp.Status != 200 {
+				return false, fmt.Errorf("status %d", resp.Status)
+			}
+			if got := resp.Header.Get(header); got != want {
+				return false, fmt.Errorf("%s is %q, want %q", header, got, want)
+			}
+			return true, nil
+		})
 	return time.Since(start)
 }
 
-// waitForRouteGone polls until the host+path stops answering 200, proving the
-// route (and, on 3.4, its dynamic backend) is retired. A non-200 answer is the
-// "gone" signal (delete → 404); a transport error is treated as not-yet-gone so
-// a flaky port-forward never reads as a passed teardown.
-func waitForRouteGone(ctx context.Context, t *testing.T, client *httpclient.Client, host, path string) {
+// waitForRouteGone polls until host+path stops answering 200; a transport error counts
+// as not-yet-gone so a flaky port-forward never reads as a passed teardown.
+func waitForRouteGone(ctx context.Context, t *testing.T, cs kubernetes.Interface, client *httpclient.Client, host, path string) {
 	t.Helper()
-	err := testutil.WaitForConditionWithDescription(ctx, testutil.WaitConfig{
-		InitialInterval: 100 * time.Millisecond,
-		MaxInterval:     time.Second,
-		Timeout:         convergenceTimeout(),
-		Multiplier:      1.5,
-	}, fmt.Sprintf("%s%s stops answering 200", host, path), func(ctx context.Context) (bool, error) {
-		resp, err := client.GET(host, path).Do(ctx)
-		if err != nil {
-			return false, err
-		}
-		if resp.Status == 200 {
-			return false, fmt.Errorf("still 200")
-		}
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("route %s%s never stopped serving: %v", host, path, err)
-	}
+	reloadFreeReaction(ctx, t, cs,
+		fmt.Sprintf("%s%s stops answering 200", host, path),
+		func(ctx context.Context) (bool, error) {
+			resp, err := client.GET(host, path).Do(ctx)
+			if err != nil {
+				return false, err
+			}
+			if resp.Status == 200 {
+				return false, fmt.Errorf("still 200")
+			}
+			return true, nil
+		})
 }
 
 // deleteRouteByName removes one namespaced object through the dynamic client,
@@ -270,28 +254,6 @@ func deleteRouteByName(
 	if err != nil && !apierrors.IsNotFound(err) {
 		t.Fatalf("delete %s %s/%s: %v", gvr.Resource, namespace, name, err)
 	}
-}
-
-// convergenceTimeout bounds a single reload-free reaction. It is deliberately
-// generous: the shared e2e suite runs these against a contended CI runner, and
-// the plan's latency budget is asserted only as a logged p50, never as a
-// per-request gate that a busy runner could trip.
-//
-// On a fleet with dynamic backends (>= 3.4) a route add/remove is a runtime op
-// (add/del backend, ~ms), so 30s is ample and a real failure surfaces fast. On
-// an older fleet the same change is reload-gated and paced by
-// minDeploymentInterval (5s); on the busy shared api-gateway shard the pacing
-// window resets on each incoming render, so convergence to a specific desired
-// state takes several reload rounds (deployment.completed observed ~40s apart
-// under load, issue #174). The reload path therefore gets a budget sized to
-// that cadence so a slow-but-correct convergence is not read as a failure — the
-// wait still returns the instant the state is reached, so the common case is
-// unaffected and the assertion (the backend IS removed) is unchanged.
-func convergenceTimeout() time.Duration {
-	if dynamicBackendsSupported() {
-		return 30 * time.Second
-	}
-	return 120 * time.Second
 }
 
 // mapEntriesFrom parses `show map` output into key→value, dropping the entry id

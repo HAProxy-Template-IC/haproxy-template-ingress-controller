@@ -109,6 +109,84 @@ func assertReloadFree(t *testing.T, before, after reloadFingerprint, what string
 	}
 }
 
+const (
+	dynamicReactionTimeout     = 30 * time.Second  // >=3.4: reaction is a runtime op (~ms).
+	reloadStallCeiling         = 120 * time.Second // <3.4: no reload for this long with the reaction unmet ⇒ wedge, not slowness.
+	reloadReactionBackstop     = 5 * time.Minute   // Absolute backstop; the primary bound is reload progress.
+	reloadReactionPollInterval = 2 * time.Second
+	reloadScrapeCadence        = 10 * time.Second // Worker-restart scrape cadence: ample for the stall ceiling, light on the shared apiserver.
+)
+
+// reloadFreeReaction waits for reached (the assertion, unchanged), bounded by fleet
+// reload progress on <3.4 and a flat budget on >=3.4 — issue #174.
+func reloadFreeReaction(
+	ctx context.Context, t *testing.T, cs kubernetes.Interface, desc string,
+	reached func(context.Context) (bool, error),
+) {
+	t.Helper()
+	if dynamicBackendsSupported() {
+		if err := testutil.WaitForConditionWithDescription(ctx, testutil.WaitConfig{
+			InitialInterval: 100 * time.Millisecond,
+			MaxInterval:     time.Second,
+			Timeout:         dynamicReactionTimeout,
+			Multiplier:      1.5,
+		}, desc, reached); err != nil {
+			t.Fatalf("%s: %v", desc, err)
+		}
+		return
+	}
+	waitReloadPacedReaction(ctx, t, cs, desc, reached)
+}
+
+// waitReloadPacedReaction waits for reached while any HAProxy worker keeps
+// reloading; it fails only on a reload stall (wedge) or the absolute backstop, so
+// an unbounded reload backlog never times it out. A scrape blip is "not yet
+// observed", never an abort: it keeps the prior start-times and keeps polling.
+func waitReloadPacedReaction(
+	ctx context.Context, t *testing.T, cs kubernetes.Interface, desc string,
+	reached func(context.Context) (bool, error),
+) {
+	t.Helper()
+	start := time.Now()
+	lastStartTimes, _ := haproxyWorkerStartTimesE(ctx, cs)
+	lastReload := start
+	lastScrape := start
+	lastErr := fmt.Errorf("no observation yet")
+
+	for {
+		if ok, err := reached(ctx); ok {
+			return
+		} else if err != nil {
+			lastErr = err
+		}
+
+		if time.Since(lastScrape) >= reloadScrapeCadence {
+			lastScrape = time.Now()
+			if now, err := haproxyWorkerStartTimesE(ctx, cs); err != nil {
+				lastErr = err
+			} else if !sameStartTimes(lastStartTimes, now) {
+				lastStartTimes = now
+				lastReload = time.Now()
+			}
+		}
+		if stalled := time.Since(lastReload); stalled >= reloadStallCeiling {
+			t.Fatalf("%s: no HAProxy worker reloaded for %s and the change never landed (last: %v); "+
+				"a reload-gated fleet applies a route add/remove only via a reload, so a fleet that "+
+				"stopped reloading will not apply it", desc, stalled.Round(time.Second), lastErr)
+		}
+		if time.Since(start) >= reloadReactionBackstop {
+			t.Fatalf("%s: not reached within the %s backstop while the fleet kept reloading (last: %v); "+
+				"the change appears never to be rendered into the config", desc, reloadReactionBackstop, lastErr)
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("%s: %v (last: %v)", desc, ctx.Err(), lastErr)
+		case <-time.After(reloadReactionPollInterval):
+		}
+	}
+}
+
 // waitFleetQuiescent blocks until the fleet is a safe baseline for a reload-free
 // measurement: the render gate has accepted the published render (it is not
 // holding after a refusal) AND no HAProxy worker has re-executed for a sustained
