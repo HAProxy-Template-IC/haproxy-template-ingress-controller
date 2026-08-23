@@ -191,7 +191,9 @@ The `*-config-snippet` annotations (`haproxy.org/backend-config-snippet`, `nginx
 
 ## Admission validation coverage
 
-The Gateway API resources — `Gateway`, `GatewayClass`, `BackendTLSPolicy`, `TLSRoute`, and `TCPRoute` — aren't yet checked by the admission webhook, so the API server accepts a malformed one. It still can't reach the fleet: the startup and config-load gate re-validates the whole rendered configuration and fails closed, so a bad object surfaces as a rejected config load reported on the `HAProxyTemplateConfig` status, not at admission time. Closing this gap is tracked in [issue #171](https://gitlab.com/haproxy-haptic/haptic/-/issues/171).
+The admission webhook renders the whole configuration with the submitted object applied and runs `haproxy -c`, so a change that would break the fleet is rejected at `kubectl apply` time. It covers `Ingress`, `HTTPRoute`, `GRPCRoute`, `Gateway`, `BackendTLSPolicy`, `TLSRoute`, and `TCPRoute`.
+
+`GatewayClass` is deliberately not admitted. The controller emits its own `GatewayClass` via Server-Side Apply (it's the operator's operational identity, not a routing object you author), so an admission rule on `GatewayClass` would intercept the controller's own write. A malformed `GatewayClass` from another source is still caught: the config-load gate re-validates the whole rendered configuration and fails closed, so a bad object surfaces as a rejected config load on the `HAProxyTemplateConfig` status rather than at admission.
 
 ## Audit trail
 

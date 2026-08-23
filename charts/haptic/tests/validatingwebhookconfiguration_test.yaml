@@ -22,3 +22,62 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: "controller.webhook.timeoutSeconds must be an integer between 2 and 30."
+
+  - it: should admit the user-authored Gateway API spec kinds
+    asserts:
+      - equal:
+          path: webhooks[?(@.name == "gateways.validation.RELEASE-NAME-haptic-webhook")].name
+          value: gateways.validation.RELEASE-NAME-haptic-webhook
+      - equal:
+          path: webhooks[?(@.name == "backendtlspolicies.validation.RELEASE-NAME-haptic-webhook")].name
+          value: backendtlspolicies.validation.RELEASE-NAME-haptic-webhook
+      - equal:
+          path: webhooks[?(@.name == "tlsroutes.validation.RELEASE-NAME-haptic-webhook")].name
+          value: tlsroutes.validation.RELEASE-NAME-haptic-webhook
+      - equal:
+          path: webhooks[?(@.name == "tcproutes.validation.RELEASE-NAME-haptic-webhook")].name
+          value: tcproutes.validation.RELEASE-NAME-haptic-webhook
+
+  - it: should not admit gatewayclasses, which the controller emits itself
+    asserts:
+      - notExists:
+          path: webhooks[?(@.name == "gatewayclasses.validation.RELEASE-NAME-haptic-webhook")].name
+
+  # resources:[<plural>] never matches <plural>/status, so admission can't
+  # re-enter on the controller's own status-subresource writes.
+  - it: should scope admission to the main resource, never the status subresource
+    asserts:
+      - equal:
+          path: webhooks[?(@.name == "gateways.validation.RELEASE-NAME-haptic-webhook")].rules[0].resources
+          value:
+            - gateways
+      - equal:
+          path: webhooks[?(@.name == "gateways.validation.RELEASE-NAME-haptic-webhook")].rules[0].operations
+          value:
+            - CREATE
+            - UPDATE
+      - equal:
+          path: webhooks[?(@.name == "backendtlspolicies.validation.RELEASE-NAME-haptic-webhook")].rules[0].resources
+          value:
+            - backendtlspolicies
+      - equal:
+          path: webhooks[?(@.name == "tlsroutes.validation.RELEASE-NAME-haptic-webhook")].rules[0].resources
+          value:
+            - tlsroutes
+      - equal:
+          path: webhooks[?(@.name == "tcproutes.validation.RELEASE-NAME-haptic-webhook")].rules[0].resources
+          value:
+            - tcproutes
+
+  - it: should emit no Gateway API webhook rules when the gateway library is off
+    set:
+      controller.templateLibraries.gateway.enabled: false
+    asserts:
+      - notExists:
+          path: webhooks[?(@.name == "gateways.validation.RELEASE-NAME-haptic-webhook")].name
+      - notExists:
+          path: webhooks[?(@.name == "backendtlspolicies.validation.RELEASE-NAME-haptic-webhook")].name
+      - notExists:
+          path: webhooks[?(@.name == "tlsroutes.validation.RELEASE-NAME-haptic-webhook")].name
+      - notExists:
+          path: webhooks[?(@.name == "tcproutes.validation.RELEASE-NAME-haptic-webhook")].name
