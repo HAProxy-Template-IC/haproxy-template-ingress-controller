@@ -186,7 +186,7 @@ Templates come from `HAProxyTemplateConfig` / `HAProxyTemplateLibrary` objects a
 
 The two uncontained rows are the real residual risk: a template can fetch an arbitrary URL, and one that allocates without bound is limited only by the render timeout and the container memory limit. Both matter most on the admission path, where the render is on the apiserver's request path.
 
-**Upstream tracking.** Renovate follows the fork's own branch; nothing watches upstream Scriggo, and `govulncheck` keys on module path, so an advisory against `github.com/open2b/scriggo` would not match this dependency. Taking an upstream security fix is a manual rebase today.
+**Upstream tracking.** Renovate follows the fork's own branch; nothing watches upstream Scriggo, and `govulncheck` keys on module path, so an advisory against `github.com/open2b/scriggo` would not match this dependency. Taking an upstream security fix is a manual rebase today. The divergence map, sync cadence, and advisory-watch process live in [Scriggo fork maintenance](../../docs/site/docs/development/scriggo-fork-maintenance.md).
 
 ## Testing
 

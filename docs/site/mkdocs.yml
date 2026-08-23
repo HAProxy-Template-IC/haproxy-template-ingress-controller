@@ -138,6 +138,7 @@ nav:
     - Linting: development/linting.md
     - Releasing: development/releasing.md
     - Gateway API Upgrade Playbook: development/gateway-api-upgrade-playbook.md
+    - Scriggo Fork Maintenance: development/scriggo-fork-maintenance.md
     # hooks/adrs.py appends an "Architecture Decision Records" group here,
     # one entry per repo-root docs/adr/NNNN-*.md, titled from its H1.
   - Changelog: changelog.md

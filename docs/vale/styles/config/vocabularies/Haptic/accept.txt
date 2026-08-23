@@ -78,6 +78,8 @@ CRUD
 crypto
 cutover
 cutset
+CVE
+CVEs
 cyclomatic
 DaemonSet
 DAG
@@ -228,6 +230,8 @@ Loopback
 lossily
 lossy
 LTS
+maintainer
+maintainer's
 Matchers
 matchers
 MaxMind
