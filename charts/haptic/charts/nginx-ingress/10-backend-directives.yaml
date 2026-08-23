@@ -53,7 +53,7 @@ templateSnippets:
           {%- end %}
           {%- var cookieHash = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-hash"] %}
           {%- if cookieHash != "" %}
-      # Warning: nginx.ingress.kubernetes.io/session-cookie-hash={{ cookieHash }} on Ingress {{ key }} is not configurable in HAProxy — dynamic cookies always hash via dynamic-cookie-key.
+      # Warning: nginx.ingress.kubernetes.io/session-cookie-hash on Ingress {{ key }} is not configurable in HAProxy — dynamic cookies always hash via dynamic-cookie-key.
           {%- end %}
           {%- if scInj != "" %}
             {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' session-cookie-name/-path contains " + scInj + ", which would break the backend cookie directive; session affinity is not applied. Remove whitespace and control characters from the value.") -}}
@@ -67,15 +67,21 @@ templateSnippets:
 
   backend-directives-700-nginx-ingress-timeouts:
     template: |
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#- proxy-read-timeout / proxy-send-timeout collapse into HAProxy's single
           settable server timeout (the larger wins), which moves to
           backend-timeouts.map via map-backend-timeout-700-nginx-timeouts
           (reload-free). timeout-connect stays per-value here. -#}
       {%- if ingress != nil %}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
         {%- var connectTimeout = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-connect-timeout"] %}
         {%- if connectTimeout != "" %}
+          {%- if !regex_search(connectTimeout, "^[0-9]+$") %}
+            {{- WebhookRejectOrWarn(ingress, "InvalidTimeout", "Annotation 'nginx.ingress.kubernetes.io/proxy-connect-timeout' on Ingress '" + key + "' is not a whole number of seconds; the timeout is not applied.") -}}
+          {%- else %}
       # nginx-ingress/backend-directives-timeouts
       timeout connect {{ connectTimeout }}s
+          {%- end %}
         {% end %}
       {%- end -%}
 
@@ -323,6 +329,8 @@ templateSnippets:
 
   backend-directives-750-nginx-ingress-rewrite-target:
     template: |
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -333,8 +341,11 @@ templateSnippets:
           {%- rewrite = regexp("\\$([1-9])").ReplaceAll(rewrite, "\\$1") %}
           {#- Only a \N backreference forces backend scope (the regex side can't be map-driven); literal rewrites go to path-rewrite.map via map-path-rewrite-750-nginx-ingress. -#}
           {%- if regex_search(rewrite, "\\\\[1-9]") %}
+            {%- var injRw = ConfigInjectionKind(rewrite, "line") %}
+            {%- if injRw != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidRewriteTarget", "Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/rewrite-target' contains " + injRw + "; the rewrite is not applied. Remove control characters from the value.") -}}{%- else %}
       # nginx-ingress/backend-directives-rewrite-target ({{ key }})
       http-request replace-path (.*) {{ rewrite }}
+            {%- end %}
           {%- end %}
         {%- end %}
       {%- end -%}
@@ -492,6 +503,7 @@ templateSnippets:
 
   backend-directives-780-nginx-ingress-upstream-hash:
     template: |
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -517,8 +529,10 @@ templateSnippets:
             {%- expr = hashBy %}
           {%- end %}
           {#- Structured Backend() arg; the macro adds `hash-type consistent`
-              (this is a hash-family balance). -#}
-          {%- serverOpts["balance"] = "hash " + expr %}
+              (this is a hash-family balance). ValidateConfigValue rejects a
+              control char in the tenant-derived fetch before it reaches the
+              `balance` line in the shared defaults profile. -#}
+          {%- serverOpts["balance"] = "hash " + ValidateConfigValue(expr, "nginx.ingress.kubernetes.io/upstream-hash-by", key, true) %}
         {%- end %}
       {%- end -%}
 

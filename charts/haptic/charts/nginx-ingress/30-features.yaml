@@ -195,12 +195,12 @@ templateSnippets:
                 skip-and-continue rather than fail() here: a missing
                 referenced Secret on one Ingress should not cascade to
                 webhook-rejection of every other Ingress in the cluster. #}
-            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
+            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
             {%- continue %}
           {%- end %}
           {%- var caBundleB64 = secret.Data["ca.crt"] %}
           {%- if caBundleB64 == "" %}
-            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' (referenced on Ingress {{ ns }}/{{ name }}) is missing data.ca.crt; skipping mTLS for this ingress.
+            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret referenced on Ingress {{ ns }}/{{ name }} is missing data.ca.crt; skipping mTLS for this ingress.
             {%- continue %}
           {%- end %}
           {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
@@ -254,6 +254,7 @@ templateSnippets:
             {%- if regex_search(permUrl, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'nginx.ingress.kubernetes.io/permanent-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
             {%- var pc = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect-code"] %}
             {%- if pc == "" %}{%- pc = "301" %}{%- end %}
+            {%- if pc != "301" && pc != "302" && pc != "303" && pc != "307" && pc != "308" %}{{- WebhookRejectOrWarn(ingress, "InvalidRedirect", "Annotation 'nginx.ingress.kubernetes.io/permanent-redirect-code' on Ingress '" + key + "' must be one of 301, 302, 303, 307, 308; the redirect is not applied.") -}}{%- continue %}{%- end %}
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}
                 {%- var rh []any = coalesce(gf["redirectHosts"], []any{}) -%}
@@ -266,6 +267,7 @@ templateSnippets:
             {%- if regex_search(tempUrl, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'nginx.ingress.kubernetes.io/temporal-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
             {%- var tc = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect-code"] %}
             {%- if tc == "" %}{%- tc = "302" %}{%- end %}
+            {%- if tc != "301" && tc != "302" && tc != "303" && tc != "307" && tc != "308" %}{{- WebhookRejectOrWarn(ingress, "InvalidRedirect", "Annotation 'nginx.ingress.kubernetes.io/temporal-redirect-code' on Ingress '" + key + "' must be one of 301, 302, 303, 307, 308; the redirect is not applied.") -}}{%- continue %}{%- end %}
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}
                 {%- var rh []any = coalesce(gf["redirectHosts"], []any{}) -%}

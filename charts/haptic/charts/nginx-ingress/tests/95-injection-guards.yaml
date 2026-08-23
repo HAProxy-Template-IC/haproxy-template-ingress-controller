@@ -1,0 +1,186 @@
+# nginx-ingress library — config-injection guards (#157, phase 2).
+# The centralized base utilities (ConfigInjectionKind per context,
+# ValidateConfigValue) carry the char-class behavior tests. These tests prove
+# each nginx-ingress SITE the later maps/named-defaults refactors left exposed is
+# wired to a guard: a hostile value carrying a unique marker must not reach the
+# config, while a valid sibling still renders (the negative control that keeps
+# each assertion load-bearing).
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+
+validationTests:
+  # ---- Warn-and-skip / name-free-comment sites: reconcile keeps rendering ----
+  # One poison Ingress hits every warn-and-skip site; a valid sibling proves the
+  # same target is reachable (negative control) and the guard is selective.
+  test-nginx-ingress-injection-reconcile-warns-and-skips:
+    description: A control character in each guarded nginx-ingress value is skipped or dropped from its comment; no smuggled directive or comment break-out reaches haproxy.cfg while a valid sibling still renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: poison
+            annotations:
+              nginx.ingress.kubernetes.io/affinity: "cookie"
+              nginx.ingress.kubernetes.io/session-cookie-hash: "sha1\nPWNHASH evil"
+              nginx.ingress.kubernetes.io/proxy-connect-timeout: "5\nPWNCONNTIMEOUT server 1ms"
+              nginx.ingress.kubernetes.io/rewrite-target: "/api$1\nPWNREWRITE evil"
+              nginx.ingress.kubernetes.io/permanent-redirect: "https://new.example.com"
+              nginx.ingress.kubernetes.io/permanent-redirect-code: "301\nPWNCODE evil"
+              nginx.ingress.kubernetes.io/auth-tls-secret: "absent\nPWNSECRET evil"
+              nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: poison.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: good
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-connect-timeout: "7"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: good.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      # Negative control: the valid sibling's timeout IS emitted, so the target is reachable.
+      - {type: contains, target: haproxy.cfg, pattern: "timeout connect 7s"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNHASH"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNCONNTIMEOUT"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNREWRITE"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNCODE"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNSECRET"}
+
+  # ---- Admission wiring: each reject/warn guard denies at admission ----
+  test-nginx-ingress-connect-timeout-admission-rejected:
+    description: A control character in proxy-connect-timeout is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: poison
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-connect-timeout: "5\nPWNCONNTIMEOUT server 1ms"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: poison.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "proxy-connect-timeout' on Ingress 'default/poison' is not a whole number of seconds"}
+
+  test-nginx-ingress-rewrite-backref-admission-rejected:
+    description: A control character in a capture-group rewrite-target is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: poison
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: "/api$1\nPWNREWRITE evil"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: poison.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "rewrite-target' contains a control character"}
+
+  test-nginx-ingress-redirect-code-admission-rejected:
+    description: A control character in permanent-redirect-code is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: poison
+            annotations:
+              nginx.ingress.kubernetes.io/permanent-redirect: "https://new.example.com"
+              nginx.ingress.kubernetes.io/permanent-redirect-code: "301\nPWNCODE evil"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: poison.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "permanent-redirect-code' on Ingress 'default/poison' must be one of 301, 302, 303, 307, 308"}
+
+  # ---- Security / balance site: fail closed (fail() aborts the render) ----
+  test-nginx-ingress-upstream-hash-injection-fails-closed:
+    description: A control character in upstream-hash-by fails the render closed instead of writing a splittable balance directive.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: poison
+            annotations:
+              nginx.ingress.kubernetes.io/upstream-hash-by: "$http_x\nPWNHASHBY evil"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: poison.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "upstream-hash-by.*must not contain control characters"}
+
+  # ---- Load-bearing allow-through: the guards must NOT reject legitimate values ----
+  test-nginx-ingress-guards-allow-legitimate-values:
+    description: A capture-group rewrite, a whole-second connect timeout, an explicit valid redirect code, and an http-variable upstream hash still render — the guards reject only their context-breaking characters.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: legit
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: "/api/$1"
+              nginx.ingress.kubernetes.io/proxy-connect-timeout: "9"
+              nginx.ingress.kubernetes.io/upstream-hash-by: "$http_x_forwarded_for"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: legit.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: legit-redirect
+            annotations:
+              nginx.ingress.kubernetes.io/permanent-redirect: "https://moved.example.com"
+              nginx.ingress.kubernetes.io/permanent-redirect-code: "308"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: legit-redirect.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "http-request replace-path \\(\\.\\*\\) /api/\\\\1"}
+      - {type: contains, target: haproxy.cfg, pattern: "timeout connect 9s"}
+      - {type: contains, target: haproxy.cfg, pattern: "balance hash req\\.hdr\\(x-forwarded-for\\)"}
+      - {type: contains, target: 'map:redirect-loc-308.map', pattern: "moved\\.example\\.com"}

@@ -25,6 +25,7 @@ templateSnippets:
           Each key is a username, value is base64-encoded bcrypt/apr1 hash
           Example: admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei4...
       #}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -86,16 +87,22 @@ templateSnippets:
                   {%- var pwKeyword = "password" %}
                   {%- if hasPrefix(rest, ":") %}{%- pwKeyword = "insecure-password" %}{%- rest = rest[1:] %}{%- end %}
                   {%- if user == "" || rest == "" %}{%- continue %}{%- end %}
+                  {%- var pwInj = ConfigInjectionKind(rest, "token") %}
                   {%- if !regex_search(rest, hashRegex) %}
                     {{- fail(hashErrMsg + " for user '" + user + "' in Secret '" + secretNs + "/" + secretName + "' (pattern \"" + hashRegex + "\")") -}}
+                  {%- else if pwInj != "" %}
+                    {{- fail("Basic-auth credential for user '" + user + "' in Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' contains " + pwInj + ", which would break out of the userlist line. Remove whitespace, quotes and control characters from the hash.") -}}
                   {%- end %}
         user {{ user }} {{ pwKeyword }} {{ rest }}
                 {%- end %}
               {%- else %}
                 {%- for _, username := range keys(secretData) %}
                   {%- var passwordHash = secretData[username] | b64decode() | tostring() %}
+                  {%- var pwInj = ConfigInjectionKind(passwordHash, "token") %}
                   {%- if !regex_search(passwordHash, hashRegex) %}
                     {{- fail(hashErrMsg + " for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' (pattern \"" + hashRegex + "\")") -}}
+                  {%- else if pwInj != "" %}
+                    {{- fail("Basic-auth hash for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' contains " + pwInj + ", which would break out of the userlist line. Remove whitespace, quotes and control characters from the hash.") -}}
                   {%- end %}
         user {{ username }} password {{ passwordHash }}
                 {%- end %}
@@ -369,6 +376,7 @@ templateSnippets:
   # forward custom headers.
   map-auth-forward-headers-500-haproxy-ingress:
     template: |-
+      {#- Header names are fail-closed by ValidateAuthHeaderName in the co-rendered spoe-message-check-auth-extra-args-500 snippet (rejects whitespace/control/fetch syntax). -#}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-request"] -%}
         {%- if authHeaders != "" -%}
@@ -463,6 +471,7 @@ templateSnippets:
   # so each var is available for whichever path runs.
   map-auth-extract-headers-500-haproxy-ingress:
     template: |-
+      {#- Header names are fail-closed by ValidateAuthHeaderName in the co-rendered frontend-spoe-set-pass-headers-500 / -fail-headers snippets (rejects whitespace/control/fetch syntax). -#}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var passHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-succeed"] -%}
         {%- var failHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-fail"] -%}

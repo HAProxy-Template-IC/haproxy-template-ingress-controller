@@ -351,3 +351,136 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: 'auth realm "Secure\\"Zone" unless'}
       - {type: not_contains, target: haproxy.cfg, pattern: "PWNREALM"}
       - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
+
+  # ---- rewrite-target backreference branch (raw replace-path line) ----
+  test-haproxy-ingress-rewrite-backref-reconcile-warns-and-skips:
+    description: A control character in a capture-group rewrite-target is skipped; no smuggled directive reaches the replace-path line while a valid capture rewrite still renders.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rw-poison
+            annotations: {haproxy-ingress.github.io/rewrite-target: "/api$1\nPWNRW evil"}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rw-poison.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rw-good
+            annotations: {haproxy-ingress.github.io/rewrite-target: "/svc/$1"}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rw-good.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "http-request replace-path \\(\\.\\*\\) /svc/\\\\1"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNRW"}
+
+  test-haproxy-ingress-rewrite-backref-admission-rejected:
+    description: A control character in a capture-group rewrite-target is denied by the admission webhook.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rw-poison
+            annotations: {haproxy-ingress.github.io/rewrite-target: "/api$1\nPWNRW evil"}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rw-poison.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "rewrite-target' contains a control character"}
+
+  # ---- Secret-reference comments: name-free (#156), no comment break-out ----
+  test-haproxy-ingress-secret-comments-no-name-leak:
+    description: A newline in a Secret-reference annotation cannot break out of the render comment, and the tenant Secret name never reaches the rendered config.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sec-comment
+            annotations:
+              haproxy-ingress.github.io/secure-verify-ca-secret: "absent\nPWNCA evil"
+              haproxy-ingress.github.io/secure-crt-secret: "absent\nPWNCRT evil"
+              haproxy-ingress.github.io/auth-tls-secret: "absent\nPWNTLS evil"
+              haproxy-ingress.github.io/auth-tls-verify-client: "on"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: sec-comment.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNCA"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNCRT"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "PWNTLS"}
+
+  # ---- auth-headers routing-map values: fail closed via ValidateAuthHeaderName ----
+  # The auth-headers-request/-succeed/-fail names are validated (fail-closed, RFC-7230
+  # token) in the co-rendered SPOE snippets, so a control character in the value aborts
+  # the render before the routing map is used — the map itself needs no separate guard.
+  test-haproxy-ingress-auth-headers-injection-fails-closed:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: A control character in auth-headers-request fails the render closed via the header-name validator, so no smuggled entry can reach the auth-forward-headers map.
+    extraContext:
+      <<: *spoaHubOn
+      renderMode: admission
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hdr-poison
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://a/check"
+              haproxy-ingress.github.io/auth-headers-request: "X-Tenant\nPWNFWD evil"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: hdr-poison.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Invalid HTTP header name"}
+
+  # ---- Basic-auth hash: fail closed (fail() aborts the render) ----
+  test-haproxy-ingress-basic-auth-hash-injection-fails-closed:
+    description: A space in a basic-auth password hash (accepted by the default hash regex) fails the render closed instead of appending extra tokens to the userlist line.
+    extraContext: {renderMode: admission}
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {namespace: default, name: basic-auth-secret}
+          data: {admin: eDJ5MDV2YWxpZGhhc2ggZ3JvdXBzIGFkbWlu}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hash-inj
+            annotations:
+              haproxy-ingress.github.io/auth-secret: "basic-auth-secret"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: hash-inj.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would break out of the userlist line"}
