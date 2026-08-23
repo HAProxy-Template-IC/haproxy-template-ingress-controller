@@ -15,11 +15,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"reflect"
+	"runtime"
+	"runtime/pprof"
 	"slices"
 	"time"
 
@@ -41,6 +44,7 @@ var (
 	benchmarkIterations      int
 	benchmarkProfileIncludes bool
 	benchmarkSchemaDir       string
+	benchmarkMemProfile      string
 )
 
 // benchmarkCmd represents the benchmark command.
@@ -79,6 +83,7 @@ func init() {
 	benchmarkCmd.Flags().StringSliceVar(&benchmarkTestNames, "test", nil, "Validation test name(s) to benchmark (omit to run all tests)")
 	benchmarkCmd.Flags().IntVar(&benchmarkIterations, "iterations", 2, "Number of render iterations")
 	benchmarkCmd.Flags().BoolVar(&benchmarkProfileIncludes, "profile-includes", false, "Show include timing statistics (top 20 slowest)")
+	benchmarkCmd.Flags().StringVar(&benchmarkMemProfile, "memprofile", "", "Write a heap profile after the render loop to this path (analyse with `go tool pprof -inuse_space`/`-alloc_space`)")
 	benchmarkCmd.Flags().StringVar(&benchmarkSchemaDir, "schema-dir", os.Getenv("HAPTIC_SCHEMA_DIR"),
 		"Directory of schema files for typed-resource access during rendering (CustomResourceDefinition YAMLs or bare OpenAPI v3 schemas). "+
 			"Required to benchmark configs that use typed access; falls through to untyped resources[\"name\"].List() if unset. Also reads HAPTIC_SCHEMA_DIR.")
@@ -179,6 +184,29 @@ func runBenchmark(cmd *cobra.Command, _ []string) error {
 	// Step 3: Output results for all tests
 	outputAllBenchmarkResults(results, compilationTime)
 
+	return maybeWriteHeapProfile(benchmarkMemProfile)
+}
+
+// maybeWriteHeapProfile writes a heap profile to path, or returns nil when path
+// is empty. Two GC cycles run first so the inuse sample reflects retained (not
+// yet collected) memory; the file carries alloc_space (cumulative) and
+// inuse_space (retained) samples. The profile is buffered and written with
+// os.WriteFile so the operator-supplied path is not an os.Open/Create taint
+// source (gosec G304).
+func maybeWriteHeapProfile(path string) error {
+	if path == "" {
+		return nil
+	}
+	runtime.GC()
+	runtime.GC()
+	var buf bytes.Buffer
+	if err := pprof.WriteHeapProfile(&buf); err != nil {
+		return fmt.Errorf("writing heap profile: %w", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		return fmt.Errorf("saving heap profile to %s: %w", path, err)
+	}
+	fmt.Printf("Wrote heap profile to %s\n", path)
 	return nil
 }
 
