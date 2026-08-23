@@ -161,6 +161,12 @@ func TestApplyRollbackOnCorruptCertificate(t *testing.T) {
 
 			waitForConfigValidatedCondition(ctx, t, client, metav1.ConditionTrue)
 			httpclient.New(t).HTTPS(host, "/").ExpectOK(t)
+
+			// Yield a settled, gate-open fleet. This drill deliberately drove the
+			// render gate PESSIMISTIC; a reload-free sibling that measures next on
+			// the shared fleet must not inherit a gate still holding or a reload
+			// still in flight (issue #170).
+			waitFleetQuiescent(ctx, t, client, clientset)
 			return ctx
 		}).
 		Feature()
