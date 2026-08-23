@@ -169,6 +169,17 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 	// Determine number of workers (use 1 worker if only 1 test)
 	numWorkers := min(len(runnableTests), r.workers)
 
+	// A gate the workers share so their `haproxy -c` runs go wide instead of
+	// serializing behind dataplane's single-slot default gate. Bound concurrent
+	// checks by the CPU allocation (GOMAXPROCS, which automaxprocs sets from the
+	// cgroup limit) so a CPU-limited controller pod doesn't oversubscribe with
+	// haproxy subprocesses during the startup/reinit load gate.
+	gateSlots := numWorkers
+	if p := runtime.GOMAXPROCS(0); p > 0 && p < gateSlots {
+		gateSlots = p
+	}
+	r.checkGate = dataplane.NewCheckGateN(gateSlots, 0)
+
 	r.logger.Log(context.Background(), logging.LevelTrace, "Starting test execution",
 		"total_tests", len(runnableTests),
 		"skipped_tests", results.SkippedTests,

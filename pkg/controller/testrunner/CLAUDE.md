@@ -572,10 +572,12 @@ if err != nil {
 HAProxy validation errors are simplified using `dataplane.SimplifyValidationError()`:
 
 ```go
-// Real signature: ValidateConfigurationContext(ctx, mainConfig, auxFiles, paths, version, skipDNSValidation)
-// returns (*parser.StructuredConfig, error). The structured config is the cached
-// parse result — callers that just want pass/fail can ignore it.
-_, err := dataplane.ValidateConfigurationContext(ctx, haproxyConfig, auxiliaryFiles, validationPaths, nil, false)
+// Real signature: ValidateConfigurationContext(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate)
+// returns error (nil / ErrValidationCacheHit / a ValidationError). The gate is a
+// *dataplane.CheckGate; the runner passes its own multi-slot r.checkGate so the
+// worker pool's `haproxy -c` runs go wide instead of serializing on the default
+// single-slot gate. nil uses that shared default gate.
+err := dataplane.ValidateConfigurationContext(ctx, haproxyConfig, auxiliaryFiles, validationPaths, false, r.checkGate)
 if err != nil {
     result.Error = dataplane.SimplifyValidationError(err)
 }
@@ -843,6 +845,7 @@ func TestRunner_RegexMatch(t *testing.T) {
 ### What's Already Optimized
 
 - **Parallel test execution**: A worker pool (`testWorker` in `runner.go`, sized to `Options.Workers` or `runtime.NumCPU()`) processes tests concurrently. Each worker gets its own `ValidationPaths` temp directory so `haproxy -c` runs don't collide.
+- **Concurrent `haproxy -c`**: `RunTests` builds a multi-slot `dataplane.CheckGate` (`r.checkGate`, sized to the worker count but capped at `GOMAXPROCS`) and passes it to every `haproxy_valid` assertion. Without it the workers serialize behind dataplane's single-slot *default* gate, so the pool gains nothing on `haproxy_valid`-heavy suites — measured 12.8s → 2.3s on a 529-test / 411-`haproxy_valid` corpus (16 cores). This path is the startup and reinit config-load gate, so the win is also faster startup and shorter leaderless windows on a config-change reinit.
 - **Template engine reuse**: The pre-compiled `templating.Engine` is shared across workers. Per-render state (filter context, current config) is passed in `additionalDeclarations`, not stored on the engine.
 
 ### Remaining Opportunities

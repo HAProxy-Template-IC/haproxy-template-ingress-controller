@@ -36,6 +36,10 @@ type Runner struct {
 	config          *config.Config
 	logger          *slog.Logger
 	workers         int
+	// checkGate bounds concurrent `haproxy -c` runs across workers. Without a
+	// dedicated gate the workers serialize behind dataplane's single-slot default
+	// gate, defeating the pool; sized to the worker count in RunTests.
+	checkGate       *dataplane.CheckGate
 	debugFilters    bool                   // Enable detailed filter operation logging
 	traceTemplates  bool                   // Enable template execution tracing
 	profileIncludes bool                   // Enable include timing profiling
