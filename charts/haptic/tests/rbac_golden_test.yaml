@@ -75,6 +75,84 @@ tests:
             resources: ["pods"]
             verbs: ["get", "list", "watch"]
 
+  # Leader-election Lease + fencing epoch act only in the controller's own
+  # namespace (POD_NAMESPACE), so leases is a Role grant and never cluster-wide.
+  - it: grants leases get/create/update in the namespaced Role
+    template: role.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["coordination.k8s.io"]
+            resources: ["leases"]
+            verbs: ["get", "create", "update"]
+
+  - it: never grants leases in the ClusterRole
+    template: clusterrole.yaml
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["coordination.k8s.io"]
+            resources: ["leases"]
+            verbs: ["get", "create", "update"]
+
+  # The HAProxyTemplateConfig/Library watch is pinned to the controller's own
+  # namespace, so its read grant is namespaced and never cluster-wide.
+  - it: grants the config CR watch in the namespaced Role
+    template: role.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["haproxy-haptic.org"]
+            resources: ["haproxytemplateconfigs", "haproxytemplatelibraries"]
+            verbs: ["get", "list", "watch"]
+
+  - it: never grants the config CR watch in the ClusterRole
+    template: clusterrole.yaml
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["haproxy-haptic.org"]
+            resources: ["haproxytemplateconfigs", "haproxytemplatelibraries"]
+            verbs: ["get", "list", "watch"]
+
+  # Output CRDs are published only to the controller's own namespace, so all four
+  # (not just haproxycfgs/haproxymapfiles) are namespaced and never cluster-wide.
+  - it: grants all four output CRDs in the namespaced Role
+    template: role.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["haproxy-haptic.org"]
+            resources: ["haproxycfgs", "haproxygeneralfiles", "haproxycrtlistfiles", "haproxymapfiles"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - it: never grants the output CRDs in the ClusterRole
+    template: clusterrole.yaml
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["haproxy-haptic.org"]
+            resources: ["haproxycfgs", "haproxygeneralfiles", "haproxycrtlistfiles", "haproxymapfiles"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # CustomResourceDefinitions are cluster-scoped, so this read grant must stay in
+  # the ClusterRole — it cannot become a namespaced Role rule.
+  - it: keeps the CustomResourceDefinitions read grant cluster-wide
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apiextensions.k8s.io"]
+            resources: ["customresourcedefinitions"]
+            verbs: ["get", "list", "watch"]
+
   # namespaces is granted only through the gateway library's watched-resources rule,
   # so it is present when gateway is on and gone when gateway is off — never as a
   # standalone hardcoded core grant.

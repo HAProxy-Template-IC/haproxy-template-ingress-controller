@@ -39,14 +39,12 @@ rules:
     verbs: ["patch"]
   {{- end }}
   {{- end }}
-  # No cluster-wide pods or namespaces grant here by design: the haproxy-pods
-  # watcher is namespace-pinned (get/list/watch on pods lives in role.yaml),
-  # and namespaces is watched only by the gateway library, so it flows through
-  # the watched-resources rules above rather than a hardcoded core grant.
-  # Leader election (coordination.k8s.io/v1)
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "create", "update"]
+  # Deliberately sparse: pods, the leader-election Lease, the
+  # HAProxyTemplateConfig/Library watch, and the output CRDs all act only in the
+  # controller's own namespace, so they live in role.yaml. namespaces is watched
+  # only by the gateway library and flows through the watched-resources rules
+  # above. What remains cluster-wide below is cluster-scoped kinds and
+  # cross-namespace writes only.
   # CustomResourceDefinitions — read-only access so the controller's
   # type-bootstrap (pkg/controller/typebootstrap) can resolve OpenAPI
   # schemas for watched CRDs at iteration start. Without this, the
@@ -63,28 +61,6 @@ rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
-  # HAProxyTemplateConfig CRD and the snippets it references
-  - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxytemplateconfigs", "haproxytemplatelibraries"]
-    verbs: ["get", "list", "watch"]
-  # Stamping the config as owner of the snippets it references, so resource-tree
-  # views show the relationship. The chart cannot: an ownerReference needs the
-  # owner's UID, which does not exist until the config is applied.
-  - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxytemplatelibraries"]
-    verbs: ["patch"]
-  # HAProxyTemplateConfig status updates
-  - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxytemplateconfigs/status"]
-    verbs: ["update", "patch"]
-  # Auxiliary file CRDs for config publishing
-  - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxycfgs", "haproxygeneralfiles", "haproxycrtlistfiles", "haproxymapfiles"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Auxiliary file CRD status updates
-  - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxycfgs/status", "haproxygeneralfiles/status", "haproxycrtlistfiles/status", "haproxymapfiles/status"]
-    verbs: ["update", "patch"]
   # Warning Events emitted by templates via recordEvent — the ingress library's
   # degraded-backend events (issue #66), governance rule violations, WAF policy
   # warnings, and the vendor annotation libraries' rejections. Each Event lands

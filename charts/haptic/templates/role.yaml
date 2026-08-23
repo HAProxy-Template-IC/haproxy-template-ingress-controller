@@ -30,22 +30,35 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # HAProxyCfg CRD (runtime configuration publishing)
-  # Published to controller's namespace as read-only view of rendered config
+  # Leader-election Lease and the fencing epoch annotation stamped on it, both in
+  # the controller's own namespace (POD_NAMESPACE) — a Role, not a ClusterRole,
+  # since the Lease never lives elsewhere. create on first acquire; get+update to
+  # renew and to bump/reclaim the epoch.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+  # HAProxyTemplateConfig and the HAProxyTemplateLibrary snippets it references,
+  # both watched in the controller's own namespace (k8sClient.Namespace()).
   - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxycfgs"]
+    resources: ["haproxytemplateconfigs", "haproxytemplatelibraries"]
+    verbs: ["get", "list", "watch"]
+  # Stamp the config as owner of the libraries it references, so resource-tree
+  # views show the relationship. The chart cannot: an ownerReference needs the
+  # owner's UID, which does not exist until the config is applied.
+  - apiGroups: ["haproxy-haptic.org"]
+    resources: ["haproxytemplatelibraries"]
+    verbs: ["patch"]
+  - apiGroups: ["haproxy-haptic.org"]
+    resources: ["haproxytemplateconfigs/status"]
+    verbs: ["update", "patch"]
+  # Output CRDs published to the controller's own namespace: the rendered config
+  # (HAProxyCfg) and its auxiliary map/general/crt-list file children.
+  - apiGroups: ["haproxy-haptic.org"]
+    resources: ["haproxycfgs", "haproxygeneralfiles", "haproxycrtlistfiles", "haproxymapfiles"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxycfgs/status"]
-    verbs: ["get", "update", "patch"]
-  # HAProxyMapFile CRD (auxiliary map files)
-  # Published to controller's namespace as children of HAProxyCfg
-  - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxymapfiles"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["haproxy-haptic.org"]
-    resources: ["haproxymapfiles/status"]
-    verbs: ["get", "update", "patch"]
+    resources: ["haproxycfgs/status", "haproxygeneralfiles/status", "haproxycrtlistfiles/status", "haproxymapfiles/status"]
+    verbs: ["update", "patch"]
   # Services (namespace-scoped — tightens blast radius)
   #
   # Templates that declare Kubernetes resources via the renderResource()
