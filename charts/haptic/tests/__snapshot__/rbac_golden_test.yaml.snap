@@ -191,14 +191,6 @@ pins the ClusterRole rules on chart defaults:
       verbs:
         - patch
     - apiGroups:
-        - coordination.k8s.io
-      resources:
-        - leases
-      verbs:
-        - get
-        - create
-        - update
-    - apiGroups:
         - apiextensions.k8s.io
       resources:
         - customresourcedefinitions
@@ -206,53 +198,6 @@ pins the ClusterRole rules on chart defaults:
         - get
         - list
         - watch
-    - apiGroups:
-        - haproxy-haptic.org
-      resources:
-        - haproxytemplateconfigs
-        - haproxytemplatelibraries
-      verbs:
-        - get
-        - list
-        - watch
-    - apiGroups:
-        - haproxy-haptic.org
-      resources:
-        - haproxytemplatelibraries
-      verbs:
-        - patch
-    - apiGroups:
-        - haproxy-haptic.org
-      resources:
-        - haproxytemplateconfigs/status
-      verbs:
-        - update
-        - patch
-    - apiGroups:
-        - haproxy-haptic.org
-      resources:
-        - haproxycfgs
-        - haproxygeneralfiles
-        - haproxycrtlistfiles
-        - haproxymapfiles
-      verbs:
-        - get
-        - list
-        - watch
-        - create
-        - update
-        - patch
-        - delete
-    - apiGroups:
-        - haproxy-haptic.org
-      resources:
-        - haproxycfgs/status
-        - haproxygeneralfiles/status
-        - haproxycrtlistfiles/status
-        - haproxymapfiles/status
-      verbs:
-        - update
-        - patch
     - apiGroups:
         - ""
       resources:
@@ -484,14 +429,6 @@ pins the ClusterRole rules with every rule-adding feature enabled:
       verbs:
         - patch
     - apiGroups:
-        - coordination.k8s.io
-      resources:
-        - leases
-      verbs:
-        - get
-        - create
-        - update
-    - apiGroups:
         - apiextensions.k8s.io
       resources:
         - customresourcedefinitions
@@ -499,53 +436,6 @@ pins the ClusterRole rules with every rule-adding feature enabled:
         - get
         - list
         - watch
-    - apiGroups:
-        - haproxy-haptic.org
-      resources:
-        - haproxytemplateconfigs
-        - haproxytemplatelibraries
-      verbs:
-        - get
-        - list
-        - watch
-    - apiGroups:
-        - haproxy-haptic.org
-      resources:
-        - haproxytemplatelibraries
-      verbs:
-        - patch
-    - apiGroups:
-        - haproxy-haptic.org
-      resources:
-        - haproxytemplateconfigs/status
-      verbs:
-        - update
-        - patch
-    - apiGroups:
-        - haproxy-haptic.org
-      resources:
-        - haproxycfgs
-        - haproxygeneralfiles
-        - haproxycrtlistfiles
-        - haproxymapfiles
-      verbs:
-        - get
-        - list
-        - watch
-        - create
-        - update
-        - patch
-        - delete
-    - apiGroups:
-        - haproxy-haptic.org
-      resources:
-        - haproxycfgs/status
-        - haproxygeneralfiles/status
-        - haproxycrtlistfiles/status
-        - haproxymapfiles/status
-      verbs:
-        - update
-        - patch
     - apiGroups:
         - ""
       resources:
@@ -599,28 +489,41 @@ pins the Role rules on chart defaults:
         - patch
         - delete
     - apiGroups:
+        - coordination.k8s.io
+      resources:
+        - leases
+      verbs:
+        - get
+        - create
+        - update
+    - apiGroups:
         - haproxy-haptic.org
       resources:
-        - haproxycfgs
+        - haproxytemplateconfigs
+        - haproxytemplatelibraries
       verbs:
         - get
         - list
         - watch
-        - create
-        - update
-        - patch
-        - delete
     - apiGroups:
         - haproxy-haptic.org
       resources:
-        - haproxycfgs/status
+        - haproxytemplatelibraries
       verbs:
-        - get
+        - patch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxytemplateconfigs/status
+      verbs:
         - update
         - patch
     - apiGroups:
         - haproxy-haptic.org
       resources:
+        - haproxycfgs
+        - haproxygeneralfiles
+        - haproxycrtlistfiles
         - haproxymapfiles
       verbs:
         - get
@@ -633,9 +536,11 @@ pins the Role rules on chart defaults:
     - apiGroups:
         - haproxy-haptic.org
       resources:
+        - haproxycfgs/status
+        - haproxygeneralfiles/status
+        - haproxycrtlistfiles/status
         - haproxymapfiles/status
       verbs:
-        - get
         - update
         - patch
     - apiGroups:
@@ -673,28 +578,41 @@ pins the Role rules with every rule-adding feature enabled:
         - patch
         - delete
     - apiGroups:
+        - coordination.k8s.io
+      resources:
+        - leases
+      verbs:
+        - get
+        - create
+        - update
+    - apiGroups:
         - haproxy-haptic.org
       resources:
-        - haproxycfgs
+        - haproxytemplateconfigs
+        - haproxytemplatelibraries
       verbs:
         - get
         - list
         - watch
-        - create
-        - update
-        - patch
-        - delete
     - apiGroups:
         - haproxy-haptic.org
       resources:
-        - haproxycfgs/status
+        - haproxytemplatelibraries
       verbs:
-        - get
+        - patch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxytemplateconfigs/status
+      verbs:
         - update
         - patch
     - apiGroups:
         - haproxy-haptic.org
       resources:
+        - haproxycfgs
+        - haproxygeneralfiles
+        - haproxycrtlistfiles
         - haproxymapfiles
       verbs:
         - get
@@ -707,9 +625,11 @@ pins the Role rules with every rule-adding feature enabled:
     - apiGroups:
         - haproxy-haptic.org
       resources:
+        - haproxycfgs/status
+        - haproxygeneralfiles/status
+        - haproxycrtlistfiles/status
         - haproxymapfiles/status
       verbs:
-        - get
         - update
         - patch
     - apiGroups:
