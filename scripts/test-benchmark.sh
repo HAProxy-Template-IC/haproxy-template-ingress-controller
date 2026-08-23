@@ -512,6 +512,9 @@ main() {
     if [[ -d "$schema_dir" && -z "${HAPTIC_SCHEMA_DIR:-}" ]]; then
         args+=("--schema-dir=$schema_dir")
     fi
+    if [[ -n "${BENCH_MEMPROFILE:-}" ]]; then
+        args+=("--memprofile=$BENCH_MEMPROFILE")
+    fi
 
     # Run single benchmark invocation (compiles once, runs all tests)
     info "Running benchmark..."

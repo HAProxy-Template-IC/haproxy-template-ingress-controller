@@ -316,6 +316,29 @@ The chart injects `POD_NAME` and `POD_NAMESPACE` via the downward API (`fieldRef
 - **Webhook port** — read from `WEBHOOK_PORT` (default `9443`). The Helm chart owns it through `controller.ports.webhook`, alongside the container port, Service target, and NetworkPolicy. Disabled entirely when `--webhook-cert-dir` is empty.
 - **pprof** — always mounted at `/debug/pprof/*` whenever the introspection server is enabled; no `ENABLE_PPROF` env var.
 
+## Memory limit (GOMEMLIMIT via automemlimit)
+
+`run.go` sets Go's `GOMEMLIMIT` from the container's cgroup memory limit at
+startup — `memlimit.SetGoMemLimitWithOpts` (`github.com/KimMachineGun/automemlimit`),
+mirroring automemlimit's defaults (FromCgroup provider, **0.9 ratio** → ~90% of
+the limit). It is called explicitly rather than via the blank-import init so its
+"GOMEMLIMIT is updated" line goes through the slog handler.
+
+**It is set programmatically, NOT via a `GOMEMLIMIT` env var.** A
+`kubectl get deploy … -o jsonpath='…env'` grep will not show it and must not be
+read as "GOMEMLIMIT is unset" — the value comes from the cgroup at runtime. To
+see the effective limit, read the `gomemlimit` field on the startup
+"…starting" log line, or `debug.SetMemoryLimit(-1)` in a debugger. `GOGC` is
+left at Go's default (the Go 1.26 Green Tea GC makes manual GOGC tuning
+unnecessary); automemlimit's `GOMEMLIMIT` is the OOM safety net.
+
+`GOMEMLIMIT` is a **soft** limit: it makes the GC run harder as the heap
+approaches it, but under a severe transient-allocation burst on a CPU-saturated
+pod the GC can fall behind and the heap can still breach the **hard** cgroup
+limit → OOMKill. So it reduces, but does not eliminate, OOM risk under extreme
+concurrent-render bursts; bounding render concurrency and per-render allocation
+is the structural fix (see issue #178).
+
 ## Signal Handling
 
 `cmd/haptic/main.go` is a thin Cobra wrapper — it just calls `rootCmd.Execute()`.
