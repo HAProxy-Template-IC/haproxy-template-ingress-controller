@@ -94,11 +94,13 @@ func ValidateSemanticsContext(ctx context.Context, mainConfig string, auxFiles *
 // runtime validation (permissive, prevents blocking when DNS fails) and false
 // for webhook validation (strict, catches DNS issues before admission).
 func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
-	return ValidateConfigurationContext(context.Background(), mainConfig, auxFiles, paths, skipDNSValidation)
+	return ValidateConfigurationContext(context.Background(), mainConfig, auxFiles, paths, skipDNSValidation, nil)
 }
 
-// ValidateConfigurationContext is ValidateConfiguration with caller cancellation.
-func ValidateConfigurationContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
+// ValidateConfigurationContext is ValidateConfiguration with caller cancellation
+// and a caller-owned CheckGate (nil runs on the shared single-slot default gate;
+// a batch caller passes a multi-slot gate so its checks run across cores).
+func ValidateConfigurationContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool, gate *CheckGate) error {
 	if cause := context.Cause(ctx); cause != nil {
 		return cause
 	}
@@ -115,7 +117,7 @@ func ValidateConfigurationContext(ctx context.Context, mainConfig string, auxFil
 	}
 
 	start := time.Now()
-	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation, nil); err != nil {
+	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate); err != nil {
 		return phaseSemantic.wrap(err)
 	}
 	slog.Debug("Validation completed", "semantic_ms", time.Since(start).Milliseconds())

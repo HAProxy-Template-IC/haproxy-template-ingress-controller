@@ -61,7 +61,7 @@ func (r *Runner) assertHAProxyValid(
 
 	// Strict validation (skipDNSValidation=false): a validation test runs on
 	// operator input, where a name that does not resolve is worth reporting.
-	err := dataplane.ValidateConfigurationContext(ctx, haproxyConfig, auxiliaryFiles, validationPaths, false)
+	err := dataplane.ValidateConfigurationContext(ctx, haproxyConfig, auxiliaryFiles, validationPaths, false, r.checkGate)
 	if cause := context.Cause(ctx); cause != nil && errors.Is(err, cause) {
 		result.incomplete = true
 		return result

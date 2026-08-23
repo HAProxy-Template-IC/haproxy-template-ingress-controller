@@ -38,7 +38,20 @@ type CheckGate struct {
 // NewCheckGate returns a gate with one slot. A non-positive minInterval
 // disables the duty-cycle cap.
 func NewCheckGate(minInterval time.Duration) *CheckGate {
-	return &CheckGate{slot: make(chan struct{}, 1), minInterval: minInterval}
+	return NewCheckGateN(1, minInterval)
+}
+
+// NewCheckGateN returns a gate allowing `slots` concurrent checks (minimum 1).
+// Use slots > 1 only for a batch of independent checks that should run across
+// cores — the validationTests load gate, whose worker pool otherwise serializes
+// every `haproxy -c` behind a single slot. Admission and the reconcile gate stay
+// single-slot on purpose. The duty-cycle cap (minInterval) spaces run starts
+// across all slots, so pair slots > 1 with minInterval == 0.
+func NewCheckGateN(slots int, minInterval time.Duration) *CheckGate {
+	if slots < 1 {
+		slots = 1
+	}
+	return &CheckGate{slot: make(chan struct{}, slots), minInterval: minInterval}
 }
 
 // enter blocks until this gate's slot is free and the duty cycle allows a run.

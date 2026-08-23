@@ -53,6 +53,35 @@ func TestCheckGate_OneSlotSerializesChecks(t *testing.T) {
 	gate.leave()
 }
 
+// N slots let N checks run at once (the validationTests load gate) but no more:
+// the (N+1)th waits. This is what lets the testrunner's worker pool run
+// `haproxy -c` across cores instead of serializing on a single slot.
+func TestCheckGateN_AllowsNConcurrentThenBlocks(t *testing.T) {
+	gate := NewCheckGateN(2, 0)
+	require.NoError(t, gate.enter(t.Context()))
+	require.NoError(t, gate.enter(t.Context()), "second slot is free")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	assert.Error(t, gate.enter(ctx), "both slots are taken, so the third check must wait")
+
+	gate.leave()
+	require.NoError(t, gate.enter(t.Context()), "a freed slot admits the next check")
+	gate.leave()
+	gate.leave()
+}
+
+// A non-positive slot count is clamped to one, so a caller can't accidentally
+// build a zero-slot gate that deadlocks every check.
+func TestCheckGateN_ClampsToAtLeastOneSlot(t *testing.T) {
+	gate := NewCheckGateN(0, 0)
+	require.NoError(t, gate.enter(t.Context()))
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	assert.Error(t, gate.enter(ctx), "clamped to one slot, so the second check waits")
+	gate.leave()
+}
+
 // The duty-cycle cap spaces run STARTS, which is what bounds the CPU a render
 // storm can take from admission.
 func TestCheckGate_DutyCycleSpacesRunStarts(t *testing.T) {
