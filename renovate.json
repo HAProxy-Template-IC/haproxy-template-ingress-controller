@@ -128,6 +128,19 @@
   ],
   "packageRules": [
     {
+      "description": "The scriggo runtime is a HAPTIC fork (gitlab.com/haproxy-haptic/scriggo), tracked by the built-in gomod manager as a pseudo-version digest. A digest bump is a fork sync that may carry an upstream security fix, but nothing here links it to open2b/scriggo advisories (govulncheck keys on module path). Force human review — never auto-merge — so a reviewer checks each bump against the upstream advisory watch. See docs/site/docs/development/scriggo-fork-maintenance.md.",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchPackageNames": [
+        "gitlab.com/haproxy-haptic/scriggo"
+      ],
+      "automerge": false,
+      "addLabels": [
+        "scriggo-fork-sync"
+      ]
+    },
+    {
       "description": "Update Go version in go.mod",
       "matchManagers": [
         "gomod"
