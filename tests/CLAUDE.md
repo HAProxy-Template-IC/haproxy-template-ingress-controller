@@ -452,6 +452,21 @@ Distinguish the two: a *flat* long timeout is almost always the bug; a wait
 bounded by an *observable progress signal* (worker restarts, processed
 counters) is correct because it fails the instant progress stops.
 
+**Never shrug off an unusually high time. Ever.** An operation that normally
+takes ~4s and one run takes 9s has told you something — chase it, do not widen
+the wait until it stops failing. "It's flaky, bump the timeout" and "convergence
+just takes a while under load" are the same mistake wearing two hats: both
+delete the signal instead of reading it. Apply a *realistic* budget — sized to
+what the operation actually costs plus honest margin — and let an unusual
+overshoot **fail loud** so the regression surfaces, rather than hiding inside a
+generous ceiling. If a legitimately slow path exists (a `< 3.4` reload), wait on
+its *completion signal* (the resource's deployed status), not on an HTTP client's
+flat retry budget racing the deploy: the completion wait returns the instant the
+work is done and fails cleanly if it stalls, so a genuine slowdown is reported,
+not absorbed. `RunSimpleIngressTest` (`tests/e2e/feature_helpers.go`) is the
+worked example — it now calls `waitForIngressDeployed` before asserting instead
+of hoping the redirect goes live within the HTTP retry window.
+
 ### Investigation Steps
 
 When a test fails intermittently:
