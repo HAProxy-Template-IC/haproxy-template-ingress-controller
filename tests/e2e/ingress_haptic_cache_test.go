@@ -952,7 +952,10 @@ func assertNoRateLimitStoreWithoutSharedLimiter(t *testing.T) {
 // the same endpoint was reachable through the allowed HAProxy path first.
 func assertVarnishRejectsUnauthorizedPod(t *testing.T) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	// The probe pod is pulled and scheduled on the busy shared shard; under load
+	// it can sit in ContainerCreating well past a tight budget (issue #176). Give
+	// the whole probe room for the image pull + schedule + the ~4s probe script.
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	defer cancel()
 
 	podName := fmt.Sprintf("varnish-policy-probe-%d", time.Now().UnixNano())
@@ -986,7 +989,7 @@ func assertVarnishRejectsUnauthorizedPod(t *testing.T) {
 
 	wait := exec.CommandContext(ctx, "kubectl", kubectlArgs(
 		"wait", "--for=jsonpath={.status.phase}=Succeeded",
-		"pod/"+podName, "--timeout=30s")...)
+		"pod/"+podName, "--timeout=120s")...)
 	var waitErr bytes.Buffer
 	wait.Stderr = &waitErr
 	if err := wait.Run(); err != nil {
