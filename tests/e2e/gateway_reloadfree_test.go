@@ -276,7 +276,23 @@ func deleteRouteByName(
 // generous: the shared e2e suite runs these against a contended CI runner, and
 // the plan's latency budget is asserted only as a logged p50, never as a
 // per-request gate that a busy runner could trip.
-func convergenceTimeout() time.Duration { return 30 * time.Second }
+//
+// On a fleet with dynamic backends (>= 3.4) a route add/remove is a runtime op
+// (add/del backend, ~ms), so 30s is ample and a real failure surfaces fast. On
+// an older fleet the same change is reload-gated and paced by
+// minDeploymentInterval (5s); on the busy shared api-gateway shard the pacing
+// window resets on each incoming render, so convergence to a specific desired
+// state takes several reload rounds (deployment.completed observed ~40s apart
+// under load, issue #174). The reload path therefore gets a budget sized to
+// that cadence so a slow-but-correct convergence is not read as a failure — the
+// wait still returns the instant the state is reached, so the common case is
+// unaffected and the assertion (the backend IS removed) is unchanged.
+func convergenceTimeout() time.Duration {
+	if dynamicBackendsSupported() {
+		return 30 * time.Second
+	}
+	return 120 * time.Second
+}
 
 // mapEntriesFrom parses `show map` output into key→value, dropping the entry id
 // HAProxy prefixes. Values keep every byte after the first space.
