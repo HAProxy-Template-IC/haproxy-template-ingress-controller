@@ -93,6 +93,8 @@ A `pre-install`/`pre-upgrade` hook Job renders the chart embedded in the control
 |-----------|------|---------|-------------|
 | `controller.configName` | string | `haptic-config` | Name of the HAProxyTemplateConfig object the controller watches |
 | `controller.logLevel` | string | `INFO` | Initial controller log level (`LOG_LEVEL` env var) — see [Logging and templating](#logging-and-templating) for the runtime override |
+| `controller.kubeClient.qps` | float | `-1` | Client-side apiserver queries per second (QPS) for the controller's own requests (`KUBE_CLIENT_QPS` env var). `<= 0` disables client-side throttling and relies on apiserver Priority & Fairness; a positive value installs one shared client-side rate limiter across all the controller's clients |
+| `controller.kubeClient.burst` | int | `0` | Client-side apiserver burst (`KUBE_CLIENT_BURST` env var); used only when `controller.kubeClient.qps > 0` (`0` means `2*qps`) |
 | `controller.ports.healthz` | int | `8080` | Single source of truth for the controller's `/healthz` and `/debug/*` listener, container port, Service, probes, and NetworkPolicy |
 | `controller.ports.metrics` | int | `9090` | Single source of truth for the `/metrics` listener, container port, Service, and monitors; `0` disables metrics and requires all monitor resources to be disabled |
 | `controller.ports.webhook` | int | `9443` | Admission webhook HTTPS port |

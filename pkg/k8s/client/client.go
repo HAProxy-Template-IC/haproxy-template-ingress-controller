@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/flowcontrol"
 )
 
 const (
@@ -56,6 +57,49 @@ type Config struct {
 	// Namespace is the default namespace for operations.
 	// If empty, will be discovered from service account.
 	Namespace string
+
+	// QPS is the client-side apiserver rate limit. Zero or negative disables
+	// client-side throttling so the controller relies on the apiserver's
+	// Priority & Fairness (the default; see New). A positive value reinstates a
+	// client-side cap shared across every derived clientset.
+	QPS float32
+
+	// Burst is the token-bucket burst; used only when QPS is positive. Zero
+	// falls back to 2*QPS.
+	Burst int
+}
+
+// applyRateLimit configures client-side apiserver rate limiting on restConfig.
+//
+// The default (cfg.QPS <= 0) disables it — restConfig.QPS = -1, no RateLimiter —
+// so the controller relies on the apiserver's Priority & Fairness. Unlike the
+// client-side token bucket, which *blocks* a throttled request until the caller's
+// context expires (with no automatic retry), APF returns 429 + Retry-After, which
+// client-go retries.
+//
+// A positive cfg.QPS reinstates a client-side cap, installed as ONE RateLimiter
+// shared by every clientset derived from this config (the core clientset, the
+// dynamic client, and every versioned/apiext client built via
+// NewForConfig(RestConfig())). NewForConfig only mints a private bucket when
+// RateLimiter is nil, so setting it here makes the cap a single controller-wide
+// budget instead of a private bucket per client. Burst falls back to 2*QPS.
+func applyRateLimit(restConfig *rest.Config, cfg Config) {
+	if cfg.QPS <= 0 {
+		restConfig.QPS = -1
+		return
+	}
+	burst := cfg.Burst
+	if burst <= 0 {
+		burst = int(cfg.QPS) * 2
+	}
+	if burst < 1 {
+		// A fractional QPS (0 < QPS < 1) truncates 2*QPS to 0; a zero-burst
+		// token bucket rejects every request and wedges the controller.
+		burst = 1
+	}
+	restConfig.QPS = cfg.QPS
+	restConfig.Burst = burst
+	restConfig.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(cfg.QPS, burst)
 }
 
 // New creates a new Kubernetes client with the provided configuration.
@@ -100,11 +144,7 @@ func New(cfg Config) (*Client, error) {
 		}
 	}
 
-	// Configure rate limiter for high-frequency CRD operations
-	// Default values (QPS=5, Burst=10) are too conservative for controllers
-	// that update multiple CRDs per reconciliation cycle
-	restConfig.QPS = 50
-	restConfig.Burst = 100
+	applyRateLimit(restConfig, cfg)
 
 	// Create clientset
 	clientset, err := kubernetes.NewForConfig(restConfig)

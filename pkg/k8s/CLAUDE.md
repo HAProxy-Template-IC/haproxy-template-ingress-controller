@@ -158,13 +158,16 @@ Adding custom client configuration:
 
 ```go
 // client/client.go
-// Config has two fields only; QPS/burst are hardcoded inside New.
 type Config struct {
-    Kubeconfig string // empty = in-cluster
-    Namespace  string // empty = auto-detect from SA token
+    Kubeconfig string  // empty = in-cluster
+    Namespace  string  // empty = auto-detect from SA token
+    QPS        float32 // <= 0 (default) disables client-side throttling → APF
+    Burst      int     // used only when QPS > 0; 0 → 2*QPS
 }
 
 // New is the only constructor; NewWithConfig does not exist.
+// QPS <= 0 sets rest.Config.QPS = -1 (rely on apiserver Priority & Fairness);
+// a positive QPS installs one shared RateLimiter across every derived clientset.
 func New(cfg Config) (*Client, error) { ... }
 ```
 

@@ -46,6 +46,8 @@ var (
 	runWebhookResourceAdmissionTimeout time.Duration
 	runKubeconfig                      string
 	runDebugPort                       int
+	runKubeClientQPS                   float32
+	runKubeClientBurst                 int
 )
 
 // runCmd represents the run command (controller main loop).
@@ -92,6 +94,44 @@ func init() {
 		"Path to kubeconfig file (for out-of-cluster development)")
 	runCmd.Flags().IntVar(&runDebugPort, "debug-port", 0,
 		"Port for debug HTTP server (0 to disable, env: DEBUG_PORT)")
+	runCmd.Flags().Float32Var(&runKubeClientQPS, "kube-client-qps", -1,
+		"Client-side apiserver QPS. <=0 disables client-side throttling and relies on apiserver Priority & Fairness (env: KUBE_CLIENT_QPS)")
+	runCmd.Flags().IntVar(&runKubeClientBurst, "kube-client-burst", 0,
+		"Client-side apiserver burst; used only when --kube-client-qps > 0, 0 means 2*qps (env: KUBE_CLIENT_BURST)")
+}
+
+// resolveFloat32Option applies flag > env > flag-default. The flag's zero value
+// is a meaningful setting, so an unchanged flag (flagChanged=false) falls through
+// to the env var.
+func resolveFloat32Option(flagChanged bool, flagValue float32, envName string) (float32, error) {
+	if flagChanged {
+		return flagValue, nil
+	}
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		return flagValue, nil
+	}
+	v, err := strconv.ParseFloat(raw, 32)
+	if err != nil {
+		return 0, fmt.Errorf("parsing %s=%q as a number: %w", envName, raw, err)
+	}
+	return float32(v), nil
+}
+
+// resolveIntOption applies flag > env > flag-default.
+func resolveIntOption(flagChanged bool, flagValue int, envName string) (int, error) {
+	if flagChanged {
+		return flagValue, nil
+	}
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		return flagValue, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parsing %s=%q as an integer: %w", envName, raw, err)
+	}
+	return v, nil
 }
 
 // resolveConfigName applies the flag > env > default priority.
@@ -105,7 +145,7 @@ func resolveConfigName(fromFlag string) string {
 	return defaultCRDName
 }
 
-func runController(_ *cobra.Command, _ []string) error {
+func runController(cmd *cobra.Command, _ []string) error {
 	// Configuration priority: CLI flags > Environment variables > Defaults
 
 	runCRDName = resolveConfigName(runCRDName)
@@ -190,8 +230,18 @@ func runController(_ *cobra.Command, _ []string) error {
 	controller.SetBuildInfo(version, os.Getenv("HAPROXY_MINOR"))
 
 	// Create Kubernetes client
+	kubeClientQPS, err := resolveFloat32Option(cmd.Flags().Changed("kube-client-qps"), runKubeClientQPS, "KUBE_CLIENT_QPS")
+	if err != nil {
+		return err
+	}
+	kubeClientBurst, err := resolveIntOption(cmd.Flags().Changed("kube-client-burst"), runKubeClientBurst, "KUBE_CLIENT_BURST")
+	if err != nil {
+		return err
+	}
 	k8sClient, err := client.New(client.Config{
 		Kubeconfig: runKubeconfig,
+		QPS:        kubeClientQPS,
+		Burst:      kubeClientBurst,
 	})
 	if err != nil {
 		return fmt.Errorf("creating Kubernetes client: %w", err)

@@ -103,6 +103,12 @@ spec:
               value: {{ $ports.healthz | quote }}
             - name: METRICS_PORT
               value: {{ $ports.metrics | quote }}
+            {{- with $controller.kubeClient }}
+            - name: KUBE_CLIENT_QPS
+              value: {{ .qps | quote }}
+            - name: KUBE_CLIENT_BURST
+              value: {{ .burst | int64 | quote }}
+            {{- end }}
             {{- with $controller.logLevel }}
             - name: LOG_LEVEL
               value: {{ . | quote }}

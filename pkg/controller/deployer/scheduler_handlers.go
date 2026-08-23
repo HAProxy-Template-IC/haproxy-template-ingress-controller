@@ -294,10 +294,16 @@ func (s *DeploymentScheduler) dispatchRender(ctx context.Context, correlationID 
 	// Drift prevention deployments must ALWAYS execute (bypass cache)
 	isDriftPrevention := reason == events.TriggerReasonDriftPrevention
 
-	// Check if deployment can be skipped (config unchanged for same pod set)
+	// Check if deployment can be skipped (config unchanged for same pod set).
+	// The fleet must be settled on the last deployed config — not merely have it
+	// as the last one that fully deployed while a later render has since moved it
+	// on. Otherwise a content-addressed render recurring after a paced deploy
+	// (add then delete, both hashing to the same recurring plan) matches the
+	// stale hash and the fleet never reaches it.
 	s.mu.RLock()
 	canSkip := !isDriftPrevention &&
 		configHash == s.lastDeployedConfigHash &&
+		s.lastDispatchedConfigHash == s.lastDeployedConfigHash &&
 		podSetHash == s.lastDeployedPodSetHash &&
 		!s.lastDeployedTime.IsZero()
 	s.mu.RUnlock()
@@ -548,10 +554,19 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	// refuse the follow-up that observes the reload firing.
 	fullyDeployed := event.Failed == 0 && event.PendingReloads == 0
 	s.mu.Lock()
-	if event.ContentChecksum != "" && event.PodSetHash != "" && fullyDeployed {
-		s.lastDeployedConfigHash = event.ContentChecksum
-		s.lastDeployedPodSetHash = event.PodSetHash
-		s.lastDeployedTime = time.Now()
+	if event.ContentChecksum != "" && event.PodSetHash != "" {
+		// Record what the fleet was last sent even when it holds it behind a
+		// paced reload: the skip-unchanged gate reads this to tell "the fleet is
+		// settled on lastDeployedConfigHash" from "a later render moved it off,
+		// and lastDeployedConfigHash is stale". A recurring content-addressed
+		// render must not be skipped just because its checksum matches that
+		// stale value.
+		s.lastDispatchedConfigHash = event.ContentChecksum
+		if fullyDeployed {
+			s.lastDeployedConfigHash = event.ContentChecksum
+			s.lastDeployedPodSetHash = event.PodSetHash
+			s.lastDeployedTime = time.Now()
+		}
 	}
 	s.mu.Unlock()
 
@@ -871,6 +886,7 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	// optimistic because the agents' own last-known-good set protects the fleet.
 	s.mu.Lock()
 	s.lastDeployedConfigHash = ""
+	s.lastDispatchedConfigHash = ""
 	s.lastDeployedPodSetHash = ""
 	s.lastDeployedTime = time.Time{}
 	s.gatePinned = false

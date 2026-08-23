@@ -29,7 +29,7 @@ gvr := schema.GroupVersionResource{Group: "haproxy-haptic.org", Version: "v1alph
 list, _ := c.DynamicClient().Resource(gvr).Namespace(c.Namespace()).List(ctx, metav1.ListOptions{})
 ```
 
-The `Config` struct has just two fields (`Kubeconfig`, `Namespace`); QPS/burst rate-limiting is hardcoded inside `New` to values appropriate for high-frequency CRD operations (QPS 50, burst 100). `NewFromClientset` builds a `*Client` from existing fakes — used by tests only.
+The `Config` struct has four fields (`Kubeconfig`, `Namespace`, `QPS`, `Burst`). `QPS <= 0` (the default) disables client-side throttling — `New` sets `rest.Config.QPS = -1` — so the controller relies on the apiserver's Priority & Fairness (APF). Unlike the client-side token bucket, which *blocks* a throttled request until the caller's context expires, APF returns `429 + Retry-After`, which client-go retries. A positive `QPS` reinstates a client-side cap installed as one shared `flowcontrol` `RateLimiter` on the `rest.Config`, so every clientset derived from it — the core clientset, the dynamic client, and any `versioned`/`apiext` client built via `NewForConfig(RestConfig())` — draws from a single controller-wide budget rather than a private bucket each (`Burst` defaults to `2*QPS` when zero). The controller wires this from `--kube-client-qps`/`--kube-client-burst` (env `KUBE_CLIENT_QPS`/`KUBE_CLIENT_BURST`, chart value `controller.kubeClient.qps`/`.burst`). `NewFromClientset` builds a `*Client` from existing fakes — used by tests only.
 
 ## Other Exported Surfaces
 

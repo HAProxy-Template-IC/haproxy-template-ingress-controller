@@ -303,6 +303,8 @@ Authoritative source: `cmd/haptic/run.go` (`init()` registers flags) and `cmd/ha
 | `--webhook-cert-dir` | `WEBHOOK_CERT_DIR` | `""` (disabled) | Directory holding the validating-admission-webhook server's TLS cert (`tls.crt`/`tls.key`); the chart mounts the cert Secret here and sets this to `/etc/webhook/certs`. The server reads and hot-reloads the files on rotation. Empty disables the webhook entirely. |
 | `--webhook-resource-admission-timeout` | `WEBHOOK_RESOURCE_ADMISSION_TIMEOUT` | `9s` | Controller-side deadline for watched-resource dry-run admission. Keep it below the matching `ValidatingWebhookConfiguration.timeoutSeconds`; the chart derives it automatically. |
 | `--debug-port` | `DEBUG_PORT` | `0` (disabled) | Port for the introspection HTTP server (`/healthz` + `/debug/vars` + `/debug/pprof`). The Helm chart sets this to `8080` by default. |
+| `--kube-client-qps` | `KUBE_CLIENT_QPS` | `-1` (APF) | Client-side apiserver QPS. `<= 0` disables client-side throttling so the controller relies on apiserver Priority & Fairness; a positive value installs one shared client-side rate limiter across all the controller's clients. Chart value `controller.kubeClient.qps`. |
+| `--kube-client-burst` | `KUBE_CLIENT_BURST` | `0` | Client-side apiserver burst; used only when `--kube-client-qps > 0` (`0` means `2*qps`). Chart value `controller.kubeClient.burst`. |
 | `--kubeconfig` | — | (in-cluster) | Out-of-cluster development. |
 | — | `LOG_LEVEL` | `INFO` | Initial log level: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive; `WARNING` accepted as alias for `WARN`). The CRD's `spec.logging.level`, when non-empty, takes over at runtime via the dynamic logger. |
 
