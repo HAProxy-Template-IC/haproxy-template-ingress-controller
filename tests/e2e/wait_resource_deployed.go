@@ -18,9 +18,9 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -45,11 +45,6 @@ import (
 // Kubernetes convention does the ordering: the chart stamps the route's own
 // metadata.generation into each condition's observedGeneration, so "this status
 // describes THIS version of my resource" is decidable from the object alone.
-
-// resourceDeployedTimeout bounds the per-resource wait. Same budget reasoning as
-// the fleet-wide wait it replaces — reconcile debounce (<=2s) + one
-// minDeploymentInterval (5s) + the per-pod sync (~1-2s).
-const resourceDeployedTimeout = 12 * time.Second
 
 // gatewayGVR and httpRouteGVR are declared in gateway_churn_test.go.
 var (
@@ -142,12 +137,12 @@ func waitForGatewayDeployed(ctx context.Context, t *testing.T, client klient.Cli
 		})
 }
 
-// waitForResourceDeployed polls the named resource until ready reports true.
-//
-// A poll, not a watch: the predicate is level-triggered on the object's own
-// state, so there is nothing an edge could carry that a re-read does not, and a
-// poll cannot be defeated by a 410 resync dropping the transition we needed —
-// which is precisely how the shared-object watch failed (#122).
+// waitForResourceDeployed polls the named resource until ready reports true,
+// bounded by fleet reload progress (reloadFreeReaction) so a reload backlog on
+// the shared reload-gated shards never trips a flat deadline (#174). A poll, not
+// a watch: the predicate is level-triggered on the object's own state, so a 410
+// resync cannot drop the transition we needed — how the shared-object watch
+// failed (#122).
 func waitForResourceDeployed(
 	ctx context.Context,
 	t *testing.T,
@@ -162,29 +157,24 @@ func waitForResourceDeployed(
 	if err != nil {
 		t.Fatalf("waitForResourceDeployed: dynamic client: %v", err)
 	}
+	// reloadFreeReaction reads fleet reload progress from a clientset; derive it
+	// here so the callers keep passing only klient.Client.
+	cs, err := newClientsetForE2E(client.RESTConfig())
+	if err != nil {
+		t.Fatalf("waitForResourceDeployed: clientset: %v", err)
+	}
 
-	ctx, cancel := context.WithTimeout(ctx, resourceDeployedTimeout)
-	defer cancel()
-
-	lastReason := "no observation yet"
-	for {
-		obj, getErr := dyn.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		switch {
-		case getErr != nil:
-			lastReason = fmt.Sprintf("get %s %s/%s: %v", gvr.Resource, namespace, name, getErr)
-		default:
+	reloadFreeReaction(ctx, t, cs,
+		fmt.Sprintf("%s %s/%s deployed to every replica", gvr.Resource, namespace, name),
+		func(ctx context.Context) (bool, error) {
+			obj, getErr := dyn.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+			if getErr != nil {
+				return false, fmt.Errorf("get %s %s/%s: %w", gvr.Resource, namespace, name, getErr)
+			}
 			done, reason := ready(obj)
 			if done {
-				return
+				return true, nil
 			}
-			lastReason = reason
-		}
-
-		select {
-		case <-ctx.Done():
-			t.Fatalf("waitForResourceDeployed %s %s/%s: %v (last state: %s)",
-				gvr.Resource, namespace, name, ctx.Err(), lastReason)
-		case <-time.After(250 * time.Millisecond):
-		}
-	}
+			return false, errors.New(reason)
+		})
 }

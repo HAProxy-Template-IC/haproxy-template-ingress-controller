@@ -68,6 +68,7 @@ func TestDispatchRender_SkipsWhenConfigAndPodSetUnchanged(t *testing.T) {
 	scheduler.lastContentChecksum = checksum
 	scheduler.currentEndpoints = endpoints
 	scheduler.lastDeployedConfigHash = checksum   // ← match
+	scheduler.lastDispatchedConfigHash = checksum // ← fleet settled on it (no paced deploy since)
 	scheduler.lastDeployedPodSetHash = podSetHash // ← match
 	scheduler.lastDeployedTime = time.Now()       // ← non-zero (deployment really happened)
 	scheduler.mu.Unlock()
@@ -185,6 +186,10 @@ func TestDispatchRender_PublishesDeploymentSkippedOnCacheHit(t *testing.T) {
 	scheduler.lastContentChecksum = checksum
 	scheduler.currentEndpoints = endpoints
 	scheduler.lastDeployedConfigHash = checksum
+	// The fleet is settled on this config: the last render dispatched IS the last
+	// one deployed, which is what lets the skip fire (a paced deploy would leave
+	// these two apart).
+	scheduler.lastDispatchedConfigHash = checksum
 	scheduler.lastDeployedPodSetHash = podSetHash
 	scheduler.lastDeployedTime = time.Now()
 	scheduler.mu.Unlock()

@@ -142,6 +142,17 @@ controller:
   # This sets the LOG_LEVEL environment variable
   # Can be overridden at runtime via controller.config.logging.level
   logLevel: INFO
+  # Client-side rate limit for the controller's own apiserver requests.
+  # The default (qps <= 0) disables client-side throttling so the controller
+  # relies on the apiserver's API Priority & Fairness (APF) — the modern posture
+  # shared by controller-runtime and kgateway. Unlike the client-side token
+  # bucket (which blocks a throttled request), APF returns 429 + Retry-After,
+  # which client-go retries. Set a positive qps to reinstate a client-side cap;
+  # it becomes one shared budget across all the controller's clients. burst is
+  # used only when qps > 0 (0 means 2*qps).
+  kubeClient:
+    qps: -1
+    burst: 0
   # Controller listener ports. These are the single source of truth for the
   # process environment, container ports, Service, probes, and NetworkPolicy.
   ports:

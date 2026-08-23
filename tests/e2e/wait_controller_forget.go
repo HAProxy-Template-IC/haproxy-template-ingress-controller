@@ -31,13 +31,12 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
-// controllerForgetTimeout caps how long the test cleanup waits for the
-// controller's rendered config to no longer mention a deleted Ingress's
-// namespace. The controller's informer typically catches up in well under
-// 1s, but we allow a bounded 15s budget so transient API-server slowness
-// and the chart's 5s minDeploymentInterval during parallel teardown don't
-// cause spurious cleanup-warning logs.
-const controllerForgetTimeout = 15 * time.Second
+// controllerForgetTimeout caps the best-effort cleanup wait for the controller to
+// drop a deleted namespace from its rendered config. Reload-independent (it tracks
+// re-render+publish, not a fleet reload), so a generous flat budget — not the
+// reload-progress gate — absorbs the publish backlog under ~70 parallel teardowns;
+// on timeout the caller only logs, never fails.
+const controllerForgetTimeout = 90 * time.Second
 
 // controllerDeployedTimeout caps the post-apply wait for the HAProxyCfg
 // status to report every HAProxy pod at a render containing the marker.

@@ -398,14 +398,24 @@ func sameStartTimes(a, b map[string]float64) bool {
 // does.
 func haproxyWorkerStartTimes(ctx context.Context, t *testing.T, cs kubernetes.Interface) map[string]float64 {
 	t.Helper()
+	times, err := haproxyWorkerStartTimesE(ctx, cs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return times
+}
+
+// haproxyWorkerStartTimesE is the non-fatal variant, for pollers that must treat
+// a transient scrape blip as "not yet observed" rather than a test abort.
+func haproxyWorkerStartTimesE(ctx context.Context, cs kubernetes.Interface) (map[string]float64, error) {
 	pods, err := cs.CoreV1().Pods(ControllerNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: LabelSelectorHAProxy,
 	})
 	if err != nil {
-		t.Fatalf("list HAProxy pods: %v", err)
+		return nil, fmt.Errorf("list HAProxy pods: %w", err)
 	}
 	if len(pods.Items) == 0 {
-		t.Fatalf("no HAProxy pods match %q", LabelSelectorHAProxy)
+		return nil, fmt.Errorf("no HAProxy pods match %q", LabelSelectorHAProxy)
 	}
 
 	times := map[string]float64{}
@@ -413,15 +423,15 @@ func haproxyWorkerStartTimes(ctx context.Context, t *testing.T, cs kubernetes.In
 		name := pods.Items[i].Name
 		body, err := apiProxyGet(ctx, name, HAProxyStatsPort, "metrics")
 		if err != nil {
-			t.Fatalf("scrape %s stats port: %v", name, err)
+			return nil, fmt.Errorf("scrape %s stats port: %w", name, err)
 		}
 		value, ok := metricValue(body, "haproxy_process_start_time_seconds")
 		if !ok {
-			t.Fatalf("pod %s exposes no haproxy_process_start_time_seconds", name)
+			return nil, fmt.Errorf("pod %s exposes no haproxy_process_start_time_seconds", name)
 		}
 		times[name] = value
 	}
-	return times
+	return times, nil
 }
 
 // metricValue reads one unlabelled sample out of a Prometheus exposition.

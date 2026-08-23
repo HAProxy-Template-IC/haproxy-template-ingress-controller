@@ -314,6 +314,7 @@ PUT
 quantile
 quantiles
 Quantizes
+QPS
 QUIC
 RBAC
 rc

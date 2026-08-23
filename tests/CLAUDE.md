@@ -416,6 +416,42 @@ Flaky tests indicate real bugs:
 
 These are all **real problems** that affect production reliability.
 
+### A Timeout States the Operation, Not the Stress
+
+A test timeout declares how long an operation *should* take. Size it to that,
+never to what you observed under load. **An operation that takes milliseconds
+or a few seconds must not need tens of seconds even under the heaviest test
+stress. If it does, the stress has exposed a scalability bug in the product —
+fix the bug, never raise the timeout to accommodate it.**
+
+A long timeout (30s, 60s, 90s) on a fundamentally fast operation is not
+patience — it is a scalability defect the test is now hiding. Raising it turns
+a red pipeline green by deleting the only signal that the product falls over
+under load. That is trading validation away (RULE #2): the operator hits the
+same wall in production, with no test to warn them.
+
+When a wait "needs" to be long under the parallel-test wave, root-cause *why
+the operation slowed down under concurrency* and fix that:
+
+- **Client-side apiserver throttling** — the controller's client-go
+  `RateLimiter` (once a per-clientset 50-QPS bucket) queued status writes under
+  the ~70-test parallel wave, so `waitForResourceDeployed` blew a 12s budget on
+  a random shard each run (#172/#173/#174). The fix was to **stop client-side
+  throttling by default** in `pkg/k8s/client` (`Config.QPS <= 0` → `rest.Config.QPS = -1`,
+  relying on apiserver Priority & Fairness, which returns `429`+`Retry-After`
+  that client-go retries — a client-side-throttled request only *blocks*), not a
+  90s wait. `reason="client-side throttling, not priority and fairness"` in the
+  controller logs is the fingerprint.
+- **Reload backlog on a `< 3.4` fleet** is the one legitimate case for a
+  *progress-bounded* wait (stay patient only while HAProxy workers keep
+  reloading, fail on a real stall) — bounded by observable progress, still not
+  by a flat long deadline. See `reloadFreeReaction` in
+  `tests/e2e/reloadfree_helpers_test.go`.
+
+Distinguish the two: a *flat* long timeout is almost always the bug; a wait
+bounded by an *observable progress signal* (worker restarts, processed
+counters) is correct because it fails the instant progress stops.
+
 ### Investigation Steps
 
 When a test fails intermittently:

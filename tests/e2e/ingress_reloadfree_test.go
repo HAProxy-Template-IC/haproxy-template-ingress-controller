@@ -30,7 +30,6 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // routeGVR is the custom-crd-example library's Route kind, watched when the
@@ -96,7 +95,7 @@ func TestIngressRouteAddRemoveIsReloadFree(t *testing.T) {
 				BackendPort:    anchorSvc.Port,
 				Annotations:    ingressFilterAnnotations("rf-anchor"),
 			})
-			waitForRouteServing(ctx, t, httpclient.New(t), anchorHost, "/", respHeader, "rf-anchor")
+			waitForRouteServing(ctx, t, cs, httpclient.New(t), anchorHost, "/", respHeader, "rf-anchor")
 			return ctx
 		}).
 		Assess("each cycle serves the Ingress and, on 3.4, never reloads", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -113,13 +112,13 @@ func TestIngressRouteAddRemoveIsReloadFree(t *testing.T) {
 				divBefore := mapDivergenceTotal(ctx, t, cs)
 
 				applyIngressFilteredRoute(ctx, t, namespace, cycleName, cycleHost, cycleSvc, want)
-				latency := waitForRouteServing(ctx, t, http, cycleHost, "/", respHeader, want)
+				latency := waitForRouteServing(ctx, t, cs, http, cycleHost, "/", respHeader, want)
 
 				entries := mapEntriesFrom(showMap(ctx, t, cs, "maps/ing-reshdr.map"))
 				assertMapHasValue(t, entries, want, "maps/ing-reshdr.map")
 
 				deleteRouteByName(ctx, t, dyn, ingressGVR, namespace, cycleName)
-				waitForRouteGone(ctx, t, http, cycleHost, "/")
+				waitForRouteGone(ctx, t, cs, http, cycleHost, "/")
 
 				after := captureReloadFingerprint(ctx, t, cs)
 				if dynamicBE {
@@ -245,24 +244,18 @@ spec:
 	}
 }
 
-// waitBackendRuntime blocks until the running worker has, or no longer has, the
-// named backend — the reload-free lifecycle signal for the custom-CRD cycle.
+// waitBackendRuntime blocks until the running worker has (want=true) or lacks
+// (want=false) the named backend — the custom-CRD cycle's reload-free signal.
 func waitBackendRuntime(ctx context.Context, t *testing.T, cs kubernetes.Interface, backend string, want bool) {
 	t.Helper()
-	err := testutil.WaitForConditionWithDescription(ctx, testutil.WaitConfig{
-		InitialInterval: 200 * time.Millisecond,
-		MaxInterval:     2 * time.Second,
-		Timeout:         convergenceTimeout(),
-		Multiplier:      1.5,
-	}, fmt.Sprintf("backend %s present=%t at runtime", backend, want), func(ctx context.Context) (bool, error) {
-		if backendInRuntime(ctx, t, cs, backend) == want {
-			return true, nil
-		}
-		return false, fmt.Errorf("backend %s present=%t, want %t", backend, !want, want)
-	})
-	if err != nil {
-		t.Fatalf("backend %s never reached present=%t: %v", backend, want, err)
-	}
+	reloadFreeReaction(ctx, t, cs,
+		fmt.Sprintf("backend %s present=%t at runtime", backend, want),
+		func(ctx context.Context) (bool, error) {
+			if backendInRuntime(ctx, t, cs, backend) == want {
+				return true, nil
+			}
+			return false, fmt.Errorf("backend %s present=%t, want %t", backend, !want, want)
+		})
 }
 
 // ingressFilterAnnotations are the haproxytech per-route directives C13 moved
