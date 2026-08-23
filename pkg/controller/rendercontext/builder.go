@@ -39,6 +39,8 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
@@ -630,6 +632,7 @@ func buildResourcesValue(
 
 	fields := make([]reflect.StructField, 0, len(resourceNames))
 	values := make([]reflect.Value, 0, len(resourceNames))
+	var key strings.Builder
 	for _, name := range resourceNames {
 		elemType := typedTypes[name]
 		store := resourceStores[name]
@@ -653,13 +656,37 @@ func buildResourcesValue(
 			Tag:  reflect.StructTag(`json:"` + name + `"`),
 		})
 		values = append(values, innerValue)
+		// Key the resources struct type on (field name, inner-type identity).
+		// The inner type pointer is stable per config (built once at bootstrap),
+		// so a schema reload makes a fresh key rather than a stale hit.
+		key.WriteString(name)
+		key.WriteByte(0)
+		key.WriteString(strconv.FormatUint(uint64(reflect.ValueOf(innerType).Pointer()), 16))
+		key.WriteByte(0)
 	}
-	resourcesType := reflect.StructOf(fields)
+	resourcesType := cachedResourcesType(key.String(), fields)
 	resources := reflect.New(resourcesType)
 	for i, v := range values {
 		resources.Elem().Field(i).Set(v)
 	}
 	return resources.Interface()
+}
+
+// resourcesTypeCache memoises the dynamically-built `resources` struct type.
+// buildResourcesValue runs on EVERY render and reflect.StructOf allocates a
+// fresh candidate type each call even when its internal cache then returns the
+// same *rtype — under render churn this was ~54% of the StructOf allocation
+// (issue #178). The type depends only on the watched-resource set + their inner
+// store types, all fixed after bootstrap, so caching by that key is safe.
+var resourcesTypeCache sync.Map // string key -> reflect.Type
+
+func cachedResourcesType(key string, fields []reflect.StructField) reflect.Type {
+	if cached, ok := resourcesTypeCache.Load(key); ok {
+		return cached.(reflect.Type)
+	}
+	t := reflect.StructOf(fields)
+	resourcesTypeCache.Store(key, t)
+	return t
 }
 
 // buildPerResourceStoreValue returns a `*innerType` whose List /
