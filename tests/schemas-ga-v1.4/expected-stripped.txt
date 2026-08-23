@@ -20,8 +20,15 @@ test-gateway-frontend-client-cert-default-line-verify
 test-gateway-frontend-client-cert-insecure-fallback-default-line
 test-gateway-https-listener-mtls-unresolved-ca-no-bind
 test-gateway-https-listener-mtls-unresolved-ca-status-conditions
+test-httproute-cors-allow-through
+test-httproute-cors-expose-header-percent-escaped
 test-httproute-cors-filter
+test-httproute-cors-list-value-injection-admission-rejected
+test-httproute-cors-list-value-injection-reconcile-warns-and-skips
 test-httproute-cors-no-hostname
+test-httproute-cors-origin-control-char-injection-admission-rejected
+test-httproute-cors-origin-injection-admission-rejected
+test-httproute-cors-origin-injection-reconcile-warns-and-skips
 test-httproute-cors-wildcard-methods-echo
 test-k8s-haproxy-service-listenerset-ports
 test-listenerset-allowed-different-namespace-denied

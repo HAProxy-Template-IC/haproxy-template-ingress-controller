@@ -33,8 +33,15 @@ test-gateway-infrastructure-propagation-with-static-addresses
 test-gateway-mirror-mixed-percent-fallback
 test-gateway-timeout-map
 test-gateway-timeout-rejected
+test-httproute-cors-allow-through
+test-httproute-cors-expose-header-percent-escaped
 test-httproute-cors-filter
+test-httproute-cors-list-value-injection-admission-rejected
+test-httproute-cors-list-value-injection-reconcile-warns-and-skips
 test-httproute-cors-no-hostname
+test-httproute-cors-origin-control-char-injection-admission-rejected
+test-httproute-cors-origin-injection-admission-rejected
+test-httproute-cors-origin-injection-reconcile-warns-and-skips
 test-httproute-cors-wildcard-methods-echo
 test-httproute-request-mirror-fraction
 test-httproute-request-mirror-percent

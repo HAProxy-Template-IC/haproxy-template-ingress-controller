@@ -94,8 +94,15 @@ test-httproute-backend-header-value-injection-admission-rejected
 test-httproute-backend-header-value-injection-reconcile-warns-and-skips
 test-httproute-backend-request-header-modifier
 test-httproute-backend-response-header-modifier
+test-httproute-cors-allow-through
+test-httproute-cors-expose-header-percent-escaped
 test-httproute-cors-filter
+test-httproute-cors-list-value-injection-admission-rejected
+test-httproute-cors-list-value-injection-reconcile-warns-and-skips
 test-httproute-cors-no-hostname
+test-httproute-cors-origin-control-char-injection-admission-rejected
+test-httproute-cors-origin-injection-admission-rejected
+test-httproute-cors-origin-injection-reconcile-warns-and-skips
 test-httproute-cors-wildcard-methods-echo
 test-httproute-cross-route-conflicts
 test-httproute-duplicate-backend-different-ports
