@@ -33,6 +33,17 @@ _helm_load:
     # ConfigMap.
     - path: watchedResources.waf_selfservice_catalogs.fieldSelector
       value: 'metadata.name={{ .Values.controller.config.templatingSettings.extraContext.waf.policies.selfService.configMapName | default "waf-policies" }}'
+  unset:
+    # These two snippets import util-spoa-rate-limit-dispatch, which the spoa-hub
+    # library defines. The import is compile-time: with the hub absent it fails
+    # to compile and bricks the whole config. Both only emit when hub messages
+    # are present (the hub is on), so dropping them when it is off changes no
+    # output. The fail-closed guard for a rate-limit annotation without the hub
+    # lives in map-rate-limit-820-haptic, which has no such import.
+    - path: templateSnippets.backend-directives-807-haptic-shared-rate-limit-consumer
+      when: '{{ include "haptic.spoaHub.disabled" . }}'
+    - path: templateSnippets.frontend-filters-863-haptic-shared-rate-limit-consumer-cache-routes
+      when: '{{ include "haptic.spoaHub.disabled" . }}'
 
 # Library-declared extraContext defaults. These flow into the rendered config's
 # templatingSettings.extraContext as low-precedence defaults — an operator can
