@@ -533,6 +533,9 @@ templateSnippets:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {%- import "util-route-condition" for RouteIdCondition -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
       {{- render "util-gateway-analysis" -}}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
       {%- if gaVal == nil %}{% return %}{% end %}
@@ -618,6 +621,19 @@ templateSnippets:
             {%- exposeList = append(exposeList, tostring(eh)) %}
           {%- end %}
           {%- var maxAge = cors | dig("maxAge") | fallback(0) %}
+          {#- #157: list values ride inside double-quoted log-format hdr/set-header values
+              (a control char splits the line; % / " / $ need escaping) and origins ride
+              inside a -m reg "..." ACL (a " breaks out — sanitize_regex escapes neither).
+              Reject control/quote here, then EscapeLogFormatValue handles the rest below. -#}
+          {%- var corsInj = "" %}
+          {%- for _, m := range methodsList %}{%- if corsInj == "" %}{%- corsInj = ConfigInjectionKind(tostring(m), "line") %}{%- end %}{%- end %}
+          {%- for _, h := range headersList %}{%- if corsInj == "" && tostring(h) != "*" %}{%- corsInj = ConfigInjectionKind(tostring(h), "line") %}{%- end %}{%- end %}
+          {%- for _, e := range exposeList %}{%- if corsInj == "" %}{%- corsInj = ConfigInjectionKind(tostring(e), "line") %}{%- end %}{%- end %}
+          {%- for _, o := range allowOrigins %}{%- if corsInj == "" %}{%- corsInj = ConfigInjectionKind(tostring(o), "dquote") %}{%- end %}{%- end %}
+          {%- if corsInj != "" %}
+            {{- WebhookRejectOrWarn(routeInfo.(map[string]any)["route"], "InvalidCORS", "HTTPRoute " + tostring(dig(routeInfo.(map[string]any)["route"], "metadata", "namespace")) + "/" + tostring(dig(routeInfo.(map[string]any)["route"], "metadata", "name")) + " has a CORS filter value containing " + corsInj + ", which would break out of the CORS response header directive; the CORS filter is not applied. Remove control characters and double quotes from allowMethods, allowHeaders, exposeHeaders and allowOrigins.") -}}
+            {%- continue %}
+          {%- end %}
           {%- var ruleCond = RouteIdCondition(routeId) %}
           {%- var originCond = "{ req.fhdr(Origin) -m found }" %}
           {%- if originRegex != "" %}
@@ -642,20 +658,20 @@ templateSnippets:
           {%- if hasWildcardMethod %}
             {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-methods \"%[var(txn.gw_cors_acrm)]\"") %}
           {%- else if len(methodsList) > 0 %}
-            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-methods \"" + join(methodsList, ", ") + "\"") %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-methods \"" + EscapeLogFormatValue(join(methodsList, ", ")) + "\"") %}
           {%- end %}
           {%- if len(headersList) > 0 %}
             {%- if headersList[0] == "*" %}
               {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-headers \"%[var(txn.gw_cors_acrh)]\"") %}
             {%- else %}
-              {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-headers \"" + join(headersList, ", ") + "\"") %}
+              {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-headers \"" + EscapeLogFormatValue(join(headersList, ", ")) + "\"") %}
             {%- end %}
           {%- end %}
           {%- if toint(maxAge) > 0 %}
             {%- preflightHdrs = append(preflightHdrs, "hdr access-control-max-age \"" + tostring(maxAge) + "\"") %}
           {%- end %}
           {%- if len(exposeList) > 0 %}
-            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-expose-headers \"" + join(exposeList, ", ") + "\"") %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-expose-headers \"" + EscapeLogFormatValue(join(exposeList, ", ")) + "\"") %}
           {%- end %}
       http-request return status 200 {{ join(preflightHdrs, " ") }} if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } {{ ruleCond }}
       {# A disallowed-origin preflight must get no access-control-* headers; falling through
@@ -667,7 +683,7 @@ templateSnippets:
       http-response set-header "access-control-allow-credentials" "true" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
           {%- end %}
           {%- if len(exposeList) > 0 %}
-      http-response set-header "access-control-expose-headers" "{{ join(exposeList, ", ") }}" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
+      http-response set-header "access-control-expose-headers" "{{ EscapeLogFormatValue(join(exposeList, ", ")) }}" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
           {%- end %}
       {# The `{%-` end markers below strip the prior directive's newline, fusing successive
          routes' CORS directives onto one malformed line; only the explicit show survives. #}{% show "\n" %}
