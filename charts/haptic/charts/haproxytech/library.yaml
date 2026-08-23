@@ -301,6 +301,7 @@ templateSnippets:
 
   global-top-500-haproxytech-ingress-auth:
     template: |
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -337,8 +338,11 @@ templateSnippets:
                 {%- var hashErrMsg = extraContext | dig_string("Invalid password hash", "annotationCompatibility", "basicAuth", "passwordHashValidation", "errorMessage") %}
                 {%- for _, username := range keys(secretData) %}
                   {%- var passwordHash = secretData[username] | b64decode() | tostring() %}
+                  {%- var pwInj = ConfigInjectionKind(passwordHash, "token") %}
                   {%- if !regex_search(passwordHash, hashRegex) %}
                     {{- fail(hashErrMsg + " for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' (pattern \"" + hashRegex + "\")") -}}
+                  {%- else if pwInj != "" %}
+                    {{- fail("Basic-auth hash for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' contains " + pwInj + ", which would break out of the userlist line. Remove whitespace, quotes and control characters from the hash.") -}}
                   {%- end %}
         user {{ username }} password {{ passwordHash }}
                 {% end -%}
@@ -1021,6 +1025,35 @@ validationTests:
       - type: haproxy_valid
       - {type: not_contains, target: haproxy.cfg, pattern: "userlist auth_default_absent-secret"}
       - {type: not_contains, target: haproxy.cfg, pattern: "http_auth(auth_default_absent-secret)"}
+
+  test-haproxytech-basic-auth-hash-injection-fails-closed:
+    description: A space in a basic-auth password hash (accepted by the default hash regex) fails the render closed instead of appending extra tokens to the userlist line (#157).
+    extraContext: {renderMode: admission}
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {namespace: default, name: basic-auth-secret}
+          data: {admin: eDJ5MDV2YWxpZGhhc2ggZ3JvdXBzIGFkbWlu}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hash-inj
+            annotations:
+              haproxy.org/auth-type: basic-auth
+              haproxy.org/auth-secret: basic-auth-secret
+          spec:
+            rules:
+              - host: hash-inj.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: api-service, port: {number: 8080}}}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "would break out of the userlist line"}
 
   test-auth-realm-with-spaces:
     description: Auth realm with spaces is normalized to dashes (matching upstream), not a render failure

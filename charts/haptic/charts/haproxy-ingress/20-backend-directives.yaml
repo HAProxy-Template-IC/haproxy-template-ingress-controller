@@ -330,10 +330,10 @@ templateSnippets:
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify required") %}
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ca-file " + caPath) %}
             {%- else %}
-            # Warning: Secret {{ caNs }}/{{ caName }} missing 'ca.crt' key
+            # WARNING haproxy-ingress/secure-verify-ca-secret: Secret for {{ key }} missing 'ca.crt' key; backend cert verification not applied.
             {%- end %}
           {%- else %}
-            # Warning: Secret {{ caNs }}/{{ caName }} referenced by haproxy-ingress.github.io/secure-verify-ca-secret not found
+            # WARNING haproxy-ingress/secure-verify-ca-secret: Secret not found for {{ key }}; backend cert verification not applied.
           {%- end %}
         {%- end %}
 
@@ -362,10 +362,10 @@ templateSnippets:
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "crt " + crtFilename) %}
               {%- serverOpts["shape"] = "structural-crt" %}
             {%- else %}
-            # Warning: Secret {{ crtNs }}/{{ crtName }} missing 'tls.crt' or 'tls.key' keys
+            # WARNING haproxy-ingress/secure-crt-secret: Secret for {{ key }} missing 'tls.crt' or 'tls.key'; client cert not applied.
             {%- end %}
           {%- else %}
-            # Warning: Secret {{ crtNs }}/{{ crtName }} referenced by haproxy-ingress.github.io/secure-crt-secret not found
+            # WARNING haproxy-ingress/secure-crt-secret: Secret not found for {{ key }}; client cert not applied.
           {%- end %}
         {%- end %}
 
@@ -648,6 +648,8 @@ templateSnippets:
         Generated HAProxy Config:
           http-request replace-path (.*) <translated-value>
       #}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -672,8 +674,11 @@ templateSnippets:
               Mutually exclusive — one rewrite value per backend. The predicate keys
               on an actual \N backreference, not any backslash. -#}
           {%- if regex_search(rewrite, "\\\\[1-9]") %}
+            {%- var injRw = ConfigInjectionKind(rewrite, "line") %}
+            {%- if injRw != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidRewriteTarget", "Ingress " + key + " annotation 'haproxy-ingress.github.io/rewrite-target' contains " + injRw + "; the rewrite is not applied. Remove control characters from the value.") -}}{%- else %}
       # haproxy-ingress/rewrite-target ({{ key }})
       http-request replace-path (.*) {{ rewrite }}
+            {%- end %}
           {%- end %}
         {%- end %}
       {%- end -%}

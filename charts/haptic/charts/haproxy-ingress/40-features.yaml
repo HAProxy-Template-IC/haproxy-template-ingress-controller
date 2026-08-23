@@ -134,12 +134,12 @@ templateSnippets:
                 continue to render. The webhook still rejects an
                 ingress whose OWN secret is missing — it just doesn't
                 cascade. #}
-            # WARNING haproxy-ingress.github.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
+            # WARNING haproxy-ingress.github.io/auth-tls-secret: Secret referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
             {%- continue %}
           {%- end %}
           {%- var caBundleB64 = secret.Data["ca.crt"] %}
           {%- if caBundleB64 == "" %}
-            # WARNING haproxy-ingress.github.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' (referenced on Ingress {{ ns }}/{{ name }}) is missing data.ca.crt; skipping mTLS for this ingress.
+            # WARNING haproxy-ingress.github.io/auth-tls-secret: Secret referenced on Ingress {{ ns }}/{{ name }} is missing data.ca.crt; skipping mTLS for this ingress.
             {%- continue %}
           {%- end %}
           {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
