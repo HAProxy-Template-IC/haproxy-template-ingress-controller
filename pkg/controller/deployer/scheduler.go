@@ -204,6 +204,17 @@ type DeploymentScheduler struct {
 	lastDeployedPodSetHash string    // Hash of endpoint authorities for the last deployment
 	lastDeployedTime       time.Time // When the last successful deployment occurred
 
+	// lastDispatchedConfigHash is the checksum of the last render whose
+	// deployment completed, whether it fully deployed or left reloads pending.
+	// The skip-unchanged gate may only fire when it equals
+	// lastDeployedConfigHash: a paced deploy advances this but not the "deployed"
+	// hash, so the fleet has moved off lastDeployedConfigHash while it still
+	// names an earlier full deploy. Content-addressed renders recur (an add and
+	// its delete hash to the same plan every churn cycle), so without this a
+	// recurring render whose checksum matches that stale hash is dismissed as
+	// unchanged and the fleet never reaches it.
+	lastDispatchedConfigHash string
+
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
 
