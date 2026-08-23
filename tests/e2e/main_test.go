@@ -535,7 +535,40 @@ func installCRDs(ctx context.Context) (context.Context, error) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return ctx, fmt.Errorf("kubectl apply CRDs: %w (output: %s)", err, out)
 	}
+	// Wait for Establishment before the controller starts — applying is not
+	// enough. A chart CRD that establishes after the controller's initial
+	// discovery forces a reinitialization (leadership flap); production
+	// establishes CRDs before the controller Deployment rolls (Helm).
+	if err := waitCRDsEstablished(ctx, ".haproxy-haptic.org"); err != nil {
+		return ctx, err
+	}
 	return ctx, nil
+}
+
+// waitCRDsEstablished blocks until every currently-installed CRD whose name
+// contains nameSubstr reports Established. Listing after apply keeps it correct
+// regardless of which exact CRDs a given channel/version installed.
+func waitCRDsEstablished(ctx context.Context, nameSubstr string) error {
+	listed, err := exec.CommandContext(ctx, "kubectl", "get", "crd",
+		"--kubeconfig", kubeconfigPath, "-o", "name").Output()
+	if err != nil {
+		return fmt.Errorf("list CRDs (%s): %w", nameSubstr, err)
+	}
+	var crds []string
+	for _, line := range strings.Split(string(listed), "\n") {
+		if name := strings.TrimSpace(line); strings.Contains(name, nameSubstr) {
+			crds = append(crds, name)
+		}
+	}
+	if len(crds) == 0 {
+		return fmt.Errorf("no CRDs matching %q found after install", nameSubstr)
+	}
+	waitArgs := append([]string{"wait", "--kubeconfig", kubeconfigPath,
+		"--for=condition=Established", "--timeout=60s"}, crds...)
+	if out, err := exec.CommandContext(ctx, "kubectl", waitArgs...).CombinedOutput(); err != nil {
+		return fmt.Errorf("wait for CRDs established (%s): %w (output: %s)", nameSubstr, err, out)
+	}
+	return nil
 }
 
 // defaultGatewayAPIVersion is the Gateway API release whose standard-channel
@@ -594,22 +627,17 @@ func applyGatewayAPICRDs(ctx context.Context, version, channel string) error {
 		return fmt.Errorf("install Gateway API CRDs (%s, %s) after retries: %w (output: %s)", version, channel, err, out)
 	}
 
-	// Single multi-arg `kubectl wait` — kubectl waits on all four CRDs in
-	// parallel, so we don't pay the sequential per-CRD shell-out overhead.
-	// The Established check guards against the chart's helm install racing
-	// the watcher's CRD lookup. These four exist in the standard channel of
-	// every release the suite targets (GRPCRoute is standard since v1.1).
-	wait := exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", kubeconfigPath,
-		"--for=condition=Established", "--timeout=60s",
-		"crd/gatewayclasses.gateway.networking.k8s.io",
-		"crd/gateways.gateway.networking.k8s.io",
-		"crd/httproutes.gateway.networking.k8s.io",
-		"crd/grpcroutes.gateway.networking.k8s.io",
-	)
-	if out, err := wait.CombinedOutput(); err != nil {
-		return fmt.Errorf("wait for Gateway API CRDs established (%s): %w (output: %s)", version, err, out)
-	}
-	return nil
+	// Wait for EVERY installed Gateway API CRD to be Established before the
+	// controller starts — not just the standard four. The experimental channel
+	// also installs tcproutes/tlsroutes/backendtlspolicies/listenersets, which
+	// the controller watches; a CRD that only becomes Established after the
+	// controller's initial discovery is seen as "added" moments later, forcing a
+	// full reinitialization and a leadership flap (~30s leaderless while both
+	// replicas re-run the startup load gate). Production establishes all CRDs
+	// before the controller Deployment rolls (Helm), so match that here. Listing
+	// the CRDs after apply keeps this correct across channels and Gateway API
+	// versions instead of hardcoding a per-channel list.
+	return waitCRDsEstablished(ctx, ".gateway.networking.k8s.io")
 }
 
 // ensureNamespaces idempotently creates the controller, shared-fixture, and
@@ -690,9 +718,15 @@ func preInstallParallel(ctx context.Context) (string, error) {
 	// The custom-CRD example library is enabled in the e2e install (see
 	// helmInstallChart) so the reload-free suite can prove the runtime lane is
 	// resource-agnostic. Its Route CRD ships with no chart schema, so install it
-	// before the controller starts watching `routes`.
+	// before the controller starts watching `routes` — and wait for it to be
+	// Established, not merely applied: a CRD that establishes after the
+	// controller's initial discovery is seen as "added" moments later and forces
+	// a reinitialization (leadership flap).
 	g.Go(func() error {
-		return kubectlApplyStdin(gctx, []byte(customRouteCRD))
+		if err := kubectlApplyStdin(gctx, []byte(customRouteCRD)); err != nil {
+			return err
+		}
+		return waitCRDsEstablished(gctx, ".haptic-example.org")
 	})
 
 	if err := g.Wait(); err != nil {
