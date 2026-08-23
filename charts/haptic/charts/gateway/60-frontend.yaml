@@ -186,6 +186,9 @@ templateSnippets:
         {%- var riConflictGroup = routeInfo["conflictGroup"] %}
         {%- var riRuleIdx int = routeInfo["ruleIdx"] %}
         {%- var riMatchIdx int = routeInfo["matchIdx"] %}
+        {#- Map-decidable routes emit nothing here (every line below is gated on advancedGroups);
+            skip them before the wasted type-switch + extraction. Their path is validated in the path-map builder. -#}
+        {%- if !advancedGroups[tostring(routeInfo | dig("route", "metadata", "namespace")) + "_" + tostring(routeInfo | dig("route", "metadata", "name")) + "_"] %}{%- continue %}{%- end %}
 
         {%%
           var riKind = ""

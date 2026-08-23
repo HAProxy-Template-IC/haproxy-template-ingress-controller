@@ -284,12 +284,33 @@ generate_ingress() {
 EOF
 }
 
-# Generate a single HTTPRoute fixture with complex rules
+# Generate a single HTTPRoute fixture.
+#
+# BENCH_ROUTE_MATCHERS controls the match shape (default "advanced"):
+#   advanced - each rule carries header + query matchers (worst case: every
+#              route is map-undecidable and emits a per-route ACL chain)
+#   plain    - path-prefix only (the common case: map-decidable, resolved by
+#              the two route maps with no per-route ACL). Use it to measure the
+#              cost the advanced-matcher pass pays on routes it emits nothing for.
 generate_httproute() {
     local i="$1"
     local port=$((8080 + (i % 100)))
     local version=$((i % 3))
     local weight=$((70 + (i % 30)))
+
+    local matchers=""
+    if [[ "${BENCH_ROUTE_MATCHERS:-advanced}" != "plain" ]]; then
+        matchers=$(cat <<EOF
+
+                      headers:
+                        - name: X-Version
+                          value: "v${version}"
+                      queryParams:
+                        - name: debug
+                          value: "true"
+EOF
+)
+    fi
 
     cat <<EOF
           - apiVersion: gateway.networking.k8s.io/v1
@@ -307,13 +328,7 @@ generate_httproute() {
                 - matches:
                     - path:
                         type: PathPrefix
-                        value: /api
-                      headers:
-                        - name: X-Version
-                          value: "v${version}"
-                      queryParams:
-                        - name: debug
-                          value: "true"
+                        value: /api${matchers}
                   backendRefs:
                     - name: bench-svc-${i}
                       port: ${port}
