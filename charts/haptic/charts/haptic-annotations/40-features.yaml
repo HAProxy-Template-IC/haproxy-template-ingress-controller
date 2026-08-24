@@ -555,7 +555,8 @@ templateSnippets:
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/config-global"] %}
-      {%- if strip(snippet) != "" %}
+      {#- Absent on most ingresses; test before the strip() call. -#}
+      {%- if snippet != "" && strip(snippet) != "" %}
       {%- if isFirst %}
       # haptic/config-global
       {%- isFirst = false %}
@@ -573,7 +574,8 @@ templateSnippets:
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/config-defaults"] %}
-      {%- if strip(snippet) != "" %}
+      {#- Absent on most ingresses; test before the strip() call. -#}
+      {%- if snippet != "" && strip(snippet) != "" %}
       {%- if isFirst %}
       # haptic/config-defaults
       {%- isFirst = false %}
@@ -595,7 +597,8 @@ templateSnippets:
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/config-frontend"] %}
-      {%- if strip(snippet) != "" %}
+      {#- Absent on most ingresses; test before the strip() call. -#}
+      {%- if snippet != "" && strip(snippet) != "" %}
       {%- if isFirst %}
       # haptic/config-frontend
       {%- isFirst = false %}

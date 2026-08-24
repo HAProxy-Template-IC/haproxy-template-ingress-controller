@@ -63,10 +63,13 @@ templateSnippets:
       #}
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
+        {#- No participating annotation → the macro emits nothing; skip the call. -#}
+        {%- var anns = ingress.Metadata.Annotations %}
+        {%- if anns["haproxy-ingress.github.io/allowlist-source-range"] == "" && anns["haproxy-ingress.github.io/whitelist-source-range"] == "" && anns["haproxy-ingress.github.io/denylist-source-range"] == "" %}{%- continue %}{%- end %}
         {#- whitelist-source-range is the deprecated alias of allowlist-source-range;
             upstream ignores it when allowlist-source-range is declared. -#}
         {%- var allowKey = "haproxy-ingress.github.io/allowlist-source-range" %}
-        {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/allowlist-source-range"] == "" && ingress.Metadata.Annotations["haproxy-ingress.github.io/whitelist-source-range"] != "" %}
+        {%- if anns["haproxy-ingress.github.io/allowlist-source-range"] == "" && anns["haproxy-ingress.github.io/whitelist-source-range"] != "" %}
           {%- allowKey = "haproxy-ingress.github.io/whitelist-source-range" %}
         {%- end %}
         {{ EmitAnnotationAccessControl(ingress,
@@ -117,6 +120,8 @@ templateSnippets:
       #}
       {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
+        {#- No enable annotation → the macro emits nothing; skip the call. -#}
+        {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-enable"] == "" %}{%- continue %}{%- end %}
         {{ EmitAnnotationCORS(ingress,
             "haproxy-ingress.github.io",
             "haproxy-ingress.github.io/cors-enable",
