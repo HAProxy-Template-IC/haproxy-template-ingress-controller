@@ -1749,7 +1749,7 @@ configure_haptic() {
     [[ "$product_deploy_interval" =~ ^[0-9]+(ns|us|ms|s|m|h)$ ]] || \
         die "chart product minDeploymentInterval is invalid: ${product_deploy_interval}"
     desired_deploy_interval="${BENCH_DEPLOY_INTERVAL:-$product_deploy_interval}"
-    rg -q '^[[:space:]]*DefaultDebounceInterval = 2 \* time\.Second$' \
+    rg -q '^[[:space:]]*DefaultDebounceInterval = 100 \* time\.Millisecond$' \
         "${PROJECT_ROOT}/pkg/k8s/types/types.go" || \
         die "controller watcher default changed; update benchmark timing provenance"
     local before_values="${WORK_DIR}/helm-values-before-normalization.json"
