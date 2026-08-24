@@ -45,6 +45,7 @@ var (
 	benchmarkProfileIncludes bool
 	benchmarkSchemaDir       string
 	benchmarkMemProfile      string
+	benchmarkCPUProfile      string
 )
 
 // benchmarkCmd represents the benchmark command.
@@ -84,6 +85,7 @@ func init() {
 	benchmarkCmd.Flags().IntVar(&benchmarkIterations, "iterations", 2, "Number of render iterations")
 	benchmarkCmd.Flags().BoolVar(&benchmarkProfileIncludes, "profile-includes", false, "Show include timing statistics (top 20 slowest)")
 	benchmarkCmd.Flags().StringVar(&benchmarkMemProfile, "memprofile", "", "Write a heap profile after the render loop to this path (analyse with `go tool pprof -inuse_space`/`-alloc_space`)")
+	benchmarkCmd.Flags().StringVar(&benchmarkCPUProfile, "cpuprofile", "", "Write a CPU profile covering the render loop to this path (analyse with `go tool pprof`)")
 	benchmarkCmd.Flags().StringVar(&benchmarkSchemaDir, "schema-dir", os.Getenv("HAPTIC_SCHEMA_DIR"),
 		"Directory of schema files for typed-resource access during rendering (CustomResourceDefinition YAMLs or bare OpenAPI v3 schemas). "+
 			"Required to benchmark configs that use typed access; falls through to untyped resources[\"name\"].List() if unset. Also reads HAPTIC_SCHEMA_DIR.")
@@ -171,20 +173,54 @@ func runBenchmark(cmd *cobra.Command, _ []string) error {
 	compilationTime := time.Since(compileStart)
 
 	// Step 2: Run benchmark for each test
-	results := make([]*BenchmarkResult, 0, len(benchmarkTestNames))
-
-	for _, testName := range benchmarkTestNames {
-		result, err := runSingleTestBenchmark(cfg, engine, testName, validationPaths, typedResult.Types, logger)
-		if err != nil {
-			return fmt.Errorf("benchmark for test %q failed: %w", testName, err)
-		}
-		results = append(results, result)
+	results, err := runAllTestBenchmarks(cfg, engine, validationPaths, typedResult, logger)
+	if err != nil {
+		return err
 	}
 
 	// Step 3: Output results for all tests
 	outputAllBenchmarkResults(results, compilationTime)
 
 	return maybeWriteHeapProfile(benchmarkMemProfile)
+}
+
+// runAllTestBenchmarks runs the render loop for every selected test, optionally
+// bracketed by a CPU profile (--cpuprofile). The profile covers only the render
+// loop, not config load or template compilation, so the samples answer "where
+// does a render spend its time". Buffered + WriteFile for the same gosec G304
+// reason as the heap profile.
+func runAllTestBenchmarks(
+	cfg *config.Config,
+	engine templating.Engine,
+	validationPaths *dataplane.ValidationPaths,
+	typedResult *typebootstrap.Result,
+	logger *slog.Logger,
+) ([]*BenchmarkResult, error) {
+	var cpuBuf bytes.Buffer
+	if benchmarkCPUProfile != "" {
+		if err := pprof.StartCPUProfile(&cpuBuf); err != nil {
+			return nil, fmt.Errorf("starting CPU profile: %w", err)
+		}
+		defer pprof.StopCPUProfile()
+	}
+
+	results := make([]*BenchmarkResult, 0, len(benchmarkTestNames))
+	for _, testName := range benchmarkTestNames {
+		result, err := runSingleTestBenchmark(cfg, engine, testName, validationPaths, typedResult.Types, logger)
+		if err != nil {
+			return nil, fmt.Errorf("benchmark for test %q failed: %w", testName, err)
+		}
+		results = append(results, result)
+	}
+
+	if benchmarkCPUProfile != "" {
+		pprof.StopCPUProfile()
+		if err := os.WriteFile(benchmarkCPUProfile, cpuBuf.Bytes(), 0o600); err != nil {
+			return nil, fmt.Errorf("saving CPU profile to %s: %w", benchmarkCPUProfile, err)
+		}
+		fmt.Printf("Wrote CPU profile to %s\n", benchmarkCPUProfile)
+	}
+	return results, nil
 }
 
 // maybeWriteHeapProfile writes a heap profile to path, or returns nil when path

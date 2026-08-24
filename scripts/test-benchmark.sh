@@ -527,6 +527,9 @@ main() {
     if [[ -d "$schema_dir" && -z "${HAPTIC_SCHEMA_DIR:-}" ]]; then
         args+=("--schema-dir=$schema_dir")
     fi
+    if [[ -n "${BENCH_CPUPROFILE:-}" ]]; then
+        args+=("--cpuprofile=$BENCH_CPUPROFILE")
+    fi
     if [[ -n "${BENCH_MEMPROFILE:-}" ]]; then
         args+=("--memprofile=$BENCH_MEMPROFILE")
     fi
