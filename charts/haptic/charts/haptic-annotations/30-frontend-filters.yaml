@@ -31,11 +31,13 @@ templateSnippets:
       #}
       {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
+          {#- Annotation first: the ns/name/key strings are only needed when it is set. -#}
+          {%- var forwardfor = ingress.Metadata.Annotations["haproxy-haptic.org/forwardfor"] %}
+          {%- if forwardfor == "" %}{%- continue %}{%- end %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var forwardfor = ingress.Metadata.Annotations["haproxy-haptic.org/forwardfor"] %}
-          {%- if forwardfor != "" && forwardfor != "add" && forwardfor != "update" && forwardfor != "ifmissing" && forwardfor != "ignore" %}
+          {%- if forwardfor != "add" && forwardfor != "update" && forwardfor != "ifmissing" && forwardfor != "ignore" %}
             {{- fail("Invalid value '" + forwardfor + "' for annotation 'haproxy-haptic.org/forwardfor' on Ingress '" + key + "'. Valid values: add, update, ifmissing, ignore") -}}
           {%- end %}
           {%- if forwardfor != "" && forwardfor != "ignore" %}
@@ -121,6 +123,9 @@ templateSnippets:
       #}
       {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
+        {#- No enable annotation → the macro emits nothing; skip the call. A
+            present-but-invalid value still reaches the macro's own handling. -#}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cors-enable"] == "" %}{%- continue %}{%- end %}
         {{ EmitAnnotationCORS(ingress,
             "haproxy-haptic.org",
             "haproxy-haptic.org/cors-enable",
@@ -146,10 +151,12 @@ templateSnippets:
       {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
+          {#- Annotation first: the ns/name/key strings are only needed when it is set. -#}
+          {%- var srcIpHeader = ingress.Metadata.Annotations["haproxy-haptic.org/src-ip-header"] %}
+          {%- if srcIpHeader == "" %}{%- continue %}{%- end %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var srcIpHeader = ingress.Metadata.Annotations["haproxy-haptic.org/src-ip-header"] %}
           {%- if srcIpHeader != "" %}
             {# Scoped by matched route. set-src rewrites the address every
                 src-based ACL then evaluates, so a wildcard or host-less rule

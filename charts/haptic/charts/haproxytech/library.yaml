@@ -59,12 +59,15 @@ templateSnippets:
     template: |
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
+        {#- No participating annotation → the macro emits nothing; skip the call. -#}
+        {%- var anns = ingress.Metadata.Annotations %}
+        {%- if anns["haproxy.org/allow-list"] == "" && anns["haproxy.org/whitelist"] == "" && anns["haproxy.org/deny-list"] == "" && anns["haproxy.org/blacklist"] == "" %}{%- continue %}{%- end %}
         {%- var allowKey = "haproxy.org/allow-list" %}
-        {%- if ingress.Metadata.Annotations["haproxy.org/allow-list"] == "" && ingress.Metadata.Annotations["haproxy.org/whitelist"] != "" %}
+        {%- if anns["haproxy.org/allow-list"] == "" && anns["haproxy.org/whitelist"] != "" %}
           {%- allowKey = "haproxy.org/whitelist" %}
         {%- end %}
         {%- var denyKey = "haproxy.org/deny-list" %}
-        {%- if ingress.Metadata.Annotations["haproxy.org/deny-list"] == "" && ingress.Metadata.Annotations["haproxy.org/blacklist"] != "" %}
+        {%- if anns["haproxy.org/deny-list"] == "" && anns["haproxy.org/blacklist"] != "" %}
           {%- denyKey = "haproxy.org/blacklist" %}
         {%- end %}
         {{ EmitAnnotationAccessControl(ingress,

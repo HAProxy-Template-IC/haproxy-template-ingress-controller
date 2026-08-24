@@ -4,6 +4,9 @@ templateSnippets:
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
       {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
+        {#- No participating annotation → the macro emits nothing; skip the call. -#}
+        {%- var anns = ingress.Metadata.Annotations %}
+        {%- if anns["nginx.ingress.kubernetes.io/whitelist-source-range"] == "" && anns["nginx.ingress.kubernetes.io/denylist-source-range"] == "" %}{%- continue %}{%- end %}
         {#- Under satisfy=any the allow-list deny would block an IP that auth could still
             rescue, so drop that arm; backend-directives-765 emits the combined gate. -#}
         {%- var allowAnn = "nginx.ingress.kubernetes.io/whitelist-source-range" -%}
@@ -24,6 +27,8 @@ templateSnippets:
     template: |
       {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
+        {#- No enable annotation → the macro emits nothing; skip the call. -#}
+        {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/enable-cors"] == "" %}{%- continue %}{%- end %}
         {{ EmitAnnotationCORS(ingress,
             "nginx.ingress.kubernetes.io",
             "nginx.ingress.kubernetes.io/enable-cors",
