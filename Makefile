@@ -134,7 +134,7 @@ HELM_UNITTEST_VERSION := 4.2.3-1.1.1
 # renovate: datasource=docker depName=ghcr.io/yannh/kubeconform versioning=docker
 KUBECONFORM_VERSION := v0.8.0-alpine
 # renovate: datasource=docker depName=kindest/node
-KUBE_VERSION := 1.36.1
+KUBE_VERSION := 1.37.0
 
 lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docker
 	@echo "Running chart-testing lint..."
