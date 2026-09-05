@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	dario.cat/mergo v1.0.2
-	github.com/KimMachineGun/automemlimit v0.7.5
+	github.com/KimMachineGun/automemlimit v1.0.0
 	github.com/arch-go/arch-go/v2 v2.1.2
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/golangci/golangci-lint/v2 v2.13.2

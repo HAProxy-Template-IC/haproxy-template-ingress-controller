@@ -197,7 +197,7 @@ func runController(cmd *cobra.Command, _ []string) error {
 	// blank-import init) so its "GOMEMLIMIT is updated" line goes through our
 	// slog handler instead of the stdlib default. Mirrors automemlimit's
 	// default options (FromCgroup provider, 0.9 ratio).
-	if _, err := memlimit.SetGoMemLimitWithOpts(memlimit.WithLogger(logger)); err != nil {
+	if _, err := memlimit.Set(memlimit.WithLogger(logger)); err != nil {
 		logger.Warn("Failed to set GOMEMLIMIT from cgroup", "error", err)
 	}
 
